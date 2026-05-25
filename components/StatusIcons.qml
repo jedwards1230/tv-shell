@@ -12,7 +12,30 @@ RowLayout {
     property string ipAddress: "..."
     readonly property int _iconSize: 64
     readonly property int _imgSize: 32
-    readonly property int _iconSourceSize: 22
+
+    // Resolve icon theme base path at startup
+    property string _iconBase: ""
+
+    Process {
+        id: iconThemeProbe
+        command: ["bash", "-c", "for d in /usr/share/icons/breeze /usr/share/icons/Adwaita /usr/share/icons/hicolor; do [ -d \"$d\" ] && echo \"$d\" && exit; done; echo ''"]
+        running: true
+        stdout: SplitParser {
+            onRead: (line) => { root._iconBase = line.trim() }
+        }
+    }
+
+    // Icon path resolver — tries multiple size directories
+    function _iconPath(category: string, name: string): string {
+        if (!_iconBase) return ""
+        // breeze uses size subdirs; try common sizes descending
+        let sizes = ["32", "24", "22", "48", "16"]
+        for (let i = 0; i < sizes.length; i++) {
+            let p = _iconBase + "/" + category + "/" + sizes[i] + "/" + name + ".svg"
+            return "file://" + p
+        }
+        return ""
+    }
 
     Process {
         id: ipProcess
@@ -41,8 +64,8 @@ RowLayout {
         Image {
             id: settingsIcon
             anchors.centerIn: parent
-            source: "image://icon/preferences-system"
-            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
+            source: root._iconBase ? "file://" + root._iconBase + "/apps/32/preferences-system.svg" : ""
+            sourceSize: Qt.size(root._imgSize, root._imgSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
@@ -73,17 +96,20 @@ RowLayout {
         color: themeMA.containsMouse ? Theme.surfaceHover : "transparent"
         Behavior on color { ColorAnimation { duration: 150 } }
 
-        property string _themeIconName: Theme.themeMode === "dark"
-            ? "weather-clear-night"
-            : Theme.themeMode === "light"
-                ? "weather-clear"
-                : "brightness-high"
+        property string _themeIconPath: {
+            if (!root._iconBase) return ""
+            if (Theme.themeMode === "dark")
+                return "file://" + root._iconBase + "/applets/48/weather-clear-night.svg"
+            if (Theme.themeMode === "light")
+                return "file://" + root._iconBase + "/applets/48/weather-clear.svg"
+            return "file://" + root._iconBase + "/actions/22/brightness-high.svg"
+        }
 
         Image {
             id: themeIcon
             anchors.centerIn: parent
-            source: "image://icon/" + parent._themeIconName
-            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
+            source: parent._themeIconPath
+            sourceSize: Qt.size(root._imgSize, root._imgSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
@@ -119,14 +145,18 @@ RowLayout {
         color: "transparent"
 
         property bool _connected: root.ipAddress !== "..." && root.ipAddress !== "No IP"
-        property string _netIconName: _connected
-            ? "network-wired" : "network-disconnect"
+        property string _netIconPath: {
+            if (!root._iconBase) return ""
+            if (_connected)
+                return "file://" + root._iconBase + "/status/22/network-wired.svg"
+            return "file://" + root._iconBase + "/actions/22/network-disconnect.svg"
+        }
 
         Image {
             id: netIcon
             anchors.centerIn: parent
-            source: "image://icon/" + parent._netIconName
-            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
+            source: parent._netIconPath
+            sourceSize: Qt.size(root._imgSize, root._imgSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
@@ -151,8 +181,8 @@ RowLayout {
         Image {
             id: volIcon
             anchors.centerIn: parent
-            source: "image://icon/audio-volume-high"
-            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
+            source: root._iconBase ? "file://" + root._iconBase + "/status/22/audio-volume-high.svg" : ""
+            sourceSize: Qt.size(root._imgSize, root._imgSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
