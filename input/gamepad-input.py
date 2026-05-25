@@ -35,6 +35,13 @@ BUTTON_MAP = {
 COMBO_KEYS = {ecodes.BTN_MODE, ecodes.BTN_EAST}
 COMBO_HOLD_SECS = 3.0
 
+# Left analog stick configuration
+STICK_DEADZONE = 0.30  # 30% of half-range from center before triggering
+
+# Repeat timing (seconds)
+STICK_INITIAL_DELAY = 0.300  # 300ms before repeat starts
+STICK_REPEAT_INTERVAL = 0.150  # 150ms between repeats
+
 
 def find_gamepad() -> InputDevice | None:
     for path in sorted(evdev.list_devices()):
@@ -55,6 +62,19 @@ class InputDaemon:
         self.held_keys: set[int] = set()
         self.combo_task: asyncio.Task | None = None
         self.running = True
+
+        # Left stick state: track which direction is currently "pressed"
+        # and repeat tasks for each axis
+        self.stick_x_key: int | None = None  # Currently emitted key for X axis
+        self.stick_y_key: int | None = None  # Currently emitted key for Y axis
+        self.stick_x_repeat: asyncio.Task | None = None
+        self.stick_y_repeat: asyncio.Task | None = None
+
+        # Stick calibration — computed from device absinfo on connect
+        self.stick_center_x: int = 0
+        self.stick_center_y: int = 0
+        self.stick_threshold_x: int = 0
+        self.stick_threshold_y: int = 0
 
     async def start(self):
         self.uinput = UInput(
@@ -79,6 +99,7 @@ class InputDaemon:
                 continue
 
             log.info("Found gamepad: %s at %s", self.gamepad.name, self.gamepad.path)
+            self._calibrate_stick()
             await self._grab()
 
             try:
@@ -88,6 +109,7 @@ class InputDaemon:
                     await self._handle_event(event)
             except OSError:
                 log.warning("Gamepad disconnected, will reconnect...")
+                self._reset_stick_state()
                 self.gamepad = None
                 self.grabbed = False
                 await asyncio.sleep(1)
@@ -129,10 +151,116 @@ class InputDaemon:
                     self._emit_key(ecodes.KEY_UP, 0)
                     self._emit_key(ecodes.KEY_DOWN, 0)
 
+            # Left analog stick → arrow keys (with deadzone + repeat)
+            elif event.code == ecodes.ABS_X:
+                self._handle_stick_axis(
+                    event.value, "x",
+                    ecodes.KEY_LEFT, ecodes.KEY_RIGHT,
+                )
+            elif event.code == ecodes.ABS_Y:
+                self._handle_stick_axis(
+                    event.value, "y",
+                    ecodes.KEY_UP, ecodes.KEY_DOWN,
+                )
+
     def _emit_key(self, key, value):
         if self.uinput:
-            self.uinput.write(ecodes.EV_KEY, key, value)
-            self.uinput.syn()
+            try:
+                self.uinput.write(ecodes.EV_KEY, key, value)
+                self.uinput.syn()
+            except OSError:
+                log.debug("uinput write failed (device closed)")
+                return
+
+    def _reset_stick_state(self):
+        """Release any held stick keys and cancel repeat tasks."""
+        for axis in ("x", "y"):
+            key = getattr(self, f"stick_{axis}_key")
+            if key is not None:
+                self._emit_key(key, 0)
+                setattr(self, f"stick_{axis}_key", None)
+            self._cancel_stick_repeat(axis)
+
+    def _calibrate_stick(self):
+        """Read absinfo for ABS_X/ABS_Y to compute center and threshold."""
+        if not self.gamepad:
+            return
+        caps = self.gamepad.capabilities(absinfo=True)
+        abs_caps = caps.get(ecodes.EV_ABS, [])
+        for code, info in abs_caps:
+            center = (info.min + info.max) // 2
+            half_range = (info.max - info.min) // 2
+            threshold = int(half_range * STICK_DEADZONE)
+            if code == ecodes.ABS_X:
+                self.stick_center_x = center
+                self.stick_threshold_x = threshold
+            elif code == ecodes.ABS_Y:
+                self.stick_center_y = center
+                self.stick_threshold_y = threshold
+        log.info("Stick calibration: X center=%d threshold=%d, Y center=%d threshold=%d",
+                 self.stick_center_x, self.stick_threshold_x,
+                 self.stick_center_y, self.stick_threshold_y)
+
+    def _handle_stick_axis(self, value: int, axis: str,
+                           neg_key: int, pos_key: int):
+        """Handle left stick axis crossing deadzone thresholds.
+
+        Emits a key press on threshold crossing, then starts a repeat task.
+        Releases the key when the stick returns inside the deadzone.
+        """
+        center = getattr(self, f"stick_center_{axis}")
+        threshold = getattr(self, f"stick_threshold_{axis}")
+        offset = value - center
+        current_key = getattr(self, f"stick_{axis}_key")
+
+        if offset < -threshold:
+            new_key = neg_key
+        elif offset > threshold:
+            new_key = pos_key
+        else:
+            new_key = None
+
+        if new_key == current_key:
+            # No change in direction — let repeat task handle it
+            return
+
+        # Release old key if any
+        if current_key is not None:
+            self._emit_key(current_key, 0)
+            self._cancel_stick_repeat(axis)
+
+        # Press new key if any
+        setattr(self, f"stick_{axis}_key", new_key)
+        if new_key is not None:
+            self._emit_key(new_key, 1)
+            self._start_stick_repeat(axis, new_key)
+
+    def _start_stick_repeat(self, axis: str, key: int):
+        """Start a repeat task: initial delay, then periodic repeats."""
+        self._cancel_stick_repeat(axis)
+        task = asyncio.create_task(self._stick_repeat_loop(axis, key))
+        setattr(self, f"stick_{axis}_repeat", task)
+
+    def _cancel_stick_repeat(self, axis: str):
+        """Cancel any running repeat task for the given axis."""
+        task = getattr(self, f"stick_{axis}_repeat")
+        if task is not None:
+            task.cancel()
+            setattr(self, f"stick_{axis}_repeat", None)
+
+    async def _stick_repeat_loop(self, axis: str, key: int):
+        """After initial delay, emit key-up/key-down at repeat interval."""
+        try:
+            await asyncio.sleep(STICK_INITIAL_DELAY)
+            while self.running:
+                # Emit release + press to simulate repeated key taps
+                self._emit_key(key, 0)
+                self._emit_key(key, 1)
+                await asyncio.sleep(STICK_REPEAT_INTERVAL)
+        except (asyncio.CancelledError, OSError):
+            pass
+        finally:
+            setattr(self, f"stick_{axis}_repeat", None)
 
     def _check_combo_start(self):
         if COMBO_KEYS.issubset(self.held_keys) and self.combo_task is None:
@@ -206,6 +334,7 @@ class InputDaemon:
                     await self._grab()
                     writer.write(b"ok\n")
                 elif cmd == "release":
+                    self._reset_stick_state()
                     await self._ungrab()
                     writer.write(b"ok\n")
                 elif cmd == "status":
@@ -249,6 +378,7 @@ async def main():
     while daemon.running:
         await asyncio.sleep(1)
 
+    daemon._reset_stick_state()
     if daemon.uinput:
         daemon.uinput.close()
     log.info("Shutting down")
