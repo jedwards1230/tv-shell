@@ -6,3 +6,8 @@ StreamOverlay 1.0 StreamOverlay.qml
 SettingsPanel 1.0 SettingsPanel.qml
 SettingsButton 1.0 SettingsButton.qml
 HomeScreen 1.0 HomeScreen.qml
+AudioSettings 1.0 AudioSettings.qml
+BluetoothSettings 1.0 BluetoothSettings.qml
+NetworkSettings 1.0 NetworkSettings.qml
+DisplaySettings 1.0 DisplaySettings.qml
+PowerSettings 1.0 PowerSettings.qml

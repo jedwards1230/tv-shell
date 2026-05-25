@@ -144,6 +144,10 @@ ShellRoot {
                 Components.StatusBar {
                     Layout.fillWidth: true
                     shellState: root.state
+                    onSettingsClicked: {
+                        settingsPanel.visible = true
+                        settingsPanel.forceActiveFocus()
+                    }
                 }
 
                 Item {

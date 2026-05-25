@@ -16,17 +16,20 @@ QtObject {
     readonly property color offline: "#c72138"
     readonly property color warning: "#d7a64b"
 
-    // Layout — scaled 2x for 4K
+    // Layout — couch-readable at 4K (10-foot UI)
     readonly property int cardWidth: 640
-    readonly property int cardHeight: 400
+    readonly property int cardHeight: 360
     readonly property int cardSpacing: 48
     readonly property int cardRadius: 24
-    readonly property int statusBarHeight: 96
+    readonly property int statusBarHeight: 120
     readonly property int padding: 48
+    readonly property int rowHeight: 420
 
-    // Font sizes — scaled 2x for 4K
+    // Font sizes — couch-readable at 4K
+    readonly property int fontHero: 72
     readonly property int fontTitle: 56
-    readonly property int fontBody: 36
-    readonly property int fontSmall: 28
-    readonly property int fontStatus: 32
+    readonly property int fontBody: 40
+    readonly property int fontSmall: 32
+    readonly property int fontStatus: 40
+    readonly property int fontHint: 36
 }
