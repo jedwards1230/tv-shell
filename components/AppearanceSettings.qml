@@ -60,11 +60,12 @@ Item {
                 Rectangle {
                     required property var modelData
                     required property int index
-                    width: 300
-                    height: 200
+                    width: 400
+                    height: 280
                     radius: Theme.cardRadius
                     color: Theme.surface
-                    border.width: Theme.themeMode === modelData.id ? 3 : (modeList.focusIndex === index && modeList.activeFocus ? 2 : 2)
+                    clip: true
+                    border.width: Theme.themeMode === modelData.id ? 3 : 2
                     border.color: Theme.themeMode === modelData.id ? Theme.focusBorder :
                                   (modeList.focusIndex === index && modeList.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
 
@@ -79,12 +80,15 @@ Item {
                     }
 
                     ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: 16
+                        anchors.fill: parent
+                        anchors.margins: 32
+                        spacing: 12
+
+                        Item { Layout.fillHeight: true }
 
                         Text {
                             text: modelData.icon
-                            font.pixelSize: Theme.fontHero * 0.6
+                            font.pixelSize: Theme.fontTitle
                             color: Theme.themeMode === modelData.id ? Theme.focusBorder : Theme.textPrimary
                             Layout.alignment: Qt.AlignHCenter
                         }
@@ -102,7 +106,12 @@ Item {
                             font.pixelSize: Theme.fontSmall
                             color: Theme.textSecondary
                             Layout.alignment: Qt.AlignHCenter
+                            Layout.maximumWidth: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
                         }
+
+                        Item { Layout.fillHeight: true }
                     }
 
                     MouseArea {
