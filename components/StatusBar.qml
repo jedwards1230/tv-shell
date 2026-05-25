@@ -5,7 +5,7 @@ import Quickshell.Io
 Rectangle {
     id: root
     height: Theme.statusBarHeight
-    color: Theme.primary
+    color: Theme.barBackground
 
     property string shellState: "idle"
     signal settingsClicked()
@@ -52,8 +52,8 @@ Rectangle {
                 }
             }
             font.pixelSize: Theme.fontBody
-            color: root.shellState === "streaming" ? Theme.accentGold :
-                   root.shellState === "reconnecting" ? Theme.accentOrange : "#ffffffcc"
+            color: root.shellState === "streaming" ? Theme.ember :
+                   root.shellState === "reconnecting" ? Theme.ember : "#ffffffcc"
         }
 
         Item { Layout.fillWidth: true }

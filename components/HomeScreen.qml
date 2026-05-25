@@ -7,12 +7,14 @@ Item {
 
     property var targets: []
     property var applications: []
+    property var recentApps: []
     property string shellState: "idle"
 
     signal streamRequested(var target)
     signal appLaunchRequested(var app)
     signal settingsRequested()
 
+    // Load installed applications
     Process {
         id: loadApps
         command: ["python3", "-c", `
@@ -47,31 +49,109 @@ print(json.dumps(apps))
         }
     }
 
-    Component.onCompleted: { loadApps.running = true }
+    // Load recent launches
+    Process {
+        id: loadRecents
+        command: ["python3", "-c", `
+import json, os
+path = os.path.expanduser('~/.local/share/game-shell/recents.json')
+try:
+    with open(path) as f:
+        data = json.load(f)
+    print(json.dumps(data[:15]))
+except:
+    print('[]')
+`]
+        stdout: SplitParser {
+            onRead: (line) => {
+                try { root.recentApps = JSON.parse(line) }
+                catch(e) { root.recentApps = [] }
+            }
+        }
+    }
 
+    Component.onCompleted: {
+        loadApps.running = true
+        loadRecents.running = true
+    }
+
+    // App launcher + recents tracker
     Process {
         id: appLauncher
-        property string cmd: ""
-        command: ["hyprctl", "dispatch", "exec", cmd]
+        command: ["echo"]
     }
 
     function launchApp(app) {
-        appLauncher.cmd = app.exec || app.name
+        // Launch via hyprctl
         appLauncher.command = ["hyprctl", "dispatch", "exec", app.exec || app.name]
         appLauncher.running = true
+        // Track in recents
+        recentsTracker.command = ["python3", "-c",
+            "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " +
+            "d=[]; " +
+            "try:\n with open(p) as f: d=json.load(f)\nexcept: pass\n" +
+            "entry={'name':'" + (app.name||"").replace("'","\\'") + "','exec':'" + (app.exec||"").replace("'","\\'") + "','comment':'" + (app.comment||"").replace("'","\\'") + "','time':time.time()}; " +
+            "d=[e for e in d if e.get('name')!=entry['name']]; d.insert(0,entry); d=d[:20]; " +
+            "open(p,'w').write(json.dumps(d,indent=2))"
+        ]
+        recentsTracker.running = true
+        // Reload recents after brief delay
+        recentsReloadTimer.start()
     }
+
+    Process { id: recentsTracker; command: ["echo"] }
+    Timer { id: recentsReloadTimer; interval: 500; onTriggered: loadRecents.running = true }
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 24
 
+        // Recents row (only if there are recent items)
+        Text {
+            visible: root.recentApps.length > 0
+            text: "Recent"
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        ListView {
+            id: recentsRow
+            visible: root.recentApps.length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? Theme.rowHeight : 0
+            orientation: ListView.Horizontal
+            spacing: Theme.cardSpacing
+            clip: true
+            focus: visible
+
+            model: root.recentApps
+
+            delegate: AppCard {
+                required property int index
+                required property var modelData
+                height: recentsRow.height - 20
+                width: Theme.cardWidth
+                app: modelData
+                focus: index === recentsRow.currentIndex
+                onActivated: root.launchApp(modelData)
+            }
+
+            Keys.onReturnPressed: {
+                if (recentsRow.currentItem)
+                    root.launchApp(recentsRow.currentItem.modelData)
+            }
+            Keys.onDownPressed: moonlightRow.forceActiveFocus()
+            Keys.onEscapePressed: root.settingsRequested()
+        }
+
         // Moonlight row
         Text {
             text: "Moonlight"
             font.pixelSize: Theme.fontTitle
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         ListView {
@@ -81,7 +161,7 @@ print(json.dumps(apps))
             orientation: ListView.Horizontal
             spacing: Theme.cardSpacing
             clip: true
-            focus: true
+            focus: !recentsRow.visible
 
             model: root.targets
 
@@ -93,23 +173,13 @@ print(json.dumps(apps))
                 target: modelData
                 focus: index === moonlightRow.currentIndex
                 onActivated: root.streamRequested(modelData)
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        moonlightRow.currentIndex = parent.index
-                        parent.forceActiveFocus()
-                    }
-                    onDoubleClicked: root.streamRequested(parent.modelData)
-                }
             }
 
             Keys.onReturnPressed: {
                 if (moonlightRow.currentItem)
                     root.streamRequested(moonlightRow.currentItem.modelData)
             }
+            Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : null
             Keys.onDownPressed: appsRow.forceActiveFocus()
             Keys.onEscapePressed: root.settingsRequested()
         }
@@ -119,13 +189,14 @@ print(json.dumps(apps))
             text: "Applications"
             font.pixelSize: Theme.fontTitle
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         ListView {
             id: appsRow
             Layout.fillWidth: true
-            Layout.preferredHeight: Theme.rowHeight
+            Layout.fillHeight: true
+            Layout.minimumHeight: Theme.rowHeight
             orientation: ListView.Horizontal
             spacing: Theme.cardSpacing
             clip: true
@@ -140,17 +211,6 @@ print(json.dumps(apps))
                 app: modelData
                 focus: index === appsRow.currentIndex
                 onActivated: root.launchApp(modelData)
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        appsRow.currentIndex = parent.index
-                        parent.forceActiveFocus()
-                    }
-                    onDoubleClicked: root.launchApp(parent.modelData)
-                }
             }
 
             Keys.onReturnPressed: {
@@ -161,12 +221,10 @@ print(json.dumps(apps))
             Keys.onEscapePressed: root.settingsRequested()
         }
 
-        Item { Layout.fillHeight: true }
-
         Text {
             text: "A: Launch  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row"
             font.pixelSize: Theme.fontHint
-            color: Theme.textDim
+            color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
             Layout.bottomMargin: 16
         }

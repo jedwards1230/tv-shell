@@ -27,7 +27,7 @@ Rectangle {
         Text {
             text: root.message
             font.pixelSize: Theme.fontTitle
-            color: Theme.text
+            color: Theme.textPrimary
             Layout.alignment: Qt.AlignHCenter
         }
 
@@ -48,7 +48,7 @@ Rectangle {
             Rectangle {
                 width: parent.width * (root.attemptCount / root.maxAttempts)
                 height: parent.height; radius: 2
-                color: Theme.accent
+                color: Theme.crimson
                 Behavior on width { NumberAnimation { duration: 300 } }
             }
         }

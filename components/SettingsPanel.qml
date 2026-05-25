@@ -42,7 +42,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     height: Theme.statusBarHeight
-                    color: Theme.primary
+                    color: Theme.navy
 
                     Text {
                         anchors.centerIn: parent
@@ -70,7 +70,7 @@ Rectangle {
                         height: 140
                         color: {
                             if (root.currentSection === index)
-                                return sidebarList.activeFocus ? Theme.accent : Theme.primary
+                                return sidebarList.activeFocus ? Theme.crimson : Theme.navy
                             if (sidebarList.currentIndex === index && sidebarList.activeFocus)
                                 return Theme.surfaceHover
                             return "transparent"
@@ -96,7 +96,7 @@ Rectangle {
                                 text: modelData.icon
                                 font.pixelSize: Theme.fontBody
                                 font.bold: true
-                                color: root.currentSection === index ? "#ffffff" : Theme.textDim
+                                color: root.currentSection === index ? "#ffffff" : Theme.textSecondary
                                 Layout.preferredWidth: 80
                             }
 
@@ -104,7 +104,7 @@ Rectangle {
                                 text: modelData.name
                                 font.pixelSize: Theme.fontBody
                                 font.bold: root.currentSection === index
-                                color: root.currentSection === index ? "#ffffff" : Theme.text
+                                color: root.currentSection === index ? "#ffffff" : Theme.textPrimary
                                 Layout.fillWidth: true
                             }
 
@@ -156,7 +156,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "B: Back to Home"
                         font.pixelSize: Theme.fontHint
-                        color: Theme.textDim
+                        color: Theme.textSecondary
                     }
                 }
             }
@@ -188,7 +188,7 @@ Rectangle {
                     text: root.sections[root.currentSection].name
                     font.pixelSize: Theme.fontTitle
                     font.bold: true
-                    color: Theme.text
+                    color: Theme.textPrimary
                 }
             }
 

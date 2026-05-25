@@ -80,7 +80,7 @@ Item {
             text: "Displays"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         // Monitor list
@@ -102,7 +102,7 @@ Item {
                 height: 180
                 radius: 16
                 color: monitorList.currentIndex === index && monitorList.activeFocus
-                       ? Theme.accent : Theme.surface
+                       ? Theme.crimson : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceHover
 
@@ -123,13 +123,13 @@ Item {
                             text: modelData.name
                             font.pixelSize: Theme.fontBody
                             font.bold: true
-                            color: isSel ? "#ffffff" : Theme.text
+                            color: isSel ? "#ffffff" : Theme.textPrimary
                         }
 
                         Text {
                             text: modelData.description
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textDim
+                            color: isSel ? "#ffffffcc" : Theme.textSecondary
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
@@ -141,19 +141,19 @@ Item {
                         Text {
                             text: "Resolution: " + modelData.width + "x" + modelData.height
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textDim
+                            color: isSel ? "#ffffffcc" : Theme.textSecondary
                         }
 
                         Text {
                             text: "Refresh: " + modelData.refreshRate.toFixed(1) + " Hz"
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textDim
+                            color: isSel ? "#ffffffcc" : Theme.textSecondary
                         }
 
                         Text {
                             text: "Scale: " + modelData.scale.toFixed(1) + "x"
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textDim
+                            color: isSel ? "#ffffffcc" : Theme.textSecondary
                         }
                     }
 
@@ -163,19 +163,19 @@ Item {
                         Text {
                             text: "Position: " + modelData.x + "," + modelData.y
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textDim
+                            color: isSel ? "#ffffffcc" : Theme.textSecondary
                         }
 
                         Text {
                             text: "DPMS: " + (modelData.dpmsStatus ? "On" : "Off")
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textDim
+                            color: isSel ? "#ffffffcc" : Theme.textSecondary
                         }
 
                         Text {
                             text: "VRR: " + (modelData.vrr ? "On" : "Off")
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textDim
+                            color: isSel ? "#ffffffcc" : Theme.textSecondary
                         }
                     }
                 }
@@ -203,7 +203,7 @@ Item {
             text: "Scale"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
             visible: root.monitors.length > 0
         }
 
@@ -233,8 +233,8 @@ Item {
                         property bool isCurrent: root.monitors.length > root.selectedMonitor &&
                                                  Math.abs(root.monitors[root.selectedMonitor].scale - parent.modelData) < 0.05
 
-                        color: isCurrent ? Theme.primary :
-                               parent.activeFocus ? Theme.accent : Theme.surface
+                        color: isCurrent ? Theme.navy :
+                               parent.activeFocus ? Theme.crimson : Theme.surface
 
                         MouseArea {
                             anchors.fill: parent
@@ -267,7 +267,7 @@ Item {
             text: "Available Modes"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
             visible: root.monitors.length > 0
         }
 
@@ -296,8 +296,8 @@ Item {
                 }
 
                 color: {
-                    if (isCurrent) return Theme.primary
-                    if (modeList.currentIndex === index && modeList.activeFocus) return Theme.accent
+                    if (isCurrent) return Theme.navy
+                    if (modeList.currentIndex === index && modeList.activeFocus) return Theme.crimson
                     return Theme.surface
                 }
                 border.width: 2
@@ -315,7 +315,7 @@ Item {
                         return res + (hz ? "  @  " + hz : "") + (isCurrent ? "  (current)" : "")
                     }
                     font.pixelSize: Theme.fontSmall
-                    color: isCurrent || (modeList.currentIndex === index && modeList.activeFocus) ? "#ffffff" : Theme.text
+                    color: isCurrent || (modeList.currentIndex === index && modeList.activeFocus) ? "#ffffff" : Theme.textPrimary
                 }
 
                 MouseArea {
@@ -351,7 +351,7 @@ Item {
         Text {
             text: "A: Select mode  |  Double-click to apply"
             font.pixelSize: Theme.fontHint
-            color: Theme.textDim
+            color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
         }
     }
