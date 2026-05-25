@@ -40,8 +40,11 @@ RowLayout {
         Image {
             id: settingsIcon
             anchors.centerIn: parent
-            source: "image://icon/preferences-system-symbolic"
+            source: "image://icon/preferences-system"
             sourceSize: Qt.size(root._imgSize, root._imgSize)
+            width: root._imgSize
+            height: root._imgSize
+            fillMode: Image.PreserveAspectFit
             visible: status === Image.Ready
         }
         Text {
@@ -70,16 +73,19 @@ RowLayout {
         Behavior on color { ColorAnimation { duration: 150 } }
 
         property string _themeIconName: Theme.themeMode === "dark"
-            ? "weather-clear-night-symbolic"
+            ? "weather-clear-night"
             : Theme.themeMode === "light"
-                ? "weather-clear-symbolic"
-                : "display-brightness-symbolic"
+                ? "weather-clear"
+                : "brightness-high"
 
         Image {
             id: themeIcon
             anchors.centerIn: parent
             source: "image://icon/" + parent._themeIconName
             sourceSize: Qt.size(root._imgSize, root._imgSize)
+            width: root._imgSize
+            height: root._imgSize
+            fillMode: Image.PreserveAspectFit
             visible: status === Image.Ready
         }
         Text {
@@ -113,13 +119,16 @@ RowLayout {
 
         property bool _connected: root.ipAddress !== "..." && root.ipAddress !== "No IP"
         property string _netIconName: _connected
-            ? "network-wired-symbolic" : "network-offline-symbolic"
+            ? "network-wired" : "network-disconnect"
 
         Image {
             id: netIcon
             anchors.centerIn: parent
             source: "image://icon/" + parent._netIconName
             sourceSize: Qt.size(root._imgSize, root._imgSize)
+            width: root._imgSize
+            height: root._imgSize
+            fillMode: Image.PreserveAspectFit
             visible: status === Image.Ready
         }
         Text {
@@ -141,8 +150,11 @@ RowLayout {
         Image {
             id: volIcon
             anchors.centerIn: parent
-            source: "image://icon/audio-volume-high-symbolic"
+            source: "image://icon/audio-volume-high"
             sourceSize: Qt.size(root._imgSize, root._imgSize)
+            width: root._imgSize
+            height: root._imgSize
+            fillMode: Image.PreserveAspectFit
             visible: status === Image.Ready
         }
         Text {
