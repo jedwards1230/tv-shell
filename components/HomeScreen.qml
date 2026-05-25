@@ -82,10 +82,8 @@ except:
     }
 
     function launchApp(app) {
-        // Launch via hyprctl
         appLauncher.command = ["hyprctl", "dispatch", "exec", app.exec || app.name]
         appLauncher.running = true
-        // Track in recents
         recentsTracker.command = ["python3", "-c",
             "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " +
             "d=[]; " +
@@ -95,7 +93,6 @@ except:
             "open(p,'w').write(json.dumps(d,indent=2))"
         ]
         recentsTracker.running = true
-        // Reload recents after brief delay
         recentsReloadTimer.start()
     }
 
@@ -107,7 +104,62 @@ except:
         anchors.margins: Theme.padding
         spacing: 24
 
-        // Recents row (only if there are recent items)
+        // === Hero Clock Area ===
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 140
+            spacing: 32
+
+            // Clock + date (left side)
+            ColumnLayout {
+                spacing: 4
+
+                Text {
+                    id: heroClockText
+                    font.pixelSize: Theme.fontHero + 24
+                    font.bold: true
+                    color: Theme.textPrimary
+
+                    Timer {
+                        interval: 1000
+                        running: true
+                        repeat: true
+                        triggeredOnStart: true
+                        onTriggered: {
+                            let now = new Date()
+                            heroClockText.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP")
+                        }
+                    }
+                }
+
+                Text {
+                    id: heroDateText
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+
+                    Timer {
+                        interval: 60000
+                        running: true
+                        repeat: true
+                        triggeredOnStart: true
+                        onTriggered: {
+                            let now = new Date()
+                            heroDateText.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d")
+                        }
+                    }
+                }
+            }
+
+            Item { Layout.fillWidth: true }
+
+            // Status icons (right side)
+            StatusIcons {
+                Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                onSettingsRequested: root.settingsRequested()
+            }
+        }
+
+        // === Recents Row ===
         Text {
             visible: root.recentApps.length > 0
             text: "Recent"
@@ -116,37 +168,44 @@ except:
             color: Theme.textPrimary
         }
 
-        ListView {
-            id: recentsRow
+        Item {
+            id: recentsContainer
             visible: root.recentApps.length > 0
             Layout.fillWidth: true
             Layout.preferredHeight: visible ? Theme.rowHeight : 0
-            orientation: ListView.Horizontal
-            spacing: Theme.cardSpacing
-            clip: true
-            focus: visible
 
-            model: root.recentApps
+            ListView {
+                id: recentsRow
+                anchors.fill: parent
+                anchors.topMargin: -16
+                anchors.bottomMargin: -16
+                orientation: ListView.Horizontal
+                spacing: Theme.cardSpacing
+                focus: visible
+                clip: false
 
-            delegate: AppCard {
-                required property int index
-                required property var modelData
-                height: recentsRow.height - 20
-                width: Theme.cardWidth
-                app: modelData
-                focus: index === recentsRow.currentIndex
-                onActivated: root.launchApp(modelData)
+                model: root.recentApps
+
+                delegate: AppCard {
+                    required property int index
+                    required property var modelData
+                    height: Theme.cardHeight
+                    width: Theme.cardWidth
+                    app: modelData
+                    focus: index === recentsRow.currentIndex
+                    onActivated: root.launchApp(modelData)
+                }
+
+                Keys.onReturnPressed: {
+                    if (recentsRow.currentItem)
+                        root.launchApp(recentsRow.currentItem.modelData)
+                }
+                Keys.onDownPressed: moonlightRow.forceActiveFocus()
+                Keys.onEscapePressed: root.settingsRequested()
             }
-
-            Keys.onReturnPressed: {
-                if (recentsRow.currentItem)
-                    root.launchApp(recentsRow.currentItem.modelData)
-            }
-            Keys.onDownPressed: moonlightRow.forceActiveFocus()
-            Keys.onEscapePressed: root.settingsRequested()
         }
 
-        // Moonlight row
+        // === Moonlight Row ===
         Text {
             text: "Moonlight"
             font.pixelSize: Theme.fontTitle
@@ -154,37 +213,43 @@ except:
             color: Theme.textPrimary
         }
 
-        ListView {
-            id: moonlightRow
+        Item {
             Layout.fillWidth: true
             Layout.preferredHeight: Theme.rowHeight
-            orientation: ListView.Horizontal
-            spacing: Theme.cardSpacing
-            clip: true
-            focus: !recentsRow.visible
 
-            model: root.targets
+            ListView {
+                id: moonlightRow
+                anchors.fill: parent
+                anchors.topMargin: -16
+                anchors.bottomMargin: -16
+                orientation: ListView.Horizontal
+                spacing: Theme.cardSpacing
+                focus: !recentsRow.visible
+                clip: false
 
-            delegate: StreamCard {
-                required property int index
-                required property var modelData
-                height: moonlightRow.height - 20
-                width: Theme.cardWidth
-                target: modelData
-                focus: index === moonlightRow.currentIndex
-                onActivated: root.streamRequested(modelData)
+                model: root.targets
+
+                delegate: StreamCard {
+                    required property int index
+                    required property var modelData
+                    height: Theme.cardHeight
+                    width: Theme.cardWidth
+                    target: modelData
+                    focus: index === moonlightRow.currentIndex
+                    onActivated: root.streamRequested(modelData)
+                }
+
+                Keys.onReturnPressed: {
+                    if (moonlightRow.currentItem)
+                        root.streamRequested(moonlightRow.currentItem.modelData)
+                }
+                Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : null
+                Keys.onDownPressed: appsRow.forceActiveFocus()
+                Keys.onEscapePressed: root.settingsRequested()
             }
-
-            Keys.onReturnPressed: {
-                if (moonlightRow.currentItem)
-                    root.streamRequested(moonlightRow.currentItem.modelData)
-            }
-            Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : null
-            Keys.onDownPressed: appsRow.forceActiveFocus()
-            Keys.onEscapePressed: root.settingsRequested()
         }
 
-        // Applications row
+        // === Applications Row ===
         Text {
             text: "Applications"
             font.pixelSize: Theme.fontTitle
@@ -192,39 +257,46 @@ except:
             color: Theme.textPrimary
         }
 
-        ListView {
-            id: appsRow
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: Theme.rowHeight
-            orientation: ListView.Horizontal
-            spacing: Theme.cardSpacing
-            clip: true
 
-            model: root.applications
+            ListView {
+                id: appsRow
+                anchors.fill: parent
+                anchors.topMargin: -16
+                anchors.bottomMargin: -16
+                orientation: ListView.Horizontal
+                spacing: Theme.cardSpacing
+                clip: false
 
-            delegate: AppCard {
-                required property int index
-                required property var modelData
-                height: appsRow.height - 20
-                width: Theme.cardWidth
-                app: modelData
-                focus: index === appsRow.currentIndex
-                onActivated: root.launchApp(modelData)
+                model: root.applications
+
+                delegate: AppCard {
+                    required property int index
+                    required property var modelData
+                    height: Theme.cardHeight
+                    width: Theme.cardWidth
+                    app: modelData
+                    focus: index === appsRow.currentIndex
+                    onActivated: root.launchApp(modelData)
+                }
+
+                Keys.onReturnPressed: {
+                    if (appsRow.currentItem)
+                        root.launchApp(appsRow.currentItem.modelData)
+                }
+                Keys.onUpPressed: moonlightRow.forceActiveFocus()
+                Keys.onEscapePressed: root.settingsRequested()
             }
-
-            Keys.onReturnPressed: {
-                if (appsRow.currentItem)
-                    root.launchApp(appsRow.currentItem.modelData)
-            }
-            Keys.onUpPressed: moonlightRow.forceActiveFocus()
-            Keys.onEscapePressed: root.settingsRequested()
         }
 
+        // === Hint Bar ===
         Text {
             text: "A: Launch  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row"
             font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
+            color: Theme.textMuted
             Layout.alignment: Qt.AlignHCenter
             Layout.bottomMargin: 16
         }

@@ -5,7 +5,7 @@ import Quickshell.Io
 Item {
     id: root
     width: Theme.cardWidth
-    height: parent ? parent.height - 20 : Theme.cardHeight
+    height: Theme.cardHeight
 
     required property var target
     property bool isOnline: false
@@ -27,46 +27,14 @@ Item {
         onTriggered: { if (!pingCheck.running) pingCheck.running = true }
     }
 
-    // Navigation direction tracking for parallax tilt
-    property real tiltX: 0
-    property real tiltY: 0
-
-    Keys.onLeftPressed: (event) => { tiltX = -4; tiltResetTimer.restart(); event.accepted = false }
-    Keys.onRightPressed: (event) => { tiltX = 4; tiltResetTimer.restart(); event.accepted = false }
-    Keys.onUpPressed: (event) => { tiltY = -3; tiltResetTimer.restart(); event.accepted = false }
-    Keys.onDownPressed: (event) => { tiltY = 3; tiltResetTimer.restart(); event.accepted = false }
-
-    Timer {
-        id: tiltResetTimer
-        interval: 300
-        onTriggered: { root.tiltX = 0; root.tiltY = 0 }
-    }
-
     transform: [
         Scale {
             origin.x: root.width / 2
             origin.y: root.height / 2
-            xScale: root.isFocused ? 1.08 : 1.0
-            yScale: root.isFocused ? 1.08 : 1.0
-
+            xScale: root.isFocused ? 1.05 : 1.0
+            yScale: root.isFocused ? 1.05 : 1.0
             Behavior on xScale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
             Behavior on yScale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        },
-        Rotation {
-            origin.x: root.width / 2
-            origin.y: root.height / 2
-            axis { x: 0; y: 1; z: 0 }
-            angle: root.isFocused ? root.tiltX : 0
-
-            Behavior on angle { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-        },
-        Rotation {
-            origin.x: root.width / 2
-            origin.y: root.height / 2
-            axis { x: 1; y: 0; z: 0 }
-            angle: root.isFocused ? root.tiltY : 0
-
-            Behavior on angle { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
         }
     ]
 
@@ -76,23 +44,12 @@ Item {
         id: card
         anchors.fill: parent
         radius: Theme.cardRadius
-        color: root.isFocused ? Theme.surface : Theme.surface
+        color: Theme.cardBackground
         border.width: root.isFocused ? 6 : 2
         border.color: root.isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
         Behavior on border.width { NumberAnimation { duration: 200 } }
-
-        // Drop shadow
-        layer.enabled: root.isFocused
-        layer.effect: Item {
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: -8
-                radius: Theme.cardRadius + 8
-                color: "#00000033"
-                z: -1
-            }
-        }
+        Behavior on border.color { ColorAnimation { duration: 200 } }
 
         MouseArea {
             id: mouseArea
@@ -107,36 +64,39 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: Theme.padding
-            spacing: 16
+            anchors.margins: Theme.padding / 2
+            spacing: 8
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 16
+            Item { Layout.fillHeight: true }
 
-                Rectangle {
-                    width: 24; height: 24; radius: 12
-                    color: root.isOnline ? Theme.online : Theme.offline
-                }
-
-                Text {
-                    text: root.target.name || "Unknown"
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
+            // Gamepad icon
+            Text {
+                text: "🎮"
+                font.pixelSize: 80
+                Layout.alignment: Qt.AlignHCenter
             }
 
-            Text {
-                text: root.target.app || ""
-                font.pixelSize: Theme.fontBody
-                color: Theme.textSecondary
+            // Online/offline dot
+            Rectangle {
+                width: 16; height: 16; radius: 8
+                color: root.isOnline ? Theme.online : Theme.offline
+                Layout.alignment: Qt.AlignHCenter
             }
 
             Item { Layout.fillHeight: true }
 
+            // Server name
+            Text {
+                text: root.target.name || "Unknown"
+                font.pixelSize: Theme.fontSmall
+                font.bold: true
+                color: Theme.textPrimary
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            // Resolution / FPS info
             Text {
                 text: {
                     let parts = []
@@ -145,8 +105,11 @@ Item {
                     if (root.target.hdr) parts.push("HDR")
                     return parts.join(" · ")
                 }
-                font.pixelSize: Theme.fontSmall
+                font.pixelSize: Theme.fontSmall - 8
                 color: Theme.textSecondary
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                visible: text !== ""
             }
         }
     }
