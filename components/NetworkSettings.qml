@@ -134,7 +134,7 @@ Item {
             delegate: Rectangle {
                 required property var modelData
                 width: parent ? parent.width : 0
-                height: 80
+                height: 96
                 radius: 16
                 color: Theme.surface
                 border.width: 2
@@ -142,7 +142,10 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Rectangle {
@@ -192,14 +195,14 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            height: ipLabel.implicitHeight + 32
+            height: ipLabel.implicitHeight + 48
             radius: 16
             color: Theme.surface
 
             Text {
                 id: ipLabel
                 anchors.fill: parent
-                anchors.margins: 16
+                anchors.margins: 24
                 text: root.ipAddress || "Fetching..."
                 font.pixelSize: Theme.fontSmall
                 font.family: "monospace"
@@ -231,7 +234,7 @@ Item {
                 required property int index
                 required property var modelData
                 width: wifiList.width
-                height: 80
+                height: 96
                 radius: 16
                 color: {
                     if (modelData.inUse) return Theme.sidebarActive
@@ -245,7 +248,10 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Text {

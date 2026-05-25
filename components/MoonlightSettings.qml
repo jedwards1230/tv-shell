@@ -116,7 +116,7 @@ Item {
                 required property int index
                 required property var modelData
                 width: serverList.width
-                height: 160
+                height: 180
                 radius: Theme.cardRadius
                 color: serverList.currentIndex === index && serverList.activeFocus
                        ? Theme.surfaceHover : Theme.surface
@@ -127,8 +127,11 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 24
-                    spacing: 24
+                    anchors.leftMargin: 32
+                    anchors.rightMargin: 32
+                    anchors.topMargin: 24
+                    anchors.bottomMargin: 24
+                    spacing: 32
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -259,8 +262,8 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 32
-                spacing: 20
+                anchors.margins: 40
+                spacing: 24
 
                 Text {
                     text: "New Server"
@@ -271,19 +274,19 @@ Item {
 
                 // Name
                 RowLayout {
-                    spacing: 16
+                    spacing: 24
 
                     Text {
                         text: "Name"
                         font.pixelSize: Theme.fontSmall
                         color: Theme.textSecondary
-                        Layout.preferredWidth: 200
+                        Layout.preferredWidth: 160
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
-                        height: 64
-                        radius: 12
+                        height: 80
+                        radius: 16
                         color: Theme.surfaceHover
                         border.width: nameInput.activeFocus ? 2 : 0
                         border.color: Theme.focusBorder
@@ -291,11 +294,15 @@ Item {
                         TextInput {
                             id: nameInput
                             anchors.fill: parent
-                            anchors.margins: 16
+                            anchors.leftMargin: 24
+                            anchors.rightMargin: 24
+                            anchors.topMargin: 20
+                            anchors.bottomMargin: 20
                             text: root.newName
                             font.pixelSize: Theme.fontSmall
                             color: Theme.textPrimary
                             clip: true
+                            verticalAlignment: TextInput.AlignVCenter
                             onTextChanged: root.newName = text
                             KeyNavigation.down: hostInput
                             Keys.onEscapePressed: { root.resetForm(); serverList.forceActiveFocus() }
@@ -305,19 +312,19 @@ Item {
 
                 // Host
                 RowLayout {
-                    spacing: 16
+                    spacing: 24
 
                     Text {
                         text: "Host"
                         font.pixelSize: Theme.fontSmall
                         color: Theme.textSecondary
-                        Layout.preferredWidth: 200
+                        Layout.preferredWidth: 160
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
-                        height: 64
-                        radius: 12
+                        height: 80
+                        radius: 16
                         color: Theme.surfaceHover
                         border.width: hostInput.activeFocus ? 2 : 0
                         border.color: Theme.focusBorder
@@ -325,11 +332,15 @@ Item {
                         TextInput {
                             id: hostInput
                             anchors.fill: parent
-                            anchors.margins: 16
+                            anchors.leftMargin: 24
+                            anchors.rightMargin: 24
+                            anchors.topMargin: 20
+                            anchors.bottomMargin: 20
                             text: root.newHost
                             font.pixelSize: Theme.fontSmall
                             color: Theme.textPrimary
                             clip: true
+                            verticalAlignment: TextInput.AlignVCenter
                             onTextChanged: root.newHost = text
                             KeyNavigation.up: nameInput
                             KeyNavigation.down: appInput
@@ -340,19 +351,19 @@ Item {
 
                 // App
                 RowLayout {
-                    spacing: 16
+                    spacing: 24
 
                     Text {
                         text: "App"
                         font.pixelSize: Theme.fontSmall
                         color: Theme.textSecondary
-                        Layout.preferredWidth: 200
+                        Layout.preferredWidth: 160
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
-                        height: 64
-                        radius: 12
+                        height: 80
+                        radius: 16
                         color: Theme.surfaceHover
                         border.width: appInput.activeFocus ? 2 : 0
                         border.color: Theme.focusBorder
@@ -360,11 +371,15 @@ Item {
                         TextInput {
                             id: appInput
                             anchors.fill: parent
-                            anchors.margins: 16
+                            anchors.leftMargin: 24
+                            anchors.rightMargin: 24
+                            anchors.topMargin: 20
+                            anchors.bottomMargin: 20
                             text: root.newApp
                             font.pixelSize: Theme.fontSmall
                             color: Theme.textPrimary
                             clip: true
+                            verticalAlignment: TextInput.AlignVCenter
                             onTextChanged: root.newApp = text
                             KeyNavigation.up: hostInput
                             Keys.onEscapePressed: { root.resetForm(); serverList.forceActiveFocus() }
@@ -449,8 +464,8 @@ Item {
 
         Rectangle {
             anchors.centerIn: parent
-            width: 700
-            height: 300
+            width: 800
+            height: 350
             radius: 32
             color: Theme.surface
 
@@ -476,7 +491,6 @@ Item {
                         id: confirmRemoveYes
                         width: confirmRemoveYesBtn.width
                         height: confirmRemoveYesBtn.height
-                        focus: root.confirmRemoveIndex >= 0
 
                         KeyNavigation.right: confirmRemoveNo
 
@@ -500,6 +514,7 @@ Item {
                         id: confirmRemoveNo
                         width: confirmRemoveNoBtn.width
                         height: confirmRemoveNoBtn.height
+                        focus: root.confirmRemoveIndex >= 0
 
                         KeyNavigation.left: confirmRemoveYes
 

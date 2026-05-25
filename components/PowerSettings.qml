@@ -248,7 +248,6 @@ Item {
                         id: confirmYesScope
                         width: confirmYesBtn.width
                         height: confirmYesBtn.height
-                        focus: root.confirmAction !== ""
                         activeFocusOnTab: true
 
                         KeyNavigation.right: confirmNoScope
@@ -277,6 +276,7 @@ Item {
                         id: confirmNoScope
                         width: confirmNoBtn.width
                         height: confirmNoBtn.height
+                        focus: root.confirmAction !== ""
                         activeFocusOnTab: true
 
                         KeyNavigation.left: confirmYesScope

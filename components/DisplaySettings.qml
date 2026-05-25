@@ -112,7 +112,10 @@ Item {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 20
+                    anchors.bottomMargin: 20
                     spacing: 8
 
                     RowLayout {
@@ -286,7 +289,7 @@ Item {
                 required property int index
                 required property var modelData
                 width: modeList.width
-                height: 64
+                height: 80
                 radius: 16
 
                 property bool isCurrent: {

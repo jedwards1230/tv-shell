@@ -267,7 +267,7 @@ Item {
                 required property int index
                 required property var modelData
                 width: sinkList.width
-                height: 80
+                height: 96
                 radius: 16
                 color: {
                     if (sinkList.currentIndex === index && sinkList.activeFocus)
@@ -276,14 +276,17 @@ Item {
                         return Theme.sidebarActive
                     return Theme.surface
                 }
-                border.width: modelData.isDefault ? 2 : 2
+                border.width: 2
                 border.color: modelData.isDefault ? Theme.focusBorder : Theme.surfaceBorder
 
                 Behavior on color { ColorAnimation { duration: 150 } }
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Text {

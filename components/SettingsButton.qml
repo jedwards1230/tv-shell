@@ -2,7 +2,7 @@ import QtQuick
 
 Rectangle {
     id: root
-    implicitWidth: label.implicitWidth + 48
+    implicitWidth: label.implicitWidth + 80
     implicitHeight: 96
     width: implicitWidth
     height: implicitHeight

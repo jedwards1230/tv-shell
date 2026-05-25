@@ -330,7 +330,7 @@ Item {
                 required property int index
                 required property var modelData
                 width: pairedList.width
-                height: 80
+                height: 96
                 radius: 16
                 color: pairedList.currentIndex === index && pairedList.activeFocus
                        ? Theme.surfaceHover : Theme.surface
@@ -341,7 +341,10 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Rectangle {
@@ -428,7 +431,7 @@ Item {
                 required property int index
                 required property var modelData
                 width: availList.width
-                height: 80
+                height: 96
                 radius: 16
                 color: availList.currentIndex === index && availList.activeFocus
                        ? Theme.surfaceHover : Theme.surface
@@ -439,7 +442,10 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Text {
