@@ -2,14 +2,13 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
-Row {
+RowLayout {
     id: root
     spacing: 24
     layoutDirection: Qt.RightToLeft
 
     signal settingsRequested()
 
-    // IP address for network indicator
     property string ipAddress: "..."
 
     Process {
@@ -28,12 +27,12 @@ Row {
         onTriggered: { if (!ipProcess.running) ipProcess.running = true }
     }
 
-    // Settings gear (⚙ renders smaller than other Unicode glyphs at same size)
     Text {
         text: "⚙"
-        font.pixelSize: Theme.fontTitle + 16
+        font.pixelSize: Theme.fontTitle + 12
         color: settingsMA.containsMouse ? Theme.textPrimary : Theme.textMuted
         opacity: settingsMA.containsMouse ? 1.0 : 0.6
+        Layout.alignment: Qt.AlignVCenter
         Behavior on opacity { NumberAnimation { duration: 150 } }
         Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -46,13 +45,13 @@ Row {
         }
     }
 
-    // Theme mode toggle (auto / light / dark)
     Text {
         text: Theme.themeMode === "dark" ? "☽" :
               Theme.themeMode === "light" ? "☀" : "◐"
         font.pixelSize: Theme.fontTitle
         color: themeMA.containsMouse ? Theme.textPrimary : Theme.textMuted
         opacity: themeMA.containsMouse ? 1.0 : 0.6
+        Layout.alignment: Qt.AlignVCenter
         Behavior on opacity { NumberAnimation { duration: 150 } }
         Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -69,20 +68,20 @@ Row {
         }
     }
 
-    // Network indicator
     Text {
         text: root.ipAddress !== "..." && root.ipAddress !== "No IP" ? "⛁" : "⚠"
         font.pixelSize: Theme.fontTitle
         color: root.ipAddress !== "..." && root.ipAddress !== "No IP"
                    ? Theme.textMuted : Theme.warning
         opacity: 0.6
+        Layout.alignment: Qt.AlignVCenter
     }
 
-    // Volume indicator
     Text {
         text: "♫"
         font.pixelSize: Theme.fontTitle
         color: Theme.textMuted
         opacity: 0.6
+        Layout.alignment: Qt.AlignVCenter
     }
 }
