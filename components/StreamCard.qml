@@ -8,6 +8,7 @@ Item {
     height: Theme.cardHeight
 
     required property var target
+    property string appName: ""  // When set, card shows app name (app-view mode)
     property bool isOnline: false
     property bool isFocused: activeFocus || mouseArea.containsMouse
 
@@ -69,10 +70,12 @@ Item {
 
             Item { Layout.fillHeight: true }
 
-            // Gamepad icon
+            // Gamepad icon (server view) or app initial (app view)
             Text {
-                text: "🎮"
+                text: root.appName !== "" ? root.appName.charAt(0).toUpperCase() : "\u{1F3AE}"
                 font.pixelSize: 120
+                font.bold: root.appName !== ""
+                color: root.appName !== "" ? Theme.textSecondary : Theme.textPrimary
                 Layout.alignment: Qt.AlignHCenter
             }
 
@@ -85,9 +88,9 @@ Item {
 
             Item { Layout.fillHeight: true }
 
-            // Server name
+            // Primary label: app name (app view) or server name (server view)
             Text {
-                text: root.target.name || "Unknown"
+                text: root.appName !== "" ? root.appName : (root.target.name || "Unknown")
                 font.pixelSize: Theme.fontSmall
                 font.bold: true
                 color: Theme.textPrimary
@@ -96,9 +99,12 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
             }
 
-            // Resolution / FPS info
+            // Subtitle: server name (app view) or resolution/fps (server view)
             Text {
                 text: {
+                    if (root.appName !== "") {
+                        return root.target.name || ""
+                    }
                     let parts = []
                     if (root.target.resolution) parts.push(root.target.resolution)
                     if (root.target.fps) parts.push(root.target.fps + " fps")

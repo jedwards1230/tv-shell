@@ -6,6 +6,10 @@ Item {
     // === Theme Mode ===
     // "auto" (time-based), "light", "dark"
     property string themeMode: "dark"
+
+    // === Moonlight View Mode ===
+    // "servers" (one card per host) or "apps" (one row per host, cards = apps)
+    property string moonlightViewMode: "servers"
     property int _currentHour: new Date().getHours()
     property bool darkMode: {
         if (themeMode === "dark") return true
@@ -27,6 +31,8 @@ Item {
                     var obj = JSON.parse(line)
                     if (obj.themeMode === "auto" || obj.themeMode === "light" || obj.themeMode === "dark")
                         themeMode = obj.themeMode
+                    if (obj.moonlightViewMode === "servers" || obj.moonlightViewMode === "apps")
+                        moonlightViewMode = obj.moonlightViewMode
                 } catch(e) { console.log("Theme: failed to parse settings:", e) }
             }
         }
@@ -36,12 +42,19 @@ Item {
         id: saveSettings
         command: ["bash", "-c",
             "mkdir -p " + _settingsDir + " && " +
-            "echo '{\"themeMode\":\"" + themeMode + "\"}' > " + _settingsFile]
+            "echo '{\"themeMode\":\"" + themeMode + "\",\"moonlightViewMode\":\"" + moonlightViewMode + "\"}' > " + _settingsFile]
     }
 
     function setThemeMode(mode) {
         if (mode === "auto" || mode === "light" || mode === "dark") {
             themeMode = mode
+            saveSettings.running = true
+        }
+    }
+
+    function setMoonlightViewMode(mode) {
+        if (mode === "servers" || mode === "apps") {
+            moonlightViewMode = mode
             saveSettings.running = true
         }
     }

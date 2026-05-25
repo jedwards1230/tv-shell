@@ -2,15 +2,15 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
-Row {
+RowLayout {
     id: root
-    spacing: 24
+    spacing: 16
     layoutDirection: Qt.RightToLeft
 
     signal settingsRequested()
 
-    // IP address for network indicator
     property string ipAddress: "..."
+    readonly property int _iconSize: 64
 
     Process {
         id: ipProcess
@@ -28,14 +28,20 @@ Row {
         onTriggered: { if (!ipProcess.running) ipProcess.running = true }
     }
 
-    // Settings gear
-    Text {
-        text: "⚙"
-        font.pixelSize: Theme.fontTitle
-        color: settingsMA.containsMouse ? Theme.textPrimary : Theme.textMuted
-        opacity: settingsMA.containsMouse ? 1.0 : 0.6
-        Behavior on opacity { NumberAnimation { duration: 150 } }
+    // Settings
+    Rectangle {
+        Layout.preferredWidth: root._iconSize
+        Layout.preferredHeight: root._iconSize
+        radius: root._iconSize / 2
+        color: settingsMA.containsMouse ? Theme.surfaceHover : "transparent"
         Behavior on color { ColorAnimation { duration: 150 } }
+
+        Text {
+            anchors.centerIn: parent
+            text: "⚙"
+            font.pixelSize: Theme.fontBody
+            color: settingsMA.containsMouse ? Theme.textPrimary : Theme.textMuted
+        }
 
         MouseArea {
             id: settingsMA
@@ -46,15 +52,21 @@ Row {
         }
     }
 
-    // Theme mode toggle (auto / light / dark)
-    Text {
-        text: Theme.themeMode === "dark" ? "☽" :
-              Theme.themeMode === "light" ? "☀" : "◐"
-        font.pixelSize: Theme.fontTitle
-        color: themeMA.containsMouse ? Theme.textPrimary : Theme.textMuted
-        opacity: themeMA.containsMouse ? 1.0 : 0.6
-        Behavior on opacity { NumberAnimation { duration: 150 } }
+    // Theme toggle
+    Rectangle {
+        Layout.preferredWidth: root._iconSize
+        Layout.preferredHeight: root._iconSize
+        radius: root._iconSize / 2
+        color: themeMA.containsMouse ? Theme.surfaceHover : "transparent"
         Behavior on color { ColorAnimation { duration: 150 } }
+
+        Text {
+            anchors.centerIn: parent
+            text: Theme.themeMode === "dark" ? "☽" :
+                  Theme.themeMode === "light" ? "☀" : "◐"
+            font.pixelSize: Theme.fontBody
+            color: themeMA.containsMouse ? Theme.textPrimary : Theme.textMuted
+        }
 
         MouseArea {
             id: themeMA
@@ -69,20 +81,34 @@ Row {
         }
     }
 
-    // Network indicator
-    Text {
-        text: root.ipAddress !== "..." && root.ipAddress !== "No IP" ? "⛁" : "⚠"
-        font.pixelSize: Theme.fontTitle
-        color: root.ipAddress !== "..." && root.ipAddress !== "No IP"
-                   ? Theme.textMuted : Theme.warning
-        opacity: 0.6
+    // Network
+    Rectangle {
+        Layout.preferredWidth: root._iconSize
+        Layout.preferredHeight: root._iconSize
+        radius: root._iconSize / 2
+        color: "transparent"
+
+        Text {
+            anchors.centerIn: parent
+            text: root.ipAddress !== "..." && root.ipAddress !== "No IP" ? "⛁" : "⚠"
+            font.pixelSize: Theme.fontBody
+            color: root.ipAddress !== "..." && root.ipAddress !== "No IP"
+                       ? Theme.textMuted : Theme.warning
+        }
     }
 
-    // Volume indicator
-    Text {
-        text: "♫"
-        font.pixelSize: Theme.fontTitle
-        color: Theme.textMuted
-        opacity: 0.6
+    // Volume
+    Rectangle {
+        Layout.preferredWidth: root._iconSize
+        Layout.preferredHeight: root._iconSize
+        radius: root._iconSize / 2
+        color: "transparent"
+
+        Text {
+            anchors.centerIn: parent
+            text: "♫"
+            font.pixelSize: Theme.fontBody
+            color: Theme.textMuted
+        }
     }
 }
