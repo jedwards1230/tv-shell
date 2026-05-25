@@ -28,10 +28,10 @@ Row {
         onTriggered: { if (!ipProcess.running) ipProcess.running = true }
     }
 
-    // Settings gear
+    // Settings gear (⚙ renders smaller than other Unicode glyphs at same size)
     Text {
         text: "⚙"
-        font.pixelSize: Theme.fontTitle
+        font.pixelSize: Theme.fontTitle + 16
         color: settingsMA.containsMouse ? Theme.textPrimary : Theme.textMuted
         opacity: settingsMA.containsMouse ? 1.0 : 0.6
         Behavior on opacity { NumberAnimation { duration: 150 } }
