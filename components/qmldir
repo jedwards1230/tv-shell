@@ -1,0 +1,8 @@
+module components
+singleton Theme 1.0 Theme.qml
+StreamCard 1.0 StreamCard.qml
+StatusBar 1.0 StatusBar.qml
+StreamOverlay 1.0 StreamOverlay.qml
+SettingsPanel 1.0 SettingsPanel.qml
+SettingsButton 1.0 SettingsButton.qml
+HomeScreen 1.0 HomeScreen.qml

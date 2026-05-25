@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Game Shell (Wayland)
+Comment=Quickshell game streaming launcher on Hyprland
+Exec=/usr/local/bin/game-shell-session
+DesktopNames=Hyprland
