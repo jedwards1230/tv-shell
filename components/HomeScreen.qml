@@ -283,8 +283,17 @@ except:
 
             // Status icons (right side)
             StatusIcons {
+                id: statusIcons
                 Layout.alignment: Qt.AlignTop | Qt.AlignRight
                 onSettingsRequested: root.settingsRequested()
+                onFocusDownRequested: {
+                    if (recentsRow.visible)
+                        recentsRow.forceActiveFocus()
+                    else if (Theme.moonlightViewMode === "servers")
+                        moonlightRow.forceActiveFocus()
+                    else if (!root._focusAppViewRow(0))
+                        appsRow.forceActiveFocus()
+                }
             }
         }
 
@@ -329,6 +338,7 @@ except:
                     if (recentsRow.currentItem)
                         root.launchApp(recentsRow.currentItem.modelData)
                 }
+                Keys.onUpPressed: statusIcons.forceActiveFocus()
                 Keys.onDownPressed: {
                     if (Theme.moonlightViewMode === "servers") {
                         moonlightRow.forceActiveFocus()
@@ -384,7 +394,7 @@ except:
                     if (moonlightRow.currentItem)
                         root.streamRequested(moonlightRow.currentItem.modelData)
                 }
-                Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : null
+                Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : statusIcons.forceActiveFocus()
                 Keys.onDownPressed: appsRow.forceActiveFocus()
                 Keys.onEscapePressed: root.settingsRequested()
             }
@@ -478,7 +488,10 @@ except:
 
                         Keys.onUpPressed: {
                             if (appViewRowDelegate.index === 0) {
-                                recentsRow.visible ? recentsRow.forceActiveFocus() : null
+                                if (recentsRow.visible)
+                                    recentsRow.forceActiveFocus()
+                                else
+                                    statusIcons.forceActiveFocus()
                             } else {
                                 root._focusAppViewRow(appViewRowDelegate.index - 1)
                             }
