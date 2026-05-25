@@ -10,6 +10,11 @@ Item {
     property var recentApps: []
     property string shellState: "idle"
 
+    // App-view: discovered apps per host { "host": ["App1", "App2", ...] }
+    property var hostApps: ({})
+    property int _appDiscoveryIndex: -1
+    property bool _appDiscoveryRunning: false
+
     signal streamRequested(var target)
     signal appLaunchRequested(var app)
     signal settingsRequested()
@@ -98,6 +103,129 @@ except:
 
     Process { id: recentsTracker; command: ["echo"] }
     Timer { id: recentsReloadTimer; interval: 500; onTriggered: loadRecents.running = true }
+
+    // === Moonlight App Discovery ===
+    Process {
+        id: appDiscovery
+        property string currentHost: ""
+        command: ["moonlight", "list", currentHost]
+        stdout: SplitParser {
+            onRead: (line) => {
+                // moonlight list outputs lines like "1. Desktop" or just "Desktop"
+                let trimmed = line.trim()
+                if (trimmed === "" || trimmed.indexOf("Search") === 0 || trimmed.indexOf("Connect") === 0) return
+                // Strip leading number+dot if present (e.g., "1. Desktop" -> "Desktop")
+                let match = trimmed.match(/^\d+\.\s+(.+)/)
+                let appName = match ? match[1] : trimmed
+                if (appName === "") return
+
+                let updated = root.hostApps
+                if (!updated[appDiscovery.currentHost])
+                    updated[appDiscovery.currentHost] = []
+                updated[appDiscovery.currentHost].push(appName)
+                root.hostApps = updated
+            }
+        }
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode !== 0) {
+                // Host offline or moonlight list failed — mark empty
+                let updated = root.hostApps
+                updated[appDiscovery.currentHost] = []
+                root.hostApps = updated
+            }
+            // Discover next host
+            root._appDiscoveryIndex++
+            root._discoverNextHost()
+        }
+    }
+
+    function _discoverNextHost() {
+        if (_appDiscoveryIndex >= root.targets.length) {
+            _appDiscoveryRunning = false
+            // Force re-evaluation by reassigning
+            root.hostApps = JSON.parse(JSON.stringify(root.hostApps))
+            return
+        }
+        let target = root.targets[_appDiscoveryIndex]
+        appDiscovery.currentHost = target.host || ""
+        if (appDiscovery.currentHost === "") {
+            _appDiscoveryIndex++
+            _discoverNextHost()
+            return
+        }
+        // Clear previous results for this host before re-query
+        let updated = root.hostApps
+        updated[appDiscovery.currentHost] = []
+        root.hostApps = updated
+        appDiscovery.running = true
+    }
+
+    function discoverAllApps() {
+        if (_appDiscoveryRunning) return
+        _appDiscoveryRunning = true
+        _appDiscoveryIndex = 0
+        // Clear all
+        root.hostApps = {}
+        _discoverNextHost()
+    }
+
+    // Refresh app discovery every 60 seconds when in app-view mode
+    Timer {
+        id: appDiscoveryTimer
+        interval: 60000
+        running: Theme.moonlightViewMode === "apps"
+        repeat: true
+        onTriggered: root.discoverAllApps()
+    }
+
+    // Trigger discovery when targets arrive or view mode switches to apps
+    onTargetsChanged: {
+        if (Theme.moonlightViewMode === "apps" && root.targets.length > 0)
+            discoverAllApps()
+    }
+
+    Connections {
+        target: Theme
+        function onMoonlightViewModeChanged() {
+            if (Theme.moonlightViewMode === "apps" && root.targets.length > 0)
+                root.discoverAllApps()
+        }
+    }
+
+    // Helper: find the ListView inside an app-view delegate by objectName
+    function _focusAppViewRow(idx) {
+        if (idx < 0 || idx >= appViewRepeater.count) return false
+        let item = appViewRepeater.itemAt(idx)
+        if (!item) return false
+        // Find the ListView by objectName
+        let listView = _findChild(item, "appViewListView")
+        if (listView) { listView.forceActiveFocus(); return true }
+        return false
+    }
+
+    function _findChild(parent, name) {
+        for (let i = 0; i < parent.children.length; i++) {
+            let child = parent.children[i]
+            if (child.objectName === name) return child
+            let found = _findChild(child, name)
+            if (found) return found
+        }
+        return null
+    }
+
+    // Computed model for app-view rows, re-evaluated when targets or hostApps change
+    property var _appViewRows: {
+        // Explicitly reference both properties so QML re-evaluates this binding
+        let ha = root.hostApps
+        let tgts = root.targets
+        let rows = []
+        for (let i = 0; i < tgts.length; i++) {
+            let t = tgts[i]
+            let apps = ha[t.host] || []
+            rows.push({ host: t.host, name: t.name, apps: apps, target: t })
+        }
+        return rows
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -200,13 +328,24 @@ except:
                     if (recentsRow.currentItem)
                         root.launchApp(recentsRow.currentItem.modelData)
                 }
-                Keys.onDownPressed: moonlightRow.forceActiveFocus()
+                Keys.onDownPressed: {
+                    if (Theme.moonlightViewMode === "servers") {
+                        moonlightRow.forceActiveFocus()
+                    } else {
+                        // App view: focus the first host row
+                        if (!root._focusAppViewRow(0))
+                            appsRow.forceActiveFocus()
+                    }
+                }
                 Keys.onEscapePressed: root.settingsRequested()
             }
         }
 
-        // === Moonlight Row ===
+        // === Moonlight Section (server-view or app-view) ===
+
+        // Server view: single "Moonlight" row with one card per server
         Text {
+            visible: Theme.moonlightViewMode === "servers"
             text: "Moonlight"
             font.pixelSize: Theme.fontTitle
             font.bold: true
@@ -214,8 +353,9 @@ except:
         }
 
         Item {
+            visible: Theme.moonlightViewMode === "servers"
             Layout.fillWidth: true
-            Layout.preferredHeight: Theme.rowHeight
+            Layout.preferredHeight: visible ? Theme.rowHeight : 0
 
             ListView {
                 id: moonlightRow
@@ -224,7 +364,7 @@ except:
                 anchors.bottomMargin: -16
                 orientation: ListView.Horizontal
                 spacing: Theme.cardSpacing
-                focus: !recentsRow.visible
+                focus: Theme.moonlightViewMode === "servers" && !recentsRow.visible
                 clip: false
 
                 model: root.targets
@@ -246,6 +386,114 @@ except:
                 Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : null
                 Keys.onDownPressed: appsRow.forceActiveFocus()
                 Keys.onEscapePressed: root.settingsRequested()
+            }
+        }
+
+        // App view: one row per host, each card is an available app
+        Repeater {
+            id: appViewRepeater
+            model: Theme.moonlightViewMode === "apps" ? root._appViewRows : []
+
+            delegate: ColumnLayout {
+                id: appViewRowDelegate
+                required property var modelData
+                required property int index
+
+                Layout.fillWidth: true
+                spacing: 8
+
+                property var hostData: modelData
+                property var hostTarget: modelData.target
+                property var hostAppList: modelData.apps
+
+                Text {
+                    text: "Moonlight — " + hostData.name
+                    font.pixelSize: Theme.fontTitle
+                    font.bold: true
+                    color: Theme.textPrimary
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Theme.rowHeight
+
+                    // Offline state
+                    Text {
+                        visible: hostAppList.length === 0 && !root._appDiscoveryRunning
+                        anchors.centerIn: parent
+                        text: "Offline or no apps found"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textMuted
+                    }
+
+                    // Loading state
+                    Text {
+                        visible: hostAppList.length === 0 && root._appDiscoveryRunning
+                        anchors.centerIn: parent
+                        text: "Discovering apps..."
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textMuted
+                    }
+
+                    ListView {
+                        id: appViewRow
+                        objectName: "appViewListView"
+                        anchors.fill: parent
+                        anchors.topMargin: -16
+                        anchors.bottomMargin: -16
+                        orientation: ListView.Horizontal
+                        spacing: Theme.cardSpacing
+                        clip: false
+                        visible: hostAppList.length > 0
+
+                        // First host row gets focus when no recents visible
+                        focus: Theme.moonlightViewMode === "apps" && index === 0 && !recentsRow.visible
+
+                        model: hostAppList
+
+                        delegate: StreamCard {
+                            required property int index
+                            required property var modelData
+                            height: Theme.cardHeight
+                            width: Theme.cardWidth
+                            target: hostTarget
+                            appName: modelData
+                            focus: index === appViewRow.currentIndex
+                            onActivated: {
+                                // Build a target with the specific app name
+                                let t = JSON.parse(JSON.stringify(hostTarget))
+                                t.app = modelData
+                                root.streamRequested(t)
+                            }
+                        }
+
+                        Keys.onReturnPressed: {
+                            if (appViewRow.currentItem) {
+                                let t = JSON.parse(JSON.stringify(hostTarget))
+                                t.app = appViewRow.currentItem.modelData
+                                root.streamRequested(t)
+                            }
+                        }
+
+                        Keys.onUpPressed: {
+                            if (appViewRowDelegate.index === 0) {
+                                recentsRow.visible ? recentsRow.forceActiveFocus() : null
+                            } else {
+                                root._focusAppViewRow(appViewRowDelegate.index - 1)
+                            }
+                        }
+
+                        Keys.onDownPressed: {
+                            if (appViewRowDelegate.index < appViewRepeater.count - 1) {
+                                root._focusAppViewRow(appViewRowDelegate.index + 1)
+                            } else {
+                                appsRow.forceActiveFocus()
+                            }
+                        }
+
+                        Keys.onEscapePressed: root.settingsRequested()
+                    }
+                }
             }
         }
 
@@ -287,7 +535,16 @@ except:
                     if (appsRow.currentItem)
                         root.launchApp(appsRow.currentItem.modelData)
                 }
-                Keys.onUpPressed: moonlightRow.forceActiveFocus()
+                Keys.onUpPressed: {
+                    if (Theme.moonlightViewMode === "servers") {
+                        moonlightRow.forceActiveFocus()
+                    } else {
+                        // App view: focus the last host row
+                        if (!root._focusAppViewRow(appViewRepeater.count - 1)) {
+                            recentsRow.visible ? recentsRow.forceActiveFocus() : null
+                        }
+                    }
+                }
                 Keys.onEscapePressed: root.settingsRequested()
             }
         }
