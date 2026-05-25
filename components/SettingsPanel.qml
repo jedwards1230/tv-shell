@@ -95,14 +95,15 @@ Rectangle {
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 48
+                            anchors.leftMargin: 40
                             anchors.rightMargin: 40
-                            spacing: 24
+                            spacing: 20
 
                             Text {
                                 text: modelData.icon
                                 font.pixelSize: Theme.fontBody
-                                Layout.preferredWidth: 60
+                                Layout.preferredWidth: 64
+                                horizontalAlignment: Text.AlignHCenter
                             }
 
                             Text {
