@@ -65,20 +65,20 @@ Item {
     readonly property color navy: "#304c7a"
 
     // === Semantic Colors (switch on darkMode) ===
-    property color background: darkMode ? "#121416" : snow
-    property color surface: darkMode ? "#1c1e22" : "#ffffff"
-    property color surfaceHover: darkMode ? "#26292e" : "#ecedf0"
-    property color surfaceBorder: darkMode ? "#33373d" : "#dcdee3"
+    property color background: darkMode ? "#111215" : snow
+    property color surface: darkMode ? "#24262c" : "#ffffff"
+    property color surfaceHover: darkMode ? "#2e3138" : "#ecedf0"
+    property color surfaceBorder: darkMode ? "#3d4149" : "#dcdee3"
 
     // Text hierarchy
     property color textPrimary: darkMode ? "#e6e4e0" : "#1a2540"
-    property color textSecondary: darkMode ? "#9a9690" : "#4a5568"
-    property color textMuted: darkMode ? "#5c5955" : "#8892a4"
+    property color textSecondary: darkMode ? "#b5b2ad" : "#4a5568"
+    property color textMuted: darkMode ? "#7d7974" : "#8892a4"
     property color textOnDark: "#f4f5f7"
-    property color textOnDarkMuted: "#c8c5c0"
+    property color textOnDarkMuted: "#d8d5d0"
 
     // Cards
-    property color cardBackground: darkMode ? "#191b1f" : "#ffffff"
+    property color cardBackground: darkMode ? "#1c1e24" : "#ffffff"
     property color cardAccent: ember
 
     // Status
@@ -89,8 +89,8 @@ Item {
     // Interactive
     property color focusBorder: crimson
     property color focusGlow: "#c7213833"
-    property color barBackground: darkMode ? "#0e0f11" : navy
-    property color sidebarActive: darkMode ? "#2a2c31" : navy
+    property color barBackground: darkMode ? "#0a0b0d" : navy
+    property color sidebarActive: darkMode ? "#2e3138" : navy
     property color sidebarText: "#e6e4e0"
 
     // === Layout — couch-readable at 4K (10-foot UI) ===
