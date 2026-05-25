@@ -12,6 +12,7 @@ RowLayout {
     property string ipAddress: "..."
     readonly property int _iconSize: 64
     readonly property int _imgSize: 32
+    readonly property int _iconSourceSize: 22
 
     Process {
         id: ipProcess
@@ -41,7 +42,7 @@ RowLayout {
             id: settingsIcon
             anchors.centerIn: parent
             source: "image://icon/preferences-system"
-            sourceSize: Qt.size(root._imgSize, root._imgSize)
+            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
@@ -82,7 +83,7 @@ RowLayout {
             id: themeIcon
             anchors.centerIn: parent
             source: "image://icon/" + parent._themeIconName
-            sourceSize: Qt.size(root._imgSize, root._imgSize)
+            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
@@ -125,7 +126,7 @@ RowLayout {
             id: netIcon
             anchors.centerIn: parent
             source: "image://icon/" + parent._netIconName
-            sourceSize: Qt.size(root._imgSize, root._imgSize)
+            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
@@ -151,7 +152,7 @@ RowLayout {
             id: volIcon
             anchors.centerIn: parent
             source: "image://icon/audio-volume-high"
-            sourceSize: Qt.size(root._imgSize, root._imgSize)
+            sourceSize: Qt.size(root._iconSourceSize, root._iconSourceSize)
             width: root._imgSize
             height: root._imgSize
             fillMode: Image.PreserveAspectFit
