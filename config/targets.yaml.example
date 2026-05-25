@@ -1,0 +1,8 @@
+targets:
+  - name: Desktop
+    host: 192.168.8.10
+    app: Desktop
+    resolution: 3840x2160
+    fps: 120
+    codec: HEVC
+    hdr: true
