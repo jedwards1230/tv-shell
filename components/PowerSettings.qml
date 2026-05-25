@@ -27,7 +27,7 @@ Item {
             text: "Power"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         Item { Layout.fillHeight: true; Layout.maximumHeight: 100 }
@@ -49,7 +49,7 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     radius: 24
-                    color: parent.activeFocus ? Theme.accentGold : Theme.surface
+                    color: parent.activeFocus ? Theme.gold : Theme.surface
                     border.width: parent.activeFocus ? 0 : 2
                     border.color: Theme.surfaceHover
 
@@ -63,14 +63,14 @@ Item {
                             text: "Sleep"
                             font.pixelSize: Theme.fontTitle
                             font.bold: true
-                            color: suspendScope.activeFocus ? "#ffffff" : Theme.text
+                            color: suspendScope.activeFocus ? "#ffffff" : Theme.textPrimary
                             Layout.alignment: Qt.AlignHCenter
                         }
 
                         Text {
                             text: "Suspend to RAM"
                             font.pixelSize: Theme.fontSmall
-                            color: suspendScope.activeFocus ? "#ffffffcc" : Theme.textDim
+                            color: suspendScope.activeFocus ? "#ffffffcc" : Theme.textSecondary
                             Layout.alignment: Qt.AlignHCenter
                         }
                     }
@@ -101,7 +101,7 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     radius: 24
-                    color: parent.activeFocus ? Theme.accentOrange : Theme.surface
+                    color: parent.activeFocus ? Theme.ember : Theme.surface
                     border.width: parent.activeFocus ? 0 : 2
                     border.color: Theme.surfaceHover
 
@@ -115,14 +115,14 @@ Item {
                             text: "Restart"
                             font.pixelSize: Theme.fontTitle
                             font.bold: true
-                            color: restartScope.activeFocus ? "#ffffff" : Theme.text
+                            color: restartScope.activeFocus ? "#ffffff" : Theme.textPrimary
                             Layout.alignment: Qt.AlignHCenter
                         }
 
                         Text {
                             text: "Reboot the system"
                             font.pixelSize: Theme.fontSmall
-                            color: restartScope.activeFocus ? "#ffffffcc" : Theme.textDim
+                            color: restartScope.activeFocus ? "#ffffffcc" : Theme.textSecondary
                             Layout.alignment: Qt.AlignHCenter
                         }
                     }
@@ -152,7 +152,7 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     radius: 24
-                    color: parent.activeFocus ? Theme.accent : Theme.surface
+                    color: parent.activeFocus ? Theme.crimson : Theme.surface
                     border.width: parent.activeFocus ? 0 : 2
                     border.color: Theme.surfaceHover
 
@@ -166,14 +166,14 @@ Item {
                             text: "Shutdown"
                             font.pixelSize: Theme.fontTitle
                             font.bold: true
-                            color: shutdownScope.activeFocus ? "#ffffff" : Theme.text
+                            color: shutdownScope.activeFocus ? "#ffffff" : Theme.textPrimary
                             Layout.alignment: Qt.AlignHCenter
                         }
 
                         Text {
                             text: "Power off the system"
                             font.pixelSize: Theme.fontSmall
-                            color: shutdownScope.activeFocus ? "#ffffffcc" : Theme.textDim
+                            color: shutdownScope.activeFocus ? "#ffffffcc" : Theme.textSecondary
                             Layout.alignment: Qt.AlignHCenter
                         }
                     }
@@ -198,7 +198,7 @@ Item {
         Text {
             text: "A: Select  |  Use with caution"
             font.pixelSize: Theme.fontHint
-            color: Theme.textDim
+            color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
         }
     }
@@ -236,7 +236,7 @@ Item {
                     }
                     font.pixelSize: Theme.fontTitle
                     font.bold: true
-                    color: Theme.text
+                    color: Theme.textPrimary
                     Layout.alignment: Qt.AlignHCenter
                 }
 

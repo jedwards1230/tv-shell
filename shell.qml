@@ -15,7 +15,7 @@ ShellRoot {
 
     Process {
         id: loadTargets
-        command: ["python3", "-c", "import json,yaml,os; f=open(os.environ.get('GAME_SHELL_TARGETS','/opt/game-shell/targets.yaml')); d=yaml.safe_load(f); print(json.dumps(d.get('targets',[])))"]
+        command: ["cat", "/opt/game-shell/targets.json"]
         stdout: SplitParser {
             onRead: (line) => {
                 try { root.targets = JSON.parse(line) }

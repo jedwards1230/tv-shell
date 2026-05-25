@@ -120,7 +120,7 @@ Item {
             text: "Active Connections"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         ListView {
@@ -154,7 +154,7 @@ Item {
                         text: modelData.name
                         font.pixelSize: Theme.fontSmall
                         font.bold: true
-                        color: Theme.text
+                        color: Theme.textPrimary
                         Layout.fillWidth: true
                     }
 
@@ -163,13 +163,13 @@ Item {
                               modelData.type === "802-11-wireless" ? "WiFi" :
                               modelData.type
                         font.pixelSize: Theme.fontSmall
-                        color: Theme.textDim
+                        color: Theme.textSecondary
                     }
 
                     Text {
                         text: modelData.device
                         font.pixelSize: Theme.fontSmall
-                        color: Theme.textDim
+                        color: Theme.textSecondary
                     }
                 }
             }
@@ -178,7 +178,7 @@ Item {
         Text {
             text: root.activeConnections.length === 0 ? "No active connections" : ""
             font.pixelSize: Theme.fontSmall
-            color: Theme.textDim
+            color: Theme.textSecondary
             visible: text !== ""
         }
 
@@ -187,7 +187,7 @@ Item {
             text: "IP Addresses"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         Rectangle {
@@ -203,7 +203,7 @@ Item {
                 text: root.ipAddress || "Fetching..."
                 font.pixelSize: Theme.fontSmall
                 font.family: "monospace"
-                color: Theme.text
+                color: Theme.textPrimary
                 wrapMode: Text.Wrap
             }
         }
@@ -213,7 +213,7 @@ Item {
             text: "WiFi Networks"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
             visible: root.hasWifi
         }
 
@@ -234,8 +234,8 @@ Item {
                 height: 80
                 radius: 16
                 color: {
-                    if (modelData.inUse) return Theme.primary
-                    if (wifiList.currentIndex === index && wifiList.activeFocus) return Theme.accent
+                    if (modelData.inUse) return Theme.navy
+                    if (wifiList.currentIndex === index && wifiList.activeFocus) return Theme.crimson
                     return Theme.surface
                 }
                 border.width: 2
@@ -252,7 +252,7 @@ Item {
                         text: modelData.ssid
                         font.pixelSize: Theme.fontSmall
                         font.bold: modelData.inUse
-                        color: modelData.inUse || (wifiList.currentIndex === index && wifiList.activeFocus) ? "#ffffff" : Theme.text
+                        color: modelData.inUse || (wifiList.currentIndex === index && wifiList.activeFocus) ? "#ffffff" : Theme.textPrimary
                         Layout.fillWidth: true
                     }
 
@@ -271,7 +271,7 @@ Item {
                                     let active = modelData.signal >= threshold
                                     if (modelData.inUse || (wifiList.currentIndex === parent.parent.parent.parent.index && wifiList.activeFocus))
                                         return active ? "#ffffff" : "#ffffff44"
-                                    return active ? Theme.primary : Theme.surfaceHover
+                                    return active ? Theme.navy : Theme.surfaceHover
                                 }
                                 anchors.bottom: parent.bottom
                             }
@@ -281,13 +281,13 @@ Item {
                     Text {
                         text: modelData.signal + "%"
                         font.pixelSize: Theme.fontSmall
-                        color: modelData.inUse || (wifiList.currentIndex === index && wifiList.activeFocus) ? "#ffffffcc" : Theme.textDim
+                        color: modelData.inUse || (wifiList.currentIndex === index && wifiList.activeFocus) ? "#ffffffcc" : Theme.textSecondary
                     }
 
                     Text {
                         text: modelData.security
                         font.pixelSize: Theme.fontSmall
-                        color: modelData.inUse || (wifiList.currentIndex === index && wifiList.activeFocus) ? "#ffffffcc" : Theme.textDim
+                        color: modelData.inUse || (wifiList.currentIndex === index && wifiList.activeFocus) ? "#ffffffcc" : Theme.textSecondary
                     }
 
                     Text {
@@ -315,7 +315,7 @@ Item {
             text: !root.hasWifi ? "No WiFi adapter detected" :
                   root.wifiNetworks.length === 0 ? "No WiFi networks found" : ""
             font.pixelSize: Theme.fontSmall
-            color: Theme.textDim
+            color: Theme.textSecondary
             visible: text !== ""
         }
 
@@ -323,7 +323,7 @@ Item {
         Text {
             text: "Network configuration is read-only"
             font.pixelSize: Theme.fontHint
-            color: Theme.textDim
+            color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
         }
     }

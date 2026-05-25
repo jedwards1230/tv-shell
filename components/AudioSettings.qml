@@ -111,7 +111,7 @@ Item {
             text: "Volume"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         RowLayout {
@@ -166,7 +166,7 @@ Item {
                     width: parent.width * (root.volume / 100)
                     height: parent.height
                     radius: 24
-                    color: root.muted ? Theme.textDim : Theme.primary
+                    color: root.muted ? Theme.textSecondary : Theme.navy
 
                     Behavior on width { NumberAnimation { duration: 100 } }
                 }
@@ -176,7 +176,7 @@ Item {
                     text: root.muted ? "MUTED" : root.volume + "%"
                     font.pixelSize: Theme.fontBody
                     font.bold: true
-                    color: root.volume > 40 ? "#ffffff" : Theme.text
+                    color: root.volume > 40 ? "#ffffff" : Theme.textPrimary
                 }
             }
 
@@ -250,7 +250,7 @@ Item {
             text: "Output Device"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
         }
 
         ListView {
@@ -271,9 +271,9 @@ Item {
                 radius: 16
                 color: {
                     if (sinkList.currentIndex === index && sinkList.activeFocus)
-                        return Theme.accent
+                        return Theme.crimson
                     if (modelData.isDefault)
-                        return Theme.primary
+                        return Theme.navy
                     return Theme.surface
                 }
                 border.width: 2
@@ -289,13 +289,13 @@ Item {
                     Text {
                         text: modelData.isDefault ? ">" : " "
                         font.pixelSize: Theme.fontBody
-                        color: (sinkList.currentIndex === index && sinkList.activeFocus) || modelData.isDefault ? "#ffffff" : Theme.text
+                        color: (sinkList.currentIndex === index && sinkList.activeFocus) || modelData.isDefault ? "#ffffff" : Theme.textPrimary
                     }
 
                     Text {
                         text: modelData.name
                         font.pixelSize: Theme.fontSmall
-                        color: (sinkList.currentIndex === index && sinkList.activeFocus) || modelData.isDefault ? "#ffffff" : Theme.text
+                        color: (sinkList.currentIndex === index && sinkList.activeFocus) || modelData.isDefault ? "#ffffff" : Theme.textPrimary
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }

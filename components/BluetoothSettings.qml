@@ -209,14 +209,14 @@ Item {
                 text: "Bluetooth"
                 font.pixelSize: Theme.fontBody
                 font.bold: true
-                color: Theme.text
+                color: Theme.textPrimary
             }
 
             Rectangle {
                 width: 160
                 height: 56
                 radius: 28
-                color: root.powered ? Theme.online : Theme.textDim
+                color: root.powered ? Theme.online : Theme.textSecondary
 
                 Behavior on color { ColorAnimation { duration: 200 } }
 
@@ -300,7 +300,7 @@ Item {
             Text {
                 text: root.statusMessage
                 font.pixelSize: Theme.fontSmall
-                color: Theme.accentGold
+                color: Theme.gold
                 visible: root.statusMessage !== ""
             }
         }
@@ -310,7 +310,7 @@ Item {
             text: "Paired Devices"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
             visible: root.powered
         }
 
@@ -333,7 +333,7 @@ Item {
                 height: 80
                 radius: 16
                 color: pairedList.currentIndex === index && pairedList.activeFocus
-                       ? Theme.accent : Theme.surface
+                       ? Theme.crimson : Theme.surface
                 border.width: 2
                 border.color: modelData.connected ? Theme.online : Theme.surfaceHover
 
@@ -346,20 +346,20 @@ Item {
 
                     Rectangle {
                         width: 20; height: 20; radius: 10
-                        color: modelData.connected ? Theme.online : Theme.textDim
+                        color: modelData.connected ? Theme.online : Theme.textSecondary
                     }
 
                     Text {
                         text: modelData.name
                         font.pixelSize: Theme.fontSmall
-                        color: pairedList.currentIndex === index && pairedList.activeFocus ? "#ffffff" : Theme.text
+                        color: pairedList.currentIndex === index && pairedList.activeFocus ? "#ffffff" : Theme.textPrimary
                         Layout.fillWidth: true
                     }
 
                     Text {
                         text: modelData.connected ? "Connected" : "Disconnected"
                         font.pixelSize: Theme.fontSmall
-                        color: pairedList.currentIndex === index && pairedList.activeFocus ? "#ffffffcc" : Theme.textDim
+                        color: pairedList.currentIndex === index && pairedList.activeFocus ? "#ffffffcc" : Theme.textSecondary
                     }
                 }
 
@@ -400,7 +400,7 @@ Item {
         Text {
             text: root.pairedDevices.length === 0 && root.powered ? "No paired devices" : ""
             font.pixelSize: Theme.fontSmall
-            color: Theme.textDim
+            color: Theme.textSecondary
             visible: text !== ""
         }
 
@@ -409,7 +409,7 @@ Item {
             text: "Available Devices"
             font.pixelSize: Theme.fontBody
             font.bold: true
-            color: Theme.text
+            color: Theme.textPrimary
             visible: root.powered && root.availableDevices.length > 0
         }
 
@@ -431,7 +431,7 @@ Item {
                 height: 80
                 radius: 16
                 color: availList.currentIndex === index && availList.activeFocus
-                       ? Theme.accent : Theme.surface
+                       ? Theme.crimson : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceHover
 
@@ -445,14 +445,14 @@ Item {
                     Text {
                         text: modelData.name
                         font.pixelSize: Theme.fontSmall
-                        color: availList.currentIndex === index && availList.activeFocus ? "#ffffff" : Theme.text
+                        color: availList.currentIndex === index && availList.activeFocus ? "#ffffff" : Theme.textPrimary
                         Layout.fillWidth: true
                     }
 
                     Text {
                         text: modelData.mac
                         font.pixelSize: Theme.fontSmall
-                        color: availList.currentIndex === index && availList.activeFocus ? "#ffffffcc" : Theme.textDim
+                        color: availList.currentIndex === index && availList.activeFocus ? "#ffffffcc" : Theme.textSecondary
                     }
                 }
 
@@ -483,7 +483,7 @@ Item {
         Text {
             text: root.powered ? "A: Connect/Disconnect  |  Scan to find new devices" : "Turn on Bluetooth to manage devices"
             font.pixelSize: Theme.fontHint
-            color: Theme.textDim
+            color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
         }
     }
