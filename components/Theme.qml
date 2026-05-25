@@ -66,19 +66,19 @@ Item {
 
     // === Semantic Colors (switch on darkMode) ===
     property color background: darkMode ? "#111215" : snow
-    property color surface: darkMode ? "#24262c" : "#ffffff"
-    property color surfaceHover: darkMode ? "#2e3138" : "#ecedf0"
-    property color surfaceBorder: darkMode ? "#3d4149" : "#dcdee3"
+    property color surface: darkMode ? "#2c2f37" : "#ffffff"
+    property color surfaceHover: darkMode ? "#393d47" : "#ecedf0"
+    property color surfaceBorder: darkMode ? "#4d525c" : "#dcdee3"
 
     // Text hierarchy
     property color textPrimary: darkMode ? "#e6e4e0" : "#1a2540"
-    property color textSecondary: darkMode ? "#b5b2ad" : "#4a5568"
-    property color textMuted: darkMode ? "#7d7974" : "#8892a4"
+    property color textSecondary: darkMode ? "#c2bfba" : "#4a5568"
+    property color textMuted: darkMode ? "#928e88" : "#8892a4"
     property color textOnDark: "#f4f5f7"
     property color textOnDarkMuted: "#d8d5d0"
 
     // Cards
-    property color cardBackground: darkMode ? "#1c1e24" : "#ffffff"
+    property color cardBackground: darkMode ? "#272a32" : "#ffffff"
     property color cardAccent: ember
 
     // Status
@@ -89,18 +89,17 @@ Item {
     // Interactive
     property color focusBorder: crimson
     property color focusGlow: "#c7213833"
-    property color barBackground: darkMode ? "#0a0b0d" : navy
-    property color sidebarActive: darkMode ? "#2e3138" : navy
+    property color barBackground: darkMode ? "#111215" : navy
+    property color sidebarActive: darkMode ? "#393d47" : navy
     property color sidebarText: "#e6e4e0"
 
     // === Layout — couch-readable at 4K (10-foot UI) ===
-    readonly property int cardWidth: 640
-    readonly property int cardHeight: 360
-    readonly property int cardSpacing: 48
+    readonly property int cardWidth: 320
+    readonly property int cardHeight: 300
+    readonly property int cardSpacing: 32
     readonly property int cardRadius: 24
-    readonly property int statusBarHeight: 120
     readonly property int padding: 48
-    readonly property int rowHeight: 420
+    readonly property int rowHeight: 360
 
     // === Font sizes — couch-readable at 4K ===
     readonly property int fontHero: 72
