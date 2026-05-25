@@ -14,7 +14,7 @@ Item {
 
     Process {
         id: pingCheck
-        command: ["ping", "-c1", "-W1", root.target.host]
+        command: ["ping", "-c1", "-W1", root.target.host || "127.0.0.1"]
         onExited: (exitCode, exitStatus) => { root.isOnline = (exitCode === 0) }
     }
 
@@ -32,8 +32,8 @@ Item {
         anchors.fill: parent
         radius: Theme.cardRadius
         color: root.activeFocus ? Theme.surfaceHover : Theme.surface
-        border.width: root.activeFocus ? 3 : 0
-        border.color: Theme.accent
+        border.width: root.activeFocus ? 6 : 2
+        border.color: root.activeFocus ? Theme.accent : Theme.surfaceHover
 
         Behavior on border.width { NumberAnimation { duration: 150 } }
         Behavior on color { ColorAnimation { duration: 150 } }
@@ -41,19 +41,19 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: Theme.padding
-            spacing: 8
+            spacing: 16
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 16
 
                 Rectangle {
-                    width: 12; height: 12; radius: 6
+                    width: 24; height: 24; radius: 12
                     color: root.isOnline ? Theme.online : Theme.offline
                 }
 
                 Text {
-                    text: root.target.name
+                    text: root.target.name || "Unknown"
                     font.pixelSize: Theme.fontTitle
                     font.bold: true
                     color: Theme.text
@@ -63,7 +63,7 @@ Item {
             }
 
             Text {
-                text: root.target.app
+                text: root.target.app || ""
                 font.pixelSize: Theme.fontBody
                 color: Theme.textDim
             }

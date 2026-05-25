@@ -13,30 +13,19 @@ ShellRoot {
     property int crashCount: 0
     property var targets: []
 
-    // Load targets from config file
     Process {
         id: loadTargets
-        command: ["python3", "-c", `
-import json, yaml, sys, os
-path = os.environ.get('GAME_SHELL_TARGETS', '/opt/game-shell/targets.yaml')
-try:
-    with open(path) as f:
-        data = yaml.safe_load(f)
-    print(json.dumps(data.get('targets', [])))
-except Exception as e:
-    print('[]')
-`]
+        command: ["python3", "-c", "import json,yaml,os; f=open(os.environ.get('GAME_SHELL_TARGETS','/opt/game-shell/targets.yaml')); d=yaml.safe_load(f); print(json.dumps(d.get('targets',[])))"]
         stdout: SplitParser {
             onRead: (line) => {
                 try { root.targets = JSON.parse(line) }
-                catch(e) { root.targets = [] }
+                catch(e) { console.log("Failed to parse targets:", e) }
             }
         }
     }
 
     Component.onCompleted: { loadTargets.running = true }
 
-    // Reset crash counter after 5 minutes of stable streaming
     Timer {
         id: crashResetTimer
         interval: 300000
@@ -44,7 +33,6 @@ except Exception as e:
         onTriggered: { root.crashCount = 0 }
     }
 
-    // AV wake
     Process {
         id: avWake
         command: ["/usr/local/bin/living-room-cec", "on"]
@@ -53,13 +41,6 @@ except Exception as e:
         }
     }
 
-    // WoL for streaming host
-    Process {
-        id: wolHost
-        command: ["wol-host"]  // placeholder — set by launchStream()
-    }
-
-    // Moonlight streaming process
     Process {
         id: moonlight
         onExited: (exitCode, exitStatus) => {
@@ -96,57 +77,14 @@ except Exception as e:
         onTriggered: { overlay.hide() }
     }
 
-    // Input daemon socket
     Process {
         id: inputGrab
-        command: ["python3", "-c", `
-import socket, sys, os
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.connect(os.environ.get('GAME_SHELL_SOCK', '/run/user/' + str(os.getuid()) + '/game-shell-input.sock'))
-sock.sendall(b'grab\n')
-resp = sock.recv(64)
-print(resp.decode().strip())
-sock.close()
-`]
+        command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'grab\\n'); print(s.recv(64).decode().strip()); s.close()"]
     }
 
     Process {
         id: inputRelease
-        command: ["python3", "-c", `
-import socket, sys, os
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.connect(os.environ.get('GAME_SHELL_SOCK', '/run/user/' + str(os.getuid()) + '/game-shell-input.sock'))
-sock.sendall(b'release\n')
-resp = sock.recv(64)
-print(resp.decode().strip())
-sock.close()
-`]
-    }
-
-    // Listen for input daemon events (combos, wake)
-    Process {
-        id: inputListener
-        running: true
-        command: ["python3", "-c", `
-import socket, os, sys
-path = os.environ.get('GAME_SHELL_SOCK', '/run/user/' + str(os.getuid()) + '/game-shell-input.sock')
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.connect(path)
-sock.sendall(b'subscribe\n')
-while True:
-    data = sock.recv(256)
-    if not data:
-        break
-    for line in data.decode().strip().split('\n'):
-        print(line, flush=True)
-`]
-        stdout: SplitParser {
-            onRead: (line) => {
-                if (line === "combo:end-session") {
-                    endSession.running = true
-                }
-            }
-        }
+        command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'release\\n'); print(s.recv(64).decode().strip()); s.close()"]
     }
 
     Process {
@@ -159,8 +97,6 @@ while True:
         root.state = "launching"
         root.crashCount = 0
         overlay.show("Launching " + target.name + "...")
-
-        // Wake AV first — moonlight launches on avWake.onExited
         avWake.running = true
     }
 
@@ -181,15 +117,9 @@ while True:
         moonlight.running = true
     }
 
-    function grabInput() {
-        inputGrab.running = true
-    }
+    function grabInput() { inputGrab.running = true }
+    function releaseInput() { inputRelease.running = true }
 
-    function releaseInput() {
-        inputRelease.running = true
-    }
-
-    // Full-screen panel on primary monitor
     Variants {
         model: Quickshell.screens
 
@@ -205,6 +135,7 @@ while True:
             }
 
             color: Components.Theme.background
+            focusable: true
 
             ColumnLayout {
                 anchors.fill: parent
@@ -225,7 +156,7 @@ while True:
                         visible: root.state === "idle"
                         targets: root.targets
                         shellState: root.state
-                        focus: root.state === "idle"
+                        focus: root.state === "idle" && !settingsPanel.visible
 
                         onStreamRequested: (target) => root.launchStream(target)
                         onSettingsRequested: {

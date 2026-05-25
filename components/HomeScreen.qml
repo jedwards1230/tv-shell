@@ -34,12 +34,21 @@ Item {
             model: root.targets
 
             delegate: StreamCard {
+                required property int index
+                required property var modelData
                 target: modelData
-                focus: index === 0
                 onActivated: root.streamRequested(modelData)
 
-                KeyNavigation.right: (index + 1 < grid.count) ? grid.itemAtIndex(index + 1) : null
-                KeyNavigation.left: (index - 1 >= 0) ? grid.itemAtIndex(index - 1) : null
+                focus: index === grid.currentIndex
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        grid.currentIndex = parent.index
+                        parent.forceActiveFocus()
+                    }
+                    onDoubleClicked: root.streamRequested(parent.modelData)
+                }
             }
 
             Keys.onEscapePressed: root.settingsRequested()
