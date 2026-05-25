@@ -84,8 +84,7 @@ Item {
     onVisibleChanged: {
         if (visible) {
             loadServers.running = true
-            if (serverList.count > 0) serverList.forceActiveFocus()
-            else addBtnScope.forceActiveFocus()
+            viewModeRow.forceActiveFocus()
         }
     }
 
@@ -93,6 +92,103 @@ Item {
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 24
+
+        // === Display Mode Toggle ===
+        Text {
+            text: "Display Mode"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        RowLayout {
+            id: viewModeRow
+            Layout.alignment: Qt.AlignLeft
+            spacing: 24
+
+            property int focusIndex: Theme.moonlightViewMode === "apps" ? 1 : 0
+
+            Keys.onLeftPressed: { if (focusIndex > 0) focusIndex-- }
+            Keys.onRightPressed: { if (focusIndex < 1) focusIndex++ }
+            Keys.onReturnPressed: {
+                Theme.setMoonlightViewMode(focusIndex === 0 ? "servers" : "apps")
+            }
+            Keys.onDownPressed: {
+                if (serverList.count > 0) serverList.forceActiveFocus()
+                else addBtnScope.forceActiveFocus()
+            }
+
+            Repeater {
+                model: [
+                    { id: "servers", label: "Servers", desc: "One card per host" },
+                    { id: "apps",    label: "Apps",    desc: "Per-host app rows" }
+                ]
+
+                Rectangle {
+                    required property var modelData
+                    required property int index
+                    width: 340
+                    height: 180
+                    radius: Theme.cardRadius
+                    color: Theme.surface
+                    border.width: Theme.moonlightViewMode === modelData.id ? 3 : 2
+                    border.color: Theme.moonlightViewMode === modelData.id ? Theme.focusBorder :
+                                  (viewModeRow.focusIndex === index && viewModeRow.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
+
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: Theme.surfaceHover
+                        visible: viewModeRow.focusIndex === index && viewModeRow.activeFocus && Theme.moonlightViewMode !== modelData.id
+                    }
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 24
+                        spacing: 8
+
+                        Item { Layout.fillHeight: true }
+
+                        Text {
+                            text: modelData.label
+                            font.pixelSize: Theme.fontBody
+                            font.bold: true
+                            color: Theme.textPrimary
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+
+                        Text {
+                            text: modelData.desc
+                            font.pixelSize: Theme.fontSmall - 4
+                            color: Theme.textSecondary
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+
+                        Item { Layout.fillHeight: true }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            viewModeRow.focusIndex = index
+                            viewModeRow.forceActiveFocus()
+                            Theme.setMoonlightViewMode(modelData.id)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Divider
+        Rectangle {
+            Layout.fillWidth: true
+            height: 2
+            color: Theme.surfaceBorder
+        }
 
         Text {
             text: "Streaming Servers"
@@ -110,7 +206,7 @@ Item {
             spacing: 16
             clip: true
             model: root.servers
-            focus: !root.showAddForm
+            focus: false
 
             delegate: Rectangle {
                 required property int index
@@ -202,6 +298,11 @@ Item {
 
             Keys.onReturnPressed: {
                 // no-op: servers are launched from home screen
+            }
+
+            Keys.onUpPressed: {
+                if (currentIndex > 0) currentIndex--
+                else viewModeRow.forceActiveFocus()
             }
 
             Keys.onDownPressed: {
