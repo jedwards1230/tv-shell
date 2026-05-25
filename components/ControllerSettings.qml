@@ -6,6 +6,7 @@ Item {
     id: root
 
     property var controllers: []
+    property bool daemonRunning: false
     property bool daemonConnected: false
     property bool daemonGrabbed: false
 
@@ -67,7 +68,10 @@ except ImportError:
             }
         }
         onExited: (exitCode, exitStatus) => {
-            if (exitCode !== 0) {
+            if (exitCode === 0) {
+                root.daemonRunning = true
+            } else {
+                root.daemonRunning = false
                 root.daemonConnected = false
                 root.daemonGrabbed = false
             }
@@ -265,13 +269,14 @@ except ImportError:
                 width: 24
                 height: 24
                 radius: 12
-                color: root.daemonConnected ? Theme.online : Theme.offline
+                color: root.daemonRunning && root.daemonConnected ? Theme.online : Theme.offline
             }
 
             Text {
                 text: {
-                    if (!root.daemonConnected) return "Daemon not running"
-                    return root.daemonGrabbed ? "Grabbed (shell has exclusive input)" : "Released (raw input to apps)"
+                    if (!root.daemonRunning) return "Daemon not running"
+                    if (!root.daemonConnected) return "No controller connected"
+                    return root.daemonGrabbed ? "Controller connected — Grabbed (shell has exclusive input)" : "Controller connected — Released (raw input to apps)"
                 }
                 font.pixelSize: Theme.fontSmall
                 color: Theme.textSecondary

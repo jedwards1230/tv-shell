@@ -185,11 +185,12 @@ ShellRoot {
                     property var eventLog: []
                     property int maxEvents: 4
 
+                    property real _now: Date.now()
+
                     // Subscribe to daemon events
                     Process {
                         id: debugSubscribe
-                        command: ["python3", "-c", "import socket,os,sys; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'subscribe\\n')\nwhile True:\n    data=s.recv(1024)\n    if not data: break\n    for line in data.decode().splitlines():\n        print(line,flush=True)"]
-                        running: debugOverlay.visible
+                        command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'subscribe\\n'); exec('while True:\\n d=s.recv(1024)\\n if not d: break\\n for l in d.decode().splitlines(): print(l,flush=True)')"]
                         stdout: SplitParser {
                             onRead: (line) => {
                                 if (line === "subscribed") return
@@ -216,10 +217,18 @@ ShellRoot {
                         }
                     }
 
+                    // Update _now for toast fade animation
+                    Timer {
+                        id: nowTimer
+                        interval: 100
+                        repeat: true
+                        onTriggered: { debugOverlay._now = Date.now() }
+                    }
+
                     // Fade out old events
                     Timer {
+                        id: fadeTimer
                         interval: 500
-                        running: debugOverlay.visible
                         repeat: true
                         onTriggered: {
                             let now = Date.now()
@@ -232,9 +241,14 @@ ShellRoot {
                     onVisibleChanged: {
                         if (!visible) {
                             debugSubscribe.running = false
+                            reconnectDebug.running = false
+                            nowTimer.running = false
+                            fadeTimer.running = false
                             eventLog = []
                         } else {
                             debugSubscribe.running = true
+                            nowTimer.running = true
+                            fadeTimer.running = true
                         }
                     }
 
@@ -277,7 +291,7 @@ ShellRoot {
                                 color: Qt.rgba(0, 0, 0, 0.75)
 
                                 opacity: {
-                                    let age = Date.now() - modelData.time
+                                    let age = debugOverlay._now - modelData.time
                                     if (age > 1200) return Math.max(0, 1.0 - (age - 1200) / 300)
                                     return 1.0
                                 }
