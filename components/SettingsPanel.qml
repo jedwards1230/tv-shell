@@ -138,17 +138,11 @@ Rectangle {
                     }
 
                     Keys.onUpPressed: {
-                        if (currentIndex > 0) {
-                            currentIndex--
-                            root.currentSection = currentIndex
-                        }
+                        if (currentIndex > 0) currentIndex--
                     }
 
                     Keys.onDownPressed: {
-                        if (currentIndex < root.sections.length - 1) {
-                            currentIndex++
-                            root.currentSection = currentIndex
-                        }
+                        if (currentIndex < root.sections.length - 1) currentIndex++
                     }
 
                     Keys.onPressed: (event) => {
