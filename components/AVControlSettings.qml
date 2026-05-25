@@ -66,7 +66,7 @@ Item {
 
     function startScan() {
         scanDevices.command = ["bash", "-c", root._buildScanCommand()]
-        root.startScan()
+        scanDevices.running = true
     }
 
     // --- CEC commands ---
@@ -133,6 +133,10 @@ Item {
 
     // --- Build scan command based on available tool ---
     function _buildScanCommand() {
+        // Prefer living-room-cec status — it's the high-level wrapper that works reliably
+        if (root.hasAvScript) {
+            return "living-room-cec status 2>/dev/null"
+        }
         if (root.cecTool === "cec-ctl") {
             // Probe TV (0) and Audio System (5) — the standard CEC addresses
             // For each: query power status, OSD name, vendor ID
@@ -148,21 +152,18 @@ Item {
         if (root.cecTool === "cec-client") {
             return "echo 'scan' | timeout 10 cec-client -s -d 1 2>/dev/null"
         }
-        // Script-only: use living-room-cec status
-        if (root.hasAvScript) {
-            return "living-room-cec status 2>/dev/null"
-        }
+        // No tools available
         return "echo 'no-tool'"
     }
 
     // --- Parse scan output based on tool ---
     function _parseScanOutput(output) {
-        if (root.cecTool === "cec-ctl") {
+        if (root.hasAvScript) {
+            _parseScriptStatusOutput(output)
+        } else if (root.cecTool === "cec-ctl") {
             _parseCecCtlOutput(output)
         } else if (root.cecTool === "cec-client") {
             _parseCecClientOutput(output)
-        } else if (root.hasAvScript) {
-            _parseScriptStatusOutput(output)
         }
     }
 
