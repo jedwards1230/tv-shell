@@ -8,6 +8,7 @@ Rectangle {
     color: Theme.primary
 
     property string shellState: "idle"
+    signal settingsClicked()
 
     Process {
         id: ipProcess
@@ -38,7 +39,7 @@ Rectangle {
             color: "#ffffff"
         }
 
-        Rectangle { width: 2; height: 40; color: "#ffffff"; opacity: 0.3 }
+        Rectangle { width: 2; height: 48; color: "#ffffff"; opacity: 0.3 }
 
         Text {
             text: {
@@ -50,7 +51,7 @@ Rectangle {
                     default: return root.shellState
                 }
             }
-            font.pixelSize: Theme.fontSmall
+            font.pixelSize: Theme.fontBody
             color: root.shellState === "streaming" ? Theme.accentGold :
                    root.shellState === "reconnecting" ? Theme.accentOrange : "#ffffffcc"
         }
@@ -60,15 +61,16 @@ Rectangle {
         Text {
             id: ipText
             text: "..."
-            font.pixelSize: Theme.fontSmall
+            font.pixelSize: Theme.fontBody
             color: "#ffffffcc"
         }
 
-        Rectangle { width: 2; height: 40; color: "#ffffff"; opacity: 0.3 }
+        Rectangle { width: 2; height: 48; color: "#ffffff"; opacity: 0.3 }
 
         Text {
             id: clockText
             font.pixelSize: Theme.fontStatus
+            font.bold: true
             color: "#ffffff"
 
             Timer {
@@ -80,6 +82,23 @@ Rectangle {
                     let now = new Date()
                     clockText.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP")
                 }
+            }
+        }
+
+        Rectangle { width: 2; height: 48; color: "#ffffff"; opacity: 0.3 }
+
+        // Settings gear icon (Unicode)
+        Text {
+            text: "⚙"
+            font.pixelSize: Theme.fontHero
+            color: settingsMouseArea.containsMouse ? "#ffffff" : "#ffffffaa"
+
+            MouseArea {
+                id: settingsMouseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.settingsClicked()
             }
         }
     }
