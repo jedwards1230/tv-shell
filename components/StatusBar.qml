@@ -5,7 +5,7 @@ import Quickshell.Io
 Rectangle {
     id: root
     height: Theme.statusBarHeight
-    color: Theme.surface
+    color: Theme.primary
 
     property string shellState: "idle"
 
@@ -29,16 +29,16 @@ Rectangle {
         anchors.fill: parent
         anchors.leftMargin: Theme.padding
         anchors.rightMargin: Theme.padding
-        spacing: 16
+        spacing: 32
 
         Text {
             text: "Game Shell"
             font.pixelSize: Theme.fontStatus
             font.bold: true
-            color: Theme.accent
+            color: "#ffffff"
         }
 
-        Rectangle { width: 1; height: 20; color: Theme.textDim; opacity: 0.3 }
+        Rectangle { width: 2; height: 40; color: "#ffffff"; opacity: 0.3 }
 
         Text {
             text: {
@@ -51,8 +51,8 @@ Rectangle {
                 }
             }
             font.pixelSize: Theme.fontSmall
-            color: root.shellState === "streaming" ? Theme.online :
-                   root.shellState === "reconnecting" ? Theme.warning : Theme.textDim
+            color: root.shellState === "streaming" ? Theme.accentGold :
+                   root.shellState === "reconnecting" ? Theme.accentOrange : "#ffffffcc"
         }
 
         Item { Layout.fillWidth: true }
@@ -61,15 +61,15 @@ Rectangle {
             id: ipText
             text: "..."
             font.pixelSize: Theme.fontSmall
-            color: Theme.textDim
+            color: "#ffffffcc"
         }
 
-        Rectangle { width: 1; height: 20; color: Theme.textDim; opacity: 0.3 }
+        Rectangle { width: 2; height: 40; color: "#ffffff"; opacity: 0.3 }
 
         Text {
             id: clockText
             font.pixelSize: Theme.fontStatus
-            color: Theme.text
+            color: "#ffffff"
 
             Timer {
                 interval: 1000
