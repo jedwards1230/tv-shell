@@ -13,6 +13,9 @@ FocusScope {
     property string ipAddress: "..."
     readonly property int _iconSize: 64
     property int currentIndex: 0
+    // NOTE: _iconCount must match the number of icon containers in the RowLayout
+    // below (Settings=0, Theme=1, Network=2, Volume=3). Update this value when
+    // adding or removing icon containers.
     readonly property int _iconCount: 4
 
     Process {

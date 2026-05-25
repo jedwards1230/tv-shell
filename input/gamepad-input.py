@@ -165,8 +165,12 @@ class InputDaemon:
 
     def _emit_key(self, key, value):
         if self.uinput:
-            self.uinput.write(ecodes.EV_KEY, key, value)
-            self.uinput.syn()
+            try:
+                self.uinput.write(ecodes.EV_KEY, key, value)
+                self.uinput.syn()
+            except OSError:
+                log.debug("uinput write failed (device closed)")
+                return
 
     def _reset_stick_state(self):
         """Release any held stick keys and cancel repeat tasks."""
@@ -248,12 +252,12 @@ class InputDaemon:
         """After initial delay, emit key-up/key-down at repeat interval."""
         try:
             await asyncio.sleep(STICK_INITIAL_DELAY)
-            while True:
+            while self.running:
                 # Emit release + press to simulate repeated key taps
                 self._emit_key(key, 0)
                 self._emit_key(key, 1)
                 await asyncio.sleep(STICK_REPEAT_INTERVAL)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, OSError):
             pass
         finally:
             setattr(self, f"stick_{axis}_repeat", None)
@@ -330,6 +334,7 @@ class InputDaemon:
                     await self._grab()
                     writer.write(b"ok\n")
                 elif cmd == "release":
+                    self._reset_stick_state()
                     await self._ungrab()
                     writer.write(b"ok\n")
                 elif cmd == "status":
@@ -373,6 +378,7 @@ async def main():
     while daemon.running:
         await asyncio.sleep(1)
 
+    daemon._reset_stick_state()
     if daemon.uinput:
         daemon.uinput.close()
     log.info("Shutting down")
