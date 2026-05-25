@@ -3,6 +3,8 @@ import Quickshell.Io
 import QtQuick
 
 QtObject {
+    default property list<QtObject> _children
+
     // === Theme Mode ===
     // "auto" (time-based), "light", "dark"
     property string themeMode: "dark"
