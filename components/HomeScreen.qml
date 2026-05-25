@@ -107,16 +107,16 @@ except:
         // === Hero Clock Area ===
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 140
+            Layout.preferredHeight: 360
             spacing: 32
 
             // Clock + date (left side)
             ColumnLayout {
-                spacing: 4
+                spacing: 16
 
                 Text {
                     id: heroClockText
-                    font.pixelSize: Theme.fontHero + 24
+                    font.pixelSize: Theme.fontHero
                     font.bold: true
                     color: Theme.textPrimary
 
@@ -134,7 +134,7 @@ except:
 
                 Text {
                     id: heroDateText
-                    font.pixelSize: Theme.fontBody
+                    font.pixelSize: Theme.fontTitle
                     color: Theme.textSecondary
 
                     Timer {
