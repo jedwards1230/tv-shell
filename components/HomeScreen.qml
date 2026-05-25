@@ -235,12 +235,13 @@ except:
         // === Hero Clock Area ===
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 360
+            Layout.preferredHeight: 480
             spacing: 32
 
             // Clock + date (left side)
             ColumnLayout {
-                spacing: 16
+                spacing: 24
+                Layout.alignment: Qt.AlignVCenter
 
                 Text {
                     id: heroClockText
