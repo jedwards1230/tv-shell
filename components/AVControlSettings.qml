@@ -14,7 +14,7 @@ Item {
     // --- CEC availability check ---
     Process {
         id: checkCec
-        command: ["bash", "-c", "which cec-client 2>/dev/null && echo 'available' || echo 'unavailable'"]
+        command: ["bash", "-c", "command -v cec-client >/dev/null 2>&1 && echo 'available' || echo 'unavailable'"]
         stdout: SplitParser {
             onRead: (line) => {
                 if (line.trim() === "available") {
@@ -58,28 +58,28 @@ Item {
     Process {
         id: wakeCmd
         command: ["bash", "-c", ""]
-        onExited: {
-            root.actionFeedback = "Wake command sent"
+        onExited: (exitCode) => {
+            root.actionFeedback = exitCode === 0 ? "Wake command sent" : "Wake command failed"
             feedbackTimer.restart()
-            refreshAfterAction.restart()
+            if (exitCode === 0) refreshAfterAction.restart()
         }
     }
 
     Process {
         id: sleepCmd
         command: ["bash", "-c", ""]
-        onExited: {
-            root.actionFeedback = "Sleep command sent"
+        onExited: (exitCode) => {
+            root.actionFeedback = exitCode === 0 ? "Sleep command sent" : "Sleep command failed"
             feedbackTimer.restart()
-            refreshAfterAction.restart()
+            if (exitCode === 0) refreshAfterAction.restart()
         }
     }
 
     Process {
         id: switchInputCmd
         command: ["bash", "-c", "echo 'as' | cec-client -s -d 1 2>/dev/null"]
-        onExited: {
-            root.actionFeedback = "Input switch command sent"
+        onExited: (exitCode) => {
+            root.actionFeedback = exitCode === 0 ? "Input switch command sent" : "Input switch command failed"
             feedbackTimer.restart()
         }
     }
@@ -114,7 +114,11 @@ Item {
         if (visible) {
             checkCec.running = true
             checkAvScript.running = true
-            wakeScope.forceActiveFocus()
+            if (root.cecAvailable) {
+                wakeScope.forceActiveFocus()
+            } else {
+                root.forceActiveFocus()
+            }
         }
     }
 
