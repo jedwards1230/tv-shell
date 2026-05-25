@@ -31,7 +31,7 @@ Row {
     // Settings gear
     Text {
         text: "⚙"
-        font.pixelSize: Theme.fontBody
+        font.pixelSize: Theme.fontTitle
         color: settingsMA.containsMouse ? Theme.textPrimary : Theme.textMuted
         opacity: settingsMA.containsMouse ? 1.0 : 0.6
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -50,7 +50,7 @@ Row {
     Text {
         text: Theme.themeMode === "dark" ? "☽" :
               Theme.themeMode === "light" ? "☀" : "◐"
-        font.pixelSize: Theme.fontBody
+        font.pixelSize: Theme.fontTitle
         color: themeMA.containsMouse ? Theme.textPrimary : Theme.textMuted
         opacity: themeMA.containsMouse ? 1.0 : 0.6
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -72,7 +72,7 @@ Row {
     // Network indicator
     Text {
         text: root.ipAddress !== "..." && root.ipAddress !== "No IP" ? "⛁" : "⚠"
-        font.pixelSize: Theme.fontBody
+        font.pixelSize: Theme.fontTitle
         color: root.ipAddress !== "..." && root.ipAddress !== "No IP"
                    ? Theme.textMuted : Theme.warning
         opacity: 0.6
@@ -81,7 +81,7 @@ Row {
     // Volume indicator
     Text {
         text: "♫"
-        font.pixelSize: Theme.fontBody
+        font.pixelSize: Theme.fontTitle
         color: Theme.textMuted
         opacity: 0.6
     }

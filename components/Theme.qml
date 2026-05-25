@@ -66,8 +66,8 @@ Item {
 
     // === Semantic Colors (switch on darkMode) ===
     property color background: darkMode ? "#111215" : snow
-    property color surface: darkMode ? "#2c2f37" : "#ffffff"
-    property color surfaceHover: darkMode ? "#393d47" : "#ecedf0"
+    property color surface: darkMode ? "#33363f" : "#ffffff"
+    property color surfaceHover: darkMode ? "#424650" : "#ecedf0"
     property color surfaceBorder: darkMode ? "#4d525c" : "#dcdee3"
 
     // Text hierarchy
@@ -78,7 +78,7 @@ Item {
     property color textOnDarkMuted: "#d8d5d0"
 
     // Cards
-    property color cardBackground: darkMode ? "#272a32" : "#ffffff"
+    property color cardBackground: darkMode ? "#2e3139" : "#ffffff"
     property color cardAccent: ember
 
     // Status
@@ -90,19 +90,20 @@ Item {
     property color focusBorder: crimson
     property color focusGlow: "#c7213833"
     property color barBackground: darkMode ? "#111215" : navy
-    property color sidebarActive: darkMode ? "#393d47" : navy
+    property color sidebarActive: darkMode ? "#424650" : navy
     property color sidebarText: "#e6e4e0"
 
     // === Layout — couch-readable at 4K (10-foot UI) ===
-    readonly property int cardWidth: 320
-    readonly property int cardHeight: 300
-    readonly property int cardSpacing: 32
+    readonly property int cardWidth: 600
+    readonly property int cardHeight: 480
+    readonly property int cardSpacing: 40
     readonly property int cardRadius: 24
     readonly property int padding: 48
-    readonly property int rowHeight: 360
+    readonly property int rowHeight: 540
+    readonly property int statusBarHeight: 120
 
     // === Font sizes — couch-readable at 4K ===
-    readonly property int fontHero: 72
+    readonly property int fontHero: 120
     readonly property int fontTitle: 56
     readonly property int fontBody: 40
     readonly property int fontSmall: 32

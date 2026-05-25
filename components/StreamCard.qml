@@ -72,7 +72,7 @@ Item {
             // Gamepad icon
             Text {
                 text: "🎮"
-                font.pixelSize: 80
+                font.pixelSize: 120
                 Layout.alignment: Qt.AlignHCenter
             }
 
