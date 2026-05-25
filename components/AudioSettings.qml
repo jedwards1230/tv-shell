@@ -158,14 +158,14 @@ Item {
             // Volume bar
             Rectangle {
                 Layout.fillWidth: true
-                height: 48
-                radius: 24
+                height: 56
+                radius: 28
                 color: Theme.surfaceHover
 
                 Rectangle {
                     width: parent.width * (root.volume / 100)
                     height: parent.height
-                    radius: 24
+                    radius: 28
                     color: root.muted ? Theme.textSecondary : Theme.navy
 
                     Behavior on width { NumberAnimation { duration: 100 } }
