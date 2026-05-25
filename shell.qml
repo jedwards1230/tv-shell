@@ -137,51 +137,36 @@ ShellRoot {
             color: Components.Theme.background
             focusable: true
 
-            ColumnLayout {
+            Item {
                 anchors.fill: parent
-                spacing: 0
 
-                Components.StatusBar {
-                    Layout.fillWidth: true
+                Components.HomeScreen {
+                    id: homeScreen
+                    anchors.fill: parent
+                    visible: root.state === "idle"
+                    targets: root.targets
                     shellState: root.state
-                    onSettingsClicked: {
+                    focus: root.state === "idle" && !settingsPanel.visible
+
+                    onStreamRequested: (target) => root.launchStream(target)
+                    onSettingsRequested: {
                         settingsPanel.visible = true
                         settingsPanel.forceActiveFocus()
                     }
                 }
 
-                Item {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-
-                    Components.HomeScreen {
-                        id: homeScreen
-                        anchors.fill: parent
-                        visible: root.state === "idle"
-                        targets: root.targets
-                        shellState: root.state
-                        focus: root.state === "idle" && !settingsPanel.visible
-
-                        onStreamRequested: (target) => root.launchStream(target)
-                        onSettingsRequested: {
-                            settingsPanel.visible = true
-                            settingsPanel.forceActiveFocus()
-                        }
+                Components.SettingsPanel {
+                    id: settingsPanel
+                    anchors.fill: parent
+                    onClosed: {
+                        settingsPanel.visible = false
+                        homeScreen.forceActiveFocus()
                     }
+                }
 
-                    Components.SettingsPanel {
-                        id: settingsPanel
-                        anchors.fill: parent
-                        onClosed: {
-                            settingsPanel.visible = false
-                            homeScreen.forceActiveFocus()
-                        }
-                    }
-
-                    Components.StreamOverlay {
-                        id: overlay
-                        anchors.fill: parent
-                    }
+                Components.StreamOverlay {
+                    id: overlay
+                    anchors.fill: parent
                 }
             }
         }
