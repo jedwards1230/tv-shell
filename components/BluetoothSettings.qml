@@ -225,7 +225,7 @@ Item {
                     text: root.powered ? "ON" : "OFF"
                     font.pixelSize: Theme.fontSmall
                     font.bold: true
-                    color: "#ffffff"
+                    color: Theme.textOnDark
                 }
             }
 
@@ -330,18 +330,21 @@ Item {
                 required property int index
                 required property var modelData
                 width: pairedList.width
-                height: 80
+                height: 96
                 radius: 16
                 color: pairedList.currentIndex === index && pairedList.activeFocus
-                       ? Theme.crimson : Theme.surface
+                       ? Theme.surfaceHover : Theme.surface
                 border.width: 2
-                border.color: modelData.connected ? Theme.online : Theme.surfaceHover
+                border.color: modelData.connected ? Theme.online : Theme.surfaceBorder
 
                 Behavior on color { ColorAnimation { duration: 150 } }
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Rectangle {
@@ -352,14 +355,14 @@ Item {
                     Text {
                         text: modelData.name
                         font.pixelSize: Theme.fontSmall
-                        color: pairedList.currentIndex === index && pairedList.activeFocus ? "#ffffff" : Theme.textPrimary
+                        color: Theme.textPrimary
                         Layout.fillWidth: true
                     }
 
                     Text {
                         text: modelData.connected ? "Connected" : "Disconnected"
                         font.pixelSize: Theme.fontSmall
-                        color: pairedList.currentIndex === index && pairedList.activeFocus ? "#ffffffcc" : Theme.textSecondary
+                        color: Theme.textSecondary
                     }
                 }
 
@@ -428,31 +431,34 @@ Item {
                 required property int index
                 required property var modelData
                 width: availList.width
-                height: 80
+                height: 96
                 radius: 16
                 color: availList.currentIndex === index && availList.activeFocus
-                       ? Theme.crimson : Theme.surface
+                       ? Theme.surfaceHover : Theme.surface
                 border.width: 2
-                border.color: Theme.surfaceHover
+                border.color: Theme.surfaceBorder
 
                 Behavior on color { ColorAnimation { duration: 150 } }
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Text {
                         text: modelData.name
                         font.pixelSize: Theme.fontSmall
-                        color: availList.currentIndex === index && availList.activeFocus ? "#ffffff" : Theme.textPrimary
+                        color: Theme.textPrimary
                         Layout.fillWidth: true
                     }
 
                     Text {
                         text: modelData.mac
                         font.pixelSize: Theme.fontSmall
-                        color: availList.currentIndex === index && availList.activeFocus ? "#ffffffcc" : Theme.textSecondary
+                        color: Theme.textSecondary
                     }
                 }
 

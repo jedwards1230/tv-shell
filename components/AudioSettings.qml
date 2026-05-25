@@ -158,14 +158,14 @@ Item {
             // Volume bar
             Rectangle {
                 Layout.fillWidth: true
-                height: 48
-                radius: 24
+                height: 56
+                radius: 28
                 color: Theme.surfaceHover
 
                 Rectangle {
                     width: parent.width * (root.volume / 100)
                     height: parent.height
-                    radius: 24
+                    radius: 28
                     color: root.muted ? Theme.textSecondary : Theme.navy
 
                     Behavior on width { NumberAnimation { duration: 100 } }
@@ -176,7 +176,7 @@ Item {
                     text: root.muted ? "MUTED" : root.volume + "%"
                     font.pixelSize: Theme.fontBody
                     font.bold: true
-                    color: root.volume > 40 ? "#ffffff" : Theme.textPrimary
+                    color: root.volume > 40 ? Theme.textOnDark : Theme.textPrimary
                 }
             }
 
@@ -267,35 +267,38 @@ Item {
                 required property int index
                 required property var modelData
                 width: sinkList.width
-                height: 80
+                height: 96
                 radius: 16
                 color: {
                     if (sinkList.currentIndex === index && sinkList.activeFocus)
-                        return Theme.crimson
+                        return Theme.surfaceHover
                     if (modelData.isDefault)
-                        return Theme.navy
+                        return Theme.sidebarActive
                     return Theme.surface
                 }
                 border.width: 2
-                border.color: Theme.surfaceHover
+                border.color: modelData.isDefault ? Theme.focusBorder : Theme.surfaceBorder
 
                 Behavior on color { ColorAnimation { duration: 150 } }
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 16
 
                     Text {
                         text: modelData.isDefault ? ">" : " "
                         font.pixelSize: Theme.fontBody
-                        color: (sinkList.currentIndex === index && sinkList.activeFocus) || modelData.isDefault ? "#ffffff" : Theme.textPrimary
+                        color: modelData.isDefault ? Theme.textOnDark : Theme.textPrimary
                     }
 
                     Text {
                         text: modelData.name
                         font.pixelSize: Theme.fontSmall
-                        color: (sinkList.currentIndex === index && sinkList.activeFocus) || modelData.isDefault ? "#ffffff" : Theme.textPrimary
+                        color: modelData.isDefault ? Theme.textOnDark : Theme.textPrimary
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }

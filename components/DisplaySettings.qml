@@ -102,9 +102,9 @@ Item {
                 height: 180
                 radius: 16
                 color: monitorList.currentIndex === index && monitorList.activeFocus
-                       ? Theme.crimson : Theme.surface
+                       ? Theme.surfaceHover : Theme.surface
                 border.width: 2
-                border.color: Theme.surfaceHover
+                border.color: Theme.surfaceBorder
 
                 Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -112,7 +112,10 @@ Item {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    anchors.topMargin: 20
+                    anchors.bottomMargin: 20
                     spacing: 8
 
                     RowLayout {
@@ -123,13 +126,13 @@ Item {
                             text: modelData.name
                             font.pixelSize: Theme.fontBody
                             font.bold: true
-                            color: isSel ? "#ffffff" : Theme.textPrimary
+                            color: Theme.textPrimary
                         }
 
                         Text {
                             text: modelData.description
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textSecondary
+                            color: Theme.textSecondary
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
@@ -141,19 +144,19 @@ Item {
                         Text {
                             text: "Resolution: " + modelData.width + "x" + modelData.height
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textSecondary
+                            color: Theme.textSecondary
                         }
 
                         Text {
                             text: "Refresh: " + modelData.refreshRate.toFixed(1) + " Hz"
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textSecondary
+                            color: Theme.textSecondary
                         }
 
                         Text {
                             text: "Scale: " + modelData.scale.toFixed(1) + "x"
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textSecondary
+                            color: Theme.textSecondary
                         }
                     }
 
@@ -163,19 +166,19 @@ Item {
                         Text {
                             text: "Position: " + modelData.x + "," + modelData.y
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textSecondary
+                            color: Theme.textSecondary
                         }
 
                         Text {
                             text: "DPMS: " + (modelData.dpmsStatus ? "On" : "Off")
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textSecondary
+                            color: Theme.textSecondary
                         }
 
                         Text {
                             text: "VRR: " + (modelData.vrr ? "On" : "Off")
                             font.pixelSize: Theme.fontSmall
-                            color: isSel ? "#ffffffcc" : Theme.textSecondary
+                            color: Theme.textSecondary
                         }
                     }
                 }
@@ -233,8 +236,8 @@ Item {
                         property bool isCurrent: root.monitors.length > root.selectedMonitor &&
                                                  Math.abs(root.monitors[root.selectedMonitor].scale - parent.modelData) < 0.05
 
-                        color: isCurrent ? Theme.navy :
-                               parent.activeFocus ? Theme.crimson : Theme.surface
+                        color: isCurrent ? Theme.sidebarActive :
+                               parent.activeFocus ? Theme.surfaceHover : Theme.surface
 
                         MouseArea {
                             anchors.fill: parent
@@ -286,7 +289,7 @@ Item {
                 required property int index
                 required property var modelData
                 width: modeList.width
-                height: 64
+                height: 80
                 radius: 16
 
                 property bool isCurrent: {
@@ -296,12 +299,12 @@ Item {
                 }
 
                 color: {
-                    if (isCurrent) return Theme.navy
-                    if (modeList.currentIndex === index && modeList.activeFocus) return Theme.crimson
+                    if (isCurrent) return Theme.sidebarActive
+                    if (modeList.currentIndex === index && modeList.activeFocus) return Theme.surfaceHover
                     return Theme.surface
                 }
-                border.width: 2
-                border.color: Theme.surfaceHover
+                border.width: isCurrent ? 2 : 2
+                border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
 
                 Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -315,7 +318,7 @@ Item {
                         return res + (hz ? "  @  " + hz : "") + (isCurrent ? "  (current)" : "")
                     }
                     font.pixelSize: Theme.fontSmall
-                    color: isCurrent || (modeList.currentIndex === index && modeList.activeFocus) ? "#ffffff" : Theme.textPrimary
+                    color: isCurrent ? Theme.textOnDark : Theme.textPrimary
                 }
 
                 MouseArea {
