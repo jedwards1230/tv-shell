@@ -19,14 +19,7 @@ Item {
     // Checks command -v AND explicit paths to handle PATH gaps
     Process {
         id: detectTools
-        command: ["bash", "-c", [
-            "for p in $(command -v living-room-cec 2>/dev/null) /usr/local/bin/living-room-cec /usr/local/sbin/living-room-cec; do",
-            "  if [ -x \"$p\" ]; then echo \"script:$p\"; break; fi",
-            "done",
-            "if command -v cec-ctl >/dev/null 2>&1; then echo 'tool:cec-ctl'; fi",
-            "if command -v cec-client >/dev/null 2>&1; then echo 'tool:cec-client'; fi",
-            "echo 'done'"
-        ].join("; ")]
+        command: ["bash", "-c", "if [ -x /usr/local/bin/living-room-cec ]; then echo script:/usr/local/bin/living-room-cec; elif [ -x /usr/local/sbin/living-room-cec ]; then echo script:/usr/local/sbin/living-room-cec; elif command -v living-room-cec >/dev/null 2>&1; then echo script:$(command -v living-room-cec); fi; command -v cec-ctl >/dev/null 2>&1 && echo tool:cec-ctl; command -v cec-client >/dev/null 2>&1 && echo tool:cec-client; echo done"]
         stdout: SplitParser {
             onRead: (line) => {
                 var trimmed = line.trim()
