@@ -53,10 +53,7 @@ FocusScope {
 
         MouseArea {
             anchors.fill: parent
-            onClicked: {
-                root.opened = false
-                root.closed()
-            }
+            onClicked: root.closed()
         }
     }
 
@@ -108,13 +105,11 @@ FocusScope {
     }
 
     // === Key handling: Escape / B closes ===
-    Keys.onEscapePressed: {
-        root.opened = false
-        root.closed()
-    }
+    // Only emit closed() — caller owns the `opened` binding and sets it to
+    // false in its onClosed handler, avoiding broken property bindings.
+    Keys.onEscapePressed: root.closed()
     Keys.onPressed: (event) => {
         if (event.key === Qt.Key_B && !event.modifiers) {
-            root.opened = false
             root.closed()
             event.accepted = true
         }

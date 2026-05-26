@@ -110,7 +110,8 @@ class InputDaemon:
 
     async def start(self):
         # Deduplicate mapped keys (e.g., BTN_SOUTH and BTN_START both map to KEY_ENTER)
-        mapped_keys = list(set(BUTTON_MAP.values()))
+        # sorted() ensures deterministic uinput capability registration order
+        mapped_keys = sorted(set(BUTTON_MAP.values()))
         self.uinput = UInput(
             {ecodes.EV_KEY: mapped_keys + [
                 ecodes.KEY_UP, ecodes.KEY_DOWN, ecodes.KEY_LEFT, ecodes.KEY_RIGHT,

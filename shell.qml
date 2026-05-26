@@ -239,6 +239,7 @@ ShellRoot {
                         settingsPanel.forceActiveFocus()
                     }
                     onClosed: {
+                        navDrawer.opened = false
                         homeFocusTimer.restart()
                     }
                 }
