@@ -253,6 +253,7 @@ ShellRoot {
         onClientsReceived: (clients) => {
             root._handleWindowQueryResult(clients)
         }
+        onErrorOccurred: { root._handleWindowQueryResult([]) }
     }
 
     Process {
