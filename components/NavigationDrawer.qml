@@ -9,7 +9,7 @@ import Quickshell.Io
 Drawer {
     id: root
     edge: "left"
-    drawerWidth: 560
+    drawerWidth: 800
 
     signal forceQuitRequested()
     signal settingsRequested()
