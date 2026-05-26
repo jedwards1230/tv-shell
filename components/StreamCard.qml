@@ -10,9 +10,20 @@ Item {
     required property var target
     property string appName: ""  // When set, card shows app name (app-view mode)
     property bool isOnline: false
-    property bool isFocused: activeFocus || mouseArea.containsMouse
+    property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
 
     signal activated()
+
+    Connections {
+        target: Theme
+        function onMouseModeChanged() {
+            if (!Theme.mouseMode && mouseArea.containsMouse) {
+                if (root.ListView.view)
+                    root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y)
+                root.forceActiveFocus()
+            }
+        }
+    }
 
     Process {
         id: pingCheck

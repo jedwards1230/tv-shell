@@ -7,9 +7,20 @@ Item {
     height: Theme.cardHeight
 
     required property var app
-    property bool isFocused: activeFocus || mouseArea.containsMouse
+    property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
 
     signal activated()
+
+    Connections {
+        target: Theme
+        function onMouseModeChanged() {
+            if (!Theme.mouseMode && mouseArea.containsMouse) {
+                if (root.ListView.view)
+                    root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y)
+                root.forceActiveFocus()
+            }
+        }
+    }
 
     transform: [
         Scale {
