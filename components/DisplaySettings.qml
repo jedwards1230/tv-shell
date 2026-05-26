@@ -265,94 +265,182 @@ FocusScope {
             }
         }
 
-        // Available modes
+        // Resolution / Mode dropdown
         Text {
-            text: "Available Modes"
+            text: "Resolution"
             font.pixelSize: Theme.fontBody
             font.bold: true
             color: Theme.textPrimary
             visible: root.monitors.length > 0
         }
 
-        ListView {
-            id: modeList
+        FocusScope {
+            id: modeDropdownScope
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 8
-            clip: true
+            Layout.preferredHeight: modeDropdownOpen ? Math.min(modeDropdownList.count * 72 + 80, 600) : 80
             visible: root.monitors.length > 0
-            model: root.monitors.length > root.selectedMonitor ? root.monitors[root.selectedMonitor].availableModes : []
+            focus: false
+
+            property bool modeDropdownOpen: false
+            property var modes: root.monitors.length > root.selectedMonitor ? root.monitors[root.selectedMonitor].availableModes : []
+            property string currentMode: {
+                if (root.monitors.length <= root.selectedMonitor) return ""
+                let mon = root.monitors[root.selectedMonitor]
+                return mon.width + "x" + mon.height + "@" + mon.refreshRate.toFixed(6)
+            }
+
+            function formatMode(mode) {
+                let parts = mode.split("@")
+                let res = parts[0] || mode
+                let hz = parts.length > 1 ? parseFloat(parts[1]).toFixed(2) + " Hz" : ""
+                return res + (hz ? "  @  " + hz : "")
+            }
 
             KeyNavigation.up: monitorList
 
-            delegate: Rectangle {
-                required property int index
-                required property var modelData
-                width: modeList.width
+            Behavior on Layout.preferredHeight { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+            Rectangle {
+                id: modeDropdownHeader
+                width: parent.width
                 height: 80
                 radius: 16
-
-                property bool isCurrent: {
-                    if (root.monitors.length <= root.selectedMonitor) return false
-                    let mon = root.monitors[root.selectedMonitor]
-                    return modelData === (mon.width + "x" + mon.height + "@" + mon.refreshRate.toFixed(6))
-                }
-
-                color: {
-                    if (isCurrent) return Theme.sidebarActive
-                    if (modeList.currentIndex === index && modeList.activeFocus) return Theme.surfaceHover
-                    return Theme.surface
-                }
-                border.width: isCurrent ? 2 : 2
-                border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
+                color: modeDropdownScope.activeFocus && !modeDropdownScope.modeDropdownOpen
+                       ? Theme.surfaceHover : Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
 
                 Behavior on color { ColorAnimation { duration: 150 } }
 
-                Text {
-                    anchors.centerIn: parent
-                    text: {
-                        // Parse "3840x2160@59.940000" -> "3840x2160 @ 59.94 Hz"
-                        let parts = modelData.split("@")
-                        let res = parts[0] || modelData
-                        let hz = parts.length > 1 ? parseFloat(parts[1]).toFixed(2) + " Hz" : ""
-                        return res + (hz ? "  @  " + hz : "") + (isCurrent ? "  (current)" : "")
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    spacing: 16
+
+                    Text {
+                        text: modeDropdownScope.formatMode(modeDropdownScope.currentMode)
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textPrimary
+                        Layout.fillWidth: true
                     }
-                    font.pixelSize: Theme.fontSmall
-                    color: isCurrent ? Theme.textOnDark : Theme.textPrimary
+
+                    Text {
+                        text: "(current)"
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textMuted
+                    }
+
+                    Text {
+                        text: modeDropdownScope.modeDropdownOpen ? "▲" : "▼"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
                 }
 
                 MouseArea {
                     anchors.fill: parent
-                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        modeList.currentIndex = index
-                        modeList.forceActiveFocus()
+                        modeDropdownScope.forceActiveFocus()
+                        modeDropdownScope.modeDropdownOpen = !modeDropdownScope.modeDropdownOpen
                     }
-                    onDoubleClicked: {
-                        if (root.monitors.length > root.selectedMonitor) {
-                            setMode.monName = root.monitors[root.selectedMonitor].name
-                            setMode.mode = modelData
-                            setMode.running = true
+                }
+            }
+
+            ListView {
+                id: modeDropdownList
+                anchors.top: modeDropdownHeader.bottom
+                anchors.topMargin: 8
+                width: parent.width
+                height: parent.height - modeDropdownHeader.height - 8
+                spacing: 4
+                clip: true
+                visible: modeDropdownScope.modeDropdownOpen
+                model: modeDropdownScope.modes
+
+                delegate: Rectangle {
+                    required property int index
+                    required property var modelData
+                    width: modeDropdownList.width
+                    height: 68
+                    radius: 12
+
+                    property bool isCurrent: modelData === modeDropdownScope.currentMode
+
+                    color: {
+                        if (isCurrent) return Theme.sidebarActive
+                        if (modeDropdownList.currentIndex === index && modeDropdownList.activeFocus) return Theme.surfaceHover
+                        return Theme.card
+                    }
+                    border.width: isCurrent ? 2 : 1
+                    border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
+
+                    Behavior on color { ColorAnimation { duration: 150 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: modeDropdownScope.formatMode(modelData) + (isCurrent ? "  (current)" : "")
+                        font.pixelSize: Theme.fontSmall
+                        color: isCurrent ? Theme.textOnDark : Theme.textPrimary
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            modeDropdownList.currentIndex = index
+                            modeDropdownList.forceActiveFocus()
+                        }
+                        onDoubleClicked: {
+                            if (root.monitors.length > root.selectedMonitor) {
+                                setMode.monName = root.monitors[root.selectedMonitor].name
+                                setMode.mode = modelData
+                                setMode.running = true
+                                modeDropdownScope.modeDropdownOpen = false
+                            }
                         }
                     }
+                }
+
+                Keys.onReturnPressed: {
+                    if (currentIndex >= 0 && root.monitors.length > root.selectedMonitor) {
+                        let modes = modeDropdownScope.modes
+                        if (currentIndex < modes.length) {
+                            setMode.monName = root.monitors[root.selectedMonitor].name
+                            setMode.mode = modes[currentIndex]
+                            setMode.running = true
+                            modeDropdownScope.modeDropdownOpen = false
+                        }
+                    }
+                }
+
+                Keys.onEscapePressed: {
+                    modeDropdownScope.modeDropdownOpen = false
+                    modeDropdownScope.forceActiveFocus()
                 }
             }
 
             Keys.onReturnPressed: {
-                if (currentIndex >= 0 && root.monitors.length > root.selectedMonitor) {
-                    let modes = root.monitors[root.selectedMonitor].availableModes
-                    if (currentIndex < modes.length) {
-                        setMode.monName = root.monitors[root.selectedMonitor].name
-                        setMode.mode = modes[currentIndex]
-                        setMode.running = true
-                    }
+                if (!modeDropdownOpen) {
+                    modeDropdownOpen = true
+                    modeDropdownList.forceActiveFocus()
+                }
+            }
+
+            Keys.onEscapePressed: {
+                if (modeDropdownOpen) {
+                    modeDropdownOpen = false
+                } else {
+                    event.accepted = false
                 }
             }
         }
 
+        Item { Layout.fillHeight: true }
+
         Text {
-            text: "A: Select mode  |  Double-click to apply"
+            text: "A: Open/apply mode  |  B: Close dropdown"
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
