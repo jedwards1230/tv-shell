@@ -188,25 +188,18 @@ except:
         }
     }
 
-    // Helper: find the ListView inside an app-view delegate by objectName
-    function _focusAppViewRow(idx) {
-        if (idx < 0 || idx >= appViewRepeater.count) return false
-        let item = appViewRepeater.itemAt(idx)
-        if (!item) return false
-        // Find the ListView by objectName
-        let listView = _findChild(item, "appViewListView")
-        if (listView) { listView.forceActiveFocus(); return true }
-        return false
+    function _appViewRowItem(idx) {
+        if (idx < 0 || idx >= appViewRepeater.count) return null
+        var item = appViewRepeater.itemAt(idx)
+        return item ? item.navigableRow : null
     }
 
-    function _findChild(parent, name) {
-        for (let i = 0; i < parent.children.length; i++) {
-            let child = parent.children[i]
-            if (child.objectName === name) return child
-            let found = _findChild(child, name)
-            if (found) return found
+    function _focusFirstVisibleRow() {
+        var row = runningRow
+        while (row) {
+            if (row.visible) { row.forceActiveFocus(); return }
+            row = (row.nextRow !== undefined) ? row.nextRow : null
         }
-        return null
     }
 
     // Computed model for app-view rows, re-evaluated when targets or hostApps change
@@ -282,16 +275,7 @@ except:
                 id: statusIcons
                 Layout.alignment: Qt.AlignTop | Qt.AlignRight
                 onSettingsRequested: root.settingsRequested()
-                onFocusDownRequested: {
-                    if (runningRow.visible)
-                        runningRow.forceActiveFocus()
-                    else if (recentsRow.visible)
-                        recentsRow.forceActiveFocus()
-                    else if (Theme.moonlightViewMode === "servers")
-                        moonlightRow.forceActiveFocus()
-                    else if (!root._focusAppViewRow(0))
-                        appsRow.forceActiveFocus()
-                }
+                onFocusDownRequested: root._focusFirstVisibleRow()
             }
         }
 
@@ -304,55 +288,26 @@ except:
             color: Theme.textPrimary
         }
 
-        Item {
-            id: runningContainer
+        NavigableRow {
+            id: runningRow
             visible: root.runningWindows.length > 0
             Layout.fillWidth: true
             Layout.preferredHeight: visible ? Theme.rowHeight : 0
+            previousRow: statusIcons
+            nextRow: recentsRow
+            model: root.runningWindows
 
-            ListView {
-                id: runningRow
-                anchors.fill: parent
-                anchors.topMargin: -16
-                anchors.bottomMargin: -16
-                orientation: ListView.Horizontal
-                spacing: Theme.cardSpacing
-                clip: false
-                highlightMoveDuration: 150
-                highlightMoveVelocity: -1
-                keyNavigationEnabled: true
-
-                model: root.runningWindows
-
-                delegate: AppCard {
-                    required property int index
-                    required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    app: modelData
-                    focus: index === runningRow.currentIndex
-                    onActivated: root.appFocusRequested(modelData.windowClass)
-                }
-
-                Keys.onReturnPressed: {
-                    if (runningRow.currentItem)
-                        root.appFocusRequested(runningRow.currentItem.modelData.windowClass)
-                }
-                Keys.onEnterPressed: {
-                    if (runningRow.currentItem)
-                        root.appFocusRequested(runningRow.currentItem.modelData.windowClass)
-                }
-                Keys.onUpPressed: statusIcons.forceActiveFocus()
-                Keys.onDownPressed: {
-                    if (recentsRow.visible)
-                        recentsRow.forceActiveFocus()
-                    else if (Theme.moonlightViewMode === "servers")
-                        moonlightRow.forceActiveFocus()
-                    else if (!root._focusAppViewRow(0))
-                        appsRow.forceActiveFocus()
-                }
-                Keys.onEscapePressed: root.settingsRequested()
+            delegate: AppCard {
+                required property int index
+                required property var modelData
+                height: Theme.cardHeight
+                width: Theme.cardWidth
+                app: modelData
+                focus: index === runningRow.currentIndex
+                onActivated: root.appFocusRequested(modelData.windowClass)
             }
+
+            onEscaped: root.settingsRequested()
         }
 
         // === Recents Row ===
@@ -364,62 +319,31 @@ except:
             color: Theme.textPrimary
         }
 
-        Item {
-            id: recentsContainer
+        NavigableRow {
+            id: recentsRow
             visible: root.recentApps.length > 0
             Layout.fillWidth: true
             Layout.preferredHeight: visible ? Theme.rowHeight : 0
-
-            ListView {
-                id: recentsRow
-                anchors.fill: parent
-                anchors.topMargin: -16
-                anchors.bottomMargin: -16
-                orientation: ListView.Horizontal
-                spacing: Theme.cardSpacing
-                focus: visible && !runningRow.visible
-                clip: false
-                highlightMoveDuration: 150
-                highlightMoveVelocity: -1
-                keyNavigationEnabled: true
-
-                model: root.recentApps
-
-                delegate: AppCard {
-                    required property int index
-                    required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    app: modelData
-                    focus: index === recentsRow.currentIndex
-                    onActivated: root.launchApp(modelData)
-                }
-
-                Keys.onReturnPressed: {
-                    if (recentsRow.currentItem)
-                        root.launchApp(recentsRow.currentItem.modelData)
-                }
-                Keys.onEnterPressed: {
-                    if (recentsRow.currentItem)
-                        root.launchApp(recentsRow.currentItem.modelData)
-                }
-                Keys.onUpPressed: {
-                    if (runningRow.visible)
-                        runningRow.forceActiveFocus()
-                    else
-                        statusIcons.forceActiveFocus()
-                }
-                Keys.onDownPressed: {
-                    if (Theme.moonlightViewMode === "servers") {
-                        moonlightRow.forceActiveFocus()
-                    } else {
-                        // App view: focus the first host row
-                        if (!root._focusAppViewRow(0))
-                            appsRow.forceActiveFocus()
-                    }
-                }
-                Keys.onEscapePressed: root.settingsRequested()
+            focus: visible && !runningRow.visible
+            previousRow: runningRow
+            nextRow: {
+                var _ = appViewRepeater.count
+                if (Theme.moonlightViewMode === "servers") return moonlightRow
+                return root._appViewRowItem(0) || appsRow
             }
+            model: root.recentApps
+
+            delegate: AppCard {
+                required property int index
+                required property var modelData
+                height: Theme.cardHeight
+                width: Theme.cardWidth
+                app: modelData
+                focus: index === recentsRow.currentIndex
+                onActivated: root.launchApp(modelData)
+            }
+
+            onEscaped: root.settingsRequested()
         }
 
         // === Moonlight Section (server-view or app-view) ===
@@ -433,52 +357,27 @@ except:
             color: Theme.textPrimary
         }
 
-        Item {
+        NavigableRow {
+            id: moonlightRow
             visible: Theme.moonlightViewMode === "servers"
             Layout.fillWidth: true
             Layout.preferredHeight: visible ? Theme.rowHeight : 0
+            focus: Theme.moonlightViewMode === "servers" && !recentsRow.visible
+            previousRow: recentsRow
+            nextRow: appsRow
+            model: root.targets
 
-            ListView {
-                id: moonlightRow
-                anchors.fill: parent
-                anchors.topMargin: -16
-                anchors.bottomMargin: -16
-                orientation: ListView.Horizontal
-                spacing: Theme.cardSpacing
-                focus: Theme.moonlightViewMode === "servers" && !recentsRow.visible
-                clip: false
-                highlightMoveDuration: 150
-                highlightMoveVelocity: -1
-                keyNavigationEnabled: true
-
-                model: root.targets
-
-                delegate: StreamCard {
-                    required property int index
-                    required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    target: modelData
-                    focus: index === moonlightRow.currentIndex
-                    onActivated: root.streamRequested(modelData)
-                }
-
-                Keys.onReturnPressed: {
-                    if (moonlightRow.currentItem)
-                        root.streamRequested(moonlightRow.currentItem.modelData)
-                }
-                Keys.onEnterPressed: {
-                    if (moonlightRow.currentItem)
-                        root.streamRequested(moonlightRow.currentItem.modelData)
-                }
-                Keys.onUpPressed: {
-                    if (recentsRow.visible) recentsRow.forceActiveFocus()
-                    else if (runningRow.visible) runningRow.forceActiveFocus()
-                    else statusIcons.forceActiveFocus()
-                }
-                Keys.onDownPressed: appsRow.forceActiveFocus()
-                Keys.onEscapePressed: root.settingsRequested()
+            delegate: StreamCard {
+                required property int index
+                required property var modelData
+                height: Theme.cardHeight
+                width: Theme.cardWidth
+                target: modelData
+                focus: index === moonlightRow.currentIndex
+                onActivated: root.streamRequested(modelData)
             }
+
+            onEscaped: root.settingsRequested()
         }
 
         // App view: one row per host, each card is an available app
@@ -497,6 +396,7 @@ except:
                 property var hostData: modelData
                 property var hostTarget: modelData.target
                 property var hostAppList: modelData.apps
+                property alias navigableRow: appViewNavRow
 
                 Text {
                     text: "Moonlight — " + hostData.name
@@ -527,24 +427,17 @@ except:
                         color: Theme.textMuted
                     }
 
-                    ListView {
-                        id: appViewRow
-                        objectName: "appViewListView"
+                    NavigableRow {
+                        id: appViewNavRow
                         anchors.fill: parent
-                        anchors.topMargin: -16
-                        anchors.bottomMargin: -16
-                        orientation: ListView.Horizontal
-                        spacing: Theme.cardSpacing
-                        clip: false
-                        highlightMoveDuration: 150
-                        highlightMoveVelocity: -1
-                        keyNavigationEnabled: true
                         visible: hostAppList.length > 0
-
-                        // First host row gets focus when no recents visible
-                        focus: Theme.moonlightViewMode === "apps" && index === 0 && !recentsRow.visible
-
+                        focus: Theme.moonlightViewMode === "apps" && appViewRowDelegate.index === 0 && !recentsRow.visible
                         model: hostAppList
+                        previousRow: {
+                            var _ = appViewRepeater.count
+                            return appViewRowDelegate.index === 0 ? recentsRow : root._appViewRowItem(appViewRowDelegate.index - 1)
+                        }
+                        nextRow: appViewRowDelegate.index < appViewRepeater.count - 1 ? root._appViewRowItem(appViewRowDelegate.index + 1) : appsRow
 
                         delegate: StreamCard {
                             required property int index
@@ -553,52 +446,15 @@ except:
                             width: Theme.cardWidth
                             target: hostTarget
                             appName: modelData
-                            focus: index === appViewRow.currentIndex
+                            focus: index === appViewNavRow.currentIndex
                             onActivated: {
-                                // Build a target with the specific app name
                                 let t = JSON.parse(JSON.stringify(hostTarget))
                                 t.app = modelData
                                 root.streamRequested(t)
                             }
                         }
 
-                        Keys.onReturnPressed: {
-                            if (appViewRow.currentItem) {
-                                let t = JSON.parse(JSON.stringify(hostTarget))
-                                t.app = appViewRow.currentItem.modelData
-                                root.streamRequested(t)
-                            }
-                        }
-                        Keys.onEnterPressed: {
-                            if (appViewRow.currentItem) {
-                                let t = JSON.parse(JSON.stringify(hostTarget))
-                                t.app = appViewRow.currentItem.modelData
-                                root.streamRequested(t)
-                            }
-                        }
-
-                        Keys.onUpPressed: {
-                            if (appViewRowDelegate.index === 0) {
-                                if (recentsRow.visible)
-                                    recentsRow.forceActiveFocus()
-                                else if (runningRow.visible)
-                                    runningRow.forceActiveFocus()
-                                else
-                                    statusIcons.forceActiveFocus()
-                            } else {
-                                root._focusAppViewRow(appViewRowDelegate.index - 1)
-                            }
-                        }
-
-                        Keys.onDownPressed: {
-                            if (appViewRowDelegate.index < appViewRepeater.count - 1) {
-                                root._focusAppViewRow(appViewRowDelegate.index + 1)
-                            } else {
-                                appsRow.forceActiveFocus()
-                            }
-                        }
-
-                        Keys.onEscapePressed: root.settingsRequested()
+                        onEscaped: root.settingsRequested()
                     }
                 }
             }
@@ -612,55 +468,28 @@ except:
             color: Theme.textPrimary
         }
 
-        Item {
+        NavigableRow {
+            id: appsRow
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: Theme.rowHeight
-
-            ListView {
-                id: appsRow
-                anchors.fill: parent
-                anchors.topMargin: -16
-                anchors.bottomMargin: -16
-                orientation: ListView.Horizontal
-                spacing: Theme.cardSpacing
-                clip: false
-                highlightMoveDuration: 150
-                highlightMoveVelocity: -1
-                keyNavigationEnabled: true
-
-                model: root.applications
-
-                delegate: AppCard {
-                    required property int index
-                    required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    app: modelData
-                    focus: index === appsRow.currentIndex
-                    onActivated: root.launchApp(modelData)
-                }
-
-                Keys.onReturnPressed: {
-                    if (appsRow.currentItem)
-                        root.launchApp(appsRow.currentItem.modelData)
-                }
-                Keys.onEnterPressed: {
-                    if (appsRow.currentItem)
-                        root.launchApp(appsRow.currentItem.modelData)
-                }
-                Keys.onUpPressed: {
-                    if (Theme.moonlightViewMode === "servers") {
-                        moonlightRow.forceActiveFocus()
-                    } else {
-                        // App view: focus the last host row
-                        if (!root._focusAppViewRow(appViewRepeater.count - 1)) {
-                            recentsRow.visible ? recentsRow.forceActiveFocus() : null
-                        }
-                    }
-                }
-                Keys.onEscapePressed: root.settingsRequested()
+            previousRow: {
+                if (Theme.moonlightViewMode === "servers") return moonlightRow
+                return root._appViewRowItem(appViewRepeater.count - 1) || recentsRow
             }
+            model: root.applications
+
+            delegate: AppCard {
+                required property int index
+                required property var modelData
+                height: Theme.cardHeight
+                width: Theme.cardWidth
+                app: modelData
+                focus: index === appsRow.currentIndex
+                onActivated: root.launchApp(modelData)
+            }
+
+            onEscaped: root.settingsRequested()
         }
 
         // === Hint Bar ===
