@@ -186,6 +186,7 @@ FocusScope {
 
                     // Key cap badges
                     Row {
+                        Layout.alignment: Qt.AlignRight
                         spacing: 8
 
                         Repeater {
@@ -194,7 +195,6 @@ FocusScope {
                             Row {
                                 spacing: 8
 
-                                // "+" separator for combo keys (after first key)
                                 Text {
                                     text: "+"
                                     font.pixelSize: Theme.fontSmall

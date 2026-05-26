@@ -93,7 +93,7 @@ FocusScope {
             model: root.monitors
             focus: true
 
-            KeyNavigation.down: modeList
+            KeyNavigation.down: scaleRow
 
             delegate: Rectangle {
                 required property int index
@@ -197,7 +197,7 @@ FocusScope {
 
             Keys.onReturnPressed: {
                 root.selectedMonitor = currentIndex
-                modeList.forceActiveFocus()
+                scaleRow.forceActiveFocus()
             }
         }
 
@@ -210,10 +210,40 @@ FocusScope {
             visible: root.monitors.length > 0
         }
 
-        RowLayout {
+        FocusScope {
+            id: scaleRow
             Layout.fillWidth: true
-            spacing: 16
+            Layout.preferredHeight: 64
             visible: root.monitors.length > 0
+
+            KeyNavigation.up: monitorList
+            KeyNavigation.down: modeDropdownScope
+
+            property int selectedScale: {
+                if (root.monitors.length <= root.selectedMonitor) return 1
+                let s = root.monitors[root.selectedMonitor].scale
+                let scales = [0.5, 1.0, 1.25, 1.5, 2.0]
+                for (let i = 0; i < scales.length; i++) {
+                    if (Math.abs(scales[i] - s) < 0.05) return i
+                }
+                return 1
+            }
+            property int focusedIndex: selectedScale
+
+            Keys.onLeftPressed: { if (focusedIndex > 0) focusedIndex-- }
+            Keys.onRightPressed: { if (focusedIndex < 4) focusedIndex++ }
+            Keys.onReturnPressed: {
+                let scales = [0.5, 1.0, 1.25, 1.5, 2.0]
+                if (root.monitors.length > root.selectedMonitor) {
+                    setScale.monName = root.monitors[root.selectedMonitor].name
+                    setScale.scaleVal = scales[focusedIndex]
+                    setScale.running = true
+                }
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                spacing: 16
 
             Repeater {
                 model: [0.5, 1.0, 1.25, 1.5, 2.0]
@@ -224,27 +254,28 @@ FocusScope {
                     required property int index
                     width: scaleBtn.width
                     height: scaleBtn.height
-                    activeFocusOnTab: true
 
                     SettingsButton {
                         id: scaleBtn
                         text: parent.modelData + "x"
-                        focus: parent.activeFocus
                         anchors.fill: parent
 
-                        // Highlight current scale
                         property bool isCurrent: root.monitors.length > root.selectedMonitor &&
                                                  Math.abs(root.monitors[root.selectedMonitor].scale - parent.modelData) < 0.05
+                        property bool isFocused: scaleRow.activeFocus && scaleRow.focusedIndex === scaleScope.index
 
                         color: isCurrent ? Theme.sidebarActive :
-                               parent.activeFocus ? Theme.surfaceHover : Theme.surface
+                               isFocused ? Theme.surfaceHover : Theme.surface
+                        border.width: isFocused ? 2 : 1
+                        border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
                         MouseArea {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                scaleScope.forceActiveFocus()
+                                scaleRow.forceActiveFocus()
+                                scaleRow.focusedIndex = scaleScope.index
                                 if (root.monitors.length > root.selectedMonitor) {
                                     setScale.monName = root.monitors[root.selectedMonitor].name
                                     setScale.scaleVal = scaleScope.modelData
@@ -253,15 +284,8 @@ FocusScope {
                             }
                         }
                     }
-
-                    Keys.onReturnPressed: {
-                        if (root.monitors.length > root.selectedMonitor) {
-                            setScale.monName = root.monitors[root.selectedMonitor].name
-                            setScale.scaleVal = modelData
-                            setScale.running = true
-                        }
-                    }
                 }
+            }
             }
         }
 
@@ -296,7 +320,7 @@ FocusScope {
                 return res + (hz ? "  @  " + hz : "")
             }
 
-            KeyNavigation.up: monitorList
+            KeyNavigation.up: scaleRow
 
             Behavior on Layout.preferredHeight { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
@@ -358,6 +382,9 @@ FocusScope {
                 clip: true
                 visible: modeDropdownScope.modeDropdownOpen
                 model: modeDropdownScope.modes
+                keyNavigationEnabled: true
+                highlightFollowsCurrentItem: true
+                highlightMoveDuration: 100
 
                 delegate: Rectangle {
                     required property int index
