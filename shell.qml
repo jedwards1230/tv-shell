@@ -24,7 +24,7 @@ ShellRoot {
         }
     }
 
-    Component.onCompleted: { loadTargets.running = true }
+    Component.onCompleted: { loadTargets.running = true; comboListener.running = true }
 
     Timer {
         id: crashResetTimer
@@ -90,6 +90,41 @@ ShellRoot {
     Process {
         id: endSession
         command: ["/usr/local/bin/end-game-session"]
+    }
+
+    // Always-on combo listener — handles force-quit (Back+Home+LB+RB) from any state
+    Process {
+        id: comboListener
+        command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
+        stdout: SplitParser {
+            onRead: (line) => {
+                if (line === "combo:force-quit") root.forceQuit()
+                else if (line === "combo:end-session") endSession.running = true
+            }
+        }
+        onExited: { comboReconnect.start() }
+    }
+
+    Timer {
+        id: comboReconnect
+        interval: 2000
+        onTriggered: { comboListener.running = true }
+    }
+
+    function forceQuit() {
+        moonlight.running = false
+        forceKill.running = true
+        root.state = "idle"
+        overlay.hide()
+        grabInput()
+        navDrawer.opened = false
+        settingsPanel.visible = false
+        homeFocusTimer.restart()
+    }
+
+    Process {
+        id: forceKill
+        command: ["bash", "-c", "pkill -f moonlight; pkill -f steam; true"]
     }
 
     function launchStream(target) {
