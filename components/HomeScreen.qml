@@ -307,7 +307,6 @@ except:
                 onActivated: root.appFocusRequested(modelData.windowClass)
             }
 
-            onActivated: root.appFocusRequested(currentItem.modelData.windowClass)
             onEscaped: root.settingsRequested()
         }
 
@@ -344,7 +343,6 @@ except:
                 onActivated: root.launchApp(modelData)
             }
 
-            onActivated: root.launchApp(currentItem.modelData)
             onEscaped: root.settingsRequested()
         }
 
@@ -379,7 +377,6 @@ except:
                 onActivated: root.streamRequested(modelData)
             }
 
-            onActivated: root.streamRequested(currentItem.modelData)
             onEscaped: root.settingsRequested()
         }
 
@@ -440,10 +437,7 @@ except:
                             var _ = appViewRepeater.count
                             return appViewRowDelegate.index === 0 ? recentsRow : root._appViewRowItem(appViewRowDelegate.index - 1)
                         }
-                        nextRow: {
-                            var _ = appViewRepeater.count
-                            return appViewRowDelegate.index < appViewRepeater.count - 1 ? root._appViewRowItem(appViewRowDelegate.index + 1) : appsRow
-                        }
+                        nextRow: appViewRowDelegate.index < appViewRepeater.count - 1 ? root._appViewRowItem(appViewRowDelegate.index + 1) : appsRow
 
                         delegate: StreamCard {
                             required property int index
@@ -460,11 +454,6 @@ except:
                             }
                         }
 
-                        onActivated: {
-                            let t = JSON.parse(JSON.stringify(hostTarget))
-                            t.app = currentItem.modelData
-                            root.streamRequested(t)
-                        }
                         onEscaped: root.settingsRequested()
                     }
                 }
@@ -485,7 +474,6 @@ except:
             Layout.fillHeight: true
             Layout.minimumHeight: Theme.rowHeight
             previousRow: {
-                var _ = appViewRepeater.count
                 if (Theme.moonlightViewMode === "servers") return moonlightRow
                 return root._appViewRowItem(appViewRepeater.count - 1) || recentsRow
             }
@@ -501,7 +489,6 @@ except:
                 onActivated: root.launchApp(modelData)
             }
 
-            onActivated: root.launchApp(currentItem.modelData)
             onEscaped: root.settingsRequested()
         }
 
