@@ -122,7 +122,7 @@ Item {
                     if (root.target.hdr) parts.push("HDR")
                     return parts.join(" · ")
                 }
-                font.pixelSize: Theme.fontSmall - 8
+                font.pixelSize: Theme.fontXSmall
                 color: Theme.textSecondary
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
