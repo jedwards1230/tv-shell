@@ -36,6 +36,9 @@ BUTTON_MAP = {
 COMBO_KEYS = {ecodes.BTN_MODE, ecodes.BTN_EAST}
 COMBO_HOLD_SECS = 3.0
 
+# Force-quit combo: Back + Home + LB + RB (instant, no hold required)
+QUIT_COMBO_KEYS = {ecodes.BTN_SELECT, ecodes.BTN_MODE, ecodes.BTN_TL, ecodes.BTN_TR}
+
 BUTTON_NAMES = {
     ecodes.BTN_SOUTH: "A",
     ecodes.BTN_EAST: "B",
@@ -153,6 +156,7 @@ class InputDaemon:
             if key_event.keystate == 1:  # down
                 self.held_keys.add(event.code)
                 self._check_combo_start()
+                self._check_quit_combo()
                 asyncio.ensure_future(self._notify_held_buttons())
             elif key_event.keystate == 0:  # up
                 self.held_keys.discard(event.code)
@@ -329,6 +333,11 @@ class InputDaemon:
         if self.combo_task and not COMBO_KEYS.issubset(self.held_keys):
             self.combo_task.cancel()
             self.combo_task = None
+
+    def _check_quit_combo(self):
+        if QUIT_COMBO_KEYS.issubset(self.held_keys):
+            log.info("Force-quit combo detected (Back+Home+LB+RB)")
+            asyncio.ensure_future(self._notify_subscribers("combo:force-quit"))
 
     async def _combo_timer(self):
         try:
