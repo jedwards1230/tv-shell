@@ -45,7 +45,7 @@ ShellRoot {
         running: root.state === "idle"
         repeat: true
         triggeredOnStart: true
-        onTriggered: { avStatusCheck.running = true }
+        onTriggered: { if (!avStatusCheck.running) avStatusCheck.running = true }
     }
 
     Component.onCompleted: { loadTargets.running = true; comboListener.running = true }
@@ -60,10 +60,10 @@ ShellRoot {
     Process {
         id: avWake
         command: ["/usr/local/bin/living-room-cec", "on"]
-        onExited: {
+        onExited: (exitCode) => {
             root.avWaking = false
-            root.avSystemOn = true
-            avStatusPoll.running = true
+            if (exitCode === 0 && !avStatusCheck.running)
+                avStatusCheck.running = true
         }
     }
 
