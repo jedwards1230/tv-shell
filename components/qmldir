@@ -22,3 +22,7 @@ NavigableRow 1.0 NavigableRow.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
 KeyBindingsSettings 1.0 KeyBindingsSettings.qml
 HyprctlClients 1.0 HyprctlClients.qml
+AVController 1.0 AVController.qml
+InputManager 1.0 InputManager.qml
+AppLifecycleManager 1.0 AppLifecycleManager.qml
+ShellLayout 1.0 ShellLayout.qml
