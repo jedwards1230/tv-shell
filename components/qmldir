@@ -25,4 +25,5 @@ HyprctlClients 1.0 HyprctlClients.qml
 AVController 1.0 AVController.qml
 InputManager 1.0 InputManager.qml
 AppLifecycleManager 1.0 AppLifecycleManager.qml
+StreamManager 1.0 StreamManager.qml
 ShellLayout 1.0 ShellLayout.qml
