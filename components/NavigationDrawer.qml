@@ -15,9 +15,12 @@ Drawer {
 
     Process {
         id: forceQuitProcess
-        command: ["bash", "-c", "pkill -f moonlight; pkill -f steam; true"]
+        command: ["bash", "-c", "pkill -x moonlight; pkill -x steam; true"]
     }
 
+    // NOTE: Socket commands below duplicate shell.qml's grabInput/releaseInput.
+    // They are simple one-liners; extracting would add indirection for no gain.
+    // Keep changes in sync with shell.qml.
     Process {
         id: grabProcess
         command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'grab\\n'); print(s.recv(64).decode().strip()); s.close()"]
@@ -193,8 +196,7 @@ Drawer {
             Layout.fillWidth: true
             Layout.preferredHeight: contentHeight
             model: [
-                { label: "Controller", icon: "\u{1F3AE}", action: "toggleGrab", type: "toggle" },
-                { label: "Settings",   icon: "⚙",    action: "settings",   type: "action" }
+                { label: "Controller", icon: "\u{1F3AE}", action: "toggleGrab", type: "toggle" }
             ]
             focus: root._focusSection === 1
             interactive: false
@@ -269,9 +271,11 @@ Drawer {
         if (index < 0 || index >= items.length) return
         switch (items[index].action) {
             case "home":
-                root.opened = false; root.closed(); break
+                // closed() signal → shell.qml onClosed handler → homeFocusTimer.restart()
+                // which returns focus to the home screen grid.
+                root.closed(); break
             case "settings":
-                root.opened = false; root.closed(); root.settingsRequested(); break
+                root.closed(); root.settingsRequested(); break
             case "forceQuit":
                 forceQuitProcess.running = true; root.forceQuitRequested(); break
         }
@@ -285,8 +289,6 @@ Drawer {
                 if (root._grabState === "grabbed") releaseProcess.running = true
                 else grabProcess.running = true
                 break
-            case "settings":
-                root.opened = false; root.closed(); root.settingsRequested(); break
         }
     }
 }
