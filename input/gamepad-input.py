@@ -86,12 +86,21 @@ DPAD_NAMES = {
 }
 
 
+# Home button hold detection
+HOME_HOLD_KEYS = {ecodes.BTN_MODE}
+HOME_HOLD_SECS = 2.0
+
 # Left analog stick configuration
 STICK_DEADZONE = 0.30  # 30% of half-range from center before triggering
 
 # Repeat timing (seconds)
 STICK_INITIAL_DELAY = 0.300  # 300ms before repeat starts
 STICK_REPEAT_INTERVAL = 0.150  # 150ms between repeats
+
+# Right-stick mouse cursor
+MOUSE_SPEED_MIN = 2
+MOUSE_SPEED_MAX = 25
+MOUSE_POLL_MS = 16  # ~60Hz
 
 
 def find_gamepad() -> InputDevice | None:
@@ -130,9 +139,18 @@ class InputDaemon:
         self.stick_x_repeat: asyncio.Task | None = None
         self.stick_y_repeat: asyncio.Task | None = None
 
-        # Right stick state (debug overlay only, no key emission)
+        # Right stick state (debug overlay + mouse cursor)
         self.rstick_x_dir: str | None = None
         self.rstick_y_dir: str | None = None
+        self.rstick_raw_x: int = 0
+        self.rstick_raw_y: int = 0
+        self.rstick_half_range_x: int = 1
+        self.rstick_half_range_y: int = 1
+        self.mouse_uinput: UInput | None = None
+        self._mouse_task: asyncio.Task | None = None
+
+        # Home button hold detection
+        self._home_hold_task: asyncio.Task | None = None
 
         # Trigger state
         self.left_trigger_held = False
@@ -161,6 +179,15 @@ class InputDaemon:
             name="game-shell-virtual-kb",
         )
         log.info("uinput device created: %s", self.uinput.device.path)
+
+        self.mouse_uinput = UInput(
+            {
+                ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL, ecodes.REL_HWHEEL],
+                ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_RIGHT, ecodes.BTN_MIDDLE],
+            },
+            name="game-shell-virtual-mouse",
+        )
+        log.info("mouse uinput device created: %s", self.mouse_uinput.device.path)
 
         asyncio.create_task(self._serve_socket())
         asyncio.create_task(self._device_loop())
@@ -215,6 +242,25 @@ class InputDaemon:
                 self.held_keys.discard(event.code)
                 self._cancel_combo()
                 asyncio.ensure_future(self._notify_held_buttons())
+
+            # Home button hold detection
+            if event.code == ecodes.BTN_MODE:
+                if key_event.keystate == 1:  # down
+                    self._start_home_hold()
+                elif key_event.keystate == 0:  # up
+                    if self._home_hold_task and not self._home_hold_task.done():
+                        self._home_hold_task.cancel()
+                        self._home_hold_task = None
+                        asyncio.ensure_future(self._notify_subscribers("home-press"))
+                    self._home_hold_task = None
+
+            # LB/RB → mouse left/right click
+            if event.code == ecodes.BTN_TL and self.mouse_uinput:
+                self.mouse_uinput.write(ecodes.EV_KEY, ecodes.BTN_LEFT, key_event.keystate)
+                self.mouse_uinput.syn()
+            elif event.code == ecodes.BTN_TR and self.mouse_uinput:
+                self.mouse_uinput.write(ecodes.EV_KEY, ecodes.BTN_RIGHT, key_event.keystate)
+                self.mouse_uinput.syn()
 
             # Map to keyboard
             mapped = self.button_map.get(event.code)
@@ -283,10 +329,27 @@ class InputDaemon:
 
     async def _handle_event_ungrabbed(self, event):
         """Lightweight handler for ungrabbed mode: combo detection + subscriber broadcast only."""
+        if event.type == ecodes.EV_ABS:
+            # Right stick mouse cursor works in ungrabbed mode too
+            if event.code == ecodes.ABS_RX:
+                self._handle_rstick_axis(event.value, "x")
+            elif event.code == ecodes.ABS_RY:
+                self._handle_rstick_axis(event.value, "y")
+            return
+
         if event.type != ecodes.EV_KEY:
             return
 
         key_event = categorize(event)
+
+        # LB/RB → mouse clicks in ungrabbed mode
+        if event.code == ecodes.BTN_TL and self.mouse_uinput:
+            self.mouse_uinput.write(ecodes.EV_KEY, ecodes.BTN_LEFT, key_event.keystate)
+            self.mouse_uinput.syn()
+        elif event.code == ecodes.BTN_TR and self.mouse_uinput:
+            self.mouse_uinput.write(ecodes.EV_KEY, ecodes.BTN_RIGHT, key_event.keystate)
+            self.mouse_uinput.syn()
+
         if key_event.keystate == 1:  # down
             self.held_keys.add(event.code)
             self._check_combo_start()
@@ -351,9 +414,11 @@ class InputDaemon:
             elif code == ecodes.ABS_RX:
                 self.rstick_center_x = center
                 self.rstick_threshold_x = threshold
+                self.rstick_half_range_x = half_range
             elif code == ecodes.ABS_RY:
                 self.rstick_center_y = center
                 self.rstick_threshold_y = threshold
+                self.rstick_half_range_y = half_range
         log.info("Stick calibration: X center=%d threshold=%d, Y center=%d threshold=%d",
                  self.stick_center_x, self.stick_threshold_x,
                  self.stick_center_y, self.stick_threshold_y)
@@ -440,10 +505,17 @@ class InputDaemon:
         asyncio.ensure_future(self._notify_held_buttons())
 
     def _handle_rstick_axis(self, value: int, axis: str):
-        """Track right stick direction for debug overlay (no key emission)."""
+        """Track right stick direction for debug overlay and mouse cursor."""
+        if axis == "x":
+            self.rstick_raw_x = value
+        else:
+            self.rstick_raw_y = value
+
         center = getattr(self, f"rstick_center_{axis}")
         threshold = getattr(self, f"rstick_threshold_{axis}")
         offset = value - center
+
+        # Debug overlay direction tracking
         if axis == "x":
             new_dir = "R←" if offset < -threshold else ("R→" if offset > threshold else None)
             if new_dir != self.rstick_x_dir:
@@ -454,6 +526,11 @@ class InputDaemon:
             if new_dir != self.rstick_y_dir:
                 self.rstick_y_dir = new_dir
                 asyncio.ensure_future(self._notify_held_buttons())
+
+        # Start mouse movement task if any deflection, stop if both centered
+        if self._has_rstick_deflection():
+            if self._mouse_task is None or self._mouse_task.done():
+                self._mouse_task = asyncio.create_task(self._mouse_move_loop())
 
     def _start_stick_repeat(self, axis: str, key: int):
         """Start a repeat task: initial delay, then periodic repeats."""
@@ -481,6 +558,54 @@ class InputDaemon:
             pass
         finally:
             setattr(self, f"stick_{axis}_repeat", None)
+
+    def _has_rstick_deflection(self) -> bool:
+        return self.rstick_x_dir is not None or self.rstick_y_dir is not None
+
+    async def _mouse_move_loop(self):
+        """Emit relative mouse movement at ~60Hz while right stick is deflected."""
+        try:
+            while self._has_rstick_deflection():
+                dx = self._compute_mouse_velocity(
+                    self.rstick_raw_x, self.rstick_center_x,
+                    self.rstick_threshold_x, self.rstick_half_range_x,
+                )
+                dy = self._compute_mouse_velocity(
+                    self.rstick_raw_y, self.rstick_center_y,
+                    self.rstick_threshold_y, self.rstick_half_range_y,
+                )
+                if self.mouse_uinput:
+                    if dx:
+                        self.mouse_uinput.write(ecodes.EV_REL, ecodes.REL_X, dx)
+                    if dy:
+                        self.mouse_uinput.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+                    if dx or dy:
+                        self.mouse_uinput.syn()
+                await asyncio.sleep(MOUSE_POLL_MS / 1000)
+        except (asyncio.CancelledError, OSError):
+            pass
+
+    def _compute_mouse_velocity(self, raw: int, center: int,
+                                threshold: int, half_range: int) -> int:
+        offset = raw - center
+        if abs(offset) < threshold:
+            return 0
+        mag = min((abs(offset) - threshold) / max(half_range - threshold, 1), 1.0)
+        speed = MOUSE_SPEED_MIN + (MOUSE_SPEED_MAX - MOUSE_SPEED_MIN) * (mag ** 2)
+        return int(speed) * (1 if offset > 0 else -1)
+
+    def _start_home_hold(self):
+        if self._home_hold_task:
+            self._home_hold_task.cancel()
+        self._home_hold_task = asyncio.create_task(self._home_hold_timer())
+
+    async def _home_hold_timer(self):
+        try:
+            await asyncio.sleep(HOME_HOLD_SECS)
+            log.info("Home hold detected")
+            await self._notify_subscribers("combo:home-hold")
+        except asyncio.CancelledError:
+            pass
 
     def _check_combo_start(self):
         if COMBO_KEYS.issubset(self.held_keys) and self.combo_task is None:
@@ -697,6 +822,8 @@ async def main():
         await asyncio.sleep(1)
 
     daemon._reset_stick_state()
+    if daemon.mouse_uinput:
+        daemon.mouse_uinput.close()
     if daemon.uinput:
         daemon.uinput.close()
     log.info("Shutting down")

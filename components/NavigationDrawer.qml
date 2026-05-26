@@ -7,7 +7,10 @@ Drawer {
     edge: "left"
     drawerWidth: 960
 
+    property bool overlayMode: false
+
     signal settingsRequested()
+    signal homeSelected()
 
     onOpenedChanged: {
         if (opened) {
@@ -208,8 +211,12 @@ Drawer {
         if (index < 0 || index >= items.length) return
         switch (items[index].action) {
             case "home":
-                // Closing the drawer returns to home via the closed() signal chain in shell.qml
-                root.closed()
+                if (root.overlayMode) {
+                    root.homeSelected()
+                } else {
+                    // Closing the drawer returns to home via the closed() signal chain in shell.qml
+                    root.closed()
+                }
                 break
         }
     }
