@@ -57,6 +57,7 @@ ShellRoot {
         interval: 30000
     }
 
+
     Component.onCompleted: { loadTargets.running = true; comboListener.running = true }
 
     Timer {
@@ -134,6 +135,12 @@ ShellRoot {
             onRead: (line) => {
                 if (line === "combo:force-quit") root.forceQuit()
                 else if (line === "combo:end-session") endSession.running = true
+                else if (line === "input-mode:mouse") {
+                    Components.Theme.mouseMode = true
+                }
+                else if (line === "input-mode:controller") {
+                    Components.Theme.mouseMode = false
+                }
                 else if (line === "controller-wake" && root.state === "idle" && !avWake.running && !avWakeCooldown.running) {
                     avWake.running = true
                     avWakeCooldown.restart()
