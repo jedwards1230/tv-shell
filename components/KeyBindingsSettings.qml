@@ -18,9 +18,12 @@ FocusScope {
         { action: "stickDown",  label: "Stick Down",         keys: ["Left Stick ↓"], category: "Navigation", description: "Move focus down" },
         { action: "stickLeft",  label: "Stick Left",         keys: ["Left Stick ←"], category: "Navigation", description: "Move focus left" },
         { action: "stickRight", label: "Stick Right",        keys: ["Left Stick →"], category: "Navigation", description: "Move focus right" },
-        { action: "drawer",     label: "Open Drawer / Wake AV", keys: ["Home"],     category: "System",     description: "Toggle navigation drawer; wakes AV if system is off" },
-        { action: "forceQuit",  label: "Force Quit",         keys: ["Back", "Home", "LB", "RB"], category: "System", description: "Instantly kill foreground app" },
-        { action: "endSession", label: "End Session",        keys: ["B", "Home"],   category: "System",     description: "Hold 3 seconds to end game session" }
+        { action: "drawer",     label: "Tap Home",               keys: ["Home"],     category: "System",     description: "Toggle drawer; wakes AV if system is off" },
+        { action: "homeHold",   label: "Go Home (close app)",    keys: ["Home (hold 2s)"], category: "System", description: "Close foreground app and return to home screen" },
+        { action: "mouseLB",    label: "Left Click",             keys: ["LB"],       category: "System",     description: "Mouse left click (right stick cursor)" },
+        { action: "mouseRB",    label: "Right Click",            keys: ["RB"],       category: "System",     description: "Mouse right click (right stick cursor)" },
+        { action: "forceQuit",  label: "Force Quit",             keys: ["Back", "Home", "LB", "RB"], category: "System", description: "Instantly kill foreground app" },
+        { action: "endSession", label: "End Session",            keys: ["B", "Home"],   category: "System",     description: "Hold 3 seconds to end game session" }
     ]
 
     // Actions that can be remapped via daemon IPC
