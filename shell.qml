@@ -195,12 +195,13 @@ ShellRoot {
                 anchors.fill: parent
 
                 // Guide button (KEY_HOMEPAGE) toggles navigation drawer
-                // If AV system is off while idle, wake it via CEC
+                // Always claim CEC active source (wake if off, switch input if on different source)
                 Keys.onPressed: (event) => {
                     if (event.key === Qt.Key_HomePage) {
-                        if (!root.avSystemOn && root.state === "idle") {
-                            root.avWaking = true
+                        if (root.state === "idle" && !avWake.running && !avWakeCooldown.running) {
+                            if (!root.avSystemOn) root.avWaking = true
                             avWake.running = true
+                            avWakeCooldown.restart()
                         }
                         navDrawer.opened = !navDrawer.opened
                         if (navDrawer.opened)
@@ -280,6 +281,11 @@ ShellRoot {
                     interval: 20000
                     running: root.avWaking
                     onTriggered: { root.avWaking = false }
+                }
+
+                Timer {
+                    id: avWakeCooldown
+                    interval: 30000
                 }
 
                 // --- Debug Input Overlay ---
