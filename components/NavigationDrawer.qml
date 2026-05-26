@@ -211,12 +211,7 @@ Drawer {
         if (index < 0 || index >= items.length) return
         switch (items[index].action) {
             case "home":
-                if (root.overlayMode) {
-                    root.homeSelected()
-                } else {
-                    // Closing the drawer returns to home via the closed() signal chain in shell.qml
-                    root.closed()
-                }
+                root.homeSelected()
                 break
         }
     }
