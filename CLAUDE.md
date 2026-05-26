@@ -35,7 +35,7 @@ components/
   SettingsButton.qml           # Reusable button component
   MarqueeText.qml              # Scrolling text for long names
   Drawer.qml                    # Reusable slide-in drawer (any edge)
-  NavigationDrawer.qml           # Left nav drawer (Home, Settings, Force Quit, toggles)
+  NavigationDrawer.qml           # Left nav drawer (Home, Settings)
   StreamOverlay.qml            # Reconnecting/error overlay
   qmldir                       # Component registry
 config/
