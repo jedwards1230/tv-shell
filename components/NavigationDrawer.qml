@@ -76,8 +76,7 @@ Drawer {
         { label: "",                   icon: "",          type: "separator", action: "" },
         { label: "Controller Capture", icon: "\u{1F3AE}", type: "toggle",   action: "toggleGrab" },
         { label: "Dark / Light Mode",  icon: "\u{1F3A8}", type: "toggle",   action: "toggleTheme" },
-        { label: "",                   icon: "",          type: "separator", action: "" },
-        { label: "Settings",           icon: "⚙",    type: "action",    action: "settings" }
+        { label: "",                   icon: "",          type: "separator", action: "" }
     ]
 
     // Indices that are focusable (skip separators)
@@ -97,18 +96,16 @@ Drawer {
         // === Clock + Date Header ===
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 160
+            Layout.preferredHeight: 280
 
             ColumnLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 40
-                anchors.topMargin: 24
-                anchors.bottomMargin: 24
-                spacing: 8
+                anchors.centerIn: parent
+                spacing: 12
 
                 Text {
                     id: drawerClock
-                    font.pixelSize: Theme.fontTitle
+                    font.pixelSize: Theme.fontHero * 0.7
+                    Layout.alignment: Qt.AlignHCenter
                     font.bold: true
                     color: Theme.textPrimary
 
@@ -126,8 +123,9 @@ Drawer {
 
                 Text {
                     id: drawerDate
-                    font.pixelSize: Theme.fontSmall
+                    font.pixelSize: Theme.fontBody
                     color: Theme.textSecondary
+                    Layout.alignment: Qt.AlignHCenter
 
                     Timer {
                         interval: 60000
@@ -165,13 +163,16 @@ Drawer {
                 required property var modelData
 
                 width: navList.width
-                height: modelData.type === "separator" ? 2 : 100
+                height: modelData.type === "separator" ? 40 : 100
 
                 // Separator
                 Rectangle {
-                    anchors.fill: parent
-                    anchors.leftMargin: 24
-                    anchors.rightMargin: 24
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 40
+                    anchors.rightMargin: 40
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 2
                     color: Theme.surfaceBorder
                     visible: modelData.type === "separator"
                 }
