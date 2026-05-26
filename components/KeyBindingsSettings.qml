@@ -37,10 +37,10 @@ FocusScope {
 
     // Button display name mapping (evdev code name -> friendly name)
     property var buttonDisplayNames: ({
-        "BTN_SOUTH": "A",
-        "BTN_EAST": "B",
-        "BTN_NORTH": "Y",
-        "BTN_WEST": "X",
+        "BTN_SOUTH": "A", "BTN_A": "A", "BTN_GAMEPAD": "A",
+        "BTN_EAST": "B", "BTN_B": "B",
+        "BTN_NORTH": "Y", "BTN_X": "Y",
+        "BTN_WEST": "X", "BTN_Y": "X",
         "BTN_TL": "LB",
         "BTN_TR": "RB",
         "BTN_SELECT": "Back",
@@ -94,7 +94,7 @@ FocusScope {
     function applyBinding(action, buttonName) {
         capturing = false
         editingIndex = -1
-        setBindingProc.command = ["bash", "-c", "echo 'set-binding " + action + " " + buttonName + "' | socat - UNIX-CONNECT:$GAME_SHELL_SOCK"]
+        setBindingProc.command = ["bash", "-c", "echo 'set-binding " + action + " " + buttonName + "' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"]
         setBindingProc.running = true
     }
 
@@ -104,7 +104,7 @@ FocusScope {
         var cmds = ""
         for (var i = 0; i < actions.length; i++) {
             if (i > 0) cmds += " && "
-            cmds += "echo 'set-binding " + actions[i] + " " + defaultBindingMap[actions[i]] + "' | socat - UNIX-CONNECT:$GAME_SHELL_SOCK"
+            cmds += "echo 'set-binding " + actions[i] + " " + defaultBindingMap[actions[i]] + "' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"
         }
         resetProc.command = ["bash", "-c", cmds]
         resetProc.running = true
@@ -114,7 +114,7 @@ FocusScope {
 
     Process {
         id: getBindingsProc
-        command: ["bash", "-c", "echo 'get-bindings' | socat - UNIX-CONNECT:$GAME_SHELL_SOCK"]
+        command: ["bash", "-c", "echo 'get-bindings' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"]
         stdout: SplitParser {
             onRead: (line) => {
                 try {
@@ -127,7 +127,7 @@ FocusScope {
 
     Process {
         id: captureProc
-        command: ["bash", "-c", "echo 'capture-next' | socat - UNIX-CONNECT:$GAME_SHELL_SOCK"]
+        command: ["bash", "-c", "echo 'capture-next' | socat -t 15 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"]
         stdout: SplitParser {
             onRead: (line) => {
                 if (line.startsWith("captured:") && root.capturing) {
@@ -143,7 +143,7 @@ FocusScope {
 
     Process {
         id: cancelCaptureProc
-        command: ["bash", "-c", "echo 'capture-cancel' | socat - UNIX-CONNECT:$GAME_SHELL_SOCK"]
+        command: ["bash", "-c", "echo 'capture-cancel' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"]
     }
 
     Process {
@@ -156,6 +156,10 @@ FocusScope {
         id: resetProc
         // command set dynamically in resetDefaults()
         onExited: { getBindingsProc.running = true }
+    }
+
+    Component.onCompleted: {
+        getBindingsProc.running = true
     }
 
     onVisibleChanged: {

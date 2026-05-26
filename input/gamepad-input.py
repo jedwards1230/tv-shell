@@ -52,7 +52,7 @@ def _button_code_to_name(code: int) -> str:
     """Convert an evdev button code to its name like 'BTN_SOUTH'."""
     names = ecodes.bytype.get(ecodes.EV_KEY, {}).get(code)
     if names:
-        return names[0] if isinstance(names, list) else names
+        return names[0] if isinstance(names, (list, tuple)) else names
     return f"0x{code:x}"
 
 
@@ -130,6 +130,10 @@ class InputDaemon:
         self.stick_x_repeat: asyncio.Task | None = None
         self.stick_y_repeat: asyncio.Task | None = None
 
+        # Right stick state (debug overlay only, no key emission)
+        self.rstick_x_dir: str | None = None
+        self.rstick_y_dir: str | None = None
+
         # Trigger state
         self.left_trigger_held = False
         self.right_trigger_held = False
@@ -139,6 +143,10 @@ class InputDaemon:
         self.stick_center_y: int = 0
         self.stick_threshold_x: int = 0
         self.stick_threshold_y: int = 0
+        self.rstick_center_x: int = 0
+        self.rstick_center_y: int = 0
+        self.rstick_threshold_x: int = 0
+        self.rstick_threshold_y: int = 0
 
     async def start(self):
         # Deduplicate mapped keys (e.g., BTN_SOUTH and BTN_START both map to KEY_ENTER)
@@ -254,6 +262,12 @@ class InputDaemon:
                     ecodes.KEY_UP, ecodes.KEY_DOWN,
                 )
 
+            # Right analog stick (debug overlay only, no key emission)
+            elif event.code == ecodes.ABS_RX:
+                self._handle_rstick_axis(event.value, "x")
+            elif event.code == ecodes.ABS_RY:
+                self._handle_rstick_axis(event.value, "y")
+
             # Triggers (analog axes treated as digital)
             elif event.code == ecodes.ABS_Z:  # Left trigger
                 was = self.left_trigger_held
@@ -314,6 +328,8 @@ class InputDaemon:
                 self._emit_key(key, 0)
                 setattr(self, f"stick_{axis}_key", None)
             self._cancel_stick_repeat(axis)
+        self.rstick_x_dir = None
+        self.rstick_y_dir = None
 
     def _calibrate_stick(self):
         """Read absinfo for ABS_X/ABS_Y to compute center and threshold."""
@@ -331,6 +347,12 @@ class InputDaemon:
             elif code == ecodes.ABS_Y:
                 self.stick_center_y = center
                 self.stick_threshold_y = threshold
+            elif code == ecodes.ABS_RX:
+                self.rstick_center_x = center
+                self.rstick_threshold_x = threshold
+            elif code == ecodes.ABS_RY:
+                self.rstick_center_y = center
+                self.rstick_threshold_y = threshold
         log.info("Stick calibration: X center=%d threshold=%d, Y center=%d threshold=%d",
                  self.stick_center_x, self.stick_threshold_x,
                  self.stick_center_y, self.stick_threshold_y)
@@ -355,6 +377,8 @@ class InputDaemon:
             for action, button_name in kb.items():
                 if action not in DEFAULT_BINDINGS:
                     continue
+                if isinstance(button_name, (list, tuple)):
+                    button_name = button_name[-1]
                 code = _button_name_to_code(button_name)
                 if code is None or code not in REMAPPABLE_BUTTONS:
                     continue
@@ -412,6 +436,23 @@ class InputDaemon:
         if new_key is not None:
             self._emit_key(new_key, 1)
             self._start_stick_repeat(axis, new_key)
+        asyncio.ensure_future(self._notify_held_buttons())
+
+    def _handle_rstick_axis(self, value: int, axis: str):
+        """Track right stick direction for debug overlay (no key emission)."""
+        center = getattr(self, f"rstick_center_{axis}")
+        threshold = getattr(self, f"rstick_threshold_{axis}")
+        offset = value - center
+        if axis == "x":
+            new_dir = "R←" if offset < -threshold else ("R→" if offset > threshold else None)
+            if new_dir != self.rstick_x_dir:
+                self.rstick_x_dir = new_dir
+                asyncio.ensure_future(self._notify_held_buttons())
+        else:
+            new_dir = "R↑" if offset < -threshold else ("R↓" if offset > threshold else None)
+            if new_dir != self.rstick_y_dir:
+                self.rstick_y_dir = new_dir
+                asyncio.ensure_future(self._notify_held_buttons())
 
     def _start_stick_repeat(self, axis: str, key: int):
         """Start a repeat task: initial delay, then periodic repeats."""
@@ -518,6 +559,16 @@ class InputDaemon:
             names.append("LT")
         if self.right_trigger_held:
             names.append("RT")
+        stick_dirs = {ecodes.KEY_UP: "L↑", ecodes.KEY_DOWN: "L↓",
+                      ecodes.KEY_LEFT: "L←", ecodes.KEY_RIGHT: "L→"}
+        if self.stick_x_key is not None:
+            names.append(stick_dirs.get(self.stick_x_key, "L?"))
+        if self.stick_y_key is not None:
+            names.append(stick_dirs.get(self.stick_y_key, "L?"))
+        if self.rstick_x_dir is not None:
+            names.append(self.rstick_x_dir)
+        if self.rstick_y_dir is not None:
+            names.append(self.rstick_y_dir)
         if names:
             await self._notify_subscribers("buttons:" + " + ".join(names))
         else:
