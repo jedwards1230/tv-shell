@@ -12,6 +12,8 @@ ShellRoot {
     property var currentTarget: null
     property int crashCount: 0
     property var targets: []
+    property bool avSystemOn: false
+    property bool avWaking: false
 
     Process {
         id: loadTargets
@@ -22,6 +24,28 @@ ShellRoot {
                 catch(e) { console.log("Failed to parse targets:", e) }
             }
         }
+    }
+
+    Process {
+        id: avStatusCheck
+        command: ["/usr/local/bin/living-room-cec", "status"]
+        stdout: SplitParser {
+            onRead: (line) => {
+                var match = line.match(/^\s*(AVR)\s*:\s*(\S+)/i)
+                if (match) {
+                    root.avSystemOn = (match[2].toLowerCase() === "on")
+                }
+            }
+        }
+    }
+
+    Timer {
+        id: avStatusPoll
+        interval: 30000
+        running: root.state === "idle"
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: { if (!avStatusCheck.running) avStatusCheck.running = true }
     }
 
     Component.onCompleted: { loadTargets.running = true; comboListener.running = true }
@@ -36,6 +60,11 @@ ShellRoot {
     Process {
         id: avWake
         command: ["/usr/local/bin/living-room-cec", "on"]
+        onExited: (exitCode) => {
+            root.avWaking = false
+            if (exitCode === 0 && !avStatusCheck.running)
+                avStatusCheck.running = true
+        }
     }
 
     Process {
@@ -166,8 +195,13 @@ ShellRoot {
                 anchors.fill: parent
 
                 // Guide button (KEY_HOMEPAGE) toggles navigation drawer
+                // If AV system is off while idle, wake it via CEC
                 Keys.onPressed: (event) => {
                     if (event.key === Qt.Key_HomePage) {
+                        if (!root.avSystemOn && root.state === "idle") {
+                            root.avWaking = true
+                            avWake.running = true
+                        }
                         navDrawer.opened = !navDrawer.opened
                         if (navDrawer.opened)
                             navDrawer.forceActiveFocus()
@@ -224,6 +258,28 @@ ShellRoot {
                         navDrawer.opened = false
                         homeFocusTimer.restart()
                     }
+                }
+
+                // --- AV Wake Overlay ---
+                Rectangle {
+                    anchors.fill: parent
+                    color: Qt.rgba(0, 0, 0, 0.7)
+                    visible: root.avWaking
+                    z: 40
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Waking AV System..."
+                        font.pixelSize: Components.Theme.fontTitle
+                        color: Components.Theme.textOnDark
+                    }
+                }
+
+                Timer {
+                    id: avWakeTimeout
+                    interval: 20000
+                    running: root.avWaking
+                    onTriggered: { root.avWaking = false }
                 }
 
                 // --- Debug Input Overlay ---

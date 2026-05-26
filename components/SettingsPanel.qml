@@ -15,6 +15,7 @@ Rectangle {
         { name: "Network",     icon: "\u{1F310}" },
         { name: "Display",     icon: "\u{1F5A5}" },
         { name: "Controllers", icon: "\u{1F3AE}" },
+        { name: "Key Bindings", icon: "⌨" },
         { name: "AV Control",  icon: "\u{1F4FA}" },
         { name: "Moonlight",   icon: "\u{1F319}" },
         { name: "Appearance",  icon: "\u{1F3A8}" },
@@ -227,10 +228,11 @@ Rectangle {
                             case 2: return networkComp
                             case 3: return displayComp
                             case 4: return controllerComp
-                            case 5: return avControlComp
-                            case 6: return moonlightComp
-                            case 7: return appearanceComp
-                            case 8: return powerComp
+                            case 5: return keyBindingsComp
+                            case 6: return avControlComp
+                            case 7: return moonlightComp
+                            case 8: return appearanceComp
+                            case 9: return powerComp
                             default: return audioComp
                         }
                     }
@@ -259,6 +261,11 @@ Rectangle {
                 Component {
                     id: controllerComp
                     ControllerSettings {}
+                }
+
+                Component {
+                    id: keyBindingsComp
+                    KeyBindingsSettings {}
                 }
 
                 Component {
