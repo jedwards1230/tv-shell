@@ -7,31 +7,12 @@ Drawer {
     edge: "left"
     drawerWidth: 960
 
-    signal forceQuitRequested()
     signal settingsRequested()
-
-    property string _grabState: "grabbed"
-
-    // NOTE: Socket commands below duplicate shell.qml's grabInput/releaseInput.
-    // They are simple one-liners; extracting would add indirection for no gain.
-    // Keep changes in sync with shell.qml.
-    Process {
-        id: statusProcess
-        command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'status\\n'); print(s.recv(64).decode().strip()); s.close()"]
-        stdout: SplitParser {
-            onRead: (line) => {
-                let parts = line.trim().split(":")
-                if (parts.length >= 2)
-                    root._grabState = parts[1]
-            }
-        }
-    }
 
     onOpenedChanged: {
         if (opened) {
             navList.currentIndex = 0
             navFocusTimer.restart()
-            statusProcess.running = true
         }
     }
 
