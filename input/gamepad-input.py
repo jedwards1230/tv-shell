@@ -115,6 +115,8 @@ class InputDaemon:
         self.uinput = UInput(
             {ecodes.EV_KEY: mapped_keys + [
                 ecodes.KEY_UP, ecodes.KEY_DOWN, ecodes.KEY_LEFT, ecodes.KEY_RIGHT,
+                ecodes.KEY_LEFTCTRL, ecodes.KEY_LEFTALT, ecodes.KEY_LEFTSHIFT,
+                ecodes.KEY_Q,
             ]},
             name="game-shell-virtual-kb",
         )
@@ -140,6 +142,7 @@ class InputDaemon:
             try:
                 async for event in self.gamepad.async_read_loop():
                     if not self.grabbed:
+                        await self._handle_event_ungrabbed(event)
                         continue
                     await self._handle_event(event)
             except OSError:
@@ -222,6 +225,33 @@ class InputDaemon:
                 self.right_trigger_held = event.value > 100
                 if was != self.right_trigger_held:
                     asyncio.ensure_future(self._notify_held_buttons())
+
+    async def _handle_event_ungrabbed(self, event):
+        """Lightweight handler for ungrabbed mode: combo detection + subscriber broadcast only."""
+        if event.type != ecodes.EV_KEY:
+            return
+
+        key_event = categorize(event)
+        if key_event.keystate == 1:  # down
+            self.held_keys.add(event.code)
+            self._check_combo_start()
+            self._check_quit_combo()
+            asyncio.ensure_future(self._notify_held_buttons())
+        elif key_event.keystate == 0:  # up
+            self.held_keys.discard(event.code)
+            self._cancel_combo()
+            asyncio.ensure_future(self._notify_held_buttons())
+
+    def _send_moonlight_quit(self):
+        """Emit Ctrl+Alt+Shift+Q via uinput to cleanly exit Moonlight."""
+        if not self.uinput:
+            return
+        keys = [ecodes.KEY_LEFTCTRL, ecodes.KEY_LEFTALT, ecodes.KEY_LEFTSHIFT, ecodes.KEY_Q]
+        for k in keys:
+            self._emit_key(k, 1)
+        for k in reversed(keys):
+            self._emit_key(k, 0)
+        log.info("Sent Ctrl+Alt+Shift+Q to quit Moonlight")
 
     def _emit_key(self, key, value):
         if self.uinput:
@@ -335,9 +365,17 @@ class InputDaemon:
             self.combo_task.cancel()
             self.combo_task = None
 
+    def _cancel_combo_unconditional(self):
+        """Cancel combo task regardless of held key state (for mode transitions)."""
+        if self.combo_task:
+            self.combo_task.cancel()
+            self.combo_task = None
+
     def _check_quit_combo(self):
         if QUIT_COMBO_KEYS.issubset(self.held_keys):
             log.info("Force-quit combo detected (Back+Home+LB+RB)")
+            if not self.grabbed:
+                self._send_moonlight_quit()
             asyncio.ensure_future(self._notify_subscribers("combo:force-quit"))
 
     async def _combo_timer(self):
@@ -356,6 +394,9 @@ class InputDaemon:
             try:
                 self.gamepad.grab()
                 self.grabbed = True
+                self._cancel_combo_unconditional()
+                self.held_keys.clear()
+                self._reset_triggers()
                 log.info("Grabbed gamepad exclusively")
             except OSError as e:
                 log.error("Failed to grab gamepad: %s", e)
@@ -365,6 +406,9 @@ class InputDaemon:
             try:
                 self.gamepad.ungrab()
                 self.grabbed = False
+                self._cancel_combo_unconditional()
+                self.held_keys.clear()
+                self._reset_triggers()
                 log.info("Released gamepad grab")
             except OSError as e:
                 log.error("Failed to ungrab gamepad: %s", e)
