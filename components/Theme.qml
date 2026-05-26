@@ -11,6 +11,10 @@ Item {
     // "servers" (one card per host) or "apps" (one row per host, cards = apps)
     property string moonlightViewMode: "servers"
 
+    // === Input Mode ===
+    // true when mouse/right-stick is driving focus, false for controller/D-pad
+    property bool mouseMode: false
+
     // === Controller Debug Overlay ===
     property bool controllerDebug: false
     property int _currentHour: new Date().getHours()
