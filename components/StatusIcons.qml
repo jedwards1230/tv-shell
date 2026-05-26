@@ -62,6 +62,17 @@ FocusScope {
         }
     }
 
+    Connections {
+        target: Theme
+        function onMouseModeChanged() {
+            if (Theme.mouseMode) return
+            if (settingsMA.containsMouse) { root.currentIndex = 0; root.forceActiveFocus() }
+            else if (themeMA.containsMouse) { root.currentIndex = 1; root.forceActiveFocus() }
+            else if (networkMA.containsMouse) { root.currentIndex = 2; root.forceActiveFocus() }
+            else if (volumeMA.containsMouse) { root.currentIndex = 3; root.forceActiveFocus() }
+        }
+    }
+
     RowLayout {
         id: iconRow
         anchors.fill: parent
@@ -73,8 +84,8 @@ FocusScope {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
-            color: settingsMA.containsMouse ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && root.currentIndex === 0 ? 3 : 0
+            color: settingsMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 0 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -90,7 +101,7 @@ FocusScope {
             Text {
                 anchors.centerIn: parent
                 text: "⚙"; font.pixelSize: root._imgSize
-                color: settingsMA.containsMouse ? Theme.textPrimary : Theme.textMuted
+                color: settingsMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
                 visible: settingsIcon.status !== Image.Ready
             }
             MouseArea {
@@ -105,8 +116,8 @@ FocusScope {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
-            color: themeMA.containsMouse ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && root.currentIndex === 1 ? 3 : 0
+            color: themeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 1 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -131,7 +142,7 @@ FocusScope {
                 anchors.centerIn: parent
                 text: Theme.themeMode === "dark" ? "☽" : Theme.themeMode === "light" ? "☀" : "◐"
                 font.pixelSize: root._imgSize
-                color: themeMA.containsMouse ? Theme.textPrimary : Theme.textMuted
+                color: themeMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
                 visible: themeIcon.status !== Image.Ready
             }
             MouseArea {
@@ -150,8 +161,8 @@ FocusScope {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
-            color: networkMA.containsMouse ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && root.currentIndex === 2 ? 3 : 0
+            color: networkMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 2 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -188,8 +199,8 @@ FocusScope {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
-            color: volumeMA.containsMouse ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && root.currentIndex === 3 ? 3 : 0
+            color: volumeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 3 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color { ColorAnimation { duration: 150 } }
 

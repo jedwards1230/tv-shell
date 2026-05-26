@@ -85,7 +85,9 @@ Rectangle {
                         color: {
                             if (root.currentSection === index)
                                 return Theme.sidebarActive
-                            if (sidebarList.currentIndex === index && sidebarList.activeFocus)
+                            if (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode)
+                                return Theme.surfaceHover
+                            if (sidebarMA.containsMouse && Theme.mouseMode)
                                 return Theme.surfaceHover
                             return "transparent"
                         }
@@ -100,7 +102,7 @@ Rectangle {
                             height: parent.height - 16
                             radius: 2
                             color: Theme.focusBorder
-                            visible: sidebarList.currentIndex === index && sidebarList.activeFocus
+                            visible: (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode) || (sidebarMA.containsMouse && Theme.mouseMode)
                         }
 
                         RowLayout {
@@ -126,6 +128,7 @@ Rectangle {
                         }
 
                         MouseArea {
+                            id: sidebarMA
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
@@ -133,6 +136,16 @@ Rectangle {
                                 sidebarList.currentIndex = index
                                 root.currentSection = index
                                 sidebarList.forceActiveFocus()
+                            }
+                        }
+
+                        Connections {
+                            target: Theme
+                            function onMouseModeChanged() {
+                                if (!Theme.mouseMode && sidebarMA.containsMouse) {
+                                    sidebarList.currentIndex = index
+                                    sidebarList.forceActiveFocus()
+                                }
                             }
                         }
                     }

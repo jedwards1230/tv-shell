@@ -7,11 +7,19 @@ Rectangle {
     width: implicitWidth
     height: implicitHeight
     radius: 16
-    color: root.activeFocus || mouseArea.containsMouse ? Theme.surfaceHover : Theme.surface
-    border.width: root.activeFocus ? 3 : 2
-    border.color: root.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+    color: (root.activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode) ? Theme.surfaceHover : Theme.surface
+    border.width: root.activeFocus && !Theme.mouseMode ? 3 : 2
+    border.color: root.activeFocus && !Theme.mouseMode ? Theme.focusBorder : Theme.surfaceBorder
 
     property alias text: label.text
+
+    Connections {
+        target: Theme
+        function onMouseModeChanged() {
+            if (!Theme.mouseMode && mouseArea.containsMouse)
+                root.forceActiveFocus()
+        }
+    }
 
     Behavior on color { ColorAnimation { duration: 150 } }
     Behavior on border.color { ColorAnimation { duration: 150 } }

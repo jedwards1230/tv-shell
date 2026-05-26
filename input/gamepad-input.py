@@ -156,6 +156,9 @@ class InputDaemon:
         self.left_trigger_held = False
         self.right_trigger_held = False
 
+        # Input mode: "controller" (D-pad/left stick/face buttons) or "mouse" (right stick/LB/RB)
+        self._input_mode: str = "controller"
+
         # Stick calibration — computed from device absinfo on connect
         self.stick_center_x: int = 0
         self.stick_center_y: int = 0
@@ -165,6 +168,12 @@ class InputDaemon:
         self.rstick_center_y: int = 0
         self.rstick_threshold_x: int = 0
         self.rstick_threshold_y: int = 0
+
+    async def _set_input_mode(self, mode: str):
+        if mode == self._input_mode:
+            return
+        self._input_mode = mode
+        await self._notify_subscribers(f"input-mode:{mode}")
 
     async def start(self):
         # Deduplicate mapped keys (e.g., BTN_SOUTH and BTN_START both map to KEY_ENTER)
@@ -238,6 +247,11 @@ class InputDaemon:
                 self._check_combo_start()
                 self._check_quit_combo()
                 asyncio.ensure_future(self._notify_held_buttons())
+                # Input mode: LB/RB → mouse, other remappable buttons → controller
+                if event.code in (ecodes.BTN_TL, ecodes.BTN_TR):
+                    asyncio.ensure_future(self._set_input_mode("mouse"))
+                elif event.code in REMAPPABLE_BUTTONS or event.code == ecodes.BTN_SELECT:
+                    asyncio.ensure_future(self._set_input_mode("controller"))
             elif key_event.keystate == 0:  # up
                 self.held_keys.discard(event.code)
                 self._cancel_combo()
@@ -282,6 +296,8 @@ class InputDaemon:
                     self._emit_key(ecodes.KEY_RIGHT, 0)
                     self.held_keys.discard(ecodes.KEY_LEFT)
                     self.held_keys.discard(ecodes.KEY_RIGHT)
+                if event.value != 0:
+                    asyncio.ensure_future(self._set_input_mode("controller"))
                 asyncio.ensure_future(self._notify_held_buttons())
             elif event.code == ecodes.ABS_HAT0Y:
                 if event.value == -1:
@@ -295,6 +311,8 @@ class InputDaemon:
                     self._emit_key(ecodes.KEY_DOWN, 0)
                     self.held_keys.discard(ecodes.KEY_UP)
                     self.held_keys.discard(ecodes.KEY_DOWN)
+                if event.value != 0:
+                    asyncio.ensure_future(self._set_input_mode("controller"))
                 asyncio.ensure_future(self._notify_held_buttons())
 
             # Left analog stick → arrow keys (with deadzone + repeat)
@@ -355,6 +373,11 @@ class InputDaemon:
             self._check_combo_start()
             self._check_quit_combo()
             asyncio.ensure_future(self._notify_held_buttons())
+            # Input mode: LB/RB → mouse, other remappable buttons → controller
+            if event.code in (ecodes.BTN_TL, ecodes.BTN_TR):
+                asyncio.ensure_future(self._set_input_mode("mouse"))
+            elif event.code in REMAPPABLE_BUTTONS or event.code == ecodes.BTN_SELECT:
+                asyncio.ensure_future(self._set_input_mode("controller"))
         elif key_event.keystate == 0:  # up
             self.held_keys.discard(event.code)
             self._cancel_combo()
@@ -502,6 +525,7 @@ class InputDaemon:
         if new_key is not None:
             self._emit_key(new_key, 1)
             self._start_stick_repeat(axis, new_key)
+            asyncio.ensure_future(self._set_input_mode("controller"))
         asyncio.ensure_future(self._notify_held_buttons())
 
     def _handle_rstick_axis(self, value: int, axis: str):
@@ -519,12 +543,18 @@ class InputDaemon:
         if axis == "x":
             new_dir = "R←" if offset < -threshold else ("R→" if offset > threshold else None)
             if new_dir != self.rstick_x_dir:
+                old_dir = self.rstick_x_dir
                 self.rstick_x_dir = new_dir
+                if new_dir is not None and old_dir is None:
+                    asyncio.ensure_future(self._set_input_mode("mouse"))
                 asyncio.ensure_future(self._notify_held_buttons())
         else:
             new_dir = "R↑" if offset < -threshold else ("R↓" if offset > threshold else None)
             if new_dir != self.rstick_y_dir:
+                old_dir = self.rstick_y_dir
                 self.rstick_y_dir = new_dir
+                if new_dir is not None and old_dir is None:
+                    asyncio.ensure_future(self._set_input_mode("mouse"))
                 asyncio.ensure_future(self._notify_held_buttons())
 
         # Start mouse movement task if any deflection, stop if both centered
@@ -648,6 +678,7 @@ class InputDaemon:
                 self._cancel_combo_unconditional()
                 self.held_keys.clear()
                 self._reset_triggers()
+                asyncio.ensure_future(self._set_input_mode("controller"))
                 log.info("Grabbed gamepad exclusively")
             except OSError as e:
                 log.error("Failed to grab gamepad: %s", e)
