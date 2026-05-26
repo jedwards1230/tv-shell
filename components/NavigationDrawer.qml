@@ -2,28 +2,22 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
-/**
- * NavigationDrawer — Left navigation drawer with Home, Settings, Force Quit,
- * controller capture toggle, and theme toggle.
- */
 Drawer {
     id: root
     edge: "left"
-    drawerWidth: 800
+    drawerWidth: 960
 
     signal forceQuitRequested()
     signal settingsRequested()
 
-    // Controller grab state: "grabbed" or "released"
     property string _grabState: "grabbed"
+    property int _focusSection: 0  // 0=nav, 1=bottom
 
-    // === Force Quit Process ===
     Process {
         id: forceQuitProcess
         command: ["bash", "-c", "pkill -f moonlight; pkill -f steam; true"]
     }
 
-    // === Input control processes ===
     Process {
         id: grabProcess
         command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'grab\\n'); print(s.recv(64).decode().strip()); s.close()"]
@@ -40,7 +34,6 @@ Drawer {
         }
     }
 
-    // Query grab state on open
     Process {
         id: statusProcess
         command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'status\\n'); print(s.recv(64).decode().strip()); s.close()"]
@@ -56,6 +49,7 @@ Drawer {
     onOpenedChanged: {
         if (opened) {
             navList.currentIndex = 0
+            root._focusSection = 0
             navFocusTimer.restart()
             statusProcess.running = true
         }
@@ -65,28 +59,6 @@ Drawer {
         id: navFocusTimer
         interval: 50
         onTriggered: navList.forceActiveFocus()
-    }
-
-    // === Navigation items model ===
-    // type: "action" = clickable item, "toggle" = toggle switch, "separator" = visual divider
-    property var _navItems: [
-        { label: "Home",               icon: "\u{1F3E0}", type: "action",    action: "home" },
-        { label: "Settings",           icon: "⚙",    type: "action",    action: "settings" },
-        { label: "Force Quit",         icon: "⏹",    type: "action",    action: "forceQuit" },
-        { label: "",                   icon: "",          type: "separator", action: "" },
-        { label: "Controller Capture", icon: "\u{1F3AE}", type: "toggle",   action: "toggleGrab" },
-        { label: "Dark / Light Mode",  icon: "\u{1F3A8}", type: "toggle",   action: "toggleTheme" },
-        { label: "",                   icon: "",          type: "separator", action: "" }
-    ]
-
-    // Indices that are focusable (skip separators)
-    property var _focusableIndices: {
-        let result = []
-        for (let i = 0; i < _navItems.length; i++) {
-            if (_navItems[i].type !== "separator")
-                result.push(i)
-        }
-        return result
     }
 
     ColumnLayout {
@@ -105,9 +77,9 @@ Drawer {
                 Text {
                     id: drawerClock
                     font.pixelSize: Theme.fontHero * 0.7
-                    Layout.alignment: Qt.AlignHCenter
                     font.bold: true
                     color: Theme.textPrimary
+                    Layout.alignment: Qt.AlignHCenter
 
                     Timer {
                         interval: 1000
@@ -141,182 +113,180 @@ Drawer {
             }
         }
 
-        // Divider under clock
-        Rectangle {
-            Layout.fillWidth: true
-            height: 2
-            color: Theme.surfaceBorder
-        }
+        Rectangle { Layout.fillWidth: true; height: 2; color: Theme.surfaceBorder }
 
-        // === Navigation List ===
+        // === Top Navigation Items ===
         ListView {
             id: navList
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            model: root._navItems
-            focus: true
-            clip: true
+            Layout.preferredHeight: contentHeight
+            model: [
+                { label: "Home",       icon: "\u{1F3E0}", action: "home" },
+                { label: "Settings",   icon: "⚙",    action: "settings" },
+                { label: "Force Quit", icon: "⏹",    action: "forceQuit" }
+            ]
+            focus: root._focusSection === 0
+            interactive: false
             currentIndex: 0
 
-            delegate: Item {
+            delegate: Rectangle {
                 required property int index
                 required property var modelData
-
                 width: navList.width
-                height: modelData.type === "separator" ? 40 : 100
+                height: 120
+                color: navList.currentIndex === index && navList.activeFocus ? Theme.surfaceHover : "transparent"
+                Behavior on color { ColorAnimation { duration: 150 } }
 
-                // Separator
                 Rectangle {
                     anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: 40
-                    anchors.rightMargin: 40
                     anchors.verticalCenter: parent.verticalCenter
-                    height: 2
-                    color: Theme.surfaceBorder
-                    visible: modelData.type === "separator"
+                    width: 4; height: parent.height - 16; radius: 2
+                    color: Theme.focusBorder
+                    visible: navList.currentIndex === index && navList.activeFocus
                 }
 
-                // Action / Toggle item
-                Rectangle {
+                RowLayout {
                     anchors.fill: parent
-                    visible: modelData.type !== "separator"
-                    color: {
-                        if (navList.currentIndex === index && navList.activeFocus)
-                            return Theme.surfaceHover
-                        return "transparent"
+                    anchors.leftMargin: 48
+                    anchors.rightMargin: 48
+                    spacing: 24
+
+                    Text {
+                        text: modelData.icon
+                        font.pixelSize: Theme.fontBody
+                        Layout.preferredWidth: 64
+                        horizontalAlignment: Text.AlignHCenter
                     }
-
-                    Behavior on color { ColorAnimation { duration: 150 } }
-
-                    // Left accent bar on focused item
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 4
-                        height: parent.height - 16
-                        radius: 2
-                        color: Theme.focusBorder
-                        visible: navList.currentIndex === index && navList.activeFocus
+                    Text {
+                        text: modelData.label
+                        font.pixelSize: Theme.fontBody
+                        color: modelData.action === "forceQuit" ? Theme.crimson : Theme.textPrimary
+                        font.bold: modelData.action === "forceQuit"
+                        Layout.fillWidth: true
                     }
+                }
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 40
-                        anchors.rightMargin: 40
-                        spacing: 20
-
-                        // Icon
-                        Text {
-                            text: modelData.icon
-                            font.pixelSize: Theme.fontBody
-                            Layout.preferredWidth: 64
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-
-                        // Label
-                        Text {
-                            text: modelData.label
-                            font.pixelSize: Theme.fontBody
-                            color: {
-                                if (modelData.action === "forceQuit")
-                                    return Theme.crimson
-                                return Theme.textPrimary
-                            }
-                            font.bold: modelData.action === "forceQuit"
-                            Layout.fillWidth: true
-                        }
-
-                        // Status text for toggles
-                        Text {
-                            visible: modelData.type === "toggle"
-                            font.pixelSize: Theme.fontSmall
-                            color: Theme.textMuted
-                            text: {
-                                if (modelData.action === "toggleGrab") {
-                                    return root._grabState === "grabbed" ? "Capturing keys..." : "Keys released"
-                                }
-                                if (modelData.action === "toggleTheme") {
-                                    if (Theme.themeMode === "dark") return "Dark"
-                                    if (Theme.themeMode === "light") return "Light"
-                                    return "Auto"
-                                }
-                                return ""
-                            }
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root._activateItem(index)
-                    }
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root._activateNav(index)
                 }
             }
 
-            // Key navigation: skip separators
             Keys.onDownPressed: {
-                let currentFocusIdx = root._focusableIndices.indexOf(navList.currentIndex)
-                if (currentFocusIdx < root._focusableIndices.length - 1) {
-                    navList.currentIndex = root._focusableIndices[currentFocusIdx + 1]
+                if (currentIndex < count - 1) currentIndex++
+                else { root._focusSection = 1; bottomList.forceActiveFocus() }
+            }
+            Keys.onUpPressed: { if (currentIndex > 0) currentIndex-- }
+            Keys.onReturnPressed: root._activateNav(currentIndex)
+        }
+
+        // === Spacer — pushes bottom items down ===
+        Item { Layout.fillWidth: true; Layout.fillHeight: true }
+
+        // === Bottom Section: Controller + Settings ===
+        Rectangle { Layout.fillWidth: true; height: 2; color: Theme.surfaceBorder }
+
+        ListView {
+            id: bottomList
+            Layout.fillWidth: true
+            Layout.preferredHeight: contentHeight
+            model: [
+                { label: "Controller", icon: "\u{1F3AE}", action: "toggleGrab", type: "toggle" },
+                { label: "Settings",   icon: "⚙",    action: "settings",   type: "action" }
+            ]
+            focus: root._focusSection === 1
+            interactive: false
+            currentIndex: 0
+
+            delegate: Rectangle {
+                required property int index
+                required property var modelData
+                width: bottomList.width
+                height: 120
+                color: bottomList.currentIndex === index && bottomList.activeFocus ? Theme.surfaceHover : "transparent"
+                Behavior on color { ColorAnimation { duration: 150 } }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 4; height: parent.height - 16; radius: 2
+                    color: Theme.focusBorder
+                    visible: bottomList.currentIndex === index && bottomList.activeFocus
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 48
+                    anchors.rightMargin: 48
+                    spacing: 24
+
+                    Text {
+                        text: modelData.icon
+                        font.pixelSize: Theme.fontBody
+                        Layout.preferredWidth: 64
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Text {
+                            text: modelData.label
+                            font.pixelSize: Theme.fontBody
+                            color: Theme.textPrimary
+                        }
+                        Text {
+                            visible: modelData.type === "toggle"
+                            text: root._grabState === "grabbed" ? "Currently capturing keys..." : "Key capture off"
+                            font.pixelSize: Theme.fontSmall
+                            color: Theme.textMuted
+                        }
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root._activateBottom(index)
                 }
             }
 
             Keys.onUpPressed: {
-                let currentFocusIdx = root._focusableIndices.indexOf(navList.currentIndex)
-                if (currentFocusIdx > 0) {
-                    navList.currentIndex = root._focusableIndices[currentFocusIdx - 1]
-                }
+                if (currentIndex > 0) currentIndex--
+                else { root._focusSection = 0; navList.forceActiveFocus() }
             }
-
-            Keys.onReturnPressed: root._activateItem(navList.currentIndex)
-        }
-
-        // === Hint Bar ===
-        Rectangle {
-            Layout.fillWidth: true
-            height: 80
-            color: Theme.surfaceHover
-
-            Text {
-                anchors.centerIn: parent
-                text: "A: Select  |  B: Close"
-                font.pixelSize: Theme.fontHint
-                color: Theme.textSecondary
-            }
+            Keys.onDownPressed: { if (currentIndex < count - 1) currentIndex++ }
+            Keys.onReturnPressed: root._activateBottom(currentIndex)
         }
     }
 
-    function _activateItem(index) {
-        let item = _navItems[index]
-        if (!item || item.type === "separator") return
-
-        switch (item.action) {
+    function _activateNav(index) {
+        let items = navList.model
+        if (index < 0 || index >= items.length) return
+        switch (items[index].action) {
             case "home":
-                root.opened = false
-                root.closed()
+                root.opened = false; root.closed(); break
+            case "settings":
+                root.opened = false; root.closed(); root.settingsRequested(); break
+            case "forceQuit":
+                forceQuitProcess.running = true; root.forceQuitRequested(); break
+        }
+    }
+
+    function _activateBottom(index) {
+        let items = bottomList.model
+        if (index < 0 || index >= items.length) return
+        switch (items[index].action) {
+            case "toggleGrab":
+                if (root._grabState === "grabbed") releaseProcess.running = true
+                else grabProcess.running = true
                 break
             case "settings":
-                root.opened = false
-                root.closed()
-                root.settingsRequested()
-                break
-            case "forceQuit":
-                forceQuitProcess.running = true
-                root.forceQuitRequested()
-                break
-            case "toggleGrab":
-                if (root._grabState === "grabbed")
-                    releaseProcess.running = true
-                else
-                    grabProcess.running = true
-                break
-            case "toggleTheme":
-                if (Theme.themeMode === "dark") Theme.setThemeMode("light")
-                else if (Theme.themeMode === "light") Theme.setThemeMode("auto")
-                else Theme.setThemeMode("dark")
-                break
+                root.opened = false; root.closed(); root.settingsRequested(); break
         }
     }
 }
