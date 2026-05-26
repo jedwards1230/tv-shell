@@ -87,8 +87,7 @@ except:
     }
 
     function launchApp(app) {
-        appLauncher.command = ["hyprctl", "dispatch", "exec", app.exec || app.name]
-        appLauncher.running = true
+        root.appLaunchRequested(app)
         recentsTracker.command = ["python3", "-c",
             "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " +
             "d=[]; " +
@@ -321,6 +320,9 @@ except:
                 spacing: Theme.cardSpacing
                 focus: visible
                 clip: false
+                highlightMoveDuration: 150
+                highlightMoveVelocity: -1
+                keyNavigationEnabled: true
 
                 model: root.recentApps
 
@@ -338,6 +340,7 @@ except:
                     if (recentsRow.currentItem)
                         root.launchApp(recentsRow.currentItem.modelData)
                 }
+                Keys.onEnterPressed: Keys.onReturnPressed(event)
                 Keys.onUpPressed: statusIcons.forceActiveFocus()
                 Keys.onDownPressed: {
                     if (Theme.moonlightViewMode === "servers") {
@@ -377,6 +380,9 @@ except:
                 spacing: Theme.cardSpacing
                 focus: Theme.moonlightViewMode === "servers" && !recentsRow.visible
                 clip: false
+                highlightMoveDuration: 150
+                highlightMoveVelocity: -1
+                keyNavigationEnabled: true
 
                 model: root.targets
 
@@ -394,6 +400,7 @@ except:
                     if (moonlightRow.currentItem)
                         root.streamRequested(moonlightRow.currentItem.modelData)
                 }
+                Keys.onEnterPressed: Keys.onReturnPressed(event)
                 Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : statusIcons.forceActiveFocus()
                 Keys.onDownPressed: appsRow.forceActiveFocus()
                 Keys.onEscapePressed: root.settingsRequested()
@@ -455,6 +462,9 @@ except:
                         orientation: ListView.Horizontal
                         spacing: Theme.cardSpacing
                         clip: false
+                        highlightMoveDuration: 150
+                        highlightMoveVelocity: -1
+                        keyNavigationEnabled: true
                         visible: hostAppList.length > 0
 
                         // First host row gets focus when no recents visible
@@ -485,6 +495,7 @@ except:
                                 root.streamRequested(t)
                             }
                         }
+                        Keys.onEnterPressed: Keys.onReturnPressed(event)
 
                         Keys.onUpPressed: {
                             if (appViewRowDelegate.index === 0) {
@@ -532,6 +543,9 @@ except:
                 orientation: ListView.Horizontal
                 spacing: Theme.cardSpacing
                 clip: false
+                highlightMoveDuration: 150
+                highlightMoveVelocity: -1
+                keyNavigationEnabled: true
 
                 model: root.applications
 
@@ -546,6 +560,10 @@ except:
                 }
 
                 Keys.onReturnPressed: {
+                    if (appsRow.currentItem)
+                        root.launchApp(appsRow.currentItem.modelData)
+                }
+                Keys.onEnterPressed: {
                     if (appsRow.currentItem)
                         root.launchApp(appsRow.currentItem.modelData)
                 }

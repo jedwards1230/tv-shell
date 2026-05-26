@@ -12,6 +12,7 @@ ShellRoot {
     property var currentTarget: null
     property int crashCount: 0
     property var targets: []
+    property string runningAppClass: ""
     property bool avSystemOn: false
     property bool avWaking: false
 
@@ -76,14 +77,18 @@ ShellRoot {
         id: moonlight
         onExited: (exitCode, exitStatus) => {
             if (exitCode === 0) {
+                overlay.hide()
                 root.state = "idle"
                 grabInput()
             } else {
                 root.crashCount++
                 if (root.crashCount < 5) {
                     root.state = "reconnecting"
+                    overlay.show("Reconnecting... (" + root.crashCount + "/5)")
                     reconnectTimer.start()
                 } else {
+                    overlay.show("Stream failed after 5 attempts")
+                    errorDismissTimer.start()
                     root.state = "idle"
                     grabInput()
                 }
@@ -130,6 +135,9 @@ ShellRoot {
                     avWake.running = true
                     avWakeCooldown.restart()
                 }
+                else if (line.startsWith("buttons:") && line.indexOf("Home") >= 0 && root.state === "appRunning") {
+                    root.returnToShell()
+                }
             }
         }
         onExited: { comboReconnect.start() }
@@ -144,6 +152,7 @@ ShellRoot {
     function forceQuit() {
         moonlight.running = false
         forceKill.running = true
+        if (root.state === "appRunning") returnToShell()
         root.state = "idle"
         grabInput()
         navDrawer.opened = false
@@ -156,10 +165,40 @@ ShellRoot {
         command: ["bash", "-c", "pkill -f moonlight; pkill -f steam; true"]
     }
 
+    Process {
+        id: closeAppWindow
+        property string appClass: ""
+        command: ["hyprctl", "dispatch", "closewindow", "class:" + appClass]
+    }
+
+    function launchDesktopApp(app) {
+        root.state = "appRunning"
+        root.runningAppClass = ""
+        appRunner.command = ["hyprctl", "dispatch", "exec", app.exec || app.name]
+        appRunner.running = true
+    }
+
+    function returnToShell() {
+        if (root.runningAppClass !== "") {
+            closeAppWindow.appClass = root.runningAppClass
+            closeAppWindow.running = true
+        }
+        root.runningAppClass = ""
+        root.state = "idle"
+        grabInput()
+        homeFocusTimer.restart()
+    }
+
+    Process {
+        id: appRunner
+        command: ["echo"]
+    }
+
     function launchStream(target) {
         root.currentTarget = target
         root.state = "launching"
         root.crashCount = 0
+        overlay.show("Launching " + (target.app || target.name) + "...")
         avWake.running = true
         launchMoonlight()
     }
@@ -189,6 +228,7 @@ ShellRoot {
         PanelWindow {
             required property var modelData
             screen: modelData
+            visible: root.state !== "appRunning"
 
             anchors {
                 top: true
@@ -230,6 +270,7 @@ ShellRoot {
                     focus: root.state === "idle" && !settingsPanel.visible && !navDrawer.opened
 
                     onStreamRequested: (target) => root.launchStream(target)
+                    onAppLaunchRequested: (app) => root.launchDesktopApp(app)
                     onSettingsRequested: {
                         settingsPanel.visible = true
                         settingsPanel.forceActiveFocus()
