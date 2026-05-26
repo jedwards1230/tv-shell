@@ -24,7 +24,7 @@ ShellRoot {
         }
     }
 
-    Component.onCompleted: { loadTargets.running = true }
+    Component.onCompleted: { loadTargets.running = true; comboListener.running = true }
 
     Timer {
         id: crashResetTimer
@@ -36,9 +36,6 @@ ShellRoot {
     Process {
         id: avWake
         command: ["/usr/local/bin/living-room-cec", "on"]
-        onExited: (exitCode, exitStatus) => {
-            if (root.state === "launching") launchMoonlight()
-        }
     }
 
     Process {
@@ -46,19 +43,14 @@ ShellRoot {
         onExited: (exitCode, exitStatus) => {
             if (exitCode === 0) {
                 root.state = "idle"
-                overlay.hide()
                 grabInput()
             } else {
                 root.crashCount++
                 if (root.crashCount < 5) {
                     root.state = "reconnecting"
-                    overlay.show("Reconnecting...")
-                    overlay.attemptCount = root.crashCount
                     reconnectTimer.start()
                 } else {
                     root.state = "idle"
-                    overlay.show("Stream failed after 5 attempts")
-                    errorDismissTimer.start()
                     grabInput()
                 }
             }
@@ -92,12 +84,46 @@ ShellRoot {
         command: ["/usr/local/bin/end-game-session"]
     }
 
+    // Always-on combo listener — handles force-quit (Back+Home+LB+RB) from any state
+    Process {
+        id: comboListener
+        command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
+        stdout: SplitParser {
+            onRead: (line) => {
+                if (line === "combo:force-quit") root.forceQuit()
+                else if (line === "combo:end-session") endSession.running = true
+            }
+        }
+        onExited: { comboReconnect.start() }
+    }
+
+    Timer {
+        id: comboReconnect
+        interval: 2000
+        onTriggered: { comboListener.running = true }
+    }
+
+    function forceQuit() {
+        moonlight.running = false
+        forceKill.running = true
+        root.state = "idle"
+        grabInput()
+        navDrawer.opened = false
+        settingsPanel.visible = false
+        homeFocusTimer.restart()
+    }
+
+    Process {
+        id: forceKill
+        command: ["bash", "-c", "pkill -f moonlight; pkill -f steam; true"]
+    }
+
     function launchStream(target) {
         root.currentTarget = target
         root.state = "launching"
         root.crashCount = 0
-        overlay.show("Launching " + target.name + "...")
         avWake.running = true
+        launchMoonlight()
     }
 
     function launchMoonlight() {
@@ -106,14 +132,13 @@ ShellRoot {
         if (currentTarget.fps) { args.push("--fps"); args.push(String(currentTarget.fps)) }
         if (currentTarget.hdr) args.push("--hdr")
         if (currentTarget.codec) { args.push("--video-codec"); args.push(currentTarget.codec) }
-        args.push("--display-mode", "borderless")
+        args.push("--display-mode", "fullscreen")
         args.push("--no-quit-after")
         args.push("--no-frame-pacing")
 
         moonlight.command = args
         releaseInput()
         root.state = "streaming"
-        overlay.hide()
         moonlight.running = true
     }
 
@@ -140,13 +165,25 @@ ShellRoot {
             Item {
                 anchors.fill: parent
 
+                // Guide button (KEY_HOMEPAGE) toggles navigation drawer
+                Keys.onPressed: (event) => {
+                    if (event.key === Qt.Key_HomePage) {
+                        navDrawer.opened = !navDrawer.opened
+                        if (navDrawer.opened)
+                            navDrawer.forceActiveFocus()
+                        else
+                            homeFocusTimer.restart()
+                        event.accepted = true
+                    }
+                }
+
                 Components.HomeScreen {
                     id: homeScreen
                     anchors.fill: parent
                     visible: root.state === "idle"
                     targets: root.targets
                     shellState: root.state
-                    focus: root.state === "idle" && !settingsPanel.visible
+                    focus: root.state === "idle" && !settingsPanel.visible && !navDrawer.opened
 
                     onStreamRequested: (target) => root.launchStream(target)
                     onSettingsRequested: {
@@ -173,6 +210,28 @@ ShellRoot {
                 Components.StreamOverlay {
                     id: overlay
                     anchors.fill: parent
+                }
+
+                // === Navigation Drawer ===
+                Components.NavigationDrawer {
+                    id: navDrawer
+                    z: 50
+                    onForceQuitRequested: {
+                        moonlight.running = false
+                        root.state = "idle"
+                        overlay.hide()
+                        grabInput()
+                        navDrawer.opened = false
+                        homeFocusTimer.restart()
+                    }
+                    onSettingsRequested: {
+                        settingsPanel.visible = true
+                        settingsPanel.forceActiveFocus()
+                    }
+                    onClosed: {
+                        navDrawer.opened = false
+                        homeFocusTimer.restart()
+                    }
                 }
 
                 // --- Debug Input Overlay ---

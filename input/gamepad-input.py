@@ -30,10 +30,14 @@ BUTTON_MAP = {
     ecodes.BTN_EAST: ecodes.KEY_ESC,      # B → Escape
     ecodes.BTN_NORTH: ecodes.KEY_TAB,     # Y → Tab
     ecodes.BTN_START: ecodes.KEY_ENTER,   # Start → Enter
+    ecodes.BTN_MODE: ecodes.KEY_HOMEPAGE, # Guide → Homepage (navigation drawer)
 }
 
 COMBO_KEYS = {ecodes.BTN_MODE, ecodes.BTN_EAST}
 COMBO_HOLD_SECS = 3.0
+
+# Force-quit combo: Back + Home + LB + RB (instant, no hold required)
+QUIT_COMBO_KEYS = {ecodes.BTN_SELECT, ecodes.BTN_MODE, ecodes.BTN_TL, ecodes.BTN_TR}
 
 BUTTON_NAMES = {
     ecodes.BTN_SOUTH: "A",
@@ -105,8 +109,11 @@ class InputDaemon:
         self.stick_threshold_y: int = 0
 
     async def start(self):
+        # Deduplicate mapped keys (e.g., BTN_SOUTH and BTN_START both map to KEY_ENTER)
+        # sorted() ensures deterministic uinput capability registration order
+        mapped_keys = sorted(set(BUTTON_MAP.values()))
         self.uinput = UInput(
-            {ecodes.EV_KEY: list(BUTTON_MAP.values()) + [
+            {ecodes.EV_KEY: mapped_keys + [
                 ecodes.KEY_UP, ecodes.KEY_DOWN, ecodes.KEY_LEFT, ecodes.KEY_RIGHT,
             ]},
             name="game-shell-virtual-kb",
@@ -150,6 +157,7 @@ class InputDaemon:
             if key_event.keystate == 1:  # down
                 self.held_keys.add(event.code)
                 self._check_combo_start()
+                self._check_quit_combo()
                 asyncio.ensure_future(self._notify_held_buttons())
             elif key_event.keystate == 0:  # up
                 self.held_keys.discard(event.code)
@@ -326,6 +334,11 @@ class InputDaemon:
         if self.combo_task and not COMBO_KEYS.issubset(self.held_keys):
             self.combo_task.cancel()
             self.combo_task = None
+
+    def _check_quit_combo(self):
+        if QUIT_COMBO_KEYS.issubset(self.held_keys):
+            log.info("Force-quit combo detected (Back+Home+LB+RB)")
+            asyncio.ensure_future(self._notify_subscribers("combo:force-quit"))
 
     async def _combo_timer(self):
         try:
