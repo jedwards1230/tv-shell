@@ -6,6 +6,7 @@ Listens on a unix socket for grab/release/subscribe commands from the shell.
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -25,13 +26,35 @@ SOCK_PATH = os.environ.get(
     f"/run/user/{os.getuid()}/game-shell-input.sock",
 )
 
-BUTTON_MAP = {
-    ecodes.BTN_SOUTH: ecodes.KEY_ENTER,   # A → Enter
-    ecodes.BTN_EAST: ecodes.KEY_ESC,      # B → Escape
-    ecodes.BTN_NORTH: ecodes.KEY_TAB,     # Y → Tab
-    ecodes.BTN_START: ecodes.KEY_ENTER,   # Start → Enter
-    ecodes.BTN_MODE: ecodes.KEY_HOMEPAGE, # Guide → Homepage (navigation drawer)
+DEFAULT_BINDINGS = {
+    "select": (ecodes.BTN_SOUTH, ecodes.KEY_ENTER),
+    "back": (ecodes.BTN_EAST, ecodes.KEY_ESC),
+    "altSelect": (ecodes.BTN_NORTH, ecodes.KEY_TAB),
+    "confirm": (ecodes.BTN_START, ecodes.KEY_ENTER),
+    "drawer": (ecodes.BTN_MODE, ecodes.KEY_HOMEPAGE),
 }
+
+REMAPPABLE_BUTTONS = {
+    ecodes.BTN_SOUTH, ecodes.BTN_EAST, ecodes.BTN_NORTH, ecodes.BTN_WEST,
+    ecodes.BTN_TL, ecodes.BTN_TR, ecodes.BTN_SELECT, ecodes.BTN_START,
+    ecodes.BTN_MODE, ecodes.BTN_THUMBL, ecodes.BTN_THUMBR,
+}
+
+SETTINGS_PATH = Path(os.path.expanduser("~/.config/game-shell/settings.json"))
+
+
+def _button_name_to_code(name: str) -> int | None:
+    """Convert an evdev code name like 'BTN_SOUTH' to its integer code."""
+    return getattr(ecodes, name, None)
+
+
+def _button_code_to_name(code: int) -> str:
+    """Convert an evdev button code to its name like 'BTN_SOUTH'."""
+    names = ecodes.bytype.get(ecodes.EV_KEY, {}).get(code)
+    if names:
+        return names[0] if isinstance(names, list) else names
+    return f"0x{code:x}"
+
 
 COMBO_KEYS = {ecodes.BTN_MODE, ecodes.BTN_EAST}
 COMBO_HOLD_SECS = 3.0
@@ -91,6 +114,15 @@ class InputDaemon:
         self.combo_task: asyncio.Task | None = None
         self.running = True
 
+        # Build button_map from defaults, then override from config
+        self.button_map: dict[int, int] = {}
+        self._bindings: dict[str, tuple[int, int]] = dict(DEFAULT_BINDINGS)
+        self._rebuild_button_map()
+        self._load_bindings()
+
+        # Capture state for keybinding reassignment
+        self._capture_future: asyncio.Future | None = None
+
         # Left stick state: track which direction is currently "pressed"
         # and repeat tasks for each axis
         self.stick_x_key: int | None = None  # Currently emitted key for X axis
@@ -111,7 +143,7 @@ class InputDaemon:
     async def start(self):
         # Deduplicate mapped keys (e.g., BTN_SOUTH and BTN_START both map to KEY_ENTER)
         # sorted() ensures deterministic uinput capability registration order
-        mapped_keys = sorted(set(BUTTON_MAP.values()))
+        mapped_keys = sorted(set(self.button_map.values()))
         self.uinput = UInput(
             {ecodes.EV_KEY: mapped_keys + [
                 ecodes.KEY_UP, ecodes.KEY_DOWN, ecodes.KEY_LEFT, ecodes.KEY_RIGHT,
@@ -156,6 +188,11 @@ class InputDaemon:
         if event.type == ecodes.EV_KEY:
             key_event = categorize(event)
 
+            # Capture mode: resolve pending capture on key down, skip normal processing
+            if self._capture_future and not self._capture_future.done() and key_event.keystate == 1:
+                self._capture_future.set_result(event.code)
+                return
+
             # Track held state for combo detection
             if key_event.keystate == 1:  # down
                 self.held_keys.add(event.code)
@@ -168,7 +205,7 @@ class InputDaemon:
                 asyncio.ensure_future(self._notify_held_buttons())
 
             # Map to keyboard
-            mapped = BUTTON_MAP.get(event.code)
+            mapped = self.button_map.get(event.code)
             if mapped and self.uinput:
                 self.uinput.write(ecodes.EV_KEY, mapped, key_event.keystate)
                 self.uinput.syn()
@@ -294,6 +331,44 @@ class InputDaemon:
         log.info("Stick calibration: X center=%d threshold=%d, Y center=%d threshold=%d",
                  self.stick_center_x, self.stick_threshold_x,
                  self.stick_center_y, self.stick_threshold_y)
+
+    def _rebuild_button_map(self):
+        """Rebuild button_map from current bindings."""
+        self.button_map = {btn: kb for btn, kb in self._bindings.values()}
+
+    def _load_bindings(self):
+        """Load keybinding overrides from settings.json."""
+        try:
+            data = json.loads(SETTINGS_PATH.read_text())
+            kb = data.get("keyBindings")
+            if not isinstance(kb, dict):
+                return
+            for action, button_name in kb.items():
+                if action not in DEFAULT_BINDINGS:
+                    continue
+                code = _button_name_to_code(button_name)
+                if code is None or code not in REMAPPABLE_BUTTONS:
+                    continue
+                _, key_code = self._bindings[action]
+                self._bindings[action] = (code, key_code)
+            self._rebuild_button_map()
+            log.info("Loaded key bindings from %s", SETTINGS_PATH)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+
+    def _save_bindings(self):
+        """Save current keybindings to settings.json (read-modify-write, single-line)."""
+        try:
+            data = json.loads(SETTINGS_PATH.read_text())
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            data = {}
+        kb = {}
+        for action, (btn_code, _) in self._bindings.items():
+            kb[action] = _button_code_to_name(btn_code)
+        data["keyBindings"] = kb
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_PATH.write_text(json.dumps(data, separators=(",", ":")))
+        log.info("Saved key bindings to %s", SETTINGS_PATH)
 
     def _handle_stick_axis(self, value: int, axis: str,
                            neg_key: int, pos_key: int):
@@ -480,6 +555,47 @@ class InputDaemon:
                     status = "connected" if self.gamepad else "disconnected"
                     grabbed = "grabbed" if self.grabbed else "released"
                     writer.write(f"{status}:{grabbed}\n".encode())
+                elif cmd == "get-bindings":
+                    result = {}
+                    for action, (btn_code, _) in self._bindings.items():
+                        result[action] = _button_code_to_name(btn_code)
+                    writer.write((json.dumps(result, separators=(",", ":")) + "\n").encode())
+                elif cmd.startswith("set-binding "):
+                    parts = cmd.split(None, 2)
+                    if len(parts) != 3:
+                        writer.write(b"error:usage: set-binding <action> <button_name>\n")
+                    else:
+                        _, action, button_name = parts
+                        if action not in DEFAULT_BINDINGS:
+                            writer.write(f"error:unknown action '{action}'\n".encode())
+                        else:
+                            code = _button_name_to_code(button_name)
+                            if code is None or code not in REMAPPABLE_BUTTONS:
+                                writer.write(f"error:invalid button '{button_name}'\n".encode())
+                            else:
+                                _, key_code = self._bindings[action]
+                                self._bindings[action] = (code, key_code)
+                                self._rebuild_button_map()
+                                self._save_bindings()
+                                writer.write(b"ok\n")
+                elif cmd == "capture-next":
+                    if self._capture_future and not self._capture_future.done():
+                        self._capture_future.cancel()
+                    loop = asyncio.get_running_loop()
+                    self._capture_future = loop.create_future()
+                    try:
+                        code = await self._capture_future
+                        name = _button_code_to_name(code)
+                        writer.write(f"captured:{name}\n".encode())
+                    except asyncio.CancelledError:
+                        writer.write(b"cancelled\n")
+                    finally:
+                        self._capture_future = None
+                elif cmd == "capture-cancel":
+                    if self._capture_future and not self._capture_future.done():
+                        self._capture_future.cancel()
+                    self._capture_future = None
+                    writer.write(b"ok\n")
                 elif cmd == "subscribe":
                     self.subscribers.append(writer)
                     writer.write(b"subscribed\n")

@@ -45,9 +45,15 @@ Item {
 
     Process {
         id: saveSettings
-        command: ["bash", "-c",
-            "mkdir -p " + _settingsDir + " && " +
-            "echo '{\"themeMode\":\"" + themeMode + "\",\"moonlightViewMode\":\"" + moonlightViewMode + "\",\"controllerDebug\":" + controllerDebug + "}' > " + _settingsFile]
+        command: ["python3", "-c",
+            "import json,os,pathlib;" +
+            "p=pathlib.Path(os.path.expanduser('" + _settingsFile + "'));" +
+            "p.parent.mkdir(parents=True,exist_ok=True);" +
+            "d=json.loads(p.read_text()) if p.exists() else {};" +
+            "d['themeMode']='" + themeMode + "';" +
+            "d['moonlightViewMode']='" + moonlightViewMode + "';" +
+            "d['controllerDebug']=" + controllerDebug + ";" +
+            "p.write_text(json.dumps(d,separators=(',',':')))"]
     }
 
     function setThemeMode(mode) {
