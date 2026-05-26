@@ -188,6 +188,7 @@ FocusScope {
             model: root.navigationBindings
             focus: true
             interactive: false
+            keyNavigationEnabled: true
 
             KeyNavigation.down: systemList
 
@@ -290,6 +291,7 @@ FocusScope {
             clip: true
             model: root.systemBindings
             interactive: false
+            keyNavigationEnabled: true
 
             KeyNavigation.up: bindingsList
             KeyNavigation.down: resetButton
