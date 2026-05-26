@@ -145,8 +145,7 @@ ShellRoot {
                 }
                 else if (line === "combo:home-hold") {
                     if (root.state === "appRunning") {
-                        root.overlayDrawerOpen = false
-                        root.returnToShell()
+                        root.closeAndReturnToShell()
                     }
                 }
             }
@@ -163,7 +162,7 @@ ShellRoot {
     function forceQuit() {
         moonlight.running = false
         forceKill.running = true
-        if (root.state === "appRunning") returnToShell()
+        if (root.state === "appRunning") closeAndReturnToShell()
         root.overlayDrawerOpen = false
         root.state = "idle"
         grabInput()
@@ -195,14 +194,20 @@ ShellRoot {
     }
 
     function returnToShell() {
+        root.runningAppClass = ""
+        root.overlayDrawerOpen = false
+        root.state = "idle"
+        grabInput()
+        settingsPanel.visible = false
+        homeFocusTimer.restart()
+    }
+
+    function closeAndReturnToShell() {
         if (root.runningAppClass !== "") {
             closeAppWindow.appClass = root.runningAppClass
             closeAppWindow.running = true
         }
-        root.runningAppClass = ""
-        root.state = "idle"
-        grabInput()
-        homeFocusTimer.restart()
+        returnToShell()
     }
 
     Process {
@@ -271,6 +276,10 @@ ShellRoot {
         id: focusWindow
         property string windowClass: ""
         command: ["hyprctl", "dispatch", "focuswindow", "class:" + windowClass]
+        onExited: (exitCode) => {
+            if (exitCode !== 0 && root.state === "appRunning")
+                root.returnToShell()
+        }
     }
 
     function checkAndLaunchApp(app) {
@@ -297,9 +306,9 @@ ShellRoot {
                     (matchName && (cls === matchName || initCls === matchName))) {
                     // Found running instance — focus it
                     root.runningAppClass = clients[i]["class"]
-                    root.state = "appRunning"
                     focusWindow.windowClass = clients[i]["class"]
                     focusWindow.running = true
+                    root.state = "appRunning"
                     return
                 }
             }
@@ -324,11 +333,23 @@ ShellRoot {
                 for (let i = 0; i < clients.length; i++) {
                     let c = clients[i]
                     if (c["class"] && c["class"] !== "" && c["class"].indexOf("quickshell") < 0) {
+                        let cls = c["class"]
+                        let iconName = (c["initialClass"] || cls).toLowerCase()
+                        let appIcon = iconName
+                        for (let j = 0; j < homeScreen.applications.length; j++) {
+                            let a = homeScreen.applications[j]
+                            let wm = (a.wmClass || "").toLowerCase()
+                            let ex = (a.exec || "").split(/\s/)[0].split("/").pop().toLowerCase()
+                            if (wm === cls.toLowerCase() || ex === cls.toLowerCase() || (a.name || "").toLowerCase() === cls.toLowerCase()) {
+                                appIcon = a.icon || iconName
+                                break
+                            }
+                        }
                         windows.push({
-                            windowClass: c["class"],
-                            title: c["title"] || c["class"],
-                            name: c["class"],
-                            icon: c["class"].toLowerCase(),
+                            windowClass: cls,
+                            title: c["title"] || cls,
+                            name: c["title"] || cls,
+                            icon: appIcon,
                             exec: ""
                         })
                     }
@@ -336,13 +357,23 @@ ShellRoot {
                 root.runningWindows = windows
             } catch(e) { root.runningWindows = [] }
             windowPoller.stdout.buffer = ""
+            if (root.state === "appRunning" && root.runningAppClass !== "") {
+                let found = false
+                for (let i = 0; i < root.runningWindows.length; i++) {
+                    if (root.runningWindows[i].windowClass === root.runningAppClass) {
+                        found = true
+                        break
+                    }
+                }
+                if (!found) root.returnToShell()
+            }
         }
     }
 
     Timer {
         id: windowPollTimer
-        interval: 5000
-        running: root.state === "idle"
+        interval: root.state === "appRunning" ? 2000 : 5000
+        running: root.state === "idle" || root.state === "appRunning"
         repeat: true
         triggeredOnStart: true
         onTriggered: { if (!windowPoller.running) windowPoller.running = true }
@@ -429,9 +460,9 @@ ShellRoot {
                     onAppLaunchRequested: (app) => root.checkAndLaunchApp(app)
                     onAppFocusRequested: (windowClass) => {
                         root.runningAppClass = windowClass
-                        root.state = "appRunning"
                         focusWindow.windowClass = windowClass
                         focusWindow.running = true
+                        root.state = "appRunning"
                     }
                     onSettingsRequested: {
                         settingsPanel.visible = true
@@ -465,8 +496,14 @@ ShellRoot {
                     z: 50
                     visible: root.state === "idle"
                     onSettingsRequested: {
+                        navDrawer.opened = false
                         settingsPanel.visible = true
                         settingsPanel.forceActiveFocus()
+                    }
+                    onHomeSelected: {
+                        navDrawer.opened = false
+                        settingsPanel.visible = false
+                        homeFocusTimer.restart()
                     }
                     onClosed: {
                         navDrawer.opened = false
@@ -486,8 +523,13 @@ ShellRoot {
                         overlayMode: true
                         opened: root.overlayDrawerOpen
                         onHomeSelected: {
+                            root.returnToShell()
+                        }
+                        onSettingsRequested: {
                             root.overlayDrawerOpen = false
                             root.returnToShell()
+                            settingsPanel.visible = true
+                            settingsPanel.forceActiveFocus()
                         }
                         onClosed: {
                             root.overlayDrawerOpen = false
