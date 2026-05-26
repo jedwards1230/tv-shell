@@ -12,8 +12,12 @@ ShellRoot {
     property var currentTarget: null
     property int crashCount: 0
     property var targets: []
+    property string runningAppClass: ""
     property bool avSystemOn: false
     property bool avWaking: false
+    property var _pendingApp: null
+    property var runningWindows: []
+    property bool overlayDrawerOpen: false
 
     Process {
         id: loadTargets
@@ -76,14 +80,18 @@ ShellRoot {
         id: moonlight
         onExited: (exitCode, exitStatus) => {
             if (exitCode === 0) {
+                overlay.hide()
                 root.state = "idle"
                 grabInput()
             } else {
                 root.crashCount++
                 if (root.crashCount < 5) {
                     root.state = "reconnecting"
+                    overlay.show("Reconnecting... (" + root.crashCount + "/5)")
                     reconnectTimer.start()
                 } else {
+                    overlay.show("Stream failed after 5 attempts")
+                    errorDismissTimer.start()
                     root.state = "idle"
                     grabInput()
                 }
@@ -130,6 +138,16 @@ ShellRoot {
                     avWake.running = true
                     avWakeCooldown.restart()
                 }
+                else if (line === "home-press") {
+                    if (root.state === "appRunning") {
+                        root.overlayDrawerOpen = !root.overlayDrawerOpen
+                    }
+                }
+                else if (line === "combo:home-hold") {
+                    if (root.state === "appRunning") {
+                        root.closeAndReturnToShell()
+                    }
+                }
             }
         }
         onExited: { comboReconnect.start() }
@@ -144,6 +162,8 @@ ShellRoot {
     function forceQuit() {
         moonlight.running = false
         forceKill.running = true
+        if (root.state === "appRunning") closeAndReturnToShell()
+        root.overlayDrawerOpen = false
         root.state = "idle"
         grabInput()
         navDrawer.opened = false
@@ -156,10 +176,214 @@ ShellRoot {
         command: ["bash", "-c", "pkill -f moonlight; pkill -f steam; true"]
     }
 
+    Process {
+        id: closeAppWindow
+        property string appClass: ""
+        command: ["hyprctl", "dispatch", "closewindow", "class:" + appClass]
+    }
+
+    property var _prelaunchClasses: []
+
+    function launchDesktopApp(app) {
+        root.state = "appRunning"
+        root.runningAppClass = ""
+        snapshotClients.running = true
+        appRunner.command = ["hyprctl", "dispatch", "exec", app.exec || app.name]
+        appRunner.running = true
+        detectNewWindow.restart()
+    }
+
+    function returnToShell() {
+        root.runningAppClass = ""
+        root.overlayDrawerOpen = false
+        root.state = "idle"
+        grabInput()
+        settingsPanel.visible = false
+        homeFocusTimer.restart()
+    }
+
+    function closeAndReturnToShell() {
+        if (root.runningAppClass !== "") {
+            closeAppWindow.appClass = root.runningAppClass
+            closeAppWindow.running = true
+        }
+        returnToShell()
+    }
+
+    Process {
+        id: appRunner
+        command: ["echo"]
+    }
+
+    Process {
+        id: snapshotClients
+        command: ["hyprctl", "clients", "-j"]
+        stdout: SplitParser {
+            property string buffer: ""
+            onRead: (line) => { buffer += line }
+        }
+        onExited: {
+            try {
+                let clients = JSON.parse(snapshotClients.stdout.buffer)
+                root._prelaunchClasses = clients.map(c => c["class"])
+            } catch(e) { root._prelaunchClasses = [] }
+            snapshotClients.stdout.buffer = ""
+        }
+    }
+
+    Process {
+        id: detectClient
+        command: ["hyprctl", "clients", "-j"]
+        stdout: SplitParser {
+            property string buffer: ""
+            onRead: (line) => { buffer += line }
+        }
+        onExited: {
+            try {
+                let clients = JSON.parse(detectClient.stdout.buffer)
+                for (let i = 0; i < clients.length; i++) {
+                    if (root._prelaunchClasses.indexOf(clients[i]["class"]) < 0 && clients[i]["class"] !== "") {
+                        root.runningAppClass = clients[i]["class"]
+                        break
+                    }
+                }
+            } catch(e) {}
+            detectClient.stdout.buffer = ""
+        }
+    }
+
+    Timer {
+        id: detectNewWindow
+        interval: 2000
+        onTriggered: { detectClient.running = true }
+    }
+
+    // === App Resume: query running windows before launching ===
+    Process {
+        id: windowQuery
+        command: ["hyprctl", "clients", "-j"]
+        stdout: SplitParser {
+            property string buffer: ""
+            onRead: (line) => { buffer += line }
+        }
+        onExited: {
+            root._handleWindowQueryResult(windowQuery.stdout.buffer)
+            windowQuery.stdout.buffer = ""
+        }
+    }
+
+    Process {
+        id: focusWindow
+        property string windowClass: ""
+        command: ["hyprctl", "dispatch", "focuswindow", "class:" + windowClass]
+        onExited: (exitCode) => {
+            if (exitCode !== 0 && root.state === "appRunning")
+                root.returnToShell()
+        }
+    }
+
+    function checkAndLaunchApp(app) {
+        root._pendingApp = app
+        windowQuery.running = true
+    }
+
+    function _handleWindowQueryResult(jsonStr) {
+        let app = root._pendingApp
+        if (!app) return
+        root._pendingApp = null
+
+        try {
+            let clients = JSON.parse(jsonStr)
+            let matchClass = (app.wmClass || "").toLowerCase()
+            let matchExec = (app.exec || "").split(/\s/)[0].split("/").pop().toLowerCase()
+            let matchName = (app.name || "").toLowerCase()
+
+            for (let i = 0; i < clients.length; i++) {
+                let cls = (clients[i]["class"] || "").toLowerCase()
+                let initCls = (clients[i]["initialClass"] || "").toLowerCase()
+                if ((matchClass && (cls === matchClass || initCls === matchClass)) ||
+                    (matchExec && (cls === matchExec || initCls === matchExec)) ||
+                    (matchName && (cls === matchName || initCls === matchName))) {
+                    // Found running instance — focus it
+                    root.runningAppClass = clients[i]["class"]
+                    focusWindow.windowClass = clients[i]["class"]
+                    focusWindow.running = true
+                    root.state = "appRunning"
+                    return
+                }
+            }
+        } catch(e) {}
+
+        // Not running — launch new
+        root.launchDesktopApp(app)
+    }
+
+    // === Running Windows Polling ===
+    Process {
+        id: windowPoller
+        command: ["hyprctl", "clients", "-j"]
+        stdout: SplitParser {
+            property string buffer: ""
+            onRead: (line) => { buffer += line }
+        }
+        onExited: {
+            try {
+                let clients = JSON.parse(windowPoller.stdout.buffer)
+                let windows = []
+                for (let i = 0; i < clients.length; i++) {
+                    let c = clients[i]
+                    if (c["class"] && c["class"] !== "" && c["class"].indexOf("quickshell") < 0) {
+                        let cls = c["class"]
+                        let iconName = (c["initialClass"] || cls).toLowerCase()
+                        let appIcon = iconName
+                        for (let j = 0; j < homeScreen.applications.length; j++) {
+                            let a = homeScreen.applications[j]
+                            let wm = (a.wmClass || "").toLowerCase()
+                            let ex = (a.exec || "").split(/\s/)[0].split("/").pop().toLowerCase()
+                            if (wm === cls.toLowerCase() || ex === cls.toLowerCase() || (a.name || "").toLowerCase() === cls.toLowerCase()) {
+                                appIcon = a.icon || iconName
+                                break
+                            }
+                        }
+                        windows.push({
+                            windowClass: cls,
+                            title: c["title"] || cls,
+                            name: c["title"] || cls,
+                            icon: appIcon,
+                            exec: ""
+                        })
+                    }
+                }
+                root.runningWindows = windows
+            } catch(e) { root.runningWindows = [] }
+            windowPoller.stdout.buffer = ""
+            if (root.state === "appRunning" && root.runningAppClass !== "") {
+                let found = false
+                for (let i = 0; i < root.runningWindows.length; i++) {
+                    if (root.runningWindows[i].windowClass === root.runningAppClass) {
+                        found = true
+                        break
+                    }
+                }
+                if (!found) root.returnToShell()
+            }
+        }
+    }
+
+    Timer {
+        id: windowPollTimer
+        interval: root.state === "appRunning" ? 2000 : 5000
+        running: root.state === "idle" || root.state === "appRunning"
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: { if (!windowPoller.running) windowPoller.running = true }
+    }
+
     function launchStream(target) {
         root.currentTarget = target
         root.state = "launching"
         root.crashCount = 0
+        overlay.show("Launching " + (target.app || target.name) + "...")
         avWake.running = true
         launchMoonlight()
     }
@@ -189,6 +413,7 @@ ShellRoot {
         PanelWindow {
             required property var modelData
             screen: modelData
+            visible: root.state !== "appRunning" || root.overlayDrawerOpen
 
             anchors {
                 top: true
@@ -197,7 +422,7 @@ ShellRoot {
                 right: true
             }
 
-            color: Components.Theme.background
+            color: root.state === "appRunning" ? "transparent" : Components.Theme.background
             focusable: true
 
             Item {
@@ -229,7 +454,16 @@ ShellRoot {
                     shellState: root.state
                     focus: root.state === "idle" && !settingsPanel.visible && !navDrawer.opened
 
+                    runningWindows: root.runningWindows
+
                     onStreamRequested: (target) => root.launchStream(target)
+                    onAppLaunchRequested: (app) => root.checkAndLaunchApp(app)
+                    onAppFocusRequested: (windowClass) => {
+                        root.runningAppClass = windowClass
+                        focusWindow.windowClass = windowClass
+                        focusWindow.running = true
+                        root.state = "appRunning"
+                    }
                     onSettingsRequested: {
                         settingsPanel.visible = true
                         settingsPanel.forceActiveFocus()
@@ -256,17 +490,54 @@ ShellRoot {
                     anchors.fill: parent
                 }
 
-                // === Navigation Drawer ===
+                // === Navigation Drawer (idle state) ===
                 Components.NavigationDrawer {
                     id: navDrawer
                     z: 50
+                    visible: root.state === "idle"
                     onSettingsRequested: {
+                        navDrawer.opened = false
                         settingsPanel.visible = true
                         settingsPanel.forceActiveFocus()
+                    }
+                    onHomeSelected: {
+                        navDrawer.opened = false
+                        settingsPanel.visible = false
+                        homeFocusTimer.restart()
                     }
                     onClosed: {
                         navDrawer.opened = false
                         homeFocusTimer.restart()
+                    }
+                }
+
+                // === Overlay Drawer (appRunning state) ===
+                Rectangle {
+                    anchors.fill: parent
+                    color: Qt.rgba(0, 0, 0, 0.5)
+                    visible: root.state === "appRunning" && root.overlayDrawerOpen
+                    z: 50
+
+                    Components.NavigationDrawer {
+                        id: overlayNavDrawer
+                        overlayMode: true
+                        opened: root.overlayDrawerOpen
+                        onHomeSelected: {
+                            root.returnToShell()
+                        }
+                        onSettingsRequested: {
+                            root.overlayDrawerOpen = false
+                            root.returnToShell()
+                            settingsPanel.visible = true
+                            settingsPanel.forceActiveFocus()
+                        }
+                        onClosed: {
+                            root.overlayDrawerOpen = false
+                        }
+                    }
+
+                    Keys.onEscapePressed: {
+                        root.overlayDrawerOpen = false
                     }
                 }
 
@@ -389,5 +660,6 @@ ShellRoot {
 
             }
         }
+
     }
 }

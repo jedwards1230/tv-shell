@@ -15,8 +15,11 @@ FocusScope {
     property int _appDiscoveryIndex: -1
     property bool _appDiscoveryRunning: false
 
+    property var runningWindows: []
+
     signal streamRequested(var target)
     signal appLaunchRequested(var app)
+    signal appFocusRequested(string windowClass)
     signal settingsRequested()
 
     // Load installed applications
@@ -42,7 +45,7 @@ for d in ['/usr/share/applications', os.path.expanduser('~/.local/share/applicat
         ex = cp.get('Desktop Entry', 'Exec', fallback='')
         for tok in ['%u','%U','%f','%F','%i','%c','%k']:
             ex = ex.replace(tok, '')
-        apps.append({'name': name, 'exec': ex.strip(), 'icon': cp.get('Desktop Entry', 'Icon', fallback=''), 'comment': cp.get('Desktop Entry', 'Comment', fallback='')})
+        apps.append({'name': name, 'exec': ex.strip(), 'icon': cp.get('Desktop Entry', 'Icon', fallback=''), 'comment': cp.get('Desktop Entry', 'Comment', fallback=''), 'wmClass': cp.get('Desktop Entry', 'StartupWMClass', fallback='')})
 apps.sort(key=lambda x: x['name'].lower())
 print(json.dumps(apps))
 `]
@@ -80,15 +83,8 @@ except:
         loadRecents.running = true
     }
 
-    // App launcher + recents tracker
-    Process {
-        id: appLauncher
-        command: ["echo"]
-    }
-
     function launchApp(app) {
-        appLauncher.command = ["hyprctl", "dispatch", "exec", app.exec || app.name]
-        appLauncher.running = true
+        root.appLaunchRequested(app)
         recentsTracker.command = ["python3", "-c",
             "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " +
             "d=[]; " +
@@ -287,6 +283,67 @@ except:
                 Layout.alignment: Qt.AlignTop | Qt.AlignRight
                 onSettingsRequested: root.settingsRequested()
                 onFocusDownRequested: {
+                    if (runningRow.visible)
+                        runningRow.forceActiveFocus()
+                    else if (recentsRow.visible)
+                        recentsRow.forceActiveFocus()
+                    else if (Theme.moonlightViewMode === "servers")
+                        moonlightRow.forceActiveFocus()
+                    else if (!root._focusAppViewRow(0))
+                        appsRow.forceActiveFocus()
+                }
+            }
+        }
+
+        // === Running Windows Row ===
+        Text {
+            visible: root.runningWindows.length > 0
+            text: "Running"
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        Item {
+            id: runningContainer
+            visible: root.runningWindows.length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? Theme.rowHeight : 0
+
+            ListView {
+                id: runningRow
+                anchors.fill: parent
+                anchors.topMargin: -16
+                anchors.bottomMargin: -16
+                orientation: ListView.Horizontal
+                spacing: Theme.cardSpacing
+                clip: false
+                highlightMoveDuration: 150
+                highlightMoveVelocity: -1
+                keyNavigationEnabled: true
+
+                model: root.runningWindows
+
+                delegate: AppCard {
+                    required property int index
+                    required property var modelData
+                    height: Theme.cardHeight
+                    width: Theme.cardWidth
+                    app: modelData
+                    focus: index === runningRow.currentIndex
+                    onActivated: root.appFocusRequested(modelData.windowClass)
+                }
+
+                Keys.onReturnPressed: {
+                    if (runningRow.currentItem)
+                        root.appFocusRequested(runningRow.currentItem.modelData.windowClass)
+                }
+                Keys.onEnterPressed: {
+                    if (runningRow.currentItem)
+                        root.appFocusRequested(runningRow.currentItem.modelData.windowClass)
+                }
+                Keys.onUpPressed: statusIcons.forceActiveFocus()
+                Keys.onDownPressed: {
                     if (recentsRow.visible)
                         recentsRow.forceActiveFocus()
                     else if (Theme.moonlightViewMode === "servers")
@@ -294,6 +351,7 @@ except:
                     else if (!root._focusAppViewRow(0))
                         appsRow.forceActiveFocus()
                 }
+                Keys.onEscapePressed: root.settingsRequested()
             }
         }
 
@@ -319,8 +377,11 @@ except:
                 anchors.bottomMargin: -16
                 orientation: ListView.Horizontal
                 spacing: Theme.cardSpacing
-                focus: visible
+                focus: visible && !runningRow.visible
                 clip: false
+                highlightMoveDuration: 150
+                highlightMoveVelocity: -1
+                keyNavigationEnabled: true
 
                 model: root.recentApps
 
@@ -338,7 +399,16 @@ except:
                     if (recentsRow.currentItem)
                         root.launchApp(recentsRow.currentItem.modelData)
                 }
-                Keys.onUpPressed: statusIcons.forceActiveFocus()
+                Keys.onEnterPressed: {
+                    if (recentsRow.currentItem)
+                        root.launchApp(recentsRow.currentItem.modelData)
+                }
+                Keys.onUpPressed: {
+                    if (runningRow.visible)
+                        runningRow.forceActiveFocus()
+                    else
+                        statusIcons.forceActiveFocus()
+                }
                 Keys.onDownPressed: {
                     if (Theme.moonlightViewMode === "servers") {
                         moonlightRow.forceActiveFocus()
@@ -377,6 +447,9 @@ except:
                 spacing: Theme.cardSpacing
                 focus: Theme.moonlightViewMode === "servers" && !recentsRow.visible
                 clip: false
+                highlightMoveDuration: 150
+                highlightMoveVelocity: -1
+                keyNavigationEnabled: true
 
                 model: root.targets
 
@@ -394,7 +467,15 @@ except:
                     if (moonlightRow.currentItem)
                         root.streamRequested(moonlightRow.currentItem.modelData)
                 }
-                Keys.onUpPressed: recentsRow.visible ? recentsRow.forceActiveFocus() : statusIcons.forceActiveFocus()
+                Keys.onEnterPressed: {
+                    if (moonlightRow.currentItem)
+                        root.streamRequested(moonlightRow.currentItem.modelData)
+                }
+                Keys.onUpPressed: {
+                    if (recentsRow.visible) recentsRow.forceActiveFocus()
+                    else if (runningRow.visible) runningRow.forceActiveFocus()
+                    else statusIcons.forceActiveFocus()
+                }
                 Keys.onDownPressed: appsRow.forceActiveFocus()
                 Keys.onEscapePressed: root.settingsRequested()
             }
@@ -455,6 +536,9 @@ except:
                         orientation: ListView.Horizontal
                         spacing: Theme.cardSpacing
                         clip: false
+                        highlightMoveDuration: 150
+                        highlightMoveVelocity: -1
+                        keyNavigationEnabled: true
                         visible: hostAppList.length > 0
 
                         // First host row gets focus when no recents visible
@@ -485,11 +569,20 @@ except:
                                 root.streamRequested(t)
                             }
                         }
+                        Keys.onEnterPressed: {
+                            if (appViewRow.currentItem) {
+                                let t = JSON.parse(JSON.stringify(hostTarget))
+                                t.app = appViewRow.currentItem.modelData
+                                root.streamRequested(t)
+                            }
+                        }
 
                         Keys.onUpPressed: {
                             if (appViewRowDelegate.index === 0) {
                                 if (recentsRow.visible)
                                     recentsRow.forceActiveFocus()
+                                else if (runningRow.visible)
+                                    runningRow.forceActiveFocus()
                                 else
                                     statusIcons.forceActiveFocus()
                             } else {
@@ -532,6 +625,9 @@ except:
                 orientation: ListView.Horizontal
                 spacing: Theme.cardSpacing
                 clip: false
+                highlightMoveDuration: 150
+                highlightMoveVelocity: -1
+                keyNavigationEnabled: true
 
                 model: root.applications
 
@@ -546,6 +642,10 @@ except:
                 }
 
                 Keys.onReturnPressed: {
+                    if (appsRow.currentItem)
+                        root.launchApp(appsRow.currentItem.modelData)
+                }
+                Keys.onEnterPressed: {
                     if (appsRow.currentItem)
                         root.launchApp(appsRow.currentItem.modelData)
                 }
