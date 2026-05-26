@@ -9,15 +9,20 @@ Item {
     property bool hasAvScript: false
     // "cec-ctl" or "cec-client" — whichever was found
     property string cecTool: ""
+    // Resolved path to living-room-cec (empty if not found)
+    property string avScriptPath: ""
     property var devices: []
     property string statusText: "Checking CEC availability..."
     property string actionFeedback: ""
 
     // --- Tool detection: living-room-cec > cec-ctl > cec-client ---
+    // Checks command -v AND explicit paths to handle PATH gaps
     Process {
         id: detectTools
         command: ["bash", "-c", [
-            "if command -v living-room-cec >/dev/null 2>&1; then echo 'script:living-room-cec'; fi",
+            "for p in $(command -v living-room-cec 2>/dev/null) /usr/local/bin/living-room-cec /usr/local/sbin/living-room-cec; do",
+            "  if [ -x \"$p\" ]; then echo \"script:$p\"; break; fi",
+            "done",
             "if command -v cec-ctl >/dev/null 2>&1; then echo 'tool:cec-ctl'; fi",
             "if command -v cec-client >/dev/null 2>&1; then echo 'tool:cec-client'; fi",
             "echo 'done'"
@@ -25,8 +30,9 @@ Item {
         stdout: SplitParser {
             onRead: (line) => {
                 var trimmed = line.trim()
-                if (trimmed === "script:living-room-cec") {
+                if (trimmed.startsWith("script:")) {
                     root.hasAvScript = true
+                    root.avScriptPath = trimmed.substring(7)
                 } else if (trimmed.startsWith("tool:") && root.cecTool === "") {
                     // First tool found wins (cec-ctl before cec-client)
                     root.cecTool = trimmed.substring(5)
@@ -127,7 +133,11 @@ Item {
     onVisibleChanged: {
         if (visible) {
             detectTools.running = true
-            wakeScope.forceActiveFocus()
+            if (root.cecAvailable) {
+                wakeScope.forceActiveFocus()
+            } else {
+                root.forceActiveFocus()
+            }
         }
     }
 
@@ -135,7 +145,7 @@ Item {
     function _buildScanCommand() {
         // Prefer living-room-cec status — it's the high-level wrapper that works reliably
         if (root.hasAvScript) {
-            return "living-room-cec status 2>/dev/null"
+            return root.avScriptPath + " status 2>/dev/null"
         }
         if (root.cecTool === "cec-ctl") {
             // Probe TV (0) and Audio System (5) — the standard CEC addresses
@@ -299,7 +309,7 @@ Item {
 
     function doWake() {
         if (root.hasAvScript) {
-            wakeCmd.command = ["living-room-cec", "on"]
+            wakeCmd.command = [root.avScriptPath, "on"]
         } else if (root.cecTool === "cec-ctl") {
             wakeCmd.command = ["bash", "-c", "cec-ctl --to 0 --image-view-on 2>/dev/null"]
         } else {
@@ -310,7 +320,7 @@ Item {
 
     function doSleep() {
         if (root.hasAvScript) {
-            sleepCmd.command = ["living-room-cec", "off"]
+            sleepCmd.command = [root.avScriptPath, "off"]
         } else if (root.cecTool === "cec-ctl") {
             sleepCmd.command = ["bash", "-c", "cec-ctl --to 0 --standby 2>/dev/null; cec-ctl --to 15 --standby 2>/dev/null"]
         } else {
@@ -320,7 +330,10 @@ Item {
     }
 
     function doSwitchInput() {
-        if (root.cecTool === "cec-ctl") {
+        if (root.hasAvScript) {
+            // living-room-cec "on" includes input switching
+            switchInputCmd.command = [root.avScriptPath, "on"]
+        } else if (root.cecTool === "cec-ctl") {
             switchInputCmd.command = ["bash", "-c", "cec-ctl --active-source phys-addr=$(cec-ctl -s 2>/dev/null | grep -oP 'Physical Address\\s*:\\s*\\K[0-9.]+') 2>/dev/null"]
         } else if (root.cecTool === "cec-client") {
             switchInputCmd.command = ["bash", "-c", "echo 'as' | cec-client -s -d 1 2>/dev/null"]
@@ -383,6 +396,8 @@ Item {
                 width: refreshBtn.implicitWidth
                 height: refreshBtn.implicitHeight
                 visible: root.cecAvailable
+
+                KeyNavigation.down: wakeScope
 
                 SettingsButton {
                     id: refreshBtn
@@ -474,6 +489,7 @@ Item {
                     focus: true
                     activeFocusOnTab: true
 
+                    KeyNavigation.up: refreshScope
                     KeyNavigation.right: sleepScope
                     KeyNavigation.down: deviceListView.count > 0 ? deviceListView : wakeScope
 
