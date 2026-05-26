@@ -19,3 +19,4 @@ ControllerSettings 1.0 ControllerSettings.qml
 MarqueeText 1.0 MarqueeText.qml
 Drawer 1.0 Drawer.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
+KeyBindingsSettings 1.0 KeyBindingsSettings.qml
