@@ -90,9 +90,13 @@ ShellRoot {
             inputManager.grab();
         }
         onRequestOverlayShow: msg => {
-            if (root._layout) root._layout.overlay.show(msg);
+            if (root._layout)
+                root._layout.overlay.show(msg);
         }
-        onRequestOverlayHide: { if (root._layout) root._layout.overlay.hide(); }
+        onRequestOverlayHide: {
+            if (root._layout)
+                root._layout.overlay.hide();
+        }
         onRequestInputRelease: inputManager.release()
         onRequestInputGrab: inputManager.grab()
     }
