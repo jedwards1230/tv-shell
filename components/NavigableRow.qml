@@ -14,6 +14,7 @@ FocusScope {
 
     signal activated
     signal escaped
+    signal contextRequested
 
     readonly property alias listView: listView
 
@@ -40,6 +41,10 @@ FocusScope {
                 root.activated();
         }
         Keys.onEscapePressed: root.escaped()
+        Keys.onTabPressed: {
+            if (listView.currentItem)
+                root.contextRequested();
+        }
         Keys.onUpPressed: root._navigateUp()
         Keys.onDownPressed: root._navigateDown()
     }

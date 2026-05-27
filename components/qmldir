@@ -35,3 +35,5 @@ NotificationToast 1.0 NotificationToast.qml
 NotificationStack 1.0 NotificationStack.qml
 singleton ErrorLog 1.0 ErrorLog.qml
 ErrorLogViewer 1.0 ErrorLogViewer.qml
+PopoverMenu 1.0 PopoverMenu.qml
+SessionDialog 1.0 SessionDialog.qml

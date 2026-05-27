@@ -20,6 +20,7 @@ FocusScope {
     signal streamRequested(var target)
     signal appLaunchRequested(var app)
     signal appFocusRequested(string windowClass)
+    signal appCloseRequested(string windowClass)
     signal settingsRequested
 
     // Load installed applications
@@ -359,6 +360,27 @@ except:
                     onActivated: root.appFocusRequested(modelData.windowClass)
                 }
 
+                onContextRequested: {
+                    if (currentItem && currentIndex >= 0 && currentIndex < root.runningWindows.length) {
+                        let pos = currentItem.mapToItem(root, currentItem.width / 2, 0);
+                        popoverMenu.targetX = pos.x;
+                        popoverMenu.targetY = pos.y;
+                        let wc = root.runningWindows[currentIndex].windowClass;
+                        popoverMenu.actions = [{
+                            label: "Resume",
+                            action: function () {
+                                root.appFocusRequested(wc);
+                            }
+                        }, {
+                            label: "Quit App",
+                            action: function () {
+                                root.appCloseRequested(wc);
+                            }
+                        }];
+                        popoverMenu.opened = true;
+                        popoverMenu.forceActiveFocus();
+                    }
+                }
                 onEscaped: root.settingsRequested()
             }
 
@@ -559,12 +581,20 @@ except:
 
             // === Hint Bar ===
             Text {
-                text: "A: Launch  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row"
+                text: runningRow.activeFocus ? "A: Resume  |  Y: Actions  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row" : "A: Launch  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row"
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
                 Layout.alignment: Qt.AlignHCenter
                 Layout.bottomMargin: 16
             }
+        }
+    }
+
+    PopoverMenu {
+        id: popoverMenu
+        onClosed: {
+            popoverMenu.opened = false;
+            runningRow.forceActiveFocus();
         }
     }
 }
