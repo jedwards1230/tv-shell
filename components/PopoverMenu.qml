@@ -36,8 +36,8 @@ FocusScope {
 
     Rectangle {
         id: menuPanel
-        width: 360
-        height: menuColumn.implicitHeight + Theme.padding * 2
+        width: 300
+        height: menuColumn.implicitHeight + 16
         radius: Theme.cardRadius
         color: Theme.surface
         border.width: 2
@@ -57,7 +57,7 @@ FocusScope {
         Column {
             id: menuColumn
             anchors.fill: parent
-            anchors.margins: Theme.padding
+            anchors.margins: 8
 
             Repeater {
                 model: root.actions
@@ -66,8 +66,8 @@ FocusScope {
                     required property var modelData
                     required property int index
                     width: menuColumn.width
-                    height: 72
-                    radius: 12
+                    height: 52
+                    radius: 10
                     color: index === root._selectedIndex ? Theme.surfaceHover : "transparent"
 
                     Behavior on color {
@@ -79,7 +79,7 @@ FocusScope {
                     Text {
                         anchors.centerIn: parent
                         text: modelData.label
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontSmall
                         font.bold: index === root._selectedIndex
                         color: Theme.textPrimary
                     }

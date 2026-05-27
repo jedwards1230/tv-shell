@@ -95,7 +95,7 @@ Item {
     function _launchMoonlight() {
         let args = ["moonlight", "stream", currentTarget.host, currentTarget.app];
         if (currentTarget.resolution === "3840x2160")
-            args.push("--4k");
+            args.push("--4K");
         if (currentTarget.fps) {
             args.push("--fps");
             args.push(String(currentTarget.fps));

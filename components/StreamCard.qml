@@ -72,6 +72,7 @@ Item {
         anchors.fill: parent
         radius: Theme.cardRadius
         color: Theme.cardBackground
+        clip: true
         border.width: root.isFocused ? 6 : 2
         border.color: root.isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
