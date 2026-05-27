@@ -185,6 +185,7 @@ Item {
                 var trimmed = line.trim();
                 if (trimmed === "")
                     return;
+                launchTimeout.stop();
                 var lines = root._stderrLines.slice();
                 lines.push(trimmed);
                 if (lines.length > 50)
@@ -197,6 +198,7 @@ Item {
                 var trimmed = line.trim();
                 if (trimmed === "")
                     return;
+                launchTimeout.stop();
                 root._lastStderr = trimmed;
                 var lines = root._stderrLines.slice();
                 lines.push(trimmed);
