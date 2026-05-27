@@ -76,10 +76,7 @@ ShellRoot {
             root.state = "streaming";
         }
         onStreamEnded: {
-            Components.NotificationManager.notify("Stream Ended", "", {
-                icon: "📡",
-                source: "stream"
-            });
+            Components.NotificationManager.info("stream", "Stream Ended");
             root.returnToShell();
         }
         onStreamCrashed: attempts => {
