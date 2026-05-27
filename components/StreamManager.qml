@@ -109,6 +109,14 @@ Item {
             args.push("--video-codec");
             args.push(currentTarget.codec);
         }
+        if (currentTarget.bitrate) {
+            args.push("--bitrate");
+            args.push(String(currentTarget.bitrate));
+        }
+        if (currentTarget.audioConfig) {
+            args.push("--audio-config");
+            args.push(currentTarget.audioConfig);
+        }
         args.push("--display-mode", "fullscreen");
         args.push("--no-quit-after");
         args.push("--no-frame-pacing");
