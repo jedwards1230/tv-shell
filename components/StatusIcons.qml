@@ -58,18 +58,25 @@ FocusScope {
     }
 
     onIpAddressChanged: {
-        var connected = ipAddress !== "..." && ipAddress !== "No IP"
+        var connected = ipAddress !== "..." && ipAddress !== "No IP";
         if (!root._networkInitialized) {
-            root._networkInitialized = true
-            root._wasConnected = connected
-            return
+            root._networkInitialized = true;
+            root._wasConnected = connected;
+            return;
         }
         if (root._wasConnected && !connected) {
-            NotificationManager.notify("Network Disconnected", "", {icon: "📶", level: "warning", source: "network"})
+            NotificationManager.notify("Network Disconnected", "", {
+                icon: "📶",
+                level: "warning",
+                source: "network"
+            });
         } else if (!root._wasConnected && connected) {
-            NotificationManager.notify("Network Connected", ipAddress, {icon: "📶", source: "network"})
+            NotificationManager.notify("Network Connected", ipAddress, {
+                icon: "📶",
+                source: "network"
+            });
         }
-        root._wasConnected = connected
+        root._wasConnected = connected;
     }
 
     // Keyboard navigation (RTL layout: Right moves to lower index, Left to higher)

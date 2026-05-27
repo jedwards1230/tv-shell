@@ -7,10 +7,10 @@ Item {
     signal forceQuitRequested
     signal endSessionRequested
     signal inputModeChanged(string mode)
-    signal controllerWake()
-    signal controllerDisconnected()
-    signal homePressed()
-    signal homeHeld()
+    signal controllerWake
+    signal controllerDisconnected
+    signal homePressed
+    signal homeHeld
 
     function grab() {
         inputGrab.running = true;
@@ -50,23 +50,28 @@ Item {
                 else if (line === "combo:end-session")
                     root.endSessionRequested();
                 else if (line === "input-mode:mouse") {
-                    Theme.mouseMode = true
-                    root.inputModeChanged("mouse")
-                }
-                else if (line === "input-mode:controller") {
-                    Theme.mouseMode = false
-                    root.inputModeChanged("controller")
-                }
-                else if (line === "controller-wake") {
-                    root.controllerWake()
-                    NotificationManager.notify("Controller Connected", "", {icon: "🎮", source: "controller"})
-                }
-                else if (line === "controller-disconnected") {
-                    root.controllerDisconnected()
-                    NotificationManager.notify("Controller Disconnected", "", {icon: "🎮", level: "warning", source: "controller"})
-                }
-                else if (line === "home-press") root.homePressed()
-                else if (line === "combo:home-hold") root.homeHeld()
+                    Theme.mouseMode = true;
+                    root.inputModeChanged("mouse");
+                } else if (line === "input-mode:controller") {
+                    Theme.mouseMode = false;
+                    root.inputModeChanged("controller");
+                } else if (line === "controller-wake") {
+                    root.controllerWake();
+                    NotificationManager.notify("Controller Connected", "", {
+                        icon: "🎮",
+                        source: "controller"
+                    });
+                } else if (line === "controller-disconnected") {
+                    root.controllerDisconnected();
+                    NotificationManager.notify("Controller Disconnected", "", {
+                        icon: "🎮",
+                        level: "warning",
+                        source: "controller"
+                    });
+                } else if (line === "home-press")
+                    root.homePressed();
+                else if (line === "combo:home-hold")
+                    root.homeHeld();
             }
         }
         onExited: {

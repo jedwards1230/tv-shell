@@ -30,7 +30,7 @@ Item {
                 var match = line.match(/^\s*(AVR)\s*:\s*(\S+)/i);
                 if (match) {
                     root.systemOn = (match[2].toLowerCase() === "on");
-                    root._initialized = true
+                    root._initialized = true;
                 }
             }
         }
@@ -74,12 +74,18 @@ Item {
 
     onSystemOnChanged: {
         if (!root._initialized) {
-            root._initialized = true
-            return
+            root._initialized = true;
+            return;
         }
         if (systemOn)
-            NotificationManager.notify("AV System On", "", {icon: "📺", source: "av"})
+            NotificationManager.notify("AV System On", "", {
+                icon: "📺",
+                source: "av"
+            });
         else
-            NotificationManager.notify("AV System Off", "", {icon: "📺", source: "av"})
+            NotificationManager.notify("AV System Off", "", {
+                icon: "📺",
+                source: "av"
+            });
     }
 }

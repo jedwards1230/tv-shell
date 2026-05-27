@@ -16,7 +16,7 @@ Item {
             delegate: NotificationToast {
                 required property var modelData
                 notification: modelData
-                onDismissed: (id) => NotificationManager.dismiss(id)
+                onDismissed: id => NotificationManager.dismiss(id)
             }
         }
     }
