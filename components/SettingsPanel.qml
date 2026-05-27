@@ -6,35 +6,67 @@ Rectangle {
     color: Theme.background
     visible: false
 
-    signal closed()
+    signal closed
 
     property int currentSection: 0
     property var sections: [
-        { name: "Audio",       icon: "\u{1F50A}" },
-        { name: "Bluetooth",   icon: "⚡" },
-        { name: "Network",     icon: "\u{1F310}" },
-        { name: "Display",     icon: "\u{1F5A5}" },
-        { name: "Controllers", icon: "\u{1F3AE}" },
-        { name: "Key Bindings", icon: "⌨" },
-        { name: "AV Control",  icon: "\u{1F4FA}" },
-        { name: "Moonlight",   icon: "\u{1F319}" },
-        { name: "Appearance",  icon: "\u{1F3A8}" },
-        { name: "Power",       icon: "⏻" }
+        {
+            name: "Audio",
+            icon: "\u{1F50A}"
+        },
+        {
+            name: "Bluetooth",
+            icon: "⚡"
+        },
+        {
+            name: "Network",
+            icon: "\u{1F310}"
+        },
+        {
+            name: "Display",
+            icon: "\u{1F5A5}"
+        },
+        {
+            name: "Controllers",
+            icon: "\u{1F3AE}"
+        },
+        {
+            name: "Key Bindings",
+            icon: "⌨"
+        },
+        {
+            name: "AV Control",
+            icon: "\u{1F4FA}"
+        },
+        {
+            name: "Moonlight",
+            icon: "\u{1F319}"
+        },
+        {
+            name: "Appearance",
+            icon: "\u{1F3A8}"
+        },
+        {
+            name: "Power",
+            icon: "⏻"
+        }
     ]
 
     onVisibleChanged: {
         if (visible) {
-            currentSection = 0
-            sidebarList.currentIndex = 0
+            currentSection = 0;
+            sidebarList.currentIndex = 0;
             // Delay focus slightly to ensure Loader has settled
-            focusTimer.restart()
+            focusTimer.restart();
         }
     }
 
     Timer {
         id: focusTimer
         interval: 50
-        onTriggered: { sidebarList.forceActiveFocus() }
+        onTriggered: {
+            sidebarList.forceActiveFocus();
+        }
     }
 
     RowLayout {
@@ -84,15 +116,19 @@ Rectangle {
                         height: 100
                         color: {
                             if (root.currentSection === index)
-                                return Theme.sidebarActive
+                                return Theme.sidebarActive;
                             if (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode)
-                                return Theme.surfaceHover
+                                return Theme.surfaceHover;
                             if (sidebarMA.containsMouse && Theme.mouseMode)
-                                return Theme.surfaceHover
-                            return "transparent"
+                                return Theme.surfaceHover;
+                            return "transparent";
                         }
 
-                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: 150
+                            }
+                        }
 
                         // Left accent bar on focused item
                         Rectangle {
@@ -133,9 +169,9 @@ Rectangle {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                sidebarList.currentIndex = index
-                                root.currentSection = index
-                                sidebarList.forceActiveFocus()
+                                sidebarList.currentIndex = index;
+                                root.currentSection = index;
+                                sidebarList.forceActiveFocus();
                             }
                         }
 
@@ -143,34 +179,36 @@ Rectangle {
                             target: Theme
                             function onMouseModeChanged() {
                                 if (!Theme.mouseMode && sidebarMA.containsMouse) {
-                                    sidebarList.currentIndex = index
-                                    sidebarList.forceActiveFocus()
+                                    sidebarList.currentIndex = index;
+                                    sidebarList.forceActiveFocus();
                                 }
                             }
                         }
                     }
 
                     Keys.onReturnPressed: {
-                        root.currentSection = currentIndex
+                        root.currentSection = currentIndex;
                     }
 
                     Keys.onRightPressed: {
-                        root.currentSection = currentIndex
-                        contentLoader.item.forceActiveFocus()
+                        root.currentSection = currentIndex;
+                        contentLoader.item.forceActiveFocus();
                     }
 
                     Keys.onUpPressed: {
-                        if (currentIndex > 0) currentIndex--
+                        if (currentIndex > 0)
+                            currentIndex--;
                     }
 
                     Keys.onDownPressed: {
-                        if (currentIndex < root.sections.length - 1) currentIndex++
+                        if (currentIndex < root.sections.length - 1)
+                            currentIndex++;
                     }
 
-                    Keys.onPressed: (event) => {
+                    Keys.onPressed: event => {
                         if (event.key === Qt.Key_B && !event.modifiers) {
-                            root.closed()
-                            event.accepted = true
+                            root.closed();
+                            event.accepted = true;
                         }
                     }
                 }
@@ -235,18 +273,29 @@ Rectangle {
                     id: contentLoader
                     anchors.fill: parent
                     sourceComponent: {
-                        switch(root.currentSection) {
-                            case 0: return audioComp
-                            case 1: return bluetoothComp
-                            case 2: return networkComp
-                            case 3: return displayComp
-                            case 4: return controllerComp
-                            case 5: return keyBindingsComp
-                            case 6: return avControlComp
-                            case 7: return moonlightComp
-                            case 8: return appearanceComp
-                            case 9: return powerComp
-                            default: return audioComp
+                        switch (root.currentSection) {
+                        case 0:
+                            return audioComp;
+                        case 1:
+                            return bluetoothComp;
+                        case 2:
+                            return networkComp;
+                        case 3:
+                            return displayComp;
+                        case 4:
+                            return controllerComp;
+                        case 5:
+                            return keyBindingsComp;
+                        case 6:
+                            return avControlComp;
+                        case 7:
+                            return moonlightComp;
+                        case 8:
+                            return appearanceComp;
+                        case 9:
+                            return powerComp;
+                        default:
+                            return audioComp;
                         }
                     }
                 }
@@ -308,20 +357,20 @@ Rectangle {
     Keys.onEscapePressed: root.closed()
 
     function returnToSidebar() {
-        sidebarList.forceActiveFocus()
+        sidebarList.forceActiveFocus();
     }
 
     Keys.onLeftPressed: {
         if (!sidebarList.activeFocus) {
-            returnToSidebar()
+            returnToSidebar();
         }
     }
 
-    Keys.onPressed: (event) => {
+    Keys.onPressed: event => {
         if (event.key === Qt.Key_B && !event.modifiers) {
             if (!sidebarList.activeFocus) {
-                returnToSidebar()
-                event.accepted = true
+                returnToSidebar();
+                event.accepted = true;
             }
         }
     }

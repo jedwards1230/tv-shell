@@ -12,15 +12,15 @@ Item {
     property bool isOnline: false
     property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
 
-    signal activated()
+    signal activated
 
     Connections {
         target: Theme
         function onMouseModeChanged() {
             if (!Theme.mouseMode && mouseArea.containsMouse) {
                 if (root.ListView.view)
-                    root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y)
-                root.forceActiveFocus()
+                    root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y);
+                root.forceActiveFocus();
             }
         }
     }
@@ -28,7 +28,9 @@ Item {
     Process {
         id: pingCheck
         command: ["ping", "-c1", "-W1", root.target.host || "127.0.0.1"]
-        onExited: (exitCode, exitStatus) => { root.isOnline = (exitCode === 0) }
+        onExited: (exitCode, exitStatus) => {
+            root.isOnline = (exitCode === 0);
+        }
     }
 
     Timer {
@@ -36,7 +38,10 @@ Item {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: { if (!pingCheck.running) pingCheck.running = true }
+        onTriggered: {
+            if (!pingCheck.running)
+                pingCheck.running = true;
+        }
     }
 
     transform: [
@@ -45,8 +50,18 @@ Item {
             origin.y: root.height / 2
             xScale: root.isFocused ? 1.05 : 1.0
             yScale: root.isFocused ? 1.05 : 1.0
-            Behavior on xScale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-            Behavior on yScale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+            Behavior on xScale {
+                NumberAnimation {
+                    duration: 250
+                    easing.type: Easing.OutCubic
+                }
+            }
+            Behavior on yScale {
+                NumberAnimation {
+                    duration: 250
+                    easing.type: Easing.OutCubic
+                }
+            }
         }
     ]
 
@@ -60,8 +75,16 @@ Item {
         border.width: root.isFocused ? 6 : 2
         border.color: root.isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
-        Behavior on border.width { NumberAnimation { duration: 200 } }
-        Behavior on border.color { ColorAnimation { duration: 200 } }
+        Behavior on border.width {
+            NumberAnimation {
+                duration: 200
+            }
+        }
+        Behavior on border.color {
+            ColorAnimation {
+                duration: 200
+            }
+        }
 
         MouseArea {
             id: mouseArea
@@ -69,8 +92,8 @@ Item {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
-                root.forceActiveFocus()
-                root.activated()
+                root.forceActiveFocus();
+                root.activated();
             }
         }
 
@@ -79,7 +102,9 @@ Item {
             anchors.margins: Theme.padding / 2
             spacing: 8
 
-            Item { Layout.fillHeight: true }
+            Item {
+                Layout.fillHeight: true
+            }
 
             // Gamepad icon (server view) or app initial (app view)
             Text {
@@ -92,12 +117,16 @@ Item {
 
             // Online/offline dot
             Rectangle {
-                width: 16; height: 16; radius: 8
+                width: 16
+                height: 16
+                radius: 8
                 color: root.isOnline ? Theme.online : Theme.offline
                 Layout.alignment: Qt.AlignHCenter
             }
 
-            Item { Layout.fillHeight: true }
+            Item {
+                Layout.fillHeight: true
+            }
 
             // Primary label: app name (app view) or server name (server view)
             Text {
@@ -114,13 +143,16 @@ Item {
             Text {
                 text: {
                     if (root.appName !== "") {
-                        return root.target.name || ""
+                        return root.target.name || "";
                     }
-                    let parts = []
-                    if (root.target.resolution) parts.push(root.target.resolution)
-                    if (root.target.fps) parts.push(root.target.fps + " fps")
-                    if (root.target.hdr) parts.push("HDR")
-                    return parts.join(" · ")
+                    let parts = [];
+                    if (root.target.resolution)
+                        parts.push(root.target.resolution);
+                    if (root.target.fps)
+                        parts.push(root.target.fps + " fps");
+                    if (root.target.hdr)
+                        parts.push("HDR");
+                    return parts.join(" · ");
                 }
                 font.pixelSize: Theme.fontXSmall
                 color: Theme.textSecondary

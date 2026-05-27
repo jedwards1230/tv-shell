@@ -15,17 +15,19 @@ Item {
         command: ["hyprctl", "clients", "-j"]
         stdout: SplitParser {
             property string buffer: ""
-            onRead: (line) => { buffer += line }
+            onRead: line => {
+                buffer += line;
+            }
         }
         onExited: {
-            root.running = false
+            root.running = false;
             try {
-                let clients = JSON.parse(proc.stdout.buffer)
-                root.clientsReceived(clients)
-            } catch(e) {
-                root.errorOccurred(e.toString())
+                let clients = JSON.parse(proc.stdout.buffer);
+                root.clientsReceived(clients);
+            } catch (e) {
+                root.errorOccurred(e.toString());
             }
-            proc.stdout.buffer = ""
+            proc.stdout.buffer = "";
         }
     }
 }

@@ -5,13 +5,29 @@ FocusScope {
     id: root
 
     property var modes: [
-        { id: "auto",  icon: "◐", label: "Auto",  desc: "Follows time of day" },
-        { id: "light", icon: "☀", label: "Light", desc: "Light background" },
-        { id: "dark",  icon: "☽", label: "Dark",  desc: "OLED optimized" }
+        {
+            id: "auto",
+            icon: "◐",
+            label: "Auto",
+            desc: "Follows time of day"
+        },
+        {
+            id: "light",
+            icon: "☀",
+            label: "Light",
+            desc: "Light background"
+        },
+        {
+            id: "dark",
+            icon: "☽",
+            label: "Dark",
+            desc: "OLED optimized"
+        }
     ]
 
     onVisibleChanged: {
-        if (visible) modeList.forceActiveFocus()
+        if (visible)
+            modeList.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -26,7 +42,10 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        Item { Layout.fillHeight: true; Layout.maximumHeight: 80 }
+        Item {
+            Layout.fillHeight: true
+            Layout.maximumHeight: 80
+        }
 
         // Mode cards
         RowLayout {
@@ -37,21 +56,24 @@ FocusScope {
 
             property int currentIndex: {
                 for (var i = 0; i < root.modes.length; i++) {
-                    if (root.modes[i].id === Theme.themeMode) return i
+                    if (root.modes[i].id === Theme.themeMode)
+                        return i;
                 }
-                return 0
+                return 0;
             }
 
             property int focusIndex: 0
 
             Keys.onLeftPressed: {
-                if (focusIndex > 0) focusIndex--
+                if (focusIndex > 0)
+                    focusIndex--;
             }
             Keys.onRightPressed: {
-                if (focusIndex < root.modes.length - 1) focusIndex++
+                if (focusIndex < root.modes.length - 1)
+                    focusIndex++;
             }
             Keys.onReturnPressed: {
-                Theme.setThemeMode(root.modes[focusIndex].id)
+                Theme.setThemeMode(root.modes[focusIndex].id);
             }
 
             Repeater {
@@ -66,10 +88,13 @@ FocusScope {
                     color: Theme.surface
                     clip: true
                     border.width: Theme.themeMode === modelData.id ? 3 : 2
-                    border.color: Theme.themeMode === modelData.id ? Theme.focusBorder :
-                                  (modeList.focusIndex === index && modeList.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
+                    border.color: Theme.themeMode === modelData.id ? Theme.focusBorder : (modeList.focusIndex === index && modeList.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
 
-                    Behavior on border.color { ColorAnimation { duration: 150 } }
+                    Behavior on border.color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
 
                     // Focus highlight background
                     Rectangle {
@@ -84,7 +109,9 @@ FocusScope {
                         anchors.margins: 32
                         spacing: 12
 
-                        Item { Layout.fillHeight: true }
+                        Item {
+                            Layout.fillHeight: true
+                        }
 
                         Text {
                             text: modelData.icon
@@ -111,7 +138,9 @@ FocusScope {
                             wrapMode: Text.WordWrap
                         }
 
-                        Item { Layout.fillHeight: true }
+                        Item {
+                            Layout.fillHeight: true
+                        }
                     }
 
                     MouseArea {
@@ -119,16 +148,18 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            modeList.focusIndex = index
-                            modeList.forceActiveFocus()
-                            Theme.setThemeMode(modelData.id)
+                            modeList.focusIndex = index;
+                            modeList.forceActiveFocus();
+                            Theme.setThemeMode(modelData.id);
                         }
                     }
                 }
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+        }
 
         Text {
             text: "Current: " + Theme.themeMode.charAt(0).toUpperCase() + Theme.themeMode.slice(1)

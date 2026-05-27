@@ -17,29 +17,36 @@ ShellRoot {
         id: loadTargets
         command: ["cat", "/opt/game-shell/targets.json"]
         stdout: SplitParser {
-            onRead: (line) => {
-                try { root.targets = JSON.parse(line) }
-                catch(e) { console.log("Failed to parse targets:", e) }
+            onRead: line => {
+                try {
+                    root.targets = JSON.parse(line);
+                } catch (e) {
+                    console.log("Failed to parse targets:", e);
+                }
             }
         }
     }
 
-    Component.onCompleted: { loadTargets.running = true; inputManager.startListening() }
+    Component.onCompleted: {
+        loadTargets.running = true;
+        inputManager.startListening();
+    }
 
     Components.InputManager {
         id: inputManager
         onForceQuitRequested: root.forceQuit()
         onEndSessionRequested: inputManager.endSession()
         onControllerWake: {
-            if (root.state === "idle") avController.wake()
+            if (root.state === "idle")
+                avController.wake();
         }
         onHomePressed: {
             if (root.state === "appRunning")
-                root.overlayDrawerOpen = !root.overlayDrawerOpen
+                root.overlayDrawerOpen = !root.overlayDrawerOpen;
         }
         onHomeHeld: {
             if (root.state === "appRunning")
-                root.closeAndReturnToShell()
+                root.closeAndReturnToShell();
         }
     }
 
@@ -52,10 +59,12 @@ ShellRoot {
         id: appLifecycle
         shellState: root.state
         applications: root._applications
-        onAppLaunched: { root.state = "appRunning" }
+        onAppLaunched: {
+            root.state = "appRunning";
+        }
         onAppClosed: {
-            appLifecycle.runningAppClass = ""
-            root.returnToShell()
+            appLifecycle.runningAppClass = "";
+            root.returnToShell();
         }
     }
 
@@ -81,28 +90,29 @@ ShellRoot {
     }
 
     function forceQuit() {
-        streamManager.forceKill()
-        if (root.state === "appRunning") closeAndReturnToShell()
-        appLifecycle.runningAppClass = ""
-        root.overlayDrawerOpen = false
-        root.state = "idle"
-        inputManager.grab()
-        layout.navDrawer.opened = false
-        layout.settingsPanel.visible = false
-        layout.focusHome()
+        streamManager.forceKill();
+        if (root.state === "appRunning")
+            closeAndReturnToShell();
+        appLifecycle.runningAppClass = "";
+        root.overlayDrawerOpen = false;
+        root.state = "idle";
+        inputManager.grab();
+        layout.navDrawer.opened = false;
+        layout.settingsPanel.visible = false;
+        layout.focusHome();
     }
 
     function returnToShell() {
-        root.overlayDrawerOpen = false
-        root.state = "idle"
-        inputManager.grab()
-        layout.settingsPanel.visible = false
-        layout.focusHome()
+        root.overlayDrawerOpen = false;
+        root.state = "idle";
+        inputManager.grab();
+        layout.settingsPanel.visible = false;
+        layout.focusHome();
     }
 
     function closeAndReturnToShell() {
-        appLifecycle.closeApp()
-        returnToShell()
+        appLifecycle.closeApp();
+        returnToShell();
     }
 
     Variants {
@@ -123,7 +133,11 @@ ShellRoot {
             color: root.state === "appRunning" ? "transparent" : Components.Theme.background
             focusable: true
 
-            onVisibleChanged: { Components.NotificationManager.shellVisible = visible }
+            Binding {
+                target: Components.NotificationManager
+                property: "shellVisible"
+                value: root.state === "idle"
+            }
 
             Components.ShellLayout {
                 id: layout
@@ -136,18 +150,21 @@ ShellRoot {
                 avSystemOn: avController.systemOn
                 avWaking: avController.waking
                 onApplicationsChanged: root._applications = applications
-                onStreamRequested: (target) => {
-                    root.state = "launching"
-                    avController.forceWake()
-                    streamManager.launch(target)
+                onStreamRequested: target => {
+                    root.state = "launching";
+                    avController.forceWake();
+                    streamManager.launch(target);
                 }
-                onAppLaunchRequested: (app) => appLifecycle.checkAndLaunchApp(app)
-                onAppFocusRequested: (windowClass) => appLifecycle.focusApp(windowClass)
+                onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
+                onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
                 onHomeKeyPressed: {
-                    if (root.state === "idle") avController.wake()
+                    if (root.state === "idle")
+                        avController.wake();
                 }
                 onReturnToShellRequested: root.returnToShell()
-                onOverlayDrawerClosed: { root.overlayDrawerOpen = false }
+                onOverlayDrawerClosed: {
+                    root.overlayDrawerOpen = false;
+                }
             }
         }
     }

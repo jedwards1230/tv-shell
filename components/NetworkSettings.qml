@@ -17,21 +17,22 @@ FocusScope {
         command: ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"]
         stdout: SplitParser {
             property var collected: []
-            onRead: (line) => {
-                let parts = line.trim().split(":")
+            onRead: line => {
+                let parts = line.trim().split(":");
                 if (parts.length >= 3) {
                     collected.push({
                         name: parts[0],
                         type: parts[1],
                         device: parts[2]
-                    })
-                    if (parts[1] === "802-11-wireless") root.hasWifi = true
+                    });
+                    if (parts[1] === "802-11-wireless")
+                        root.hasWifi = true;
                 }
             }
         }
         onExited: {
-            root.activeConnections = getActiveConns.stdout.collected
-            getActiveConns.stdout.collected = []
+            root.activeConnections = getActiveConns.stdout.collected;
+            getActiveConns.stdout.collected = [];
         }
     }
 
@@ -40,11 +41,13 @@ FocusScope {
         command: ["bash", "-c", "ip -4 -o addr show | grep -v '127.0.0.1' | head -3 | awk '{print $2\": \"$4}'"]
         stdout: SplitParser {
             property var lines: []
-            onRead: (line) => { lines.push(line.trim()) }
+            onRead: line => {
+                lines.push(line.trim());
+            }
         }
         onExited: {
-            root.ipAddress = getIP.stdout.lines.join("\n")
-            getIP.stdout.lines = []
+            root.ipAddress = getIP.stdout.lines.join("\n");
+            getIP.stdout.lines = [];
         }
     }
 
@@ -53,33 +56,36 @@ FocusScope {
         command: ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list", "--rescan", "auto"]
         stdout: SplitParser {
             property var collected: []
-            onRead: (line) => {
-                let parts = line.trim().split(":")
+            onRead: line => {
+                let parts = line.trim().split(":");
                 if (parts.length >= 3 && parts[0] !== "") {
                     collected.push({
                         ssid: parts[0],
                         signal: parseInt(parts[1]) || 0,
                         security: parts[2] || "Open",
                         inUse: parts.length >= 4 && parts[3] === "*"
-                    })
+                    });
                 }
             }
         }
         onExited: {
             // Deduplicate by SSID, keep highest signal
-            let seen = {}
-            let deduped = []
+            let seen = {};
+            let deduped = [];
             for (let i = 0; i < getWifi.stdout.collected.length; i++) {
-                let net = getWifi.stdout.collected[i]
+                let net = getWifi.stdout.collected[i];
                 if (!seen[net.ssid] || net.signal > seen[net.ssid].signal) {
-                    seen[net.ssid] = net
+                    seen[net.ssid] = net;
                 }
             }
-            for (let ssid in seen) deduped.push(seen[ssid])
+            for (let ssid in seen)
+                deduped.push(seen[ssid]);
             // Sort by signal descending
-            deduped.sort(function(a, b) { return b.signal - a.signal })
-            root.wifiNetworks = deduped
-            getWifi.stdout.collected = []
+            deduped.sort(function (a, b) {
+                return b.signal - a.signal;
+            });
+            root.wifiNetworks = deduped;
+            getWifi.stdout.collected = [];
         }
     }
 
@@ -87,26 +93,28 @@ FocusScope {
         id: checkWifiDevice
         command: ["nmcli", "-t", "-f", "TYPE,DEVICE", "device", "status"]
         stdout: SplitParser {
-            onRead: (line) => {
-                if (line.indexOf("wifi") >= 0) root.hasWifi = true
+            onRead: line => {
+                if (line.indexOf("wifi") >= 0)
+                    root.hasWifi = true;
             }
         }
         onExited: {
-            if (root.hasWifi) getWifi.running = true
+            if (root.hasWifi)
+                getWifi.running = true;
         }
     }
 
     Component.onCompleted: {
-        getActiveConns.running = true
-        getIP.running = true
-        checkWifiDevice.running = true
+        getActiveConns.running = true;
+        getIP.running = true;
+        checkWifiDevice.running = true;
     }
 
     onVisibleChanged: {
         if (visible) {
-            getActiveConns.running = true
-            getIP.running = true
-            checkWifiDevice.running = true
+            getActiveConns.running = true;
+            getIP.running = true;
+            checkWifiDevice.running = true;
         }
     }
 
@@ -149,7 +157,9 @@ FocusScope {
                     spacing: 16
 
                     Rectangle {
-                        width: 20; height: 20; radius: 10
+                        width: 20
+                        height: 20
+                        radius: 10
                         color: Theme.online
                     }
 
@@ -162,9 +172,7 @@ FocusScope {
                     }
 
                     Text {
-                        text: modelData.type === "802-3-ethernet" ? "Ethernet" :
-                              modelData.type === "802-11-wireless" ? "WiFi" :
-                              modelData.type
+                        text: modelData.type === "802-3-ethernet" ? "Ethernet" : modelData.type === "802-11-wireless" ? "WiFi" : modelData.type
                         font.pixelSize: Theme.fontSmall
                         color: Theme.textSecondary
                     }
@@ -237,14 +245,20 @@ FocusScope {
                 height: 96
                 radius: 16
                 color: {
-                    if (modelData.inUse) return Theme.sidebarActive
-                    if (wifiList.currentIndex === index && wifiList.activeFocus) return Theme.surfaceHover
-                    return Theme.surface
+                    if (modelData.inUse)
+                        return Theme.sidebarActive;
+                    if (wifiList.currentIndex === index && wifiList.activeFocus)
+                        return Theme.surfaceHover;
+                    return Theme.surface;
                 }
                 border.width: 2
                 border.color: modelData.inUse ? Theme.focusBorder : Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -273,11 +287,11 @@ FocusScope {
                                 height: 12 + index * 8
                                 radius: 2
                                 color: {
-                                    let threshold = (index + 1) * 25
-                                    let active = modelData.signal >= threshold
+                                    let threshold = (index + 1) * 25;
+                                    let active = modelData.signal >= threshold;
                                     if (modelData.inUse)
-                                        return active ? Theme.textOnDark : Theme.textOnDarkMuted
-                                    return active ? Theme.focusBorder : Theme.surfaceHover
+                                        return active ? Theme.textOnDark : Theme.textOnDarkMuted;
+                                    return active ? Theme.focusBorder : Theme.surfaceHover;
                                 }
                                 anchors.bottom: parent.bottom
                             }
@@ -310,16 +324,15 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        wifiList.currentIndex = index
-                        wifiList.forceActiveFocus()
+                        wifiList.currentIndex = index;
+                        wifiList.forceActiveFocus();
                     }
                 }
             }
         }
 
         Text {
-            text: !root.hasWifi ? "No WiFi adapter detected" :
-                  root.wifiNetworks.length === 0 ? "No WiFi networks found" : ""
+            text: !root.hasWifi ? "No WiFi adapter detected" : root.wifiNetworks.length === 0 ? "No WiFi networks found" : ""
             font.pixelSize: Theme.fontSmall
             color: Theme.textSecondary
             visible: text !== ""
