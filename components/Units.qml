@@ -1,11 +1,12 @@
 pragma Singleton
-import Quickshell.Io
+import Quickshell
 import QtQuick
 
 Item {
     id: units
 
-    property int screenHeight: 2160
+    // Single-screen kiosk — uses the primary screen's pixel height.
+    readonly property int screenHeight: Quickshell.screens.length > 0 ? Quickshell.screens[0].height : 2160
 
     readonly property int gridUnit: Math.round(screenHeight / 40)
 
@@ -28,17 +29,4 @@ Item {
     readonly property int iconSizeMD: Math.round(gridUnit * 1.19)
     readonly property int iconSizeLG: Math.round(gridUnit * 2.22)
     readonly property int iconSizeXL: Math.round(gridUnit * 4.44)
-
-    Process {
-        id: detectScreen
-        command: ["bash", "-c", "hyprctl monitors -j 2>/dev/null | python3 -c \"import sys,json;d=json.load(sys.stdin);print(d[0]['height'] if d else 2160)\""]
-        stdout: SplitParser {
-            onRead: (line) => {
-                let h = parseInt(line.trim())
-                if (h > 0) units.screenHeight = h
-            }
-        }
-    }
-
-    Component.onCompleted: { detectScreen.running = true }
 }
