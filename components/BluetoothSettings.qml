@@ -17,9 +17,9 @@ FocusScope {
         id: btPowerStatus
         command: ["bluetoothctl", "show"]
         stdout: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 if (line.indexOf("Powered:") >= 0) {
-                    root.powered = line.indexOf("yes") >= 0
+                    root.powered = line.indexOf("yes") >= 0;
                 }
             }
         }
@@ -29,8 +29,8 @@ FocusScope {
         id: btPowerOn
         command: ["bluetoothctl", "power", "on"]
         onExited: {
-            btPowerStatus.running = true
-            pairedRefreshTimer.start()
+            btPowerStatus.running = true;
+            pairedRefreshTimer.start();
         }
     }
 
@@ -38,8 +38,8 @@ FocusScope {
         id: btPowerOff
         command: ["bluetoothctl", "power", "off"]
         onExited: {
-            root.scanning = false
-            btPowerStatus.running = true
+            root.scanning = false;
+            btPowerStatus.running = true;
         }
     }
 
@@ -48,22 +48,25 @@ FocusScope {
         command: ["bluetoothctl", "devices", "Paired"]
         stdout: SplitParser {
             property var collected: []
-            onRead: (line) => {
+            onRead: line => {
                 // "Device AA:BB:CC:DD:EE:FF Device Name"
-                let match = line.trim().match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/)
+                let match = line.trim().match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
                 if (match) {
-                    collected.push({ mac: match[1], name: match[2] })
+                    collected.push({
+                        mac: match[1],
+                        name: match[2]
+                    });
                 }
             }
         }
         onExited: {
-            root.pairedDevices = btListPaired.stdout.collected
-            btListPaired.stdout.collected = []
+            root.pairedDevices = btListPaired.stdout.collected;
+            btListPaired.stdout.collected = [];
             // Check connection status for each
             if (root.pairedDevices.length > 0) {
-                btInfoDevice.mac = root.pairedDevices[0].mac
-                btInfoDevice.deviceIndex = 0
-                btInfoDevice.running = true
+                btInfoDevice.mac = root.pairedDevices[0].mac;
+                btInfoDevice.deviceIndex = 0;
+                btInfoDevice.running = true;
             }
         }
     }
@@ -74,24 +77,24 @@ FocusScope {
         property int deviceIndex: 0
         command: ["bluetoothctl", "info", mac]
         stdout: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 if (line.indexOf("Connected:") >= 0) {
-                    let connected = line.indexOf("yes") >= 0
-                    let idx = btInfoDevice.deviceIndex
+                    let connected = line.indexOf("yes") >= 0;
+                    let idx = btInfoDevice.deviceIndex;
                     if (idx >= 0 && idx < root.pairedDevices.length) {
-                        let devs = root.pairedDevices
-                        devs[idx].connected = connected
-                        root.pairedDevices = devs
+                        let devs = root.pairedDevices;
+                        devs[idx].connected = connected;
+                        root.pairedDevices = devs;
                     }
                 }
             }
         }
         onExited: {
-            let next = btInfoDevice.deviceIndex + 1
+            let next = btInfoDevice.deviceIndex + 1;
             if (next < root.pairedDevices.length) {
-                btInfoDevice.mac = root.pairedDevices[next].mac
-                btInfoDevice.deviceIndex = next
-                btInfoDevice.running = true
+                btInfoDevice.mac = root.pairedDevices[next].mac;
+                btInfoDevice.deviceIndex = next;
+                btInfoDevice.running = true;
             }
         }
     }
@@ -99,10 +102,12 @@ FocusScope {
     Process {
         id: btScanOn
         command: ["bash", "-c", "timeout 10 bluetoothctl scan on 2>&1 || true"]
-        onStarted: { root.scanning = true }
+        onStarted: {
+            root.scanning = true;
+        }
         onExited: {
-            root.scanning = false
-            btListAvailable.running = true
+            root.scanning = false;
+            btListAvailable.running = true;
         }
     }
 
@@ -111,26 +116,29 @@ FocusScope {
         command: ["bluetoothctl", "devices"]
         stdout: SplitParser {
             property var collected: []
-            onRead: (line) => {
-                let match = line.trim().match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/)
+            onRead: line => {
+                let match = line.trim().match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
                 if (match) {
                     // Exclude already paired
-                    let isPaired = false
+                    let isPaired = false;
                     for (let i = 0; i < root.pairedDevices.length; i++) {
                         if (root.pairedDevices[i].mac === match[1]) {
-                            isPaired = true
-                            break
+                            isPaired = true;
+                            break;
                         }
                     }
                     if (!isPaired) {
-                        collected.push({ mac: match[1], name: match[2] })
+                        collected.push({
+                            mac: match[1],
+                            name: match[2]
+                        });
                     }
                 }
             }
         }
         onExited: {
-            root.availableDevices = btListAvailable.stdout.collected
-            btListAvailable.stdout.collected = []
+            root.availableDevices = btListAvailable.stdout.collected;
+            btListAvailable.stdout.collected = [];
         }
     }
 
@@ -138,11 +146,13 @@ FocusScope {
         id: btConnect
         property string mac: ""
         command: ["bluetoothctl", "connect", mac]
-        onStarted: { root.statusMessage = "Connecting..." }
-        onExited: (exitCode) => {
-            root.statusMessage = exitCode === 0 ? "Connected" : "Connection failed"
-            statusClearTimer.start()
-            btListPaired.running = true
+        onStarted: {
+            root.statusMessage = "Connecting...";
+        }
+        onExited: exitCode => {
+            root.statusMessage = exitCode === 0 ? "Connected" : "Connection failed";
+            statusClearTimer.start();
+            btListPaired.running = true;
         }
     }
 
@@ -150,11 +160,13 @@ FocusScope {
         id: btDisconnect
         property string mac: ""
         command: ["bluetoothctl", "disconnect", mac]
-        onStarted: { root.statusMessage = "Disconnecting..." }
-        onExited: (exitCode) => {
-            root.statusMessage = exitCode === 0 ? "Disconnected" : "Disconnect failed"
-            statusClearTimer.start()
-            btListPaired.running = true
+        onStarted: {
+            root.statusMessage = "Disconnecting...";
+        }
+        onExited: exitCode => {
+            root.statusMessage = exitCode === 0 ? "Disconnected" : "Disconnect failed";
+            statusClearTimer.start();
+            btListPaired.running = true;
         }
     }
 
@@ -162,36 +174,42 @@ FocusScope {
         id: btPair
         property string mac: ""
         command: ["bash", "-c", "echo 'yes' | bluetoothctl pair " + mac]
-        onStarted: { root.statusMessage = "Pairing..." }
-        onExited: (exitCode) => {
-            root.statusMessage = exitCode === 0 ? "Paired" : "Pairing failed"
-            statusClearTimer.start()
-            btListPaired.running = true
+        onStarted: {
+            root.statusMessage = "Pairing...";
+        }
+        onExited: exitCode => {
+            root.statusMessage = exitCode === 0 ? "Paired" : "Pairing failed";
+            statusClearTimer.start();
+            btListPaired.running = true;
         }
     }
 
     Timer {
         id: statusClearTimer
         interval: 3000
-        onTriggered: { root.statusMessage = "" }
+        onTriggered: {
+            root.statusMessage = "";
+        }
     }
 
     Timer {
         id: pairedRefreshTimer
         interval: 500
-        onTriggered: { btListPaired.running = true }
+        onTriggered: {
+            btListPaired.running = true;
+        }
     }
 
     Component.onCompleted: {
-        btPowerStatus.running = true
-        btListPaired.running = true
+        btPowerStatus.running = true;
+        btListPaired.running = true;
     }
 
     onVisibleChanged: {
         if (visible) {
-            btPowerStatus.running = true
-            btListPaired.running = true
-            powerToggleScope.forceActiveFocus()
+            btPowerStatus.running = true;
+            btListPaired.running = true;
+            powerToggleScope.forceActiveFocus();
         }
     }
 
@@ -218,7 +236,11 @@ FocusScope {
                 radius: 28
                 color: root.powered ? Theme.online : Theme.textSecondary
 
-                Behavior on color { ColorAnimation { duration: 200 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 200
+                    }
+                }
 
                 Text {
                     anchors.centerIn: parent
@@ -250,16 +272,20 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            powerToggleScope.forceActiveFocus()
-                            if (root.powered) btPowerOff.running = true
-                            else btPowerOn.running = true
+                            powerToggleScope.forceActiveFocus();
+                            if (root.powered)
+                                btPowerOff.running = true;
+                            else
+                                btPowerOn.running = true;
                         }
                     }
                 }
 
                 Keys.onReturnPressed: {
-                    if (root.powered) btPowerOff.running = true
-                    else btPowerOn.running = true
+                    if (root.powered)
+                        btPowerOff.running = true;
+                    else
+                        btPowerOn.running = true;
                 }
             }
 
@@ -284,18 +310,22 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            scanScope.forceActiveFocus()
-                            if (!root.scanning) btScanOn.running = true
+                            scanScope.forceActiveFocus();
+                            if (!root.scanning)
+                                btScanOn.running = true;
                         }
                     }
                 }
 
                 Keys.onReturnPressed: {
-                    if (!root.scanning) btScanOn.running = true
+                    if (!root.scanning)
+                        btScanOn.running = true;
                 }
             }
 
-            Item { Layout.fillWidth: true }
+            Item {
+                Layout.fillWidth: true
+            }
 
             Text {
                 text: root.statusMessage
@@ -332,12 +362,15 @@ FocusScope {
                 width: pairedList.width
                 height: 96
                 radius: 16
-                color: pairedList.currentIndex === index && pairedList.activeFocus
-                       ? Theme.surfaceHover : Theme.surface
+                color: pairedList.currentIndex === index && pairedList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: modelData.connected ? Theme.online : Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -348,7 +381,9 @@ FocusScope {
                     spacing: 16
 
                     Rectangle {
-                        width: 20; height: 20; radius: 10
+                        width: 20
+                        height: 20
+                        radius: 10
                         color: modelData.connected ? Theme.online : Theme.textSecondary
                     }
 
@@ -371,16 +406,16 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        pairedList.currentIndex = index
-                        pairedList.forceActiveFocus()
+                        pairedList.currentIndex = index;
+                        pairedList.forceActiveFocus();
                     }
                     onDoubleClicked: {
                         if (modelData.connected) {
-                            btDisconnect.mac = modelData.mac
-                            btDisconnect.running = true
+                            btDisconnect.mac = modelData.mac;
+                            btDisconnect.running = true;
                         } else {
-                            btConnect.mac = modelData.mac
-                            btConnect.running = true
+                            btConnect.mac = modelData.mac;
+                            btConnect.running = true;
                         }
                     }
                 }
@@ -388,13 +423,13 @@ FocusScope {
 
             Keys.onReturnPressed: {
                 if (currentIndex >= 0 && currentIndex < root.pairedDevices.length) {
-                    let dev = root.pairedDevices[currentIndex]
+                    let dev = root.pairedDevices[currentIndex];
                     if (dev.connected) {
-                        btDisconnect.mac = dev.mac
-                        btDisconnect.running = true
+                        btDisconnect.mac = dev.mac;
+                        btDisconnect.running = true;
                     } else {
-                        btConnect.mac = dev.mac
-                        btConnect.running = true
+                        btConnect.mac = dev.mac;
+                        btConnect.running = true;
                     }
                 }
             }
@@ -433,12 +468,15 @@ FocusScope {
                 width: availList.width
                 height: 96
                 radius: 16
-                color: availList.currentIndex === index && availList.activeFocus
-                       ? Theme.surfaceHover : Theme.surface
+                color: availList.currentIndex === index && availList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -467,20 +505,20 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        availList.currentIndex = index
-                        availList.forceActiveFocus()
+                        availList.currentIndex = index;
+                        availList.forceActiveFocus();
                     }
                     onDoubleClicked: {
-                        btPair.mac = modelData.mac
-                        btPair.running = true
+                        btPair.mac = modelData.mac;
+                        btPair.running = true;
                     }
                 }
             }
 
             Keys.onReturnPressed: {
                 if (currentIndex >= 0 && currentIndex < root.availableDevices.length) {
-                    btPair.mac = root.availableDevices[currentIndex].mac
-                    btPair.running = true
+                    btPair.mac = root.availableDevices[currentIndex].mac;
+                    btPair.running = true;
                 }
             }
         }

@@ -17,12 +17,20 @@ Rectangle {
         target: Theme
         function onMouseModeChanged() {
             if (!Theme.mouseMode && mouseArea.containsMouse)
-                root.forceActiveFocus()
+                root.forceActiveFocus();
         }
     }
 
-    Behavior on color { ColorAnimation { duration: 150 } }
-    Behavior on border.color { ColorAnimation { duration: 150 } }
+    Behavior on color {
+        ColorAnimation {
+            duration: 150
+        }
+    }
+    Behavior on border.color {
+        ColorAnimation {
+            duration: 150
+        }
+    }
 
     MouseArea {
         id: mouseArea
@@ -30,8 +38,8 @@ Rectangle {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: {
-            root.forceActiveFocus()
-            root.Keys.returnPressed(null)
+            root.forceActiveFocus();
+            root.Keys.returnPressed(null);
         }
     }
 

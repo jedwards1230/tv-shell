@@ -11,13 +11,13 @@ Rectangle {
     property int maxAttempts: 5
 
     function show(msg) {
-        message = msg
-        visible = true
+        message = msg;
+        visible = true;
     }
 
     function hide() {
-        visible = false
-        attemptCount = 0
+        visible = false;
+        attemptCount = 0;
     }
 
     ColumnLayout {
@@ -42,14 +42,21 @@ Rectangle {
         Rectangle {
             visible: root.attemptCount > 0
             Layout.alignment: Qt.AlignHCenter
-            width: 200; height: 4; radius: 2
+            width: 200
+            height: 4
+            radius: 2
             color: Theme.surface
 
             Rectangle {
                 width: parent.width * (root.attemptCount / root.maxAttempts)
-                height: parent.height; radius: 2
+                height: parent.height
+                radius: 2
                 color: Theme.crimson
-                Behavior on width { NumberAnimation { duration: 300 } }
+                Behavior on width {
+                    NumberAnimation {
+                        duration: 300
+                    }
+                }
             }
         }
     }

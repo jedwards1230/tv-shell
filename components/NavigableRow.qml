@@ -12,8 +12,8 @@ FocusScope {
     property alias count: listView.count
     property bool keyNavigationWraps: false
 
-    signal activated()
-    signal escaped()
+    signal activated
+    signal escaped
 
     readonly property alias listView: listView
 
@@ -31,32 +31,38 @@ FocusScope {
         keyNavigationWraps: root.keyNavigationWraps
         focus: true
 
-        Keys.onReturnPressed: { if (listView.currentItem) root.activated() }
-        Keys.onEnterPressed: { if (listView.currentItem) root.activated() }
+        Keys.onReturnPressed: {
+            if (listView.currentItem)
+                root.activated();
+        }
+        Keys.onEnterPressed: {
+            if (listView.currentItem)
+                root.activated();
+        }
         Keys.onEscapePressed: root.escaped()
         Keys.onUpPressed: root._navigateUp()
         Keys.onDownPressed: root._navigateDown()
     }
 
     function _navigateUp() {
-        var target = previousRow
+        var target = previousRow;
         while (target) {
             if (target.visible) {
-                target.forceActiveFocus()
-                return
+                target.forceActiveFocus();
+                return;
             }
-            target = (target.previousRow !== undefined) ? target.previousRow : null
+            target = (target.previousRow !== undefined) ? target.previousRow : null;
         }
     }
 
     function _navigateDown() {
-        var target = nextRow
+        var target = nextRow;
         while (target) {
             if (target.visible) {
-                target.forceActiveFocus()
-                return
+                target.forceActiveFocus();
+                return;
             }
-            target = (target.nextRow !== undefined) ? target.nextRow : null
+            target = (target.nextRow !== undefined) ? target.nextRow : null;
         }
     }
 }

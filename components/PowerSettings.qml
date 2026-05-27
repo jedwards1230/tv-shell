@@ -7,14 +7,23 @@ FocusScope {
 
     property string confirmAction: ""
 
-    Process { id: powerOff; command: ["systemctl", "poweroff"] }
-    Process { id: rebootCmd; command: ["systemctl", "reboot"] }
-    Process { id: suspendCmd; command: ["systemctl", "suspend"] }
+    Process {
+        id: powerOff
+        command: ["systemctl", "poweroff"]
+    }
+    Process {
+        id: rebootCmd
+        command: ["systemctl", "reboot"]
+    }
+    Process {
+        id: suspendCmd
+        command: ["systemctl", "suspend"]
+    }
 
     onVisibleChanged: {
         if (visible) {
-            root.confirmAction = ""
-            suspendScope.forceActiveFocus()
+            root.confirmAction = "";
+            suspendScope.forceActiveFocus();
         }
     }
 
@@ -30,7 +39,10 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        Item { Layout.fillHeight: true; Layout.maximumHeight: 100 }
+        Item {
+            Layout.fillHeight: true
+            Layout.maximumHeight: 100
+        }
 
         // Power buttons - large and centered
         ColumnLayout {
@@ -53,7 +65,11 @@ FocusScope {
                     border.width: parent.activeFocus ? 0 : 2
                     border.color: Theme.surfaceHover
 
-                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
 
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -80,13 +96,15 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            suspendScope.forceActiveFocus()
-                            root.confirmAction = "suspend"
+                            suspendScope.forceActiveFocus();
+                            root.confirmAction = "suspend";
                         }
                     }
                 }
 
-                Keys.onReturnPressed: { root.confirmAction = "suspend" }
+                Keys.onReturnPressed: {
+                    root.confirmAction = "suspend";
+                }
             }
 
             FocusScope {
@@ -105,7 +123,11 @@ FocusScope {
                     border.width: parent.activeFocus ? 0 : 2
                     border.color: Theme.surfaceHover
 
-                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
 
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -132,13 +154,15 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            restartScope.forceActiveFocus()
-                            root.confirmAction = "restart"
+                            restartScope.forceActiveFocus();
+                            root.confirmAction = "restart";
                         }
                     }
                 }
 
-                Keys.onReturnPressed: { root.confirmAction = "restart" }
+                Keys.onReturnPressed: {
+                    root.confirmAction = "restart";
+                }
             }
 
             FocusScope {
@@ -156,7 +180,11 @@ FocusScope {
                     border.width: parent.activeFocus ? 0 : 2
                     border.color: Theme.surfaceHover
 
-                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
 
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -183,17 +211,21 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            shutdownScope.forceActiveFocus()
-                            root.confirmAction = "shutdown"
+                            shutdownScope.forceActiveFocus();
+                            root.confirmAction = "shutdown";
                         }
                     }
                 }
 
-                Keys.onReturnPressed: { root.confirmAction = "shutdown" }
+                Keys.onReturnPressed: {
+                    root.confirmAction = "shutdown";
+                }
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+        }
 
         Text {
             text: "A: Select  |  Use with caution"
@@ -211,7 +243,9 @@ FocusScope {
 
         MouseArea {
             anchors.fill: parent
-            onClicked: { root.confirmAction = "" }
+            onClicked: {
+                root.confirmAction = "";
+            }
         }
 
         Rectangle {
@@ -227,11 +261,15 @@ FocusScope {
 
                 Text {
                     text: {
-                        switch(root.confirmAction) {
-                            case "suspend": return "Sleep this system?"
-                            case "restart": return "Restart this system?"
-                            case "shutdown": return "Shut down this system?"
-                            default: return ""
+                        switch (root.confirmAction) {
+                        case "suspend":
+                            return "Sleep this system?";
+                        case "restart":
+                            return "Restart this system?";
+                        case "shutdown":
+                            return "Shut down this system?";
+                        default:
+                            return "";
                         }
                     }
                     font.pixelSize: Theme.fontTitle
@@ -263,8 +301,8 @@ FocusScope {
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    confirmYesScope.forceActiveFocus()
-                                    executeAction()
+                                    confirmYesScope.forceActiveFocus();
+                                    executeAction();
                                 }
                             }
                         }
@@ -292,28 +330,40 @@ FocusScope {
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    confirmNoScope.forceActiveFocus()
-                                    root.confirmAction = ""
+                                    confirmNoScope.forceActiveFocus();
+                                    root.confirmAction = "";
                                 }
                             }
                         }
 
-                        Keys.onReturnPressed: { root.confirmAction = "" }
-                        Keys.onEscapePressed: { root.confirmAction = "" }
+                        Keys.onReturnPressed: {
+                            root.confirmAction = "";
+                        }
+                        Keys.onEscapePressed: {
+                            root.confirmAction = "";
+                        }
                     }
                 }
             }
         }
 
-        Keys.onEscapePressed: { root.confirmAction = "" }
+        Keys.onEscapePressed: {
+            root.confirmAction = "";
+        }
     }
 
     function executeAction() {
-        switch(root.confirmAction) {
-            case "suspend": suspendCmd.running = true; break
-            case "restart": rebootCmd.running = true; break
-            case "shutdown": powerOff.running = true; break
+        switch (root.confirmAction) {
+        case "suspend":
+            suspendCmd.running = true;
+            break;
+        case "restart":
+            rebootCmd.running = true;
+            break;
+        case "shutdown":
+            powerOff.running = true;
+            break;
         }
-        root.confirmAction = ""
+        root.confirmAction = "";
     }
 }
