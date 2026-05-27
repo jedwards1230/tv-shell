@@ -32,3 +32,5 @@ ShellLayout 1.0 ShellLayout.qml
 singleton NotificationManager 1.0 NotificationManager.qml
 NotificationToast 1.0 NotificationToast.qml
 NotificationStack 1.0 NotificationStack.qml
+singleton ErrorLog 1.0 ErrorLog.qml
+ErrorLogViewer 1.0 ErrorLogViewer.qml

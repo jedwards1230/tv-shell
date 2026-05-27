@@ -38,6 +38,10 @@ FocusScope {
             else
                 homeFocusTimer.restart();
             event.accepted = true;
+        } else if (event.key === Qt.Key_Tab && NotificationManager.hasActiveError) {
+            NotificationManager.dismissErrors();
+            errorLogViewer.opened = true;
+            event.accepted = true;
         }
     }
 
@@ -110,6 +114,12 @@ FocusScope {
         anchors.rightMargin: Units.spacingXL
         anchors.topMargin: Units.gridUnit * 9
         z: 45
+    }
+
+    // === Error Log Viewer ===
+    ErrorLogViewer {
+        id: errorLogViewer
+        z: 60
     }
 
     // === Overlay Drawer (appRunning state) ===
