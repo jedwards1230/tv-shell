@@ -157,7 +157,7 @@ FocusScope {
             Image {
                 id: notifIcon
                 anchors.centerIn: parent
-                source: root._iconBase ? "file://" + root._iconBase + "/status/22/preferences-desktop-notification-bell.svg" : ""
+                source: root._iconBase ? "file://" + root._iconBase + "/actions/22/" + (NotificationManager.unreadCount > 0 ? "notification-active.svg" : "notification-inactive.svg") : ""
                 sourceSize: Qt.size(root._imgSize, root._imgSize)
                 width: root._imgSize
                 height: root._imgSize
@@ -219,7 +219,7 @@ FocusScope {
             Image {
                 id: settingsIcon
                 anchors.centerIn: parent
-                source: root._iconBase ? "file://" + root._iconBase + "/apps/32/preferences-system.svg" : ""
+                source: root._iconBase ? "file://" + root._iconBase + "/actions/22/configure.svg" : ""
                 sourceSize: Qt.size(root._imgSize, root._imgSize)
                 width: root._imgSize
                 height: root._imgSize
