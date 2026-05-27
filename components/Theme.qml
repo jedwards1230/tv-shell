@@ -129,20 +129,22 @@ Item {
     property color sidebarActive: darkMode ? "#424650" : navy
     property color sidebarText: "#e6e4e0"
 
-    // === Layout — couch-readable at 4K (10-foot UI) ===
-    readonly property int cardWidth: 600
-    readonly property int cardHeight: 480
-    readonly property int cardSpacing: 40
-    readonly property int cardRadius: 24
-    readonly property int padding: 48
-    readonly property int rowHeight: 540
-    readonly property int statusBarHeight: 120
+    // === Layout — derived from Units.gridUnit (couch-readable, resolution-adaptive) ===
+    readonly property int cardWidth: Math.round(Units.gridUnit * 11.11)
+    readonly property int cardHeight: Math.round(Units.gridUnit * 8.89)
+    readonly property int cardSpacing: Math.round(Units.gridUnit * 0.74)
+    readonly property int cardRadius: Math.round(Units.gridUnit * 0.44)
+    readonly property int padding: Math.round(Units.gridUnit * 0.89)
+    readonly property int rowHeight: Math.round(Units.gridUnit * 10.0)
+    readonly property int statusBarHeight: Math.round(Units.gridUnit * 2.22)
 
-    // === Font sizes — couch-readable at 4K ===
-    readonly property int fontHero: 120
-    readonly property int fontTitle: 56
-    readonly property int fontBody: 40
-    readonly property int fontSmall: 32
-    readonly property int fontStatus: 40
-    readonly property int fontHint: 36
+    // === Font sizes — derived from Units.gridUnit (couch-readable, resolution-adaptive) ===
+    readonly property int fontHero: Math.round(Units.gridUnit * 2.22)
+    readonly property int fontTitle: Math.round(Units.gridUnit * 1.04)
+    readonly property int fontBody: Math.round(Units.gridUnit * 0.74)
+    readonly property int fontSmall: Math.round(Units.gridUnit * 0.59)
+    readonly property int fontStatus: Math.round(Units.gridUnit * 0.74)
+    readonly property int fontHint: Math.round(Units.gridUnit * 0.67)
+    readonly property int fontCaption: Math.round(Units.gridUnit * 0.52)
+    readonly property int fontXSmall: Math.round(Units.gridUnit * 0.44)
 }
