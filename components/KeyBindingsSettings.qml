@@ -140,7 +140,6 @@ FocusScope {
     // Actions that can be remapped via daemon IPC
     property var remappableActions: ["select", "back", "altSelect", "confirm"]
 
-
     // Capture state
     property int editingIndex: -1
     property bool capturing: false
