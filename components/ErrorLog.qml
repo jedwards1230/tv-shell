@@ -20,33 +20,39 @@ Item {
         entry.details = details || "";
         entry.target = target !== undefined ? target : _currentTarget;
 
-        var list = root.entries.slice()
-        list.push(entry)
+        var list = root.entries.slice();
+        list.push(entry);
         if (list.length > root.maxEntries)
-            list = list.slice(list.length - root.maxEntries)
-        root.entries = list
-        root.count = list.length
-        errorAdded(entry)
+            list = list.slice(list.length - root.maxEntries);
+        root.entries = list;
+        root.count = list.length;
+        errorAdded(entry);
 
-        NotificationManager.notify(
-            _sourceLabel(source) + " Error",
-            message,
-            { level: "error", duration: 0, source: source }
-        )
+        NotificationManager.notify(_sourceLabel(source) + " Error", message, {
+            level: "error",
+            duration: 0,
+            source: source
+        });
     }
 
     function clear() {
-        root.entries = []
-        root.count = 0
+        root.entries = [];
+        root.count = 0;
     }
 
-    function setCurrentTarget(t) { _currentTarget = t }
+    function setCurrentTarget(t) {
+        _currentTarget = t;
+    }
 
     function _sourceLabel(source) {
-        if (source === "moonlight") return "Stream"
-        if (source === "app") return "App"
-        if (source === "input") return "Input"
-        if (source === "av") return "AV System"
-        return "System"
+        if (source === "moonlight")
+            return "Stream";
+        if (source === "app")
+            return "App";
+        if (source === "input")
+            return "Input";
+        if (source === "av")
+            return "AV System";
+        return "System";
     }
 }

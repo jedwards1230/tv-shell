@@ -18,9 +18,10 @@ Item {
 
     function _computeHasActiveError() {
         for (var i = 0; i < activeList.length; i++) {
-            if (activeList[i].level === "error") return true
+            if (activeList[i].level === "error")
+                return true;
         }
-        return false
+        return false;
     }
 
     onActiveListChanged: hasActiveError = _computeHasActiveError()
@@ -34,8 +35,12 @@ Item {
                 remaining.push(root.activeList[i]);
         }
         root.activeList = remaining;
-        root._queue = root._queue.filter(function(n) { return n.level !== "error"; });
-        root._deferredQueue = root._deferredQueue.filter(function(n) { return n.level !== "error"; });
+        root._queue = root._queue.filter(function (n) {
+            return n.level !== "error";
+        });
+        root._deferredQueue = root._deferredQueue.filter(function (n) {
+            return n.level !== "error";
+        });
         _processQueue();
     }
 
