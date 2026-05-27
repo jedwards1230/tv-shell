@@ -9,6 +9,7 @@ FocusScope {
     signal focusDownRequested()
 
     property string ipAddress: "..."
+    property bool _wasConnected: false
     readonly property int _iconSize: 64
     readonly property int _imgSize: 32
     // Must match the number of icon containers below (Settings=0, Theme=1, Network=2, Volume=3)
@@ -44,6 +45,16 @@ FocusScope {
         repeat: true
         triggeredOnStart: true
         onTriggered: { if (!ipProcess.running) ipProcess.running = true }
+    }
+
+    onIpAddressChanged: {
+        var connected = ipAddress !== "..." && ipAddress !== "No IP"
+        if (root._wasConnected && !connected) {
+            NotificationManager.notify("Network Disconnected", "", {icon: "📶", level: "warning", source: "network"})
+        } else if (!root._wasConnected && connected && ipAddress !== "...") {
+            NotificationManager.notify("Network Connected", ipAddress, {icon: "📶", source: "network"})
+        }
+        root._wasConnected = connected
     }
 
     // Keyboard navigation (RTL layout: Right moves to lower index, Left to higher)

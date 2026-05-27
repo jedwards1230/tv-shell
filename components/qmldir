@@ -29,3 +29,6 @@ InputManager 1.0 InputManager.qml
 AppLifecycleManager 1.0 AppLifecycleManager.qml
 StreamManager 1.0 StreamManager.qml
 ShellLayout 1.0 ShellLayout.qml
+singleton NotificationManager 1.0 NotificationManager.qml
+NotificationToast 1.0 NotificationToast.qml
+NotificationStack 1.0 NotificationStack.qml
