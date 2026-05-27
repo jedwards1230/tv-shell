@@ -239,8 +239,8 @@ except:
         anchors.fill: parent
         anchors.topMargin: Theme.padding
         anchors.bottomMargin: Theme.padding
-        anchors.leftMargin: Theme.padding + 20
-        anchors.rightMargin: Theme.padding + 20
+        anchors.leftMargin: Theme.padding
+        anchors.rightMargin: Theme.padding
         contentHeight: contentColumn.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
