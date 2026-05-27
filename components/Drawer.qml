@@ -25,7 +25,7 @@ FocusScope {
     // Content goes inside contentContainer
     default property alias content: contentContainer.data
 
-    signal closed()
+    signal closed
 
     // Drawer is always full-parent overlay
     anchors.fill: parent
@@ -42,13 +42,13 @@ FocusScope {
         color: Qt.rgba(0, 0, 0, 0.5)
         opacity: {
             if (root.edge === "left")
-                return 1.0 - Math.abs(drawerPanel.x / root.drawerWidth)
+                return 1.0 - Math.abs(drawerPanel.x / root.drawerWidth);
             if (root.edge === "right")
-                return 1.0 - Math.abs((parent.width - drawerPanel.x - root.drawerWidth) / root.drawerWidth)
+                return 1.0 - Math.abs((parent.width - drawerPanel.x - root.drawerWidth) / root.drawerWidth);
             if (root.edge === "top")
-                return 1.0 - Math.abs(drawerPanel.y / root.drawerHeight)
+                return 1.0 - Math.abs(drawerPanel.y / root.drawerHeight);
             // bottom
-            return 1.0 - Math.abs((parent.height - drawerPanel.y - root.drawerHeight) / root.drawerHeight)
+            return 1.0 - Math.abs((parent.height - drawerPanel.y - root.drawerHeight) / root.drawerHeight);
         }
 
         MouseArea {
@@ -69,17 +69,17 @@ FocusScope {
         // Position: slides in from offscreen
         x: {
             if (root.edge === "left")
-                return root.opened ? 0 : -root.drawerWidth
+                return root.opened ? 0 : -root.drawerWidth;
             if (root.edge === "right")
-                return root.opened ? parent.width - root.drawerWidth : parent.width
-            return 0
+                return root.opened ? parent.width - root.drawerWidth : parent.width;
+            return 0;
         }
         y: {
             if (root.edge === "top")
-                return root.opened ? 0 : -root.drawerHeight
+                return root.opened ? 0 : -root.drawerHeight;
             if (root.edge === "bottom")
-                return root.opened ? parent.height - root.drawerHeight : parent.height
-            return 0
+                return root.opened ? parent.height - root.drawerHeight : parent.height;
+            return 0;
         }
 
         Behavior on x {
@@ -108,10 +108,10 @@ FocusScope {
     // Only emit closed() — caller owns the `opened` binding and sets it to
     // false in its onClosed handler, avoiding broken property bindings.
     Keys.onEscapePressed: root.closed()
-    Keys.onPressed: (event) => {
+    Keys.onPressed: event => {
         if (event.key === Qt.Key_B && !event.modifiers) {
-            root.closed()
-            event.accepted = true
+            root.closed();
+            event.accepted = true;
         }
     }
 }

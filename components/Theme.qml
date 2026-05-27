@@ -19,10 +19,12 @@ Item {
     property bool controllerDebug: false
     property int _currentHour: new Date().getHours()
     property bool darkMode: {
-        if (themeMode === "dark") return true
-        if (themeMode === "light") return false
+        if (themeMode === "dark")
+            return true;
+        if (themeMode === "light")
+            return false;
         // auto: dark from 8 PM to 7 AM
-        return _currentHour >= 20 || _currentHour < 7
+        return _currentHour >= 20 || _currentHour < 7;
     }
 
     // === Settings Persistence ===
@@ -33,16 +35,18 @@ Item {
         id: loadSettings
         command: ["bash", "-c", "cat " + _settingsFile + " 2>/dev/null || true"]
         stdout: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 try {
-                    var obj = JSON.parse(line)
+                    var obj = JSON.parse(line);
                     if (obj.themeMode === "auto" || obj.themeMode === "light" || obj.themeMode === "dark")
-                        themeMode = obj.themeMode
+                        themeMode = obj.themeMode;
                     if (obj.moonlightViewMode === "servers" || obj.moonlightViewMode === "apps")
-                        moonlightViewMode = obj.moonlightViewMode
+                        moonlightViewMode = obj.moonlightViewMode;
                     if (typeof obj.controllerDebug === "boolean")
-                        controllerDebug = obj.controllerDebug
-                } catch(e) { console.log("Theme: failed to parse settings:", e) }
+                        controllerDebug = obj.controllerDebug;
+                } catch (e) {
+                    console.log("Theme: failed to parse settings:", e);
+                }
             }
         }
     }
@@ -52,34 +56,26 @@ Item {
     // kiosk — the two writers update disjoint keys and rarely race in practice.
     Process {
         id: saveSettings
-        command: ["python3", "-c",
-            "import json,os,pathlib;" +
-            "p=pathlib.Path(os.path.expanduser('" + _settingsFile + "'));" +
-            "p.parent.mkdir(parents=True,exist_ok=True);" +
-            "d=json.loads(p.read_text()) if p.exists() else {};" +
-            "d['themeMode']='" + themeMode + "';" +
-            "d['moonlightViewMode']='" + moonlightViewMode + "';" +
-            "d['controllerDebug']=" + (controllerDebug ? "True" : "False") + ";" +
-            "p.write_text(json.dumps(d,separators=(',',':')))"]
+        command: ["python3", "-c", "import json,os,pathlib;" + "p=pathlib.Path(os.path.expanduser('" + _settingsFile + "'));" + "p.parent.mkdir(parents=True,exist_ok=True);" + "d=json.loads(p.read_text()) if p.exists() else {};" + "d['themeMode']='" + themeMode + "';" + "d['moonlightViewMode']='" + moonlightViewMode + "';" + "d['controllerDebug']=" + (controllerDebug ? "True" : "False") + ";" + "p.write_text(json.dumps(d,separators=(',',':')))"]
     }
 
     function setThemeMode(mode) {
         if (mode === "auto" || mode === "light" || mode === "dark") {
-            themeMode = mode
-            saveSettings.running = true
+            themeMode = mode;
+            saveSettings.running = true;
         }
     }
 
     function setMoonlightViewMode(mode) {
         if (mode === "servers" || mode === "apps") {
-            moonlightViewMode = mode
-            saveSettings.running = true
+            moonlightViewMode = mode;
+            saveSettings.running = true;
         }
     }
 
     function setControllerDebug(enabled) {
-        controllerDebug = enabled
-        saveSettings.running = true
+        controllerDebug = enabled;
+        saveSettings.running = true;
     }
 
     // Re-evaluate auto mode every 60 seconds
@@ -88,10 +84,14 @@ Item {
         interval: 60000
         running: themeMode === "auto"
         repeat: true
-        onTriggered: { _currentHour = new Date().getHours() }
+        onTriggered: {
+            _currentHour = new Date().getHours();
+        }
     }
 
-    Component.onCompleted: { loadSettings.running = true }
+    Component.onCompleted: {
+        loadSettings.running = true;
+    }
 
     // === Base Palette (5 accent colors — shared across themes) ===
     readonly property color snow: "#f4f5f7"

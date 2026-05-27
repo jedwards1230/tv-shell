@@ -21,23 +21,23 @@ FocusScope {
     signal streamRequested(var target)
     signal appLaunchRequested(var app)
     signal appFocusRequested(string windowClass)
-    signal homeKeyPressed()
-    signal returnToShellRequested()
-    signal overlayDrawerClosed()
+    signal homeKeyPressed
+    signal returnToShellRequested
+    signal overlayDrawerClosed
 
     function focusHome() {
-        homeFocusTimer.restart()
+        homeFocusTimer.restart();
     }
 
-    Keys.onPressed: (event) => {
+    Keys.onPressed: event => {
         if (event.key === Qt.Key_HomePage) {
-            root.homeKeyPressed()
-            navDrawer.opened = !navDrawer.opened
+            root.homeKeyPressed();
+            navDrawer.opened = !navDrawer.opened;
             if (navDrawer.opened)
-                navDrawer.forceActiveFocus()
+                navDrawer.forceActiveFocus();
             else
-                homeFocusTimer.restart()
-            event.accepted = true
+                homeFocusTimer.restart();
+            event.accepted = true;
         }
     }
 
@@ -51,12 +51,12 @@ FocusScope {
 
         runningWindows: root.runningWindows
 
-        onStreamRequested: (target) => root.streamRequested(target)
-        onAppLaunchRequested: (app) => root.appLaunchRequested(app)
-        onAppFocusRequested: (windowClass) => root.appFocusRequested(windowClass)
+        onStreamRequested: target => root.streamRequested(target)
+        onAppLaunchRequested: app => root.appLaunchRequested(app)
+        onAppFocusRequested: windowClass => root.appFocusRequested(windowClass)
         onSettingsRequested: {
-            settingsPanel.visible = true
-            settingsPanel.forceActiveFocus()
+            settingsPanel.visible = true;
+            settingsPanel.forceActiveFocus();
         }
     }
 
@@ -64,15 +64,17 @@ FocusScope {
         id: settingsPanel
         anchors.fill: parent
         onClosed: {
-            settingsPanel.visible = false
-            homeFocusTimer.restart()
+            settingsPanel.visible = false;
+            homeFocusTimer.restart();
         }
     }
 
     Timer {
         id: homeFocusTimer
         interval: 50
-        onTriggered: { homeScreen.forceActiveFocus() }
+        onTriggered: {
+            homeScreen.forceActiveFocus();
+        }
     }
 
     StreamOverlay {
@@ -86,18 +88,18 @@ FocusScope {
         z: 50
         visible: root.shellState === "idle"
         onSettingsRequested: {
-            navDrawer.opened = false
-            settingsPanel.visible = true
-            settingsPanel.forceActiveFocus()
+            navDrawer.opened = false;
+            settingsPanel.visible = true;
+            settingsPanel.forceActiveFocus();
         }
         onHomeSelected: {
-            navDrawer.opened = false
-            settingsPanel.visible = false
-            homeFocusTimer.restart()
+            navDrawer.opened = false;
+            settingsPanel.visible = false;
+            homeFocusTimer.restart();
         }
         onClosed: {
-            navDrawer.opened = false
-            homeFocusTimer.restart()
+            navDrawer.opened = false;
+            homeFocusTimer.restart();
         }
     }
 
@@ -122,21 +124,21 @@ FocusScope {
             overlayMode: true
             opened: root.overlayDrawerOpen
             onHomeSelected: {
-                root.returnToShellRequested()
+                root.returnToShellRequested();
             }
             onSettingsRequested: {
-                root.overlayDrawerClosed()
-                root.returnToShellRequested()
-                settingsPanel.visible = true
-                settingsPanel.forceActiveFocus()
+                root.overlayDrawerClosed();
+                root.returnToShellRequested();
+                settingsPanel.visible = true;
+                settingsPanel.forceActiveFocus();
             }
             onClosed: {
-                root.overlayDrawerClosed()
+                root.overlayDrawerClosed();
             }
         }
 
         Keys.onEscapePressed: {
-            root.overlayDrawerClosed()
+            root.overlayDrawerClosed();
         }
     }
 
@@ -170,22 +172,23 @@ FocusScope {
             id: debugSubscribe
             command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
             stdout: SplitParser {
-                onRead: (line) => {
-                    if (line === "subscribed") return
+                onRead: line => {
+                    if (line === "subscribed")
+                        return;
                     if (line.startsWith("buttons:")) {
-                        let combo = line.substring(8).trim()
-                        debugOverlay.currentCombo = combo
+                        let combo = line.substring(8).trim();
+                        debugOverlay.currentCombo = combo;
                         if (combo !== "") {
-                            debugOverlay.displayCombo = combo
-                            debugOverlay.showingCombo = true
-                            comboFadeTimer.restart()
+                            debugOverlay.displayCombo = combo;
+                            debugOverlay.showingCombo = true;
+                            comboFadeTimer.restart();
                         }
                     }
                 }
             }
             onExited: {
                 if (debugOverlay.visible)
-                    reconnectDebug.start()
+                    reconnectDebug.start();
             }
         }
 
@@ -194,7 +197,7 @@ FocusScope {
             interval: 2000
             onTriggered: {
                 if (debugOverlay.visible)
-                    debugSubscribe.running = true
+                    debugSubscribe.running = true;
             }
         }
 
@@ -203,19 +206,19 @@ FocusScope {
             interval: 1500
             onTriggered: {
                 if (debugOverlay.currentCombo === "")
-                    debugOverlay.showingCombo = false
+                    debugOverlay.showingCombo = false;
             }
         }
 
         onVisibleChanged: {
             if (!visible) {
-                debugSubscribe.running = false
-                reconnectDebug.running = false
-                showingCombo = false
-                currentCombo = ""
-                displayCombo = ""
+                debugSubscribe.running = false;
+                reconnectDebug.running = false;
+                showingCombo = false;
+                currentCombo = "";
+                displayCombo = "";
             } else {
-                debugSubscribe.running = true
+                debugSubscribe.running = true;
             }
         }
 
@@ -233,7 +236,11 @@ FocusScope {
             visible: debugOverlay.showingCombo
             opacity: debugOverlay.currentCombo !== "" ? 1.0 : 0.4
 
-            Behavior on opacity { NumberAnimation { duration: 300 } }
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 300
+                }
+            }
 
             Text {
                 id: comboText
