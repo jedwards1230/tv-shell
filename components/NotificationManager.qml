@@ -6,6 +6,7 @@ Item {
 
     property var activeList: []
     property bool shellVisible: true
+    property bool hasActiveError: _computeHasActiveError()
 
     property var _queue: []
     property var _deferredQueue: []
@@ -14,6 +15,34 @@ Item {
 
     signal notificationAdded(var notification)
     signal notificationDismissed(int id)
+
+    function _computeHasActiveError() {
+        for (var i = 0; i < activeList.length; i++) {
+            if (activeList[i].level === "error")
+                return true;
+        }
+        return false;
+    }
+
+    onActiveListChanged: hasActiveError = _computeHasActiveError()
+
+    function dismissErrors() {
+        var remaining = [];
+        for (var i = 0; i < root.activeList.length; i++) {
+            if (root.activeList[i].level === "error")
+                notificationDismissed(root.activeList[i].id);
+            else
+                remaining.push(root.activeList[i]);
+        }
+        root.activeList = remaining;
+        root._queue = root._queue.filter(function (n) {
+            return n.level !== "error";
+        });
+        root._deferredQueue = root._deferredQueue.filter(function (n) {
+            return n.level !== "error";
+        });
+        _processQueue();
+    }
 
     function notify(title, message, options) {
         var opts = options || Object.create(null);

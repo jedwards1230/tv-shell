@@ -41,6 +41,16 @@ FocusScope {
         }
     }
 
+    Shortcut {
+        sequence: "Tab"
+        enabled: NotificationManager.hasActiveError && root.shellState === "idle"
+        onActivated: {
+            NotificationManager.dismissErrors();
+            errorLogViewer.opened = true;
+            errorLogViewer.forceActiveFocus();
+        }
+    }
+
     HomeScreen {
         id: homeScreen
         anchors.fill: parent
@@ -110,6 +120,12 @@ FocusScope {
         anchors.rightMargin: Units.spacingXL
         anchors.topMargin: Units.gridUnit * 9
         z: 45
+    }
+
+    // === Error Log Viewer ===
+    ErrorLogViewer {
+        id: errorLogViewer
+        z: 60
     }
 
     // === Overlay Drawer (appRunning state) ===
