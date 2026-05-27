@@ -15,9 +15,9 @@ Item {
     opacity: 0
 
     Component.onCompleted: {
-        enterAnim.start()
+        enterAnim.start();
         if (notification.duration > 0)
-            autoDismissTimer.start()
+            autoDismissTimer.start();
     }
 
     NumberAnimation {
@@ -79,9 +79,11 @@ Item {
             width: 4
             radius: Units.radiusMD
             color: {
-                if (root.notification.level === "error") return Theme.crimson
-                if (root.notification.level === "warning") return Theme.ember
-                return Theme.navy
+                if (root.notification.level === "error")
+                    return Theme.crimson;
+                if (root.notification.level === "warning")
+                    return Theme.ember;
+                return Theme.navy;
             }
 
             // Clip right side of the accent bar radius so it sits flush

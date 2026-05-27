@@ -71,19 +71,32 @@ ShellRoot {
     Components.StreamManager {
         id: streamManager
         shellState: root.state
-        onStreamStarted: { root.state = "streaming" }
+        onStreamStarted: {
+            root.state = "streaming";
+        }
         onStreamEnded: {
-            Components.NotificationManager.notify("Stream Ended", "", {icon: "📡", source: "stream"})
-            root.returnToShell()
+            Components.NotificationManager.notify("Stream Ended", "", {
+                icon: "📡",
+                source: "stream"
+            });
+            root.returnToShell();
         }
-        onStreamCrashed: (attempts) => { root.state = "reconnecting" }
+        onStreamCrashed: attempts => {
+            root.state = "reconnecting";
+        }
         onStreamFailed: {
-            var hostName = streamManager.currentTarget ? (streamManager.currentTarget.name || "") : ""
-            Components.NotificationManager.notify("Stream Failed", hostName, {icon: "📡", level: "error", source: "stream"})
-            root.state = "idle"
-            inputManager.grab()
+            var hostName = streamManager.currentTarget ? (streamManager.currentTarget.name || "") : "";
+            Components.NotificationManager.notify("Stream Failed", hostName, {
+                icon: "📡",
+                level: "error",
+                source: "stream"
+            });
+            root.state = "idle";
+            inputManager.grab();
         }
-        onRequestOverlayShow: (msg) => { layout.overlay.show(msg) }
+        onRequestOverlayShow: msg => {
+            layout.overlay.show(msg);
+        }
         onRequestOverlayHide: layout.overlay.hide()
         onRequestInputRelease: inputManager.release()
         onRequestInputGrab: inputManager.grab()
