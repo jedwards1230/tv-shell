@@ -113,14 +113,7 @@ except:
     }
 
     function saveStreamRecent(appName, host) {
-        streamRecentsSaver.command = ["python3", "-c",
-            "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/stream-recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " +
-            "d=[]; " +
-            "try:\n with open(p) as f: d=json.load(f)\nexcept: pass\n" +
-            "entry={'app':'" + appName.replace(/'/g, "\\'") + "','host':'" + host.replace(/'/g, "\\'") + "','time':time.time()}; " +
-            "d=[e for e in d if e.get('app')!=entry['app'] or e.get('host')!=entry['host']]; d.insert(0,entry); d=d[:20]; " +
-            "open(p,'w').write(json.dumps(d,indent=2))"
-        ];
+        streamRecentsSaver.command = ["python3", "-c", "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/stream-recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " + "d=[]; " + "try:\n with open(p) as f: d=json.load(f)\nexcept: pass\n" + "entry={'app':'" + appName.replace(/'/g, "\\'") + "','host':'" + host.replace(/'/g, "\\'") + "','time':time.time()}; " + "d=[e for e in d if e.get('app')!=entry['app'] or e.get('host')!=entry['host']]; d.insert(0,entry); d=d[:20]; " + "open(p,'w').write(json.dumps(d,indent=2))"];
         streamRecentsSaver.running = true;
         streamRecentsReloadTimer.start();
     }
@@ -375,10 +368,12 @@ except Exception:
             apps.sort(function (a, b) {
                 let aActive = (a === activeApp) ? 0 : 1;
                 let bActive = (b === activeApp) ? 0 : 1;
-                if (aActive !== bActive) return aActive - bActive;
+                if (aActive !== bActive)
+                    return aActive - bActive;
                 let aRecent = (a in recentOrder) ? recentOrder[a] : 9999;
                 let bRecent = (b in recentOrder) ? recentOrder[b] : 9999;
-                if (aRecent !== bRecent) return aRecent - bRecent;
+                if (aRecent !== bRecent)
+                    return aRecent - bRecent;
                 return a.localeCompare(b);
             });
             rows.push({

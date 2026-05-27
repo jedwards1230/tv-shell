@@ -138,9 +138,7 @@ Item {
         // Wrapper ignores TERM/HUP so moonlight survives shell restarts.
         // Subshell resets traps so moonlight has normal signal handling.
         let escaped = mlArgs.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(" ");
-        moonlight.command = ["bash", "-c",
-            "trap '' TERM HUP; (trap - TERM HUP; exec env QT_QPA_PLATFORM=wayland LIBVA_DRIVER_NAME=radeonsi " + escaped + ") & wait $!",
-        ];
+        moonlight.command = ["bash", "-c", "trap '' TERM HUP; (trap - TERM HUP; exec env QT_QPA_PLATFORM=wayland LIBVA_DRIVER_NAME=radeonsi " + escaped + ") & wait $!",];
         requestInputRelease();
         streamStarted();
         launchTimeout.restart();
