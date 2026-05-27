@@ -485,6 +485,7 @@ except:
                     height: Theme.cardHeight
                     width: Theme.cardWidth
                     target: modelData
+                    shellState: root.shellState
                     focus: index === moonlightRow.currentIndex
                     onActivated: root.streamRequested(modelData)
                 }
@@ -572,6 +573,7 @@ except:
                                 width: Theme.cardWidth
                                 target: hostTarget
                                 appName: modelData
+                                shellState: root.shellState
                                 focus: index === appViewNavRow.currentIndex
                                 onActivated: {
                                     let t = JSON.parse(JSON.stringify(hostTarget));

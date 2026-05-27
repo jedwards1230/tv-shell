@@ -73,6 +73,10 @@ ShellRoot {
         id: inputManager
         onForceQuitRequested: root.forceQuit()
         onEndSessionRequested: inputManager.endSession()
+        onSuspendStreamRequested: {
+            if (root.state === "streaming" || root.state === "reconnecting")
+                streamManager.suspend();
+        }
         onControllerWake: {
             if (root.state === "idle")
                 avController.wake();
@@ -113,6 +117,10 @@ ShellRoot {
         }
         onStreamEnded: {
             Components.NotificationManager.info("stream", "Stream Ended");
+            root.returnToShell();
+        }
+        onStreamSuspended: {
+            Components.NotificationManager.info("stream", "Stream Suspended");
             root.returnToShell();
         }
         onStreamCrashed: attempts => {
