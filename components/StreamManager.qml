@@ -168,6 +168,18 @@ Item {
 
     Process {
         id: moonlight
+        stdout: SplitParser {
+            onRead: line => {
+                var trimmed = line.trim();
+                if (trimmed === "")
+                    return;
+                var lines = root._stderrLines.slice();
+                lines.push(trimmed);
+                if (lines.length > 50)
+                    lines = lines.slice(lines.length - 50);
+                root._stderrLines = lines;
+            }
+        }
         stderr: SplitParser {
             onRead: line => {
                 var trimmed = line.trim();
@@ -190,10 +202,9 @@ Item {
                 root.streamEnded();
             } else {
                 root.crashCount++;
+                ErrorLog.log("moonlight", "Stream exit code " + exitCode + " (attempt " + root.crashCount + ")", root._stderrLines.join("\n"));
                 if (root.crashCount < 5) {
-                    root._lastStderr = "";
-                    root._stderrLines = [];
-                    root.requestOverlayShow("Reconnecting... (" + root.crashCount + "/5)");
+                    root.requestOverlayShow("Reconnecting... (" + root.crashCount + "/5)\n" + (root._lastStderr || ""));
                     root.streamCrashed(root.crashCount);
                     reconnectTimer.start();
                 } else {
@@ -202,7 +213,6 @@ Item {
                     errorDismissTimer.start();
                     root.requestInputGrab();
                     root.streamFailed(msg);
-                    ErrorLog.log("moonlight", msg, root._stderrLines.join("\n"));
                 }
             }
         }
