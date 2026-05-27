@@ -174,7 +174,10 @@ ShellRoot {
             Components.ShellLayout {
                 id: layout
                 anchors.fill: parent
-                Component.onCompleted: root._layout = layout
+                Component.onCompleted: {
+                    root._layout = layout;
+                    root._layout.focusHome();
+                }
                 shellState: root.state
                 targets: root.targets
                 runningWindows: appLifecycle.runningWindows
