@@ -13,6 +13,7 @@ Item {
     // Active session state detected by pre-flight check
     property string activeSessionApp: ""
     property bool _sessionCheckCancelled: false
+    property bool _forceKilled: false
 
     signal streamStarted
     signal streamEnded
@@ -36,6 +37,7 @@ Item {
         _stderrLines = [];
         activeSessionApp = "";
         _sessionCheckCancelled = false;
+        _forceKilled = false;
         ErrorLog.setCurrentTarget(target.name || target.app || "");
 
         if (target.sunshineUser && target.sunshinePass) {
@@ -75,6 +77,7 @@ Item {
     }
 
     function forceKill() {
+        _forceKilled = true;
         stop();
         _sessionCheckCancelled = true;
         sessionCheckProc.running = false;
@@ -196,6 +199,8 @@ Item {
         }
         onExited: (exitCode, exitStatus) => {
             launchTimeout.stop();
+            if (root._forceKilled)
+                return;
             if (exitCode === 0) {
                 root._lastStderr = "";
                 root._stderrLines = [];
