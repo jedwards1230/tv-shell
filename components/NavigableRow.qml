@@ -23,7 +23,7 @@ FocusScope {
         anchors.fill: parent
         anchors.topMargin: -16
         anchors.bottomMargin: -16
-        anchors.leftMargin: -16
+        leftMargin: 16
         orientation: ListView.Horizontal
         spacing: Theme.cardSpacing
         clip: false
