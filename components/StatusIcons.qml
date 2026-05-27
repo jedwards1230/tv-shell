@@ -6,6 +6,7 @@ FocusScope {
     id: root
 
     signal settingsRequested
+    signal notificationCenterRequested
     signal focusDownRequested
 
     property string ipAddress: "..."
@@ -13,8 +14,8 @@ FocusScope {
     property bool _networkInitialized: false
     readonly property int _iconSize: 64
     readonly property int _imgSize: 32
-    // Must match the number of icon containers below (Settings=0, Theme=1, Network=2, Volume=3)
-    readonly property int _iconCount: 4
+    // Must match the number of icon containers below (Notifications=0, Settings=1, Theme=2, Network=3, Volume=4)
+    readonly property int _iconCount: 5
     property int currentIndex: 0
 
     implicitWidth: iconRow.implicitWidth
@@ -93,9 +94,12 @@ FocusScope {
     Keys.onReturnPressed: {
         switch (currentIndex) {
         case 0:
-            root.settingsRequested();
+            root.notificationCenterRequested();
             break;
         case 1:
+            root.settingsRequested();
+            break;
+        case 2:
             if (Theme.themeMode === "auto")
                 Theme.setThemeMode("light");
             else if (Theme.themeMode === "light")
@@ -111,17 +115,20 @@ FocusScope {
         function onMouseModeChanged() {
             if (Theme.mouseMode)
                 return;
-            if (settingsMA.containsMouse) {
+            if (notifMA.containsMouse) {
                 root.currentIndex = 0;
                 root.forceActiveFocus();
-            } else if (themeMA.containsMouse) {
+            } else if (settingsMA.containsMouse) {
                 root.currentIndex = 1;
                 root.forceActiveFocus();
-            } else if (networkMA.containsMouse) {
+            } else if (themeMA.containsMouse) {
                 root.currentIndex = 2;
                 root.forceActiveFocus();
-            } else if (volumeMA.containsMouse) {
+            } else if (networkMA.containsMouse) {
                 root.currentIndex = 3;
+                root.forceActiveFocus();
+            } else if (volumeMA.containsMouse) {
+                root.currentIndex = 4;
                 root.forceActiveFocus();
             }
         }
@@ -133,13 +140,75 @@ FocusScope {
         spacing: 12
         layoutDirection: Qt.RightToLeft
 
-        // Settings (index 0)
+        // Notifications (index 0)
+        Rectangle {
+            Layout.preferredWidth: root._iconSize
+            Layout.preferredHeight: root._iconSize
+            radius: root._iconSize / 2
+            color: notifMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 0 ? 3 : 0
+            border.color: Theme.focusBorder
+            Behavior on color {
+                ColorAnimation {
+                    duration: 150
+                }
+            }
+
+            Image {
+                id: notifIcon
+                anchors.centerIn: parent
+                source: root._iconBase ? "file://" + root._iconBase + "/status/22/preferences-desktop-notification-bell.svg" : ""
+                sourceSize: Qt.size(root._imgSize, root._imgSize)
+                width: root._imgSize
+                height: root._imgSize
+                fillMode: Image.PreserveAspectFit
+                visible: status === Image.Ready
+            }
+            Text {
+                anchors.centerIn: parent
+                text: "\u{1F514}"
+                font.pixelSize: root._imgSize
+                color: notifMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                visible: notifIcon.status !== Image.Ready
+            }
+
+            // Badge
+            Rectangle {
+                visible: NotificationManager.unreadCount > 0
+                width: 20
+                height: 20
+                radius: 10
+                color: Theme.crimson
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: 6
+                anchors.rightMargin: 6
+
+                Text {
+                    anchors.centerIn: parent
+                    text: NotificationManager.unreadCount > 9 ? "9+" : NotificationManager.unreadCount.toString()
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: Theme.textOnDark
+                }
+            }
+
+            MouseArea {
+                id: notifMA
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.notificationCenterRequested()
+            }
+        }
+
+        // Settings (index 1)
         Rectangle {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
             color: settingsMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 0 ? 3 : 0
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 1 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color {
                 ColorAnimation {
@@ -173,13 +242,13 @@ FocusScope {
             }
         }
 
-        // Theme toggle (index 1)
+        // Theme toggle (index 2)
         Rectangle {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
             color: themeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 1 ? 3 : 0
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 2 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color {
                 ColorAnimation {
@@ -230,13 +299,13 @@ FocusScope {
             }
         }
 
-        // Network (index 2)
+        // Network (index 3)
         Rectangle {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
             color: networkMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 2 ? 3 : 0
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 3 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color {
                 ColorAnimation {
@@ -277,13 +346,13 @@ FocusScope {
             }
         }
 
-        // Volume (index 3)
+        // Volume (index 4)
         Rectangle {
             Layout.preferredWidth: root._iconSize
             Layout.preferredHeight: root._iconSize
             radius: root._iconSize / 2
             color: volumeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 3 ? 3 : 0
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 4 ? 3 : 0
             border.color: Theme.focusBorder
             Behavior on color {
                 ColorAnimation {

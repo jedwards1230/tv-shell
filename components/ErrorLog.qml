@@ -30,7 +30,6 @@ Item {
 
         NotificationManager.notify(_sourceLabel(source) + " Error", message, {
             level: "error",
-            duration: 0,
             source: source
         });
     }

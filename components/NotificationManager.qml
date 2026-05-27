@@ -8,6 +8,10 @@ Item {
     property bool shellVisible: true
     property bool hasActiveError: _computeHasActiveError()
 
+    property var history: []
+    property int unreadCount: 0
+    readonly property int _maxHistory: 100
+
     property var _queue: []
     property var _deferredQueue: []
     property int _nextId: 1
@@ -56,6 +60,13 @@ Item {
         n.source = opts.source || "system";
         n.timestamp = new Date();
 
+        var hist = root.history.slice();
+        hist.unshift(n);
+        if (hist.length > root._maxHistory)
+            hist = hist.slice(0, root._maxHistory);
+        root.history = hist;
+        root.unreadCount = root.unreadCount + 1;
+
         if (!root.shellVisible) {
             var deferred = root._deferredQueue.slice();
             deferred.push(n);
@@ -80,6 +91,23 @@ Item {
         root.activeList = [];
         root._queue = [];
         root._deferredQueue = [];
+    }
+
+    function markAllRead() {
+        root.unreadCount = 0;
+    }
+
+    function clearHistory() {
+        root.history = [];
+        root.unreadCount = 0;
+    }
+
+    function removeFromHistory(id) {
+        root.history = root.history.filter(function (n) {
+            return n.id !== id;
+        });
+        if (root.unreadCount > 0)
+            root.unreadCount = root.unreadCount - 1;
     }
 
     function _enqueue(n) {

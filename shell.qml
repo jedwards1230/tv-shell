@@ -127,6 +127,7 @@ ShellRoot {
             root._layout.sessionDialog.opened = false;
             root._layout.navDrawer.opened = false;
             root._layout.settingsPanel.visible = false;
+            root._layout.notificationCenter.opened = false;
             root._layout.focusHome();
         }
     }
