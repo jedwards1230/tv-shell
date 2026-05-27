@@ -9,24 +9,26 @@ Item {
     property string shellState: ""
 
     function wake() {
-        if (waking || avWake.running || avWakeCooldown.running) return
-        if (!systemOn) waking = true
-        avWake.running = true
-        avWakeCooldown.restart()
+        if (waking || avWake.running || avWakeCooldown.running)
+            return;
+        if (!systemOn)
+            waking = true;
+        avWake.running = true;
+        avWakeCooldown.restart();
     }
 
     function forceWake() {
-        avWake.running = true
+        avWake.running = true;
     }
 
     Process {
         id: avStatusCheck
         command: ["/usr/local/bin/living-room-cec", "status"]
         stdout: SplitParser {
-            onRead: (line) => {
-                var match = line.match(/^\s*(AVR)\s*:\s*(\S+)/i)
+            onRead: line => {
+                var match = line.match(/^\s*(AVR)\s*:\s*(\S+)/i);
                 if (match) {
-                    root.systemOn = (match[2].toLowerCase() === "on")
+                    root.systemOn = (match[2].toLowerCase() === "on");
                 }
             }
         }
@@ -38,7 +40,10 @@ Item {
         running: root.shellState === "idle"
         repeat: true
         triggeredOnStart: true
-        onTriggered: { if (!avStatusCheck.running) avStatusCheck.running = true }
+        onTriggered: {
+            if (!avStatusCheck.running)
+                avStatusCheck.running = true;
+        }
     }
 
     Timer {
@@ -49,10 +54,10 @@ Item {
     Process {
         id: avWake
         command: ["/usr/local/bin/living-room-cec", "on"]
-        onExited: (exitCode) => {
-            root.waking = false
+        onExited: exitCode => {
+            root.waking = false;
             if (exitCode === 0 && !avStatusCheck.running)
-                avStatusCheck.running = true
+                avStatusCheck.running = true;
         }
     }
 
@@ -60,6 +65,8 @@ Item {
         id: avWakeTimeout
         interval: 20000
         running: root.waking
-        onTriggered: { root.waking = false }
+        onTriggered: {
+            root.waking = false;
+        }
     }
 }

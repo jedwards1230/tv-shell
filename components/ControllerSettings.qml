@@ -44,11 +44,11 @@ except ImportError:
     print(json.dumps(devs))
 `]
         stdout: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 try {
-                    root.controllers = JSON.parse(line)
-                } catch(e) {
-                    console.log("ControllerSettings: failed to parse controllers:", e)
+                    root.controllers = JSON.parse(line);
+                } catch (e) {
+                    console.log("ControllerSettings: failed to parse controllers:", e);
                 }
             }
         }
@@ -60,20 +60,20 @@ except ImportError:
         id: daemonStatus
         command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'status\\n'); print(s.recv(64).decode().strip()); s.close()"]
         stdout: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 // Format: "connected:grabbed" or "disconnected:released"
-                let parts = line.split(":")
-                root.daemonConnected = parts[0] === "connected"
-                root.daemonGrabbed = parts.length > 1 && parts[1] === "grabbed"
+                let parts = line.split(":");
+                root.daemonConnected = parts[0] === "connected";
+                root.daemonGrabbed = parts.length > 1 && parts[1] === "grabbed";
             }
         }
         onExited: (exitCode, exitStatus) => {
             if (exitCode === 0) {
-                root.daemonRunning = true
+                root.daemonRunning = true;
             } else {
-                root.daemonRunning = false
-                root.daemonConnected = false
-                root.daemonGrabbed = false
+                root.daemonRunning = false;
+                root.daemonConnected = false;
+                root.daemonGrabbed = false;
             }
         }
     }
@@ -83,13 +83,17 @@ except ImportError:
     Process {
         id: grabCmd
         command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'grab\\n'); print(s.recv(64).decode().strip()); s.close()"]
-        onExited: { daemonStatus.running = true }
+        onExited: {
+            daemonStatus.running = true;
+        }
     }
 
     Process {
         id: releaseCmd
         command: ["python3", "-c", "import socket,os; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock')); s.sendall(b'release\\n'); print(s.recv(64).decode().strip()); s.close()"]
-        onExited: { daemonStatus.running = true }
+        onExited: {
+            daemonStatus.running = true;
+        }
     }
 
     // --- Auto-refresh ---
@@ -100,25 +104,25 @@ except ImportError:
         running: root.visible
         repeat: true
         onTriggered: {
-            scanControllers.running = true
-            daemonStatus.running = true
+            scanControllers.running = true;
+            daemonStatus.running = true;
         }
     }
 
     Component.onCompleted: {
-        scanControllers.running = true
-        daemonStatus.running = true
+        scanControllers.running = true;
+        daemonStatus.running = true;
     }
 
     onVisibleChanged: {
         if (visible) {
-            scanControllers.running = true
-            daemonStatus.running = true
+            scanControllers.running = true;
+            daemonStatus.running = true;
             // Focus first actionable element
             if (root.controllers.length > 0)
-                controllerList.forceActiveFocus()
+                controllerList.forceActiveFocus();
             else
-                refreshScope.forceActiveFocus()
+                refreshScope.forceActiveFocus();
         }
     }
 
@@ -161,16 +165,16 @@ except ImportError:
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            refreshScope.forceActiveFocus()
-                            scanControllers.running = true
-                            daemonStatus.running = true
+                            refreshScope.forceActiveFocus();
+                            scanControllers.running = true;
+                            daemonStatus.running = true;
                         }
                     }
                 }
 
                 Keys.onReturnPressed: {
-                    scanControllers.running = true
-                    daemonStatus.running = true
+                    scanControllers.running = true;
+                    daemonStatus.running = true;
                 }
             }
         }
@@ -194,12 +198,15 @@ except ImportError:
                 width: controllerList.width
                 height: 180
                 radius: 16
-                color: controllerList.currentIndex === index && controllerList.activeFocus
-                       ? Theme.surfaceHover : Theme.surface
+                color: controllerList.currentIndex === index && controllerList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -278,9 +285,11 @@ except ImportError:
 
             Text {
                 text: {
-                    if (!root.daemonRunning) return "Daemon not running"
-                    if (!root.daemonConnected) return "No controller connected"
-                    return root.daemonGrabbed ? "Controller connected — Grabbed (shell has exclusive input)" : "Controller connected — Released (raw input to apps)"
+                    if (!root.daemonRunning)
+                        return "Daemon not running";
+                    if (!root.daemonConnected)
+                        return "No controller connected";
+                    return root.daemonGrabbed ? "Controller connected — Grabbed (shell has exclusive input)" : "Controller connected — Released (raw input to apps)";
                 }
                 font.pixelSize: Theme.fontSmall
                 color: Theme.textSecondary
@@ -307,11 +316,11 @@ except ImportError:
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            grabScope.forceActiveFocus()
+                            grabScope.forceActiveFocus();
                             if (root.daemonGrabbed) {
-                                releaseCmd.running = true
+                                releaseCmd.running = true;
                             } else {
-                                grabCmd.running = true
+                                grabCmd.running = true;
                             }
                         }
                     }
@@ -319,9 +328,9 @@ except ImportError:
 
                 Keys.onReturnPressed: {
                     if (root.daemonGrabbed) {
-                        releaseCmd.running = true
+                        releaseCmd.running = true;
                     } else {
-                        grabCmd.running = true
+                        grabCmd.running = true;
                     }
                 }
             }
@@ -361,28 +370,28 @@ except ImportError:
                     focus: parent.activeFocus
                     anchors.fill: parent
 
-                    color: Theme.controllerDebug
-                           ? Theme.sidebarActive
-                           : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    color: Theme.controllerDebug ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
 
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            debugScope.forceActiveFocus()
-                            Theme.setControllerDebug(!Theme.controllerDebug)
+                            debugScope.forceActiveFocus();
+                            Theme.setControllerDebug(!Theme.controllerDebug);
                         }
                     }
                 }
 
                 Keys.onReturnPressed: {
-                    Theme.setControllerDebug(!Theme.controllerDebug)
+                    Theme.setControllerDebug(!Theme.controllerDebug);
                 }
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+        }
 
         Text {
             text: "A: Select  |  Auto-refreshes every 10s"
