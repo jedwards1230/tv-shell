@@ -66,6 +66,7 @@ ShellRoot {
 
     Component.onCompleted: {
         loadTargets.running = true;
+        inputManager.grab();
         inputManager.startListening();
     }
 
