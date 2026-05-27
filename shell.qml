@@ -153,7 +153,7 @@ ShellRoot {
         PanelWindow {
             required property var modelData
             screen: modelData
-            visible: root.state !== "appRunning" || root.overlayDrawerOpen
+            visible: (root.state !== "appRunning" && root.state !== "streaming") || root.overlayDrawerOpen
 
             anchors {
                 top: true
