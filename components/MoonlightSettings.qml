@@ -161,7 +161,7 @@ FocusScope {
 
                         Text {
                             text: modelData.desc
-                            font.pixelSize: Theme.fontSmall - 4
+                            font.pixelSize: Theme.fontCaption
                             color: Theme.textSecondary
                             Layout.alignment: Qt.AlignHCenter
                         }

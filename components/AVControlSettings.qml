@@ -734,7 +734,7 @@ Item {
                                             if (modelData.powerStatus === "standby") return "Standby"
                                             return "Unknown"
                                         }
-                                        font.pixelSize: Theme.fontSmall - 4
+                                        font.pixelSize: Theme.fontCaption
                                         color: {
                                             if (modelData.powerStatus === "on") return Theme.online
                                             if (modelData.powerStatus === "standby") return Theme.gold
