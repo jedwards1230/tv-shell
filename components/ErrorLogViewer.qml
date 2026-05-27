@@ -15,44 +15,46 @@ FocusScope {
 
     onOpenedChanged: {
         if (opened) {
-            _selectedIndex = 0
-            _expandedId = -1
-            root.forceActiveFocus()
+            _selectedIndex = 0;
+            _expandedId = -1;
+            root.forceActiveFocus();
         }
     }
 
     function _reversedEntries() {
-        var list = ErrorLog.entries.slice()
-        list.reverse()
-        return list
+        var list = ErrorLog.entries.slice();
+        list.reverse();
+        return list;
     }
 
-    Keys.onPressed: (event) => {
-        var entries = _reversedEntries()
+    Keys.onPressed: event => {
+        var entries = _reversedEntries();
 
         if (event.key === Qt.Key_Up) {
-            if (_selectedIndex > 0) _selectedIndex--
-            event.accepted = true
+            if (_selectedIndex > 0)
+                _selectedIndex--;
+            event.accepted = true;
         } else if (event.key === Qt.Key_Down) {
-            if (_selectedIndex < entries.length - 1) _selectedIndex++
-            event.accepted = true
+            if (_selectedIndex < entries.length - 1)
+                _selectedIndex++;
+            event.accepted = true;
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             // A button — toggle details
             if (entries.length > 0) {
-                var entry = entries[_selectedIndex]
-                _expandedId = (_expandedId === entry.id) ? -1 : entry.id
+                var entry = entries[_selectedIndex];
+                _expandedId = (_expandedId === entry.id) ? -1 : entry.id;
             }
-            event.accepted = true
+            event.accepted = true;
         } else if (event.key === Qt.Key_Escape) {
             // B button — close
-            root.opened = false
-            event.accepted = true
+            root.opened = false;
+            event.accepted = true;
         } else if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) {
             // X button — clear all
-            ErrorLog.clear()
-            _selectedIndex = 0
-            _expandedId = -1
-            event.accepted = true
+            ErrorLog.clear();
+            _selectedIndex = 0;
+            _expandedId = -1;
+            event.accepted = true;
         }
     }
 
@@ -130,13 +132,11 @@ FocusScope {
                         // Timestamp
                         Text {
                             text: {
-                                var d = modelData.timestamp
-                                var h = d.getHours()
-                                var m = d.getMinutes()
-                                var s = d.getSeconds()
-                                return (h < 10 ? "0" : "") + h + ":" +
-                                       (m < 10 ? "0" : "") + m + ":" +
-                                       (s < 10 ? "0" : "") + s
+                                var d = modelData.timestamp;
+                                var h = d.getHours();
+                                var m = d.getMinutes();
+                                var s = d.getSeconds();
+                                return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
                             }
                             font.pixelSize: Theme.fontSmall
                             font.family: "monospace"

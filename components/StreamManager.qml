@@ -68,9 +68,10 @@ Item {
     Process {
         id: moonlight
         stderr: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 var trimmed = line.trim();
-                if (trimmed === "") return;
+                if (trimmed === "")
+                    return;
                 root._lastStderr = trimmed;
                 var lines = root._stderrLines.slice();
                 lines.push(trimmed);
