@@ -503,7 +503,7 @@ except:
                     required property int index
 
                     Layout.fillWidth: true
-                    spacing: 0
+                    spacing: contentColumn.spacing
 
                     property var hostData: modelData
                     property var hostTarget: modelData.target
