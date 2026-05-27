@@ -19,6 +19,8 @@ Rectangle {
         anchors.centerIn: parent
         visible: root.message !== ""
         text: root.message
+        textFormat: Text.PlainText
+        horizontalAlignment: Text.AlignHCenter
         font.pixelSize: Theme.fontTitle
         color: Theme.textOnDark
     }
