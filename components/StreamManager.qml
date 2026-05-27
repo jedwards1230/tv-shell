@@ -78,6 +78,7 @@ Item {
         reconnectTimer.stop();
         errorDismissTimer.stop();
         moonlight.running = false;
+        _killMoonlight.running = true;
     }
 
     function suspend() {
@@ -85,6 +86,7 @@ Item {
         reconnectTimer.stop();
         errorDismissTimer.stop();
         moonlight.running = false;
+        _killMoonlight.running = true;
     }
 
     function forceKill() {
@@ -107,7 +109,9 @@ Item {
     }
 
     function _launchMoonlight() {
-        let args = ["env", "QT_QPA_PLATFORM=wayland", "LIBVA_DRIVER_NAME=radeonsi", "moonlight", "stream", currentTarget.host, currentTarget.app];
+        // setsid detaches Moonlight from Quickshell's process group so
+        // restarting the shell doesn't kill an active stream.
+        let args = ["setsid", "env", "QT_QPA_PLATFORM=wayland", "LIBVA_DRIVER_NAME=radeonsi", "moonlight", "stream", currentTarget.host, currentTarget.app];
         if (currentTarget.resolution === "3840x2160")
             args.push("--4K");
         // Sunshine min_fps_target defaults to 60 when clientRefreshRateX100 is 0.
@@ -255,6 +259,11 @@ Item {
                 }
             }
         }
+    }
+
+    Process {
+        id: _killMoonlight
+        command: ["pkill", "-f", "moonlight stream"]
     }
 
     Process {
