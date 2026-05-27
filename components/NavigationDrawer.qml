@@ -9,13 +9,13 @@ Drawer {
 
     property bool overlayMode: false
 
-    signal settingsRequested()
-    signal homeSelected()
+    signal settingsRequested
+    signal homeSelected
 
     onOpenedChanged: {
         if (opened) {
-            navList.currentIndex = 0
-            navFocusTimer.restart()
+            navList.currentIndex = 0;
+            navFocusTimer.restart();
         }
     }
 
@@ -51,8 +51,8 @@ Drawer {
                         repeat: true
                         triggeredOnStart: true
                         onTriggered: {
-                            let now = new Date()
-                            drawerClock.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP")
+                            let now = new Date();
+                            drawerClock.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP");
                         }
                     }
                 }
@@ -69,15 +69,19 @@ Drawer {
                         repeat: true
                         triggeredOnStart: true
                         onTriggered: {
-                            let now = new Date()
-                            drawerDate.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d")
+                            let now = new Date();
+                            drawerDate.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d");
                         }
                     }
                 }
             }
         }
 
-        Rectangle { Layout.fillWidth: true; height: 2; color: Theme.surfaceBorder }
+        Rectangle {
+            Layout.fillWidth: true
+            height: 2
+            color: Theme.surfaceBorder
+        }
 
         // === Top Navigation Items ===
         ListView {
@@ -85,7 +89,11 @@ Drawer {
             Layout.fillWidth: true
             Layout.preferredHeight: contentHeight
             model: [
-                { label: "Home", icon: "\u{1F3E0}", action: "home" }
+                {
+                    label: "Home",
+                    icon: "\u{1F3E0}",
+                    action: "home"
+                }
             ]
             focus: true
             interactive: false
@@ -97,12 +105,18 @@ Drawer {
                 width: navList.width
                 height: 120
                 color: navList.currentIndex === index && navList.activeFocus ? Theme.surfaceHover : "transparent"
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 Rectangle {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 4; height: parent.height - 16; radius: 2
+                    width: 4
+                    height: parent.height - 16
+                    radius: 2
                     color: Theme.focusBorder
                     visible: navList.currentIndex === index && navList.activeFocus
                 }
@@ -135,23 +149,39 @@ Drawer {
                 }
             }
 
-            Keys.onDownPressed: { bottomList.forceActiveFocus() }
-            Keys.onUpPressed: { if (currentIndex > 0) currentIndex-- }
+            Keys.onDownPressed: {
+                bottomList.forceActiveFocus();
+            }
+            Keys.onUpPressed: {
+                if (currentIndex > 0)
+                    currentIndex--;
+            }
             Keys.onReturnPressed: root._activateNav(currentIndex)
         }
 
         // === Spacer ===
-        Item { Layout.fillWidth: true; Layout.fillHeight: true }
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
 
         // === Bottom Section: Settings ===
-        Rectangle { Layout.fillWidth: true; height: 2; color: Theme.surfaceBorder }
+        Rectangle {
+            Layout.fillWidth: true
+            height: 2
+            color: Theme.surfaceBorder
+        }
 
         ListView {
             id: bottomList
             Layout.fillWidth: true
             Layout.preferredHeight: contentHeight
             model: [
-                { label: "Settings", icon: "⚙", action: "settings" }
+                {
+                    label: "Settings",
+                    icon: "⚙",
+                    action: "settings"
+                }
             ]
             interactive: false
             currentIndex: 0
@@ -162,12 +192,18 @@ Drawer {
                 width: bottomList.width
                 height: 120
                 color: bottomList.currentIndex === index && bottomList.activeFocus ? Theme.surfaceHover : "transparent"
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 Rectangle {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 4; height: parent.height - 16; radius: 2
+                    width: 4
+                    height: parent.height - 16
+                    radius: 2
                     color: Theme.focusBorder
                     visible: bottomList.currentIndex === index && bottomList.activeFocus
                 }
@@ -200,30 +236,37 @@ Drawer {
                 }
             }
 
-            Keys.onUpPressed: { navList.forceActiveFocus() }
-            Keys.onDownPressed: { if (currentIndex < count - 1) currentIndex++ }
+            Keys.onUpPressed: {
+                navList.forceActiveFocus();
+            }
+            Keys.onDownPressed: {
+                if (currentIndex < count - 1)
+                    currentIndex++;
+            }
             Keys.onReturnPressed: root._activateBottom(currentIndex)
         }
     }
 
     function _activateNav(index) {
-        let items = navList.model
-        if (index < 0 || index >= items.length) return
+        let items = navList.model;
+        if (index < 0 || index >= items.length)
+            return;
         switch (items[index].action) {
-            case "home":
-                root.homeSelected()
-                break
+        case "home":
+            root.homeSelected();
+            break;
         }
     }
 
     function _activateBottom(index) {
-        let items = bottomList.model
-        if (index < 0 || index >= items.length) return
+        let items = bottomList.model;
+        if (index < 0 || index >= items.length)
+            return;
         switch (items[index].action) {
-            case "settings":
-                root.closed()
-                root.settingsRequested()
-                break
+        case "settings":
+            root.closed();
+            root.settingsRequested();
+            break;
         }
     }
 }

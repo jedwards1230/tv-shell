@@ -24,9 +24,12 @@ FocusScope {
         id: loadServers
         command: ["cat", "/opt/game-shell/targets.json"]
         stdout: SplitParser {
-            onRead: (line) => {
-                try { root.servers = JSON.parse(line) }
-                catch(e) { root.servers = [] }
+            onRead: line => {
+                try {
+                    root.servers = JSON.parse(line);
+                } catch (e) {
+                    root.servers = [];
+                }
             }
         }
     }
@@ -38,12 +41,13 @@ FocusScope {
     }
 
     function persistServers() {
-        saveServers.json = JSON.stringify(root.servers)
-        saveServers.running = true
+        saveServers.json = JSON.stringify(root.servers);
+        saveServers.running = true;
     }
 
     function addServer() {
-        if (newName === "" || newHost === "") return
+        if (newName === "" || newHost === "")
+            return;
         let entry = {
             name: newName,
             host: newHost,
@@ -52,39 +56,41 @@ FocusScope {
             fps: newFps,
             hdr: newHdr,
             codec: newCodec
-        }
-        let list = root.servers.slice()
-        list.push(entry)
-        root.servers = list
-        persistServers()
-        resetForm()
+        };
+        let list = root.servers.slice();
+        list.push(entry);
+        root.servers = list;
+        persistServers();
+        resetForm();
     }
 
     function removeServer(idx) {
-        let list = root.servers.slice()
-        list.splice(idx, 1)
-        root.servers = list
-        persistServers()
-        root.confirmRemoveIndex = -1
+        let list = root.servers.slice();
+        list.splice(idx, 1);
+        root.servers = list;
+        persistServers();
+        root.confirmRemoveIndex = -1;
     }
 
     function resetForm() {
-        newName = ""
-        newHost = ""
-        newApp = "Desktop"
-        newResolution = "3840x2160"
-        newFps = 120
-        newHdr = true
-        newCodec = "HEVC"
-        showAddForm = false
+        newName = "";
+        newHost = "";
+        newApp = "Desktop";
+        newResolution = "3840x2160";
+        newFps = 120;
+        newHdr = true;
+        newCodec = "HEVC";
+        showAddForm = false;
     }
 
-    Component.onCompleted: { loadServers.running = true }
+    Component.onCompleted: {
+        loadServers.running = true;
+    }
 
     onVisibleChanged: {
         if (visible) {
-            loadServers.running = true
-            viewModeRow.forceActiveFocus()
+            loadServers.running = true;
+            viewModeRow.forceActiveFocus();
         }
     }
 
@@ -108,20 +114,36 @@ FocusScope {
 
             property int focusIndex: Theme.moonlightViewMode === "apps" ? 1 : 0
 
-            Keys.onLeftPressed: { if (focusIndex > 0) focusIndex-- }
-            Keys.onRightPressed: { if (focusIndex < 1) focusIndex++ }
+            Keys.onLeftPressed: {
+                if (focusIndex > 0)
+                    focusIndex--;
+            }
+            Keys.onRightPressed: {
+                if (focusIndex < 1)
+                    focusIndex++;
+            }
             Keys.onReturnPressed: {
-                Theme.setMoonlightViewMode(focusIndex === 0 ? "servers" : "apps")
+                Theme.setMoonlightViewMode(focusIndex === 0 ? "servers" : "apps");
             }
             Keys.onDownPressed: {
-                if (serverList.count > 0) serverList.forceActiveFocus()
-                else addBtnScope.forceActiveFocus()
+                if (serverList.count > 0)
+                    serverList.forceActiveFocus();
+                else
+                    addBtnScope.forceActiveFocus();
             }
 
             Repeater {
                 model: [
-                    { id: "servers", label: "Servers", desc: "One card per host" },
-                    { id: "apps",    label: "Apps",    desc: "Per-host app rows" }
+                    {
+                        id: "servers",
+                        label: "Servers",
+                        desc: "One card per host"
+                    },
+                    {
+                        id: "apps",
+                        label: "Apps",
+                        desc: "Per-host app rows"
+                    }
                 ]
 
                 Rectangle {
@@ -132,10 +154,13 @@ FocusScope {
                     radius: Theme.cardRadius
                     color: Theme.surface
                     border.width: Theme.moonlightViewMode === modelData.id ? 3 : 2
-                    border.color: Theme.moonlightViewMode === modelData.id ? Theme.focusBorder :
-                                  (viewModeRow.focusIndex === index && viewModeRow.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
+                    border.color: Theme.moonlightViewMode === modelData.id ? Theme.focusBorder : (viewModeRow.focusIndex === index && viewModeRow.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
 
-                    Behavior on border.color { ColorAnimation { duration: 150 } }
+                    Behavior on border.color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
 
                     Rectangle {
                         anchors.fill: parent
@@ -149,7 +174,9 @@ FocusScope {
                         anchors.margins: 24
                         spacing: 8
 
-                        Item { Layout.fillHeight: true }
+                        Item {
+                            Layout.fillHeight: true
+                        }
 
                         Text {
                             text: modelData.label
@@ -166,7 +193,9 @@ FocusScope {
                             Layout.alignment: Qt.AlignHCenter
                         }
 
-                        Item { Layout.fillHeight: true }
+                        Item {
+                            Layout.fillHeight: true
+                        }
                     }
 
                     MouseArea {
@@ -174,9 +203,9 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            viewModeRow.focusIndex = index
-                            viewModeRow.forceActiveFocus()
-                            Theme.setMoonlightViewMode(modelData.id)
+                            viewModeRow.focusIndex = index;
+                            viewModeRow.forceActiveFocus();
+                            Theme.setMoonlightViewMode(modelData.id);
                         }
                     }
                 }
@@ -214,12 +243,15 @@ FocusScope {
                 width: serverList.width
                 height: 180
                 radius: Theme.cardRadius
-                color: serverList.currentIndex === index && serverList.activeFocus
-                       ? Theme.surfaceHover : Theme.surface
+                color: serverList.currentIndex === index && serverList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -287,27 +319,35 @@ FocusScope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: { root.confirmRemoveIndex = index }
+                                onClicked: {
+                                    root.confirmRemoveIndex = index;
+                                }
                             }
                         }
 
-                        Keys.onReturnPressed: { root.confirmRemoveIndex = index }
+                        Keys.onReturnPressed: {
+                            root.confirmRemoveIndex = index;
+                        }
                     }
                 }
             }
 
-            Keys.onReturnPressed: {
-                // no-op: servers are launched from home screen
-            }
+            Keys.onReturnPressed:
+            // no-op: servers are launched from home screen
+            {}
 
             Keys.onUpPressed: {
-                if (currentIndex > 0) currentIndex--
-                else viewModeRow.forceActiveFocus()
+                if (currentIndex > 0)
+                    currentIndex--;
+                else
+                    viewModeRow.forceActiveFocus();
             }
 
             Keys.onDownPressed: {
-                if (currentIndex < root.servers.length - 1) currentIndex++
-                else addBtnScope.forceActiveFocus()
+                if (currentIndex < root.servers.length - 1)
+                    currentIndex++;
+                else
+                    addBtnScope.forceActiveFocus();
             }
         }
 
@@ -338,16 +378,16 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        addBtnScope.forceActiveFocus()
-                        root.showAddForm = true
-                        nameInput.forceActiveFocus()
+                        addBtnScope.forceActiveFocus();
+                        root.showAddForm = true;
+                        nameInput.forceActiveFocus();
                     }
                 }
             }
 
             Keys.onReturnPressed: {
-                root.showAddForm = true
-                nameInput.forceActiveFocus()
+                root.showAddForm = true;
+                nameInput.forceActiveFocus();
             }
         }
 
@@ -406,7 +446,10 @@ FocusScope {
                             verticalAlignment: TextInput.AlignVCenter
                             onTextChanged: root.newName = text
                             KeyNavigation.down: hostInput
-                            Keys.onEscapePressed: { root.resetForm(); serverList.forceActiveFocus() }
+                            Keys.onEscapePressed: {
+                                root.resetForm();
+                                serverList.forceActiveFocus();
+                            }
                         }
                     }
                 }
@@ -445,7 +488,10 @@ FocusScope {
                             onTextChanged: root.newHost = text
                             KeyNavigation.up: nameInput
                             KeyNavigation.down: appInput
-                            Keys.onEscapePressed: { root.resetForm(); serverList.forceActiveFocus() }
+                            Keys.onEscapePressed: {
+                                root.resetForm();
+                                serverList.forceActiveFocus();
+                            }
                         }
                     }
                 }
@@ -483,7 +529,10 @@ FocusScope {
                             verticalAlignment: TextInput.AlignVCenter
                             onTextChanged: root.newApp = text
                             KeyNavigation.up: hostInput
-                            Keys.onEscapePressed: { root.resetForm(); serverList.forceActiveFocus() }
+                            Keys.onEscapePressed: {
+                                root.resetForm();
+                                serverList.forceActiveFocus();
+                            }
                         }
                     }
                 }
@@ -509,11 +558,17 @@ FocusScope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: { root.resetForm(); serverList.forceActiveFocus() }
+                                onClicked: {
+                                    root.resetForm();
+                                    serverList.forceActiveFocus();
+                                }
                             }
                         }
 
-                        Keys.onReturnPressed: { root.resetForm(); serverList.forceActiveFocus() }
+                        Keys.onReturnPressed: {
+                            root.resetForm();
+                            serverList.forceActiveFocus();
+                        }
                     }
 
                     FocusScope {
@@ -532,11 +587,17 @@ FocusScope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: { root.addServer(); serverList.forceActiveFocus() }
+                                onClicked: {
+                                    root.addServer();
+                                    serverList.forceActiveFocus();
+                                }
                             }
                         }
 
-                        Keys.onReturnPressed: { root.addServer(); serverList.forceActiveFocus() }
+                        Keys.onReturnPressed: {
+                            root.addServer();
+                            serverList.forceActiveFocus();
+                        }
                     }
                 }
             }
@@ -560,7 +621,9 @@ FocusScope {
 
         MouseArea {
             anchors.fill: parent
-            onClicked: { root.confirmRemoveIndex = -1 }
+            onClicked: {
+                root.confirmRemoveIndex = -1;
+            }
         }
 
         Rectangle {
@@ -575,9 +638,7 @@ FocusScope {
                 spacing: 32
 
                 Text {
-                    text: root.confirmRemoveIndex >= 0 && root.confirmRemoveIndex < root.servers.length
-                          ? "Remove \"" + root.servers[root.confirmRemoveIndex].name + "\"?"
-                          : ""
+                    text: root.confirmRemoveIndex >= 0 && root.confirmRemoveIndex < root.servers.length ? "Remove \"" + root.servers[root.confirmRemoveIndex].name + "\"?" : ""
                     font.pixelSize: Theme.fontTitle
                     font.bold: true
                     color: Theme.textPrimary
@@ -604,11 +665,15 @@ FocusScope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: { root.removeServer(root.confirmRemoveIndex) }
+                                onClicked: {
+                                    root.removeServer(root.confirmRemoveIndex);
+                                }
                             }
                         }
 
-                        Keys.onReturnPressed: { root.removeServer(root.confirmRemoveIndex) }
+                        Keys.onReturnPressed: {
+                            root.removeServer(root.confirmRemoveIndex);
+                        }
                     }
 
                     FocusScope {
@@ -628,17 +693,25 @@ FocusScope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: { root.confirmRemoveIndex = -1 }
+                                onClicked: {
+                                    root.confirmRemoveIndex = -1;
+                                }
                             }
                         }
 
-                        Keys.onReturnPressed: { root.confirmRemoveIndex = -1 }
-                        Keys.onEscapePressed: { root.confirmRemoveIndex = -1 }
+                        Keys.onReturnPressed: {
+                            root.confirmRemoveIndex = -1;
+                        }
+                        Keys.onEscapePressed: {
+                            root.confirmRemoveIndex = -1;
+                        }
                     }
                 }
             }
         }
 
-        Keys.onEscapePressed: { root.confirmRemoveIndex = -1 }
+        Keys.onEscapePressed: {
+            root.confirmRemoveIndex = -1;
+        }
     }
 }

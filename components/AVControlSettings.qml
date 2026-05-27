@@ -21,25 +21,25 @@ Item {
         id: detectTools
         command: ["bash", "-c", "if [ -x /usr/local/bin/living-room-cec ]; then echo script:/usr/local/bin/living-room-cec; elif [ -x /usr/local/sbin/living-room-cec ]; then echo script:/usr/local/sbin/living-room-cec; elif command -v living-room-cec >/dev/null 2>&1; then echo script:$(command -v living-room-cec); fi; command -v cec-ctl >/dev/null 2>&1 && echo tool:cec-ctl; command -v cec-client >/dev/null 2>&1 && echo tool:cec-client; echo done"]
         stdout: SplitParser {
-            onRead: (line) => {
-                var trimmed = line.trim()
+            onRead: line => {
+                var trimmed = line.trim();
                 if (trimmed.startsWith("script:")) {
-                    root.hasAvScript = true
-                    root.avScriptPath = trimmed.substring(7)
+                    root.hasAvScript = true;
+                    root.avScriptPath = trimmed.substring(7);
                 } else if (trimmed.startsWith("tool:") && root.cecTool === "") {
                     // First tool found wins (cec-ctl before cec-client)
-                    root.cecTool = trimmed.substring(5)
-                    root.cecAvailable = true
+                    root.cecTool = trimmed.substring(5);
+                    root.cecAvailable = true;
                 } else if (trimmed === "done") {
                     // If we have a script but no low-level tool, still mark available
                     if (root.hasAvScript && !root.cecAvailable) {
-                        root.cecAvailable = true
+                        root.cecAvailable = true;
                     }
                     if (root.cecAvailable) {
-                        root.statusText = "CEC available — scanning devices..."
-                        root.startScan()
+                        root.statusText = "CEC available — scanning devices...";
+                        root.startScan();
                     } else {
-                        root.statusText = "CEC tools not installed"
+                        root.statusText = "CEC tools not installed";
                     }
                 }
             }
@@ -55,46 +55,50 @@ Item {
         command: ["bash", "-c", "true"]
         stdout: SplitParser {
             property string buffer: ""
-            onRead: (line) => { buffer += line + "\n" }
+            onRead: line => {
+                buffer += line + "\n";
+            }
         }
         onExited: {
-            root._parseScanOutput(scanDevices.stdout.buffer)
-            scanDevices.stdout.buffer = ""
+            root._parseScanOutput(scanDevices.stdout.buffer);
+            scanDevices.stdout.buffer = "";
         }
     }
 
     function startScan() {
-        scanDevices.command = ["bash", "-c", root._buildScanCommand()]
-        scanDevices.running = true
+        scanDevices.command = ["bash", "-c", root._buildScanCommand()];
+        scanDevices.running = true;
     }
 
     // --- CEC commands ---
     Process {
         id: wakeCmd
         command: ["bash", "-c", ""]
-        onExited: (exitCode) => {
-            root.actionFeedback = exitCode === 0 ? "Wake command sent" : "Wake command failed"
-            feedbackTimer.restart()
-            if (exitCode === 0) refreshAfterAction.restart()
+        onExited: exitCode => {
+            root.actionFeedback = exitCode === 0 ? "Wake command sent" : "Wake command failed";
+            feedbackTimer.restart();
+            if (exitCode === 0)
+                refreshAfterAction.restart();
         }
     }
 
     Process {
         id: sleepCmd
         command: ["bash", "-c", ""]
-        onExited: (exitCode) => {
-            root.actionFeedback = exitCode === 0 ? "Sleep command sent" : "Sleep command failed"
-            feedbackTimer.restart()
-            if (exitCode === 0) refreshAfterAction.restart()
+        onExited: exitCode => {
+            root.actionFeedback = exitCode === 0 ? "Sleep command sent" : "Sleep command failed";
+            feedbackTimer.restart();
+            if (exitCode === 0)
+                refreshAfterAction.restart();
         }
     }
 
     Process {
         id: switchInputCmd
         command: ["bash", "-c", ""]
-        onExited: (exitCode) => {
-            root.actionFeedback = exitCode === 0 ? "Input switch command sent" : "Input switch command failed"
-            feedbackTimer.restart()
+        onExited: exitCode => {
+            root.actionFeedback = exitCode === 0 ? "Input switch command sent" : "Input switch command failed";
+            feedbackTimer.restart();
         }
     }
 
@@ -104,32 +108,38 @@ Item {
         interval: 30000
         running: root.visible && root.cecAvailable
         repeat: true
-        onTriggered: { root.startScan() }
+        onTriggered: {
+            root.startScan();
+        }
     }
 
     Timer {
         id: feedbackTimer
         interval: 3000
-        onTriggered: { root.actionFeedback = "" }
+        onTriggered: {
+            root.actionFeedback = "";
+        }
     }
 
     Timer {
         id: refreshAfterAction
         interval: 5000
-        onTriggered: { root.startScan() }
+        onTriggered: {
+            root.startScan();
+        }
     }
 
     Component.onCompleted: {
-        detectTools.running = true
+        detectTools.running = true;
     }
 
     onVisibleChanged: {
         if (visible) {
-            detectTools.running = true
+            detectTools.running = true;
             if (root.cecAvailable) {
-                wakeScope.forceActiveFocus()
+                wakeScope.forceActiveFocus();
             } else {
-                root.forceActiveFocus()
+                root.forceActiveFocus();
             }
         }
     }
@@ -138,50 +148,43 @@ Item {
     function _buildScanCommand() {
         // Prefer living-room-cec status — it's the high-level wrapper that works reliably
         if (root.hasAvScript) {
-            return root.avScriptPath + " status 2>/dev/null"
+            return root.avScriptPath + " status 2>/dev/null";
         }
         if (root.cecTool === "cec-ctl") {
             // Probe TV (0) and Audio System (5) — the standard CEC addresses
             // For each: query power status, OSD name, vendor ID
-            return [
-                "for addr in 0 5; do",
-                "  echo \"===DEVICE addr=$addr===\"",
-                "  timeout 3 cec-ctl --to $addr --give-device-power-status 2>/dev/null",
-                "  timeout 3 cec-ctl --to $addr --give-osd-name 2>/dev/null",
-                "  timeout 3 cec-ctl --to $addr --give-device-vendor-id 2>/dev/null",
-                "done"
-            ].join("; ")
+            return ["for addr in 0 5; do", "  echo \"===DEVICE addr=$addr===\"", "  timeout 3 cec-ctl --to $addr --give-device-power-status 2>/dev/null", "  timeout 3 cec-ctl --to $addr --give-osd-name 2>/dev/null", "  timeout 3 cec-ctl --to $addr --give-device-vendor-id 2>/dev/null", "done"].join("; ");
         }
         if (root.cecTool === "cec-client") {
-            return "echo 'scan' | timeout 10 cec-client -s -d 1 2>/dev/null"
+            return "echo 'scan' | timeout 10 cec-client -s -d 1 2>/dev/null";
         }
         // No tools available
-        return "echo 'no-tool'"
+        return "echo 'no-tool'";
     }
 
     // --- Parse scan output based on tool ---
     function _parseScanOutput(output) {
         if (root.hasAvScript) {
-            _parseScriptStatusOutput(output)
+            _parseScriptStatusOutput(output);
         } else if (root.cecTool === "cec-ctl") {
-            _parseCecCtlOutput(output)
+            _parseCecCtlOutput(output);
         } else if (root.cecTool === "cec-client") {
-            _parseCecClientOutput(output)
+            _parseCecClientOutput(output);
         }
     }
 
     // --- Parse cec-ctl output ---
     function _parseCecCtlOutput(output) {
-        var devs = []
-        var sections = output.split("===DEVICE")
+        var devs = [];
+        var sections = output.split("===DEVICE");
         for (var i = 1; i < sections.length; i++) {
-            var section = sections[i]
+            var section = sections[i];
 
             // Extract logical address from header
-            var addrMatch = section.match(/addr=(\d+)===/)
-            if (!addrMatch) continue
-
-            var logAddr = parseInt(addrMatch[1])
+            var addrMatch = section.match(/addr=(\d+)===/);
+            if (!addrMatch)
+                continue;
+            var logAddr = parseInt(addrMatch[1]);
             var dev = {
                 logicalAddress: logAddr,
                 name: logAddr === 0 ? "TV" : logAddr === 5 ? "Audio System" : "Device " + logAddr,
@@ -189,52 +192,53 @@ Item {
                 vendor: "",
                 powerStatus: "unknown",
                 type: logAddr === 0 ? "TV" : logAddr === 5 ? "Audio System" : ""
-            }
+            };
 
             // Power status: "pwr-state: on (0x00)" or "pwr-state: standby (0x01)"
-            var pwrMatch = section.match(/pwr-state:\s*(\S+)/)
+            var pwrMatch = section.match(/pwr-state:\s*(\S+)/);
             if (pwrMatch) {
-                dev.powerStatus = pwrMatch[1].toLowerCase()
+                dev.powerStatus = pwrMatch[1].toLowerCase();
             } else {
                 // No response = device not present on bus
-                continue
+                continue;
             }
 
             // OSD name: "name: OLED65C2PU"
-            var nameMatch = section.match(/^\s*name:\s*(.+)$/m)
+            var nameMatch = section.match(/^\s*name:\s*(.+)$/m);
             if (nameMatch) {
-                dev.name = nameMatch[1].trim()
+                dev.name = nameMatch[1].trim();
             }
 
             // Vendor: "vendor-id: 0x00e091 (LG)"
-            var vendorMatch = section.match(/vendor-id:\s*\S+\s*\((\S+)\)/)
+            var vendorMatch = section.match(/vendor-id:\s*\S+\s*\((\S+)\)/);
             if (vendorMatch) {
-                dev.vendor = vendorMatch[1]
+                dev.vendor = vendorMatch[1];
             }
 
-            devs.push(dev)
+            devs.push(dev);
         }
 
-        root.devices = devs
+        root.devices = devs;
         if (devs.length > 0) {
-            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected"
+            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected";
         } else {
-            root.statusText = "No CEC devices found"
+            root.statusText = "No CEC devices found";
         }
     }
 
     // --- Parse cec-client scan output ---
     function _parseCecClientOutput(output) {
-        var devs = []
-        var lines = output.split("\n")
-        var current = null
+        var devs = [];
+        var lines = output.split("\n");
+        var current = null;
 
         for (var i = 0; i < lines.length; i++) {
-            var line = lines[i]
+            var line = lines[i];
 
-            var deviceMatch = line.match(/device\s+#(\d+):/)
+            var deviceMatch = line.match(/device\s+#(\d+):/);
             if (deviceMatch) {
-                if (current) devs.push(current)
+                if (current)
+                    devs.push(current);
                 current = {
                     logicalAddress: parseInt(deviceMatch[1]),
                     name: "Unknown",
@@ -242,44 +246,60 @@ Item {
                     vendor: "",
                     powerStatus: "unknown",
                     type: ""
-                }
-                continue
+                };
+                continue;
             }
-            if (!current) continue
+            if (!current)
+                continue;
+            var osdMatch = line.match(/osd string\s*:\s*(.+)/i);
+            if (osdMatch) {
+                current.name = osdMatch[1].trim();
+                continue;
+            }
 
-            var osdMatch = line.match(/osd string\s*:\s*(.+)/i)
-            if (osdMatch) { current.name = osdMatch[1].trim(); continue }
+            var physMatch = line.match(/address\s*:\s*([0-9.]+)/i);
+            if (physMatch) {
+                current.physicalAddress = physMatch[1].trim();
+                continue;
+            }
 
-            var physMatch = line.match(/address\s*:\s*([0-9.]+)/i)
-            if (physMatch) { current.physicalAddress = physMatch[1].trim(); continue }
+            var vendorMatch = line.match(/vendor\s*:\s*(.+)/i);
+            if (vendorMatch) {
+                current.vendor = vendorMatch[1].trim();
+                continue;
+            }
 
-            var vendorMatch = line.match(/vendor\s*:\s*(.+)/i)
-            if (vendorMatch) { current.vendor = vendorMatch[1].trim(); continue }
+            var powerMatch = line.match(/power status\s*:\s*(.+)/i);
+            if (powerMatch) {
+                current.powerStatus = powerMatch[1].trim().toLowerCase();
+                continue;
+            }
 
-            var powerMatch = line.match(/power status\s*:\s*(.+)/i)
-            if (powerMatch) { current.powerStatus = powerMatch[1].trim().toLowerCase(); continue }
-
-            var typeMatch = line.match(/type\s*:\s*(.+)/i)
-            if (typeMatch) { current.type = typeMatch[1].trim(); continue }
+            var typeMatch = line.match(/type\s*:\s*(.+)/i);
+            if (typeMatch) {
+                current.type = typeMatch[1].trim();
+                continue;
+            }
         }
-        if (current) devs.push(current)
+        if (current)
+            devs.push(current);
 
-        root.devices = devs
+        root.devices = devs;
         if (devs.length > 0) {
-            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected"
+            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected";
         } else {
-            root.statusText = "No CEC devices found"
+            root.statusText = "No CEC devices found";
         }
     }
 
     // --- Parse living-room-cec status output ---
     // Output format: "  TV: on" / "  AVR: standby"
     function _parseScriptStatusOutput(output) {
-        var devs = []
-        var lines = output.split("\n")
+        var devs = [];
+        var lines = output.split("\n");
 
         for (var i = 0; i < lines.length; i++) {
-            var match = lines[i].match(/^\s*(TV|AVR)\s*:\s*(\S+)/i)
+            var match = lines[i].match(/^\s*(TV|AVR)\s*:\s*(\S+)/i);
             if (match) {
                 devs.push({
                     logicalAddress: match[1].toUpperCase() === "TV" ? 0 : 5,
@@ -288,52 +308,52 @@ Item {
                     vendor: "",
                     powerStatus: match[2].toLowerCase(),
                     type: match[1].toUpperCase() === "TV" ? "TV" : "Audio System"
-                })
+                });
             }
         }
 
-        root.devices = devs
+        root.devices = devs;
         if (devs.length > 0) {
-            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected"
+            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected";
         } else {
-            root.statusText = "No CEC devices found"
+            root.statusText = "No CEC devices found";
         }
     }
 
     function doWake() {
         if (root.hasAvScript) {
-            wakeCmd.command = [root.avScriptPath, "on"]
+            wakeCmd.command = [root.avScriptPath, "on"];
         } else if (root.cecTool === "cec-ctl") {
-            wakeCmd.command = ["bash", "-c", "cec-ctl --to 0 --image-view-on 2>/dev/null"]
+            wakeCmd.command = ["bash", "-c", "cec-ctl --to 0 --image-view-on 2>/dev/null"];
         } else {
-            wakeCmd.command = ["bash", "-c", "echo 'on 0' | cec-client -s -d 1 2>/dev/null"]
+            wakeCmd.command = ["bash", "-c", "echo 'on 0' | cec-client -s -d 1 2>/dev/null"];
         }
-        wakeCmd.running = true
+        wakeCmd.running = true;
     }
 
     function doSleep() {
         if (root.hasAvScript) {
-            sleepCmd.command = [root.avScriptPath, "off"]
+            sleepCmd.command = [root.avScriptPath, "off"];
         } else if (root.cecTool === "cec-ctl") {
-            sleepCmd.command = ["bash", "-c", "cec-ctl --to 0 --standby 2>/dev/null; cec-ctl --to 15 --standby 2>/dev/null"]
+            sleepCmd.command = ["bash", "-c", "cec-ctl --to 0 --standby 2>/dev/null; cec-ctl --to 15 --standby 2>/dev/null"];
         } else {
-            sleepCmd.command = ["bash", "-c", "echo 'standby 0' | cec-client -s -d 1 2>/dev/null"]
+            sleepCmd.command = ["bash", "-c", "echo 'standby 0' | cec-client -s -d 1 2>/dev/null"];
         }
-        sleepCmd.running = true
+        sleepCmd.running = true;
     }
 
     function doSwitchInput() {
         if (root.hasAvScript) {
             // living-room-cec "on" includes input switching
-            switchInputCmd.command = [root.avScriptPath, "on"]
+            switchInputCmd.command = [root.avScriptPath, "on"];
         } else if (root.cecTool === "cec-ctl") {
-            switchInputCmd.command = ["bash", "-c", "cec-ctl --active-source phys-addr=$(cec-ctl -s 2>/dev/null | grep -oP 'Physical Address\\s*:\\s*\\K[0-9.]+') 2>/dev/null"]
+            switchInputCmd.command = ["bash", "-c", "cec-ctl --active-source phys-addr=$(cec-ctl -s 2>/dev/null | grep -oP 'Physical Address\\s*:\\s*\\K[0-9.]+') 2>/dev/null"];
         } else if (root.cecTool === "cec-client") {
-            switchInputCmd.command = ["bash", "-c", "echo 'as' | cec-client -s -d 1 2>/dev/null"]
+            switchInputCmd.command = ["bash", "-c", "echo 'as' | cec-client -s -d 1 2>/dev/null"];
         } else {
-            switchInputCmd.command = ["bash", "-c", "echo 'no CEC tool available'; exit 1"]
+            switchInputCmd.command = ["bash", "-c", "echo 'no CEC tool available'; exit 1"];
         }
-        switchInputCmd.running = true
+        switchInputCmd.running = true;
     }
 
     // --- UI ---
@@ -354,7 +374,9 @@ Item {
                 color: Theme.textPrimary
             }
 
-            Item { Layout.fillWidth: true }
+            Item {
+                Layout.fillWidth: true
+            }
 
             // Status indicator
             Rectangle {
@@ -400,8 +422,8 @@ Item {
                 }
 
                 Keys.onReturnPressed: {
-                    root.statusText = "Scanning..."
-                    root.startScan()
+                    root.statusText = "Scanning...";
+                    root.startScan();
                 }
 
                 MouseArea {
@@ -409,9 +431,9 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        refreshScope.forceActiveFocus()
-                        root.statusText = "Scanning..."
-                        root.startScan()
+                        refreshScope.forceActiveFocus();
+                        root.statusText = "Scanning...";
+                        root.startScan();
                     }
                 }
             }
@@ -493,7 +515,11 @@ Item {
                         border.width: parent.activeFocus ? 0 : 2
                         border.color: Theme.surfaceBorder
 
-                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: 150
+                            }
+                        }
 
                         ColumnLayout {
                             anchors.centerIn: parent
@@ -520,13 +546,15 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                wakeScope.forceActiveFocus()
-                                root.doWake()
+                                wakeScope.forceActiveFocus();
+                                root.doWake();
                             }
                         }
                     }
 
-                    Keys.onReturnPressed: { root.doWake() }
+                    Keys.onReturnPressed: {
+                        root.doWake();
+                    }
                 }
 
                 // Sleep AV
@@ -547,7 +575,11 @@ Item {
                         border.width: parent.activeFocus ? 0 : 2
                         border.color: Theme.surfaceBorder
 
-                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: 150
+                            }
+                        }
 
                         ColumnLayout {
                             anchors.centerIn: parent
@@ -574,13 +606,15 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                sleepScope.forceActiveFocus()
-                                root.doSleep()
+                                sleepScope.forceActiveFocus();
+                                root.doSleep();
                             }
                         }
                     }
 
-                    Keys.onReturnPressed: { root.doSleep() }
+                    Keys.onReturnPressed: {
+                        root.doSleep();
+                    }
                 }
 
                 // Switch Input
@@ -600,7 +634,11 @@ Item {
                         border.width: parent.activeFocus ? 0 : 2
                         border.color: Theme.surfaceBorder
 
-                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: 150
+                            }
+                        }
 
                         ColumnLayout {
                             anchors.centerIn: parent
@@ -627,13 +665,15 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                switchScope.forceActiveFocus()
-                                root.doSwitchInput()
+                                switchScope.forceActiveFocus();
+                                root.doSwitchInput();
                             }
                         }
                     }
 
-                    Keys.onReturnPressed: { root.doSwitchInput() }
+                    Keys.onReturnPressed: {
+                        root.doSwitchInput();
+                    }
                 }
             }
         }
@@ -687,12 +727,15 @@ Item {
                     width: deviceListView.width
                     height: 160
                     radius: 16
-                    color: deviceListView.currentIndex === index && deviceListView.activeFocus
-                           ? Theme.surfaceHover : Theme.surface
+                    color: deviceListView.currentIndex === index && deviceListView.activeFocus ? Theme.surfaceHover : Theme.surface
                     border.width: 2
                     border.color: Theme.surfaceBorder
 
-                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
 
                     RowLayout {
                         anchors.fill: parent
@@ -721,24 +764,30 @@ Item {
                                     height: 40
                                     radius: 20
                                     color: {
-                                        if (modelData.powerStatus === "on") return Qt.rgba(0.176, 0.541, 0.306, 0.2)
-                                        if (modelData.powerStatus === "standby") return Qt.rgba(0.843, 0.651, 0.294, 0.2)
-                                        return Theme.surfaceHover
+                                        if (modelData.powerStatus === "on")
+                                            return Qt.rgba(0.176, 0.541, 0.306, 0.2);
+                                        if (modelData.powerStatus === "standby")
+                                            return Qt.rgba(0.843, 0.651, 0.294, 0.2);
+                                        return Theme.surfaceHover;
                                     }
 
                                     Text {
                                         id: powerLabel
                                         anchors.centerIn: parent
                                         text: {
-                                            if (modelData.powerStatus === "on") return "On"
-                                            if (modelData.powerStatus === "standby") return "Standby"
-                                            return "Unknown"
+                                            if (modelData.powerStatus === "on")
+                                                return "On";
+                                            if (modelData.powerStatus === "standby")
+                                                return "Standby";
+                                            return "Unknown";
                                         }
                                         font.pixelSize: Theme.fontCaption
                                         color: {
-                                            if (modelData.powerStatus === "on") return Theme.online
-                                            if (modelData.powerStatus === "standby") return Theme.gold
-                                            return Theme.textSecondary
+                                            if (modelData.powerStatus === "on")
+                                                return Theme.online;
+                                            if (modelData.powerStatus === "standby")
+                                                return Theme.gold;
+                                            return Theme.textSecondary;
                                         }
                                     }
                                 }
@@ -775,8 +824,8 @@ Item {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            deviceListView.currentIndex = index
-                            deviceListView.forceActiveFocus()
+                            deviceListView.currentIndex = index;
+                            deviceListView.forceActiveFocus();
                         }
                     }
                 }
@@ -785,9 +834,7 @@ Item {
 
         // Hint bar
         Text {
-            text: root.cecAvailable
-                  ? "A: Select  |  Auto-refresh every 30s" + (root.cecTool ? "  |  " + root.cecTool : "")
-                  : "Install v4l-utils or libcec for CEC support"
+            text: root.cecAvailable ? "A: Select  |  Auto-refresh every 30s" + (root.cecTool ? "  |  " + root.cecTool : "") : "Install v4l-utils or libcec for CEC support"
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter

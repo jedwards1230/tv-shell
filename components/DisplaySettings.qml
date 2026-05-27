@@ -15,14 +15,16 @@ FocusScope {
         command: ["hyprctl", "monitors", "-j"]
         stdout: SplitParser {
             property string buffer: ""
-            onRead: (line) => { buffer += line }
+            onRead: line => {
+                buffer += line;
+            }
         }
         onExited: {
             try {
-                let data = JSON.parse(getMonitors.stdout.buffer)
-                let mons = []
+                let data = JSON.parse(getMonitors.stdout.buffer);
+                let mons = [];
                 for (let i = 0; i < data.length; i++) {
-                    let m = data[i]
+                    let m = data[i];
                     mons.push({
                         name: m.name || "Unknown",
                         description: m.description || "",
@@ -36,13 +38,13 @@ FocusScope {
                         dpmsStatus: m.dpmsStatus !== false,
                         vrr: m.vrr || false,
                         availableModes: m.availableModes || []
-                    })
+                    });
                 }
-                root.monitors = mons
-            } catch(e) {
-                console.log("Failed to parse monitor data:", e)
+                root.monitors = mons;
+            } catch (e) {
+                console.log("Failed to parse monitor data:", e);
             }
-            getMonitors.stdout.buffer = ""
+            getMonitors.stdout.buffer = "";
         }
     }
 
@@ -51,7 +53,9 @@ FocusScope {
         property string monName: ""
         property real scaleVal: 1.0
         command: ["hyprctl", "keyword", "monitor", monName + ",preferred,auto," + scaleVal]
-        onExited: { getMonitors.running = true }
+        onExited: {
+            getMonitors.running = true;
+        }
     }
 
     Process {
@@ -59,15 +63,19 @@ FocusScope {
         property string monName: ""
         property string mode: ""
         command: ["hyprctl", "keyword", "monitor", monName + "," + mode + ",auto,1"]
-        onExited: { getMonitors.running = true }
+        onExited: {
+            getMonitors.running = true;
+        }
     }
 
-    Component.onCompleted: { getMonitors.running = true }
+    Component.onCompleted: {
+        getMonitors.running = true;
+    }
 
     onVisibleChanged: {
         if (visible) {
-            getMonitors.running = true
-            monitorList.forceActiveFocus()
+            getMonitors.running = true;
+            monitorList.forceActiveFocus();
         }
     }
 
@@ -101,12 +109,15 @@ FocusScope {
                 width: monitorList.width
                 height: 180
                 radius: 16
-                color: monitorList.currentIndex === index && monitorList.activeFocus
-                       ? Theme.surfaceHover : Theme.surface
+                color: monitorList.currentIndex === index && monitorList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 property bool isSel: monitorList.currentIndex === index && monitorList.activeFocus
 
@@ -188,16 +199,16 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        monitorList.currentIndex = index
-                        monitorList.forceActiveFocus()
-                        root.selectedMonitor = index
+                        monitorList.currentIndex = index;
+                        monitorList.forceActiveFocus();
+                        root.selectedMonitor = index;
                     }
                 }
             }
 
             Keys.onReturnPressed: {
-                root.selectedMonitor = currentIndex
-                scaleRow.forceActiveFocus()
+                root.selectedMonitor = currentIndex;
+                scaleRow.forceActiveFocus();
             }
         }
 
@@ -220,24 +231,32 @@ FocusScope {
             KeyNavigation.down: modeDropdownScope
 
             property int selectedScale: {
-                if (root.monitors.length <= root.selectedMonitor) return 1
-                let s = root.monitors[root.selectedMonitor].scale
-                let scales = [0.5, 1.0, 1.25, 1.5, 2.0]
+                if (root.monitors.length <= root.selectedMonitor)
+                    return 1;
+                let s = root.monitors[root.selectedMonitor].scale;
+                let scales = [0.5, 1.0, 1.25, 1.5, 2.0];
                 for (let i = 0; i < scales.length; i++) {
-                    if (Math.abs(scales[i] - s) < 0.05) return i
+                    if (Math.abs(scales[i] - s) < 0.05)
+                        return i;
                 }
-                return 1
+                return 1;
             }
             property int focusedIndex: selectedScale
 
-            Keys.onLeftPressed: { if (focusedIndex > 0) focusedIndex-- }
-            Keys.onRightPressed: { if (focusedIndex < 4) focusedIndex++ }
+            Keys.onLeftPressed: {
+                if (focusedIndex > 0)
+                    focusedIndex--;
+            }
+            Keys.onRightPressed: {
+                if (focusedIndex < 4)
+                    focusedIndex++;
+            }
             Keys.onReturnPressed: {
-                let scales = [0.5, 1.0, 1.25, 1.5, 2.0]
+                let scales = [0.5, 1.0, 1.25, 1.5, 2.0];
                 if (root.monitors.length > root.selectedMonitor) {
-                    setScale.monName = root.monitors[root.selectedMonitor].name
-                    setScale.scaleVal = scales[focusedIndex]
-                    setScale.running = true
+                    setScale.monName = root.monitors[root.selectedMonitor].name;
+                    setScale.scaleVal = scales[focusedIndex];
+                    setScale.running = true;
                 }
             }
 
@@ -245,47 +264,45 @@ FocusScope {
                 anchors.fill: parent
                 spacing: 16
 
-            Repeater {
-                model: [0.5, 1.0, 1.25, 1.5, 2.0]
+                Repeater {
+                    model: [0.5, 1.0, 1.25, 1.5, 2.0]
 
-                FocusScope {
-                    id: scaleScope
-                    required property var modelData
-                    required property int index
-                    width: scaleBtn.width
-                    height: scaleBtn.height
+                    FocusScope {
+                        id: scaleScope
+                        required property var modelData
+                        required property int index
+                        width: scaleBtn.width
+                        height: scaleBtn.height
 
-                    SettingsButton {
-                        id: scaleBtn
-                        text: parent.modelData + "x"
-                        anchors.fill: parent
-
-                        property bool isCurrent: root.monitors.length > root.selectedMonitor &&
-                                                 Math.abs(root.monitors[root.selectedMonitor].scale - parent.modelData) < 0.05
-                        property bool isFocused: scaleRow.activeFocus && scaleRow.focusedIndex === scaleScope.index
-
-                        color: isCurrent ? Theme.sidebarActive :
-                               isFocused ? Theme.surfaceHover : Theme.surface
-                        border.width: isFocused ? 2 : 1
-                        border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
-
-                        MouseArea {
+                        SettingsButton {
+                            id: scaleBtn
+                            text: parent.modelData + "x"
                             anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                scaleRow.forceActiveFocus()
-                                scaleRow.focusedIndex = scaleScope.index
-                                if (root.monitors.length > root.selectedMonitor) {
-                                    setScale.monName = root.monitors[root.selectedMonitor].name
-                                    setScale.scaleVal = scaleScope.modelData
-                                    setScale.running = true
+
+                            property bool isCurrent: root.monitors.length > root.selectedMonitor && Math.abs(root.monitors[root.selectedMonitor].scale - parent.modelData) < 0.05
+                            property bool isFocused: scaleRow.activeFocus && scaleRow.focusedIndex === scaleScope.index
+
+                            color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
+                            border.width: isFocused ? 2 : 1
+                            border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    scaleRow.forceActiveFocus();
+                                    scaleRow.focusedIndex = scaleScope.index;
+                                    if (root.monitors.length > root.selectedMonitor) {
+                                        setScale.monName = root.monitors[root.selectedMonitor].name;
+                                        setScale.scaleVal = scaleScope.modelData;
+                                        setScale.running = true;
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
             }
         }
 
@@ -308,33 +325,42 @@ FocusScope {
             property bool modeDropdownOpen: false
             property var modes: root.monitors.length > root.selectedMonitor ? root.monitors[root.selectedMonitor].availableModes : []
             property string currentMode: {
-                if (root.monitors.length <= root.selectedMonitor) return ""
-                let mon = root.monitors[root.selectedMonitor]
-                return mon.width + "x" + mon.height + "@" + mon.refreshRate.toFixed(6)
+                if (root.monitors.length <= root.selectedMonitor)
+                    return "";
+                let mon = root.monitors[root.selectedMonitor];
+                return mon.width + "x" + mon.height + "@" + mon.refreshRate.toFixed(6);
             }
 
             function formatMode(mode) {
-                let parts = mode.split("@")
-                let res = parts[0] || mode
-                let hz = parts.length > 1 ? parseFloat(parts[1]).toFixed(2) + " Hz" : ""
-                return res + (hz ? "  @  " + hz : "")
+                let parts = mode.split("@");
+                let res = parts[0] || mode;
+                let hz = parts.length > 1 ? parseFloat(parts[1]).toFixed(2) + " Hz" : "";
+                return res + (hz ? "  @  " + hz : "");
             }
 
             KeyNavigation.up: scaleRow
 
-            Behavior on Layout.preferredHeight { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+            Behavior on Layout.preferredHeight {
+                NumberAnimation {
+                    duration: 200
+                    easing.type: Easing.OutCubic
+                }
+            }
 
             Rectangle {
                 id: modeDropdownHeader
                 width: parent.width
                 height: 80
                 radius: 16
-                color: modeDropdownScope.activeFocus && !modeDropdownScope.modeDropdownOpen
-                       ? Theme.surfaceHover : Theme.surface
+                color: modeDropdownScope.activeFocus && !modeDropdownScope.modeDropdownOpen ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -366,8 +392,8 @@ FocusScope {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        modeDropdownScope.forceActiveFocus()
-                        modeDropdownScope.modeDropdownOpen = !modeDropdownScope.modeDropdownOpen
+                        modeDropdownScope.forceActiveFocus();
+                        modeDropdownScope.modeDropdownOpen = !modeDropdownScope.modeDropdownOpen;
                     }
                 }
             }
@@ -396,14 +422,20 @@ FocusScope {
                     property bool isCurrent: modelData === modeDropdownScope.currentMode
 
                     color: {
-                        if (isCurrent) return Theme.sidebarActive
-                        if (modeDropdownList.currentIndex === index && modeDropdownList.activeFocus) return Theme.surfaceHover
-                        return Theme.card
+                        if (isCurrent)
+                            return Theme.sidebarActive;
+                        if (modeDropdownList.currentIndex === index && modeDropdownList.activeFocus)
+                            return Theme.surfaceHover;
+                        return Theme.card;
                     }
                     border.width: isCurrent ? 2 : 1
                     border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
 
-                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
 
                     Text {
                         anchors.centerIn: parent
@@ -416,15 +448,15 @@ FocusScope {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            modeDropdownList.currentIndex = index
-                            modeDropdownList.forceActiveFocus()
+                            modeDropdownList.currentIndex = index;
+                            modeDropdownList.forceActiveFocus();
                         }
                         onDoubleClicked: {
                             if (root.monitors.length > root.selectedMonitor) {
-                                setMode.monName = root.monitors[root.selectedMonitor].name
-                                setMode.mode = modelData
-                                setMode.running = true
-                                modeDropdownScope.modeDropdownOpen = false
+                                setMode.monName = root.monitors[root.selectedMonitor].name;
+                                setMode.mode = modelData;
+                                setMode.running = true;
+                                modeDropdownScope.modeDropdownOpen = false;
                             }
                         }
                     }
@@ -432,39 +464,41 @@ FocusScope {
 
                 Keys.onReturnPressed: {
                     if (currentIndex >= 0 && root.monitors.length > root.selectedMonitor) {
-                        let modes = modeDropdownScope.modes
+                        let modes = modeDropdownScope.modes;
                         if (currentIndex < modes.length) {
-                            setMode.monName = root.monitors[root.selectedMonitor].name
-                            setMode.mode = modes[currentIndex]
-                            setMode.running = true
-                            modeDropdownScope.modeDropdownOpen = false
+                            setMode.monName = root.monitors[root.selectedMonitor].name;
+                            setMode.mode = modes[currentIndex];
+                            setMode.running = true;
+                            modeDropdownScope.modeDropdownOpen = false;
                         }
                     }
                 }
 
                 Keys.onEscapePressed: {
-                    modeDropdownScope.modeDropdownOpen = false
-                    modeDropdownScope.forceActiveFocus()
+                    modeDropdownScope.modeDropdownOpen = false;
+                    modeDropdownScope.forceActiveFocus();
                 }
             }
 
             Keys.onReturnPressed: {
                 if (!modeDropdownOpen) {
-                    modeDropdownOpen = true
-                    modeDropdownList.forceActiveFocus()
+                    modeDropdownOpen = true;
+                    modeDropdownList.forceActiveFocus();
                 }
             }
 
             Keys.onEscapePressed: {
                 if (modeDropdownOpen) {
-                    modeDropdownOpen = false
+                    modeDropdownOpen = false;
                 } else {
-                    event.accepted = false
+                    event.accepted = false;
                 }
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+        }
 
         Text {
             text: "A: Open/apply mode  |  B: Close dropdown"
