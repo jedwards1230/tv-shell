@@ -121,6 +121,7 @@ ShellRoot {
         root.state = "idle";
         inputManager.grab();
         if (root._layout) {
+            root._layout.overlay.hide();
             root._layout.settingsPanel.visible = false;
             root._layout.focusHome();
         }
