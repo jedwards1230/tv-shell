@@ -24,7 +24,9 @@ Item {
             loops: Animation.Infinite
 
             // Pause at start
-            PauseAnimation { duration: 2000 }
+            PauseAnimation {
+                duration: 2000
+            }
 
             // Scroll left to reveal full text
             NumberAnimation {
@@ -35,7 +37,9 @@ Item {
             }
 
             // Pause at end
-            PauseAnimation { duration: 1500 }
+            PauseAnimation {
+                duration: 1500
+            }
 
             // Snap back
             NumberAnimation {
@@ -48,7 +52,8 @@ Item {
 
         // Reset position when not scrolling
         onNeedsScrollChanged: {
-            if (!needsScroll) x = 0
+            if (!needsScroll)
+                x = 0;
         }
     }
 }

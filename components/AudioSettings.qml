@@ -16,13 +16,13 @@ FocusScope {
         id: getVolume
         command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
         stdout: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 // Output: "Volume: 0.50" or "Volume: 0.50 [MUTED]"
-                let parts = line.trim().split(" ")
+                let parts = line.trim().split(" ");
                 if (parts.length >= 2) {
-                    root.volume = Math.round(parseFloat(parts[1]) * 100)
+                    root.volume = Math.round(parseFloat(parts[1]) * 100);
                 }
-                root.muted = line.indexOf("[MUTED]") >= 0
+                root.muted = line.indexOf("[MUTED]") >= 0;
             }
         }
     }
@@ -31,13 +31,17 @@ FocusScope {
         id: setVolume
         property string level: "50%"
         command: ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", level]
-        onExited: { getVolume.running = true }
+        onExited: {
+            getVolume.running = true;
+        }
     }
 
     Process {
         id: toggleMute
         command: ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
-        onExited: { getVolume.running = true }
+        onExited: {
+            getVolume.running = true;
+        }
     }
 
     Process {
@@ -45,28 +49,29 @@ FocusScope {
         command: ["bash", "-c", "wpctl status | sed -n '/Audio/,/Video/p' | sed -n '/Sinks:/,/Sources:/p' | grep -v 'Sinks:\\|Sources:\\|^$'"]
         stdout: SplitParser {
             property var collected: []
-            onRead: (line) => {
+            onRead: line => {
                 // Lines like: " │      46. Denon AVR-X1700H  [vol: 1.00]"
                 //             " │  *   86. Radeon HD Audio   [vol: 1.00]"
                 // Strip box-drawing chars and leading whitespace
-                let cleaned = line.replace(/[│├└─┐┘┌┬┴┤┼]/g, " ")
-                let isDefault = cleaned.indexOf("*") >= 0
+                let cleaned = line.replace(/[│├└─┐┘┌┬┴┤┼]/g, " ");
+                let isDefault = cleaned.indexOf("*") >= 0;
                 // Extract id and name from "  *   86. Some Name  [vol: 1.00]"
-                let match = cleaned.match(/\*?\s*(\d+)\.\s+(.+?)(?:\s+\[vol:.+\])?\s*$/)
+                let match = cleaned.match(/\*?\s*(\d+)\.\s+(.+?)(?:\s+\[vol:.+\])?\s*$/);
                 if (match) {
                     let entry = {
                         id: parseInt(match[1]),
                         name: match[2].trim(),
                         isDefault: isDefault
-                    }
-                    collected.push(entry)
-                    if (isDefault) root.defaultSinkIndex = collected.length - 1
+                    };
+                    collected.push(entry);
+                    if (isDefault)
+                        root.defaultSinkIndex = collected.length - 1;
                 }
             }
         }
         onExited: {
-            root.sinks = listSinks.stdout.collected
-            listSinks.stdout.collected = []
+            root.sinks = listSinks.stdout.collected;
+            listSinks.stdout.collected = [];
         }
     }
 
@@ -75,29 +80,31 @@ FocusScope {
         property int sinkId: 0
         command: ["wpctl", "set-default", String(sinkId)]
         onExited: {
-            listSinks.running = true
+            listSinks.running = true;
             // Small delay then refresh volume for the new default
-            refreshTimer.start()
+            refreshTimer.start();
         }
     }
 
     Timer {
         id: refreshTimer
         interval: 500
-        onTriggered: { getVolume.running = true }
+        onTriggered: {
+            getVolume.running = true;
+        }
     }
 
     Component.onCompleted: {
-        getVolume.running = true
-        listSinks.running = true
+        getVolume.running = true;
+        listSinks.running = true;
     }
 
     // Refresh when section becomes visible
     onVisibleChanged: {
         if (visible) {
-            getVolume.running = true
-            listSinks.running = true
-            volumeRow.forceActiveFocus()
+            getVolume.running = true;
+            listSinks.running = true;
+            volumeRow.forceActiveFocus();
         }
     }
 
@@ -140,18 +147,18 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            volDownScope.forceActiveFocus()
-                            root.volume = Math.max(0, root.volume - 5)
-                            setVolume.level = root.volume + "%"
-                            setVolume.running = true
+                            volDownScope.forceActiveFocus();
+                            root.volume = Math.max(0, root.volume - 5);
+                            setVolume.level = root.volume + "%";
+                            setVolume.running = true;
                         }
                     }
                 }
 
                 Keys.onReturnPressed: {
-                    root.volume = Math.max(0, root.volume - 5)
-                    setVolume.level = root.volume + "%"
-                    setVolume.running = true
+                    root.volume = Math.max(0, root.volume - 5);
+                    setVolume.level = root.volume + "%";
+                    setVolume.running = true;
                 }
             }
 
@@ -168,7 +175,11 @@ FocusScope {
                     radius: 28
                     color: root.muted ? Theme.textSecondary : Theme.navy
 
-                    Behavior on width { NumberAnimation { duration: 100 } }
+                    Behavior on width {
+                        NumberAnimation {
+                            duration: 100
+                        }
+                    }
                 }
 
                 Text {
@@ -200,18 +211,18 @@ FocusScope {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            volUpScope.forceActiveFocus()
-                            root.volume = Math.min(100, root.volume + 5)
-                            setVolume.level = root.volume + "%"
-                            setVolume.running = true
+                            volUpScope.forceActiveFocus();
+                            root.volume = Math.min(100, root.volume + 5);
+                            setVolume.level = root.volume + "%";
+                            setVolume.running = true;
                         }
                     }
                 }
 
                 Keys.onReturnPressed: {
-                    root.volume = Math.min(100, root.volume + 5)
-                    setVolume.level = root.volume + "%"
-                    setVolume.running = true
+                    root.volume = Math.min(100, root.volume + 5);
+                    setVolume.level = root.volume + "%";
+                    setVolume.running = true;
                 }
             }
         }
@@ -236,13 +247,15 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        muteScope.forceActiveFocus()
-                        toggleMute.running = true
+                        muteScope.forceActiveFocus();
+                        toggleMute.running = true;
                     }
                 }
             }
 
-            Keys.onReturnPressed: { toggleMute.running = true }
+            Keys.onReturnPressed: {
+                toggleMute.running = true;
+            }
         }
 
         // Output devices
@@ -271,15 +284,19 @@ FocusScope {
                 radius: 16
                 color: {
                     if (sinkList.currentIndex === index && sinkList.activeFocus)
-                        return Theme.surfaceHover
+                        return Theme.surfaceHover;
                     if (modelData.isDefault)
-                        return Theme.sidebarActive
-                    return Theme.surface
+                        return Theme.sidebarActive;
+                    return Theme.surface;
                 }
                 border.width: 2
                 border.color: modelData.isDefault ? Theme.focusBorder : Theme.surfaceBorder
 
-                Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -309,18 +326,18 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        sinkList.currentIndex = index
-                        sinkList.forceActiveFocus()
-                        setDefaultSink.sinkId = modelData.id
-                        setDefaultSink.running = true
+                        sinkList.currentIndex = index;
+                        sinkList.forceActiveFocus();
+                        setDefaultSink.sinkId = modelData.id;
+                        setDefaultSink.running = true;
                     }
                 }
             }
 
             Keys.onReturnPressed: {
                 if (currentIndex >= 0 && currentIndex < root.sinks.length) {
-                    setDefaultSink.sinkId = root.sinks[currentIndex].id
-                    setDefaultSink.running = true
+                    setDefaultSink.sinkId = root.sinks[currentIndex].id;
+                    setDefaultSink.running = true;
                 }
             }
         }

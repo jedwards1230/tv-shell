@@ -9,15 +9,15 @@ Item {
     required property var app
     property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
 
-    signal activated()
+    signal activated
 
     Connections {
         target: Theme
         function onMouseModeChanged() {
             if (!Theme.mouseMode && mouseArea.containsMouse) {
                 if (root.ListView.view)
-                    root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y)
-                root.forceActiveFocus()
+                    root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y);
+                root.forceActiveFocus();
             }
         }
     }
@@ -28,8 +28,18 @@ Item {
             origin.y: root.height / 2
             xScale: root.isFocused ? 1.05 : 1.0
             yScale: root.isFocused ? 1.05 : 1.0
-            Behavior on xScale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-            Behavior on yScale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+            Behavior on xScale {
+                NumberAnimation {
+                    duration: 250
+                    easing.type: Easing.OutCubic
+                }
+            }
+            Behavior on yScale {
+                NumberAnimation {
+                    duration: 250
+                    easing.type: Easing.OutCubic
+                }
+            }
         }
     ]
 
@@ -43,8 +53,16 @@ Item {
         border.width: root.isFocused ? 6 : 2
         border.color: root.isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
-        Behavior on border.width { NumberAnimation { duration: 200 } }
-        Behavior on border.color { ColorAnimation { duration: 200 } }
+        Behavior on border.width {
+            NumberAnimation {
+                duration: 200
+            }
+        }
+        Behavior on border.color {
+            ColorAnimation {
+                duration: 200
+            }
+        }
 
         MouseArea {
             id: mouseArea
@@ -52,8 +70,8 @@ Item {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
-                root.forceActiveFocus()
-                root.activated()
+                root.forceActiveFocus();
+                root.activated();
             }
         }
 
@@ -62,7 +80,9 @@ Item {
             anchors.margins: Theme.padding / 2
             spacing: 8
 
-            Item { Layout.fillHeight: true }
+            Item {
+                Layout.fillHeight: true
+            }
 
             // App icon (Freedesktop icon theme)
             Image {
@@ -90,7 +110,9 @@ Item {
                 verticalAlignment: Text.AlignVCenter
             }
 
-            Item { Layout.fillHeight: true }
+            Item {
+                Layout.fillHeight: true
+            }
 
             // App name — marquee scrolls when focused and text overflows
             MarqueeText {

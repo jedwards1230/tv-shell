@@ -20,7 +20,7 @@ FocusScope {
     signal streamRequested(var target)
     signal appLaunchRequested(var app)
     signal appFocusRequested(string windowClass)
-    signal settingsRequested()
+    signal settingsRequested
 
     // Load installed applications
     Process {
@@ -50,9 +50,12 @@ apps.sort(key=lambda x: x['name'].lower())
 print(json.dumps(apps))
 `]
         stdout: SplitParser {
-            onRead: (line) => {
-                try { root.applications = JSON.parse(line) }
-                catch(e) { console.log("Failed to parse apps:", e) }
+            onRead: line => {
+                try {
+                    root.applications = JSON.parse(line);
+                } catch (e) {
+                    console.log("Failed to parse apps:", e);
+                }
             }
         }
     }
@@ -71,34 +74,37 @@ except:
     print('[]')
 `]
         stdout: SplitParser {
-            onRead: (line) => {
-                try { root.recentApps = JSON.parse(line) }
-                catch(e) { root.recentApps = [] }
+            onRead: line => {
+                try {
+                    root.recentApps = JSON.parse(line);
+                } catch (e) {
+                    root.recentApps = [];
+                }
             }
         }
     }
 
     Component.onCompleted: {
-        loadApps.running = true
-        loadRecents.running = true
+        loadApps.running = true;
+        loadRecents.running = true;
     }
 
     function launchApp(app) {
-        root.appLaunchRequested(app)
-        recentsTracker.command = ["python3", "-c",
-            "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " +
-            "d=[]; " +
-            "try:\n with open(p) as f: d=json.load(f)\nexcept: pass\n" +
-            "entry={'name':'" + (app.name||"").replace("'","\\'") + "','exec':'" + (app.exec||"").replace("'","\\'") + "','comment':'" + (app.comment||"").replace("'","\\'") + "','time':time.time()}; " +
-            "d=[e for e in d if e.get('name')!=entry['name']]; d.insert(0,entry); d=d[:20]; " +
-            "open(p,'w').write(json.dumps(d,indent=2))"
-        ]
-        recentsTracker.running = true
-        recentsReloadTimer.start()
+        root.appLaunchRequested(app);
+        recentsTracker.command = ["python3", "-c", "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " + "d=[]; " + "try:\n with open(p) as f: d=json.load(f)\nexcept: pass\n" + "entry={'name':'" + (app.name || "").replace("'", "\\'") + "','exec':'" + (app.exec || "").replace("'", "\\'") + "','comment':'" + (app.comment || "").replace("'", "\\'") + "','time':time.time()}; " + "d=[e for e in d if e.get('name')!=entry['name']]; d.insert(0,entry); d=d[:20]; " + "open(p,'w').write(json.dumps(d,indent=2))"];
+        recentsTracker.running = true;
+        recentsReloadTimer.start();
     }
 
-    Process { id: recentsTracker; command: ["echo"] }
-    Timer { id: recentsReloadTimer; interval: 500; onTriggered: loadRecents.running = true }
+    Process {
+        id: recentsTracker
+        command: ["echo"]
+    }
+    Timer {
+        id: recentsReloadTimer
+        interval: 500
+        onTriggered: loadRecents.running = true
+    }
 
     // === Moonlight App Discovery ===
     Process {
@@ -106,63 +112,65 @@ except:
         property string currentHost: ""
         command: ["moonlight", "list", currentHost]
         stdout: SplitParser {
-            onRead: (line) => {
+            onRead: line => {
                 // moonlight list outputs lines like "1. Desktop" or just "Desktop"
-                let trimmed = line.trim()
-                if (trimmed === "" || trimmed.indexOf("Search") === 0 || trimmed.indexOf("Connect") === 0) return
+                let trimmed = line.trim();
+                if (trimmed === "" || trimmed.indexOf("Search") === 0 || trimmed.indexOf("Connect") === 0)
+                    return;
                 // Strip leading number+dot if present (e.g., "1. Desktop" -> "Desktop")
-                let match = trimmed.match(/^\d+\.\s+(.+)/)
-                let appName = match ? match[1] : trimmed
-                if (appName === "") return
-
-                let updated = root.hostApps
+                let match = trimmed.match(/^\d+\.\s+(.+)/);
+                let appName = match ? match[1] : trimmed;
+                if (appName === "")
+                    return;
+                let updated = root.hostApps;
                 if (!updated[appDiscovery.currentHost])
-                    updated[appDiscovery.currentHost] = []
-                updated[appDiscovery.currentHost].push(appName)
-                root.hostApps = updated
+                    updated[appDiscovery.currentHost] = [];
+                updated[appDiscovery.currentHost].push(appName);
+                root.hostApps = updated;
             }
         }
         onExited: (exitCode, exitStatus) => {
             if (exitCode !== 0) {
                 // Host offline or moonlight list failed — mark empty
-                let updated = root.hostApps
-                updated[appDiscovery.currentHost] = []
-                root.hostApps = updated
+                let updated = root.hostApps;
+                updated[appDiscovery.currentHost] = [];
+                root.hostApps = updated;
             }
             // Discover next host
-            root._appDiscoveryIndex++
-            root._discoverNextHost()
+            root._appDiscoveryIndex++;
+            root._discoverNextHost();
         }
     }
 
     function _discoverNextHost() {
         if (_appDiscoveryIndex >= root.targets.length) {
-            _appDiscoveryRunning = false
+            _appDiscoveryRunning = false;
             // Force re-evaluation by reassigning
-            root.hostApps = JSON.parse(JSON.stringify(root.hostApps))
-            return
+            root.hostApps = JSON.parse(JSON.stringify(root.hostApps));
+            return;
         }
-        let target = root.targets[_appDiscoveryIndex]
-        appDiscovery.currentHost = target.host || ""
+        let target = root.targets[_appDiscoveryIndex];
+        appDiscovery.currentHost = target.host || "";
         if (appDiscovery.currentHost === "") {
-            _appDiscoveryIndex++
-            _discoverNextHost()
-            return
+            _appDiscoveryIndex++;
+            _discoverNextHost();
+            return;
         }
         // Clear previous results for this host before re-query
-        let updated = root.hostApps
-        updated[appDiscovery.currentHost] = []
-        root.hostApps = updated
-        appDiscovery.running = true
+        let updated = root.hostApps;
+        updated[appDiscovery.currentHost] = [];
+        root.hostApps = updated;
+        appDiscovery.running = true;
     }
 
     function discoverAllApps() {
-        if (_appDiscoveryRunning) return
-        _appDiscoveryRunning = true
-        _appDiscoveryIndex = 0
+        if (_appDiscoveryRunning)
+            return;
+        _appDiscoveryRunning = true;
+        _appDiscoveryIndex = 0;
         // Clear all
-        root.hostApps = {}
-        _discoverNextHost()
+        root.hostApps = {};
+        _discoverNextHost();
     }
 
     // Refresh app discovery every 60 seconds when in app-view mode
@@ -177,43 +185,52 @@ except:
     // Trigger discovery when targets arrive or view mode switches to apps
     onTargetsChanged: {
         if (Theme.moonlightViewMode === "apps" && root.targets.length > 0)
-            discoverAllApps()
+            discoverAllApps();
     }
 
     Connections {
         target: Theme
         function onMoonlightViewModeChanged() {
             if (Theme.moonlightViewMode === "apps" && root.targets.length > 0)
-                root.discoverAllApps()
+                root.discoverAllApps();
         }
     }
 
     function _appViewRowItem(idx) {
-        if (idx < 0 || idx >= appViewRepeater.count) return null
-        var item = appViewRepeater.itemAt(idx)
-        return item ? item.navigableRow : null
+        if (idx < 0 || idx >= appViewRepeater.count)
+            return null;
+        var item = appViewRepeater.itemAt(idx);
+        return item ? item.navigableRow : null;
     }
 
     function _focusFirstVisibleRow() {
-        var row = runningRow
+        var row = runningRow;
         while (row) {
-            if (row.visible) { row.forceActiveFocus(); return }
-            row = (row.nextRow !== undefined) ? row.nextRow : null
+            if (row.visible) {
+                row.forceActiveFocus();
+                return;
+            }
+            row = (row.nextRow !== undefined) ? row.nextRow : null;
         }
     }
 
     // Computed model for app-view rows, re-evaluated when targets or hostApps change
     property var _appViewRows: {
         // Explicitly reference both properties so QML re-evaluates this binding
-        let ha = root.hostApps
-        let tgts = root.targets
-        let rows = []
+        let ha = root.hostApps;
+        let tgts = root.targets;
+        let rows = [];
         for (let i = 0; i < tgts.length; i++) {
-            let t = tgts[i]
-            let apps = ha[t.host] || []
-            rows.push({ host: t.host, name: t.name, apps: apps, target: t })
+            let t = tgts[i];
+            let apps = ha[t.host] || [];
+            rows.push({
+                host: t.host,
+                name: t.name,
+                apps: apps,
+                target: t
+            });
         }
-        return rows
+        return rows;
     }
 
     ColumnLayout {
@@ -244,8 +261,8 @@ except:
                         repeat: true
                         triggeredOnStart: true
                         onTriggered: {
-                            let now = new Date()
-                            heroClockText.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP")
+                            let now = new Date();
+                            heroClockText.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP");
                         }
                     }
                 }
@@ -261,14 +278,16 @@ except:
                         repeat: true
                         triggeredOnStart: true
                         onTriggered: {
-                            let now = new Date()
-                            heroDateText.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d")
+                            let now = new Date();
+                            heroDateText.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d");
                         }
                     }
                 }
             }
 
-            Item { Layout.fillWidth: true }
+            Item {
+                Layout.fillWidth: true
+            }
 
             // Status icons (right side)
             StatusIcons {
@@ -327,9 +346,10 @@ except:
             focus: visible && !runningRow.visible
             previousRow: runningRow
             nextRow: {
-                var _ = appViewRepeater.count
-                if (Theme.moonlightViewMode === "servers") return moonlightRow
-                return root._appViewRowItem(0) || appsRow
+                var _ = appViewRepeater.count;
+                if (Theme.moonlightViewMode === "servers")
+                    return moonlightRow;
+                return root._appViewRowItem(0) || appsRow;
             }
             model: root.recentApps
 
@@ -434,8 +454,8 @@ except:
                         focus: Theme.moonlightViewMode === "apps" && appViewRowDelegate.index === 0 && !recentsRow.visible
                         model: hostAppList
                         previousRow: {
-                            var _ = appViewRepeater.count
-                            return appViewRowDelegate.index === 0 ? recentsRow : root._appViewRowItem(appViewRowDelegate.index - 1)
+                            var _ = appViewRepeater.count;
+                            return appViewRowDelegate.index === 0 ? recentsRow : root._appViewRowItem(appViewRowDelegate.index - 1);
                         }
                         nextRow: appViewRowDelegate.index < appViewRepeater.count - 1 ? root._appViewRowItem(appViewRowDelegate.index + 1) : appsRow
 
@@ -448,9 +468,9 @@ except:
                             appName: modelData
                             focus: index === appViewNavRow.currentIndex
                             onActivated: {
-                                let t = JSON.parse(JSON.stringify(hostTarget))
-                                t.app = modelData
-                                root.streamRequested(t)
+                                let t = JSON.parse(JSON.stringify(hostTarget));
+                                t.app = modelData;
+                                root.streamRequested(t);
                             }
                         }
 
@@ -474,8 +494,9 @@ except:
             Layout.fillHeight: true
             Layout.minimumHeight: Theme.rowHeight
             previousRow: {
-                if (Theme.moonlightViewMode === "servers") return moonlightRow
-                return root._appViewRowItem(appViewRepeater.count - 1) || recentsRow
+                if (Theme.moonlightViewMode === "servers")
+                    return moonlightRow;
+                return root._appViewRowItem(appViewRepeater.count - 1) || recentsRow;
             }
             model: root.applications
 
