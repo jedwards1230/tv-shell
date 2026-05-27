@@ -234,7 +234,7 @@ FocusScope {
             activeFocusOnTab: true
 
             KeyNavigation.up: volDownScope
-            KeyNavigation.down: sinkList
+            KeyNavigation.down: sinkDropdownScope
 
             SettingsButton {
                 id: muteBtn
@@ -367,7 +367,7 @@ FocusScope {
                             return Theme.sidebarActive;
                         if (sinkDropdownList.currentIndex === index && sinkDropdownList.activeFocus)
                             return Theme.surfaceHover;
-                        return Theme.card;
+                        return Theme.cardBackground;
                     }
                     border.width: isCurrent ? 2 : 1
                     border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
