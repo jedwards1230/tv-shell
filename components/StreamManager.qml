@@ -12,6 +12,7 @@ Item {
 
     // Active session state detected by pre-flight check
     property string activeSessionApp: ""
+    property bool _sessionCheckCancelled: false
 
     signal streamStarted
     signal streamEnded
@@ -34,6 +35,7 @@ Item {
         _lastStderr = "";
         _stderrLines = [];
         activeSessionApp = "";
+        _sessionCheckCancelled = false;
         ErrorLog.setCurrentTarget(target.name || target.app || "");
 
         if (target.sunshineUser && target.sunshinePass) {
@@ -46,17 +48,20 @@ Item {
     }
 
     function resumeSession() {
+        _sessionCheckCancelled = false;
         requestOverlayShow("Resuming " + (currentTarget.app || currentTarget.name) + "...");
         _launchMoonlight();
     }
 
     function quitAndRelaunch() {
+        _sessionCheckCancelled = false;
         requestOverlayShow("Quitting current session...");
         sessionQuit.command = ["moonlight", "quit", currentTarget.host];
         sessionQuit.running = true;
     }
 
     function cancelSessionCheck() {
+        _sessionCheckCancelled = true;
         sessionCheckProc.running = false;
         sessionQuit.running = false;
         requestOverlayHide();
@@ -71,6 +76,9 @@ Item {
 
     function forceKill() {
         stop();
+        _sessionCheckCancelled = true;
+        sessionCheckProc.running = false;
+        sessionQuit.running = false;
         forceKillProc.running = true;
     }
 
@@ -79,7 +87,8 @@ Item {
         let port = currentTarget.sunshinePort || "47990";
         let user = currentTarget.sunshineUser;
         let pass = currentTarget.sunshinePass;
-        sessionCheckProc.command = ["bash", "-c", "curl -sk --connect-timeout 3 -u '" + user + ":" + pass + "' 'https://" + host + ":" + port + "/api/currentClient' | tr -d '\\n'"];
+        sessionCheckProc._response = "";
+        sessionCheckProc.command = ["curl", "-sk", "--connect-timeout", "3", "--max-time", "5", "--user", user + ":" + pass, "https://" + host + ":" + port + "/api/currentClient"];
         sessionCheckProc.running = true;
     }
 
@@ -112,15 +121,17 @@ Item {
         property string _response: ""
         stdout: SplitParser {
             onRead: line => {
-                sessionCheckProc._response = line;
+                sessionCheckProc._response += line;
             }
         }
         onExited: (exitCode, exitStatus) => {
+            if (root._sessionCheckCancelled)
+                return;
+
             let response = sessionCheckProc._response;
             sessionCheckProc._response = "";
 
             if (exitCode !== 0 || response === "") {
-                // Curl failed or empty response — proceed with launch
                 root.requestOverlayShow("Launching " + (root.currentTarget.app || root.currentTarget.name) + "...");
                 root._launchMoonlight();
                 return;
@@ -128,20 +139,16 @@ Item {
 
             try {
                 let data = JSON.parse(response);
-                // Sunshine returns currentApp when a session is active
                 let runningApp = data.currentApp || "";
                 if (runningApp === "" || runningApp === root.currentTarget.app) {
-                    // No session or same app — proceed (auto-resume)
                     root.requestOverlayShow("Launching " + (root.currentTarget.app || root.currentTarget.name) + "...");
                     root._launchMoonlight();
                 } else {
-                    // Different app running — show conflict dialog
                     root.activeSessionApp = runningApp;
                     root.requestOverlayHide();
                     root.sessionConflictDetected(runningApp, root.currentTarget.name || root.currentTarget.host);
                 }
             } catch (e) {
-                // Parse failed — proceed with launch
                 root.requestOverlayShow("Launching " + (root.currentTarget.app || root.currentTarget.name) + "...");
                 root._launchMoonlight();
             }
@@ -152,6 +159,8 @@ Item {
     Process {
         id: sessionQuit
         onExited: {
+            if (root._sessionCheckCancelled)
+                return;
             root.requestOverlayShow("Launching " + (root.currentTarget.app || root.currentTarget.name) + "...");
             root._launchMoonlight();
         }

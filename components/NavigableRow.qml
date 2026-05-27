@@ -41,9 +41,11 @@ FocusScope {
                 root.activated();
         }
         Keys.onEscapePressed: root.escaped()
-        Keys.onTabPressed: {
-            if (listView.currentItem)
+        Keys.onTabPressed: event => {
+            if (listView.currentItem) {
                 root.contextRequested();
+                event.accepted = true;
+            }
         }
         Keys.onUpPressed: root._navigateUp()
         Keys.onDownPressed: root._navigateDown()

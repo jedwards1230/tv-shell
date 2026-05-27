@@ -53,8 +53,10 @@ Item {
     }
 
     function closeAppByClass(windowClass) {
-        closeAppWindow.appClass = windowClass;
-        closeAppWindow.running = true;
+        if (windowClass && windowClass !== "") {
+            closeAppWindow.appClass = windowClass;
+            closeAppWindow.running = true;
+        }
     }
 
     function focusApp(windowClass) {

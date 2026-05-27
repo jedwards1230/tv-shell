@@ -113,4 +113,8 @@ FocusScope {
     Keys.onReturnPressed: _activateItem(_selectedIndex)
     Keys.onEnterPressed: _activateItem(_selectedIndex)
     Keys.onEscapePressed: root.closed()
+    Keys.onTabPressed: event => {
+        root.closed();
+        event.accepted = true;
+    }
 }
