@@ -269,7 +269,7 @@ except:
             // === Hero Clock Area ===
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 480
+                Layout.preferredHeight: Units.gridUnit * 9
                 spacing: 32
 
                 // Clock + date (left side)
@@ -323,6 +323,8 @@ except:
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
                     onSettingsRequested: root.settingsRequested()
                     onFocusDownRequested: root._focusFirstVisibleRow()
+                    onActiveFocusChanged: if (activeFocus)
+                        scrollView.contentY = 0
                 }
             }
 
