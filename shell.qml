@@ -51,6 +51,13 @@ ShellRoot {
     }
 
     Process {
+        id: streamQuitProc
+        onExited: {
+            Components.NotificationManager.info("stream", "Stream Session Ended");
+        }
+    }
+
+    Process {
         id: loadTargets
         command: ["cat", "/opt/game-shell/targets.json"]
         stdout: SplitParser {
@@ -231,6 +238,10 @@ ShellRoot {
                     root.state = "launching";
                     avController.forceWake();
                     streamManager.launch(target);
+                }
+                onStreamQuitRequested: target => {
+                    streamQuitProc.command = ["moonlight", "quit", target.host];
+                    streamQuitProc.running = true;
                 }
                 onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
                 onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
