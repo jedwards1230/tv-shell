@@ -90,6 +90,28 @@ except:
         loadRecents.running = true;
     }
 
+    onActiveFocusChanged: {
+        if (activeFocus)
+            _ensureRowFocusTimer.restart();
+    }
+
+    Timer {
+        id: _ensureRowFocusTimer
+        interval: 10
+        onTriggered: {
+            if (!root.activeFocus)
+                return;
+            if (statusIcons.activeFocus || runningRow.activeFocus || recentsRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
+                return;
+            for (let i = 0; i < appViewRepeater.count; i++) {
+                let item = appViewRepeater.itemAt(i);
+                if (item && item.navigableRow && item.navigableRow.activeFocus)
+                    return;
+            }
+            root._focusFirstVisibleRow();
+        }
+    }
+
     function launchApp(app) {
         root.appLaunchRequested(app);
         recentsTracker.command = ["python3", "-c", "import json,os,time; p=os.path.expanduser('~/.local/share/game-shell/recents.json'); os.makedirs(os.path.dirname(p),exist_ok=True); " + "d=[]; " + "try:\n with open(p) as f: d=json.load(f)\nexcept: pass\n" + "entry={'name':'" + (app.name || "").replace("'", "\\'") + "','exec':'" + (app.exec || "").replace("'", "\\'") + "','comment':'" + (app.comment || "").replace("'", "\\'") + "','time':time.time()}; " + "d=[e for e in d if e.get('name')!=entry['name']]; d.insert(0,entry); d=d[:20]; " + "open(p,'w').write(json.dumps(d,indent=2))"];
@@ -347,6 +369,7 @@ except:
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
+                focus: visible
                 previousRow: statusIcons
                 nextRow: recentsRow
                 model: root.runningWindows
@@ -447,7 +470,7 @@ except:
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
-                focus: Theme.moonlightViewMode === "servers" && !recentsRow.visible
+                focus: Theme.moonlightViewMode === "servers" && !recentsRow.visible && !runningRow.visible
                 previousRow: recentsRow
                 nextRow: appsRow
                 onActiveFocusChanged: if (activeFocus)
@@ -530,7 +553,7 @@ except:
                             anchors.fill: parent
                             visible: hostAppList.length > 0
                             keyNavigationWraps: true
-                            focus: Theme.moonlightViewMode === "apps" && appViewRowDelegate.index === 0 && !recentsRow.visible
+                            focus: Theme.moonlightViewMode === "apps" && appViewRowDelegate.index === 0 && !recentsRow.visible && !runningRow.visible
                             onActiveFocusChanged: if (activeFocus)
                                 scrollView.ensureVisible(appViewRowDelegate)
                             model: hostAppList
