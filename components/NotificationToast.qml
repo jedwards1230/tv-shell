@@ -14,14 +14,10 @@ Item {
     x: Units.gridUnit * 2
     opacity: 0
 
-    readonly property bool _persistent: notification.level === "error" && notification.duration === 0
-
     Component.onCompleted: {
         enterAnim.start();
         if (notification.duration > 0)
             autoDismissTimer.start();
-        else if (_persistent)
-            fallbackDismissTimer.start();
     }
 
     NumberAnimation {
@@ -64,12 +60,6 @@ Item {
     Timer {
         id: autoDismissTimer
         interval: root.notification.duration
-        onTriggered: exitAnim.start()
-    }
-
-    Timer {
-        id: fallbackDismissTimer
-        interval: 30000
         onTriggered: exitAnim.start()
     }
 
@@ -145,14 +135,6 @@ Item {
                 font.pixelSize: Theme.fontSmall
                 color: Theme.textSecondary
                 elide: Text.ElideRight
-            }
-
-            Text {
-                visible: root._persistent
-                width: parent.width
-                text: "[Y] View Log"
-                font.pixelSize: Theme.fontCaption
-                color: Theme.textMuted
             }
         }
     }

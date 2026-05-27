@@ -10,6 +10,7 @@ Drawer {
     property bool overlayMode: false
 
     signal settingsRequested
+    signal notificationCenterRequested
     signal homeSelected
 
     onOpenedChanged: {
@@ -93,6 +94,11 @@ Drawer {
                     label: "Home",
                     icon: "\u{1F3E0}",
                     action: "home"
+                },
+                {
+                    label: "Notifications",
+                    icon: "\u{1F514}",
+                    action: "notifications"
                 }
             ]
             focus: true
@@ -139,6 +145,15 @@ Drawer {
                         color: Theme.textPrimary
                         Layout.fillWidth: true
                     }
+
+                    Rectangle {
+                        visible: modelData.action === "notifications" && NotificationManager.unreadCount > 0
+                        width: 14
+                        height: 14
+                        radius: 7
+                        color: Theme.crimson
+                        Layout.alignment: Qt.AlignVCenter
+                    }
                 }
 
                 MouseArea {
@@ -150,7 +165,10 @@ Drawer {
             }
 
             Keys.onDownPressed: {
-                bottomList.forceActiveFocus();
+                if (currentIndex < count - 1)
+                    currentIndex++;
+                else
+                    bottomList.forceActiveFocus();
             }
             Keys.onUpPressed: {
                 if (currentIndex > 0)
@@ -254,6 +272,10 @@ Drawer {
         switch (items[index].action) {
         case "home":
             root.homeSelected();
+            break;
+        case "notifications":
+            root.closed();
+            root.notificationCenterRequested();
             break;
         }
     }

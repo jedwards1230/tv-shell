@@ -17,6 +17,7 @@ FocusScope {
     property alias settingsPanel: settingsPanel
     property alias navDrawer: navDrawer
     property alias overlay: overlay
+    property alias notificationCenter: notificationCenter
 
     signal streamRequested(var target)
     signal appLaunchRequested(var app)
@@ -45,16 +46,6 @@ FocusScope {
         }
     }
 
-    Shortcut {
-        sequence: "Tab"
-        enabled: NotificationManager.hasActiveError && root.shellState === "idle" && !homeScreen.activeFocus
-        onActivated: {
-            NotificationManager.dismissErrors();
-            errorLogViewer.opened = true;
-            errorLogViewer.forceActiveFocus();
-        }
-    }
-
     HomeScreen {
         id: homeScreen
         anchors.fill: parent
@@ -72,6 +63,10 @@ FocusScope {
         onSettingsRequested: {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();
+        }
+        onNotificationCenterRequested: {
+            notificationCenter.opened = true;
+            notificationCenter.forceActiveFocus();
         }
     }
 
@@ -111,6 +106,11 @@ FocusScope {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();
         }
+        onNotificationCenterRequested: {
+            navDrawer.opened = false;
+            notificationCenter.opened = true;
+            notificationCenter.forceActiveFocus();
+        }
         onHomeSelected: {
             navDrawer.opened = false;
             settingsPanel.visible = false;
@@ -137,6 +137,17 @@ FocusScope {
         z: 60
     }
 
+    // === Notification Center ===
+    NotificationCenter {
+        id: notificationCenter
+        z: 60
+        onErrorLogRequested: {
+            errorLogViewer.opened = true;
+            errorLogViewer.forceActiveFocus();
+            notificationCenter.opened = false;
+        }
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
@@ -161,6 +172,11 @@ FocusScope {
                 settingsPanel.visible = true;
                 settingsPanel.forceActiveFocus();
             }
+            onNotificationCenterRequested: {
+                root.overlayDrawerClosed();
+                notificationCenter.opened = true;
+                notificationCenter.forceActiveFocus();
+            }
             onClosed: {
                 root.overlayDrawerClosed();
             }
@@ -177,6 +193,22 @@ FocusScope {
         z: 40
         dimLevel: 0.7
         message: "Waking AV System..."
+    }
+
+    Connections {
+        target: notificationCenter
+        function onOpenedChanged() {
+            if (!notificationCenter.opened && !errorLogViewer.opened)
+                homeFocusTimer.restart();
+        }
+    }
+
+    Connections {
+        target: errorLogViewer
+        function onOpenedChanged() {
+            if (!errorLogViewer.opened)
+                homeFocusTimer.restart();
+        }
     }
 
     // --- Debug Input Overlay ---

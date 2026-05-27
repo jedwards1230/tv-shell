@@ -78,14 +78,8 @@ Item {
             return;
         }
         if (systemOn)
-            NotificationManager.notify("AV System On", "", {
-                icon: "📺",
-                source: "av"
-            });
+            NotificationManager.info("av", "AV System On");
         else
-            NotificationManager.notify("AV System Off", "", {
-                icon: "📺",
-                source: "av"
-            });
+            NotificationManager.info("av", "AV System Off");
     }
 }

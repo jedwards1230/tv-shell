@@ -60,17 +60,10 @@ Item {
                     root.inputModeChanged("controller");
                 } else if (line === "controller-wake") {
                     root.controllerWake();
-                    NotificationManager.notify("Controller Connected", "", {
-                        icon: "🎮",
-                        source: "controller"
-                    });
+                    NotificationManager.info("controller", "Controller Connected");
                 } else if (line === "controller-disconnected") {
                     root.controllerDisconnected();
-                    NotificationManager.notify("Controller Disconnected", "", {
-                        icon: "🎮",
-                        level: "warning",
-                        source: "controller"
-                    });
+                    NotificationManager.warn("controller", "Controller Disconnected");
                 } else if (line === "home-press")
                     root.homePressed();
                 else if (line === "combo:home-hold")
