@@ -33,43 +33,20 @@ BaseCard {
 
     Process {
         id: sessionCheck
-        property string _response: ""
-        stdout: SplitParser {
-            onRead: line => {
-                sessionCheck._response += line;
-            }
-        }
+        command: ["pgrep", "-f", "moonlight stream"]
         onExited: (exitCode, exitStatus) => {
-            let response = sessionCheck._response;
-            sessionCheck._response = "";
-            if (exitCode !== 0 || response === "") {
-                root.hasActiveSession = false;
-                return;
-            }
-            try {
-                let data = JSON.parse(response);
-                root.hasActiveSession = (data.currentApp || "") !== "";
-            } catch (e) {
-                root.hasActiveSession = false;
-            }
+            root.hasActiveSession = (exitCode === 0);
         }
     }
 
     Timer {
-        interval: 15000
-        running: root.shellState === "idle" && !!root.target.sunshineUser && !!root.target.sunshinePass
+        interval: 5000
+        running: root.shellState === "idle"
         repeat: true
         triggeredOnStart: true
         onTriggered: {
-            if (sessionCheck.running)
-                return;
-            let host = root.target.host;
-            let port = root.target.sunshinePort || "47990";
-            let user = root.target.sunshineUser;
-            let pass = root.target.sunshinePass;
-            sessionCheck._response = "";
-            sessionCheck.command = ["curl", "-sk", "--connect-timeout", "3", "--max-time", "5", "--user", user + ":" + pass, "https://" + host + ":" + port + "/api/currentClient"];
-            sessionCheck.running = true;
+            if (!sessionCheck.running)
+                sessionCheck.running = true;
         }
     }
 
