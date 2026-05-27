@@ -22,6 +22,7 @@ FocusScope {
     signal appFocusRequested(string windowClass)
     signal appCloseRequested(string windowClass)
     signal settingsRequested
+    signal notificationCenterRequested
 
     // Load installed applications
     Process {
@@ -348,6 +349,7 @@ except:
                     id: statusIcons
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
                     onSettingsRequested: root.settingsRequested()
+                    onNotificationCenterRequested: root.notificationCenterRequested()
                     onFocusDownRequested: root._focusFirstVisibleRow()
                     onActiveFocusChanged: if (activeFocus)
                         scrollView.contentY = 0
@@ -501,7 +503,7 @@ except:
                     required property int index
 
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: contentColumn.spacing
 
                     property var hostData: modelData
                     property var hostTarget: modelData.target

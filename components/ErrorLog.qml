@@ -28,11 +28,7 @@ Item {
         root.count = list.length;
         errorAdded(entry);
 
-        NotificationManager.notify(_sourceLabel(source) + " Error", message, {
-            level: "error",
-            duration: 0,
-            source: source
-        });
+        NotificationManager.error(source, _sourceLabel(source) + " Error", message);
     }
 
     function clear() {
