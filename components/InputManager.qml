@@ -8,6 +8,7 @@ Item {
     signal endSessionRequested
     signal inputModeChanged(string mode)
     signal controllerWake
+    signal controllerDisconnected
     signal homePressed
     signal homeHeld
 
@@ -54,9 +55,20 @@ Item {
                 } else if (line === "input-mode:controller") {
                     Theme.mouseMode = false;
                     root.inputModeChanged("controller");
-                } else if (line === "controller-wake")
+                } else if (line === "controller-wake") {
                     root.controllerWake();
-                else if (line === "home-press")
+                    NotificationManager.notify("Controller Connected", "", {
+                        icon: "🎮",
+                        source: "controller"
+                    });
+                } else if (line === "controller-disconnected") {
+                    root.controllerDisconnected();
+                    NotificationManager.notify("Controller Disconnected", "", {
+                        icon: "🎮",
+                        level: "warning",
+                        source: "controller"
+                    });
+                } else if (line === "home-press")
                     root.homePressed();
                 else if (line === "combo:home-hold")
                     root.homeHeld();

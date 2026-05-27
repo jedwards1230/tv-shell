@@ -224,6 +224,7 @@ class InputDaemon:
                     await self._handle_event(event)
             except OSError:
                 log.warning("Gamepad disconnected, will reconnect...")
+                await self._notify_subscribers("controller-disconnected")
                 self._reset_stick_state()
                 self.gamepad = None
                 self.grabbed = False

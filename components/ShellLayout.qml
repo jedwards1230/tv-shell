@@ -103,6 +103,15 @@ FocusScope {
         }
     }
 
+    // === Notification Stack ===
+    NotificationStack {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.rightMargin: Units.spacingXL
+        anchors.topMargin: Units.gridUnit * 9
+        z: 45
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Rectangle {
         anchors.fill: parent
