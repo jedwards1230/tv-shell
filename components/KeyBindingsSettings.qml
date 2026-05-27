@@ -102,10 +102,10 @@ FocusScope {
         },
         {
             action: "homeHold",
-            label: "Go Home (close app)",
+            label: "Go Home",
             keys: ["Home (hold 2s)"],
             category: "System",
-            description: "Close foreground app and return to home screen"
+            description: "Return to home screen (app stays running)"
         },
         {
             action: "mouseLB",
