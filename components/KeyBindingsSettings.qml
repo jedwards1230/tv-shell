@@ -320,12 +320,13 @@ FocusScope {
         ListView {
             id: bindingsList
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(root.navigationBindings.length * 88, 1060)
+            Layout.fillHeight: true
             spacing: 8
             clip: true
             model: root.navigationBindings
             focus: true
             keyNavigationEnabled: true
+            onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
 
             KeyNavigation.down: systemList
 
@@ -425,11 +426,12 @@ FocusScope {
         ListView {
             id: systemList
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(root.systemBindings.length * 108, 400)
+            Layout.fillHeight: true
             spacing: 8
             clip: true
             model: root.systemBindings
             keyNavigationEnabled: true
+            onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
 
             KeyNavigation.up: bindingsList
             KeyNavigation.down: resetButton
