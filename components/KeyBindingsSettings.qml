@@ -325,6 +325,11 @@ FocusScope {
             }
         }
 
+        Keys.onDownPressed: {
+            if (currentIndex >= count - 1)
+                resetButton.forceActiveFocus();
+        }
+
         Keys.onReturnPressed: {
             var binding = root.bindings[currentIndex];
             if (root.remappableActions.indexOf(binding.action) >= 0)
@@ -425,6 +430,10 @@ FocusScope {
                 text: "Reset to Defaults"
                 anchors.horizontalCenter: parent.horizontalCenter
 
+                Keys.onUpPressed: {
+                    bindingsList.currentIndex = bindingsList.count - 1;
+                    bindingsList.forceActiveFocus();
+                }
                 Keys.onReturnPressed: root.resetDefaults()
             }
 
