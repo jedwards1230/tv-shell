@@ -12,6 +12,7 @@ ShellRoot {
     property var targets: []
     property bool overlayDrawerOpen: false
     property var _applications: []
+    property var _layout: null
 
     Process {
         id: loadTargets
@@ -89,9 +90,9 @@ ShellRoot {
             inputManager.grab();
         }
         onRequestOverlayShow: msg => {
-            layout.overlay.show(msg);
+            if (root._layout) root._layout.overlay.show(msg);
         }
-        onRequestOverlayHide: layout.overlay.hide()
+        onRequestOverlayHide: { if (root._layout) root._layout.overlay.hide(); }
         onRequestInputRelease: inputManager.release()
         onRequestInputGrab: inputManager.grab()
     }
@@ -104,17 +105,21 @@ ShellRoot {
         root.overlayDrawerOpen = false;
         root.state = "idle";
         inputManager.grab();
-        layout.navDrawer.opened = false;
-        layout.settingsPanel.visible = false;
-        layout.focusHome();
+        if (root._layout) {
+            root._layout.navDrawer.opened = false;
+            root._layout.settingsPanel.visible = false;
+            root._layout.focusHome();
+        }
     }
 
     function returnToShell() {
         root.overlayDrawerOpen = false;
         root.state = "idle";
         inputManager.grab();
-        layout.settingsPanel.visible = false;
-        layout.focusHome();
+        if (root._layout) {
+            root._layout.settingsPanel.visible = false;
+            root._layout.focusHome();
+        }
     }
 
     function closeAndReturnToShell() {
@@ -149,6 +154,7 @@ ShellRoot {
             Components.ShellLayout {
                 id: layout
                 anchors.fill: parent
+                Component.onCompleted: root._layout = layout
                 shellState: root.state
                 targets: root.targets
                 runningWindows: appLifecycle.runningWindows
