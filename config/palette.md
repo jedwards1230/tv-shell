@@ -62,6 +62,14 @@
 
 Persisted to `~/.config/game-shell/settings.json`.
 
+## Palette Object Pattern
+
+Theme-dependent colors are backed by `_darkPalette` and `_lightPalette` objects in `Theme.qml`. The active palette is exposed as `Theme.palette`, and existing property names (`Theme.background`, `Theme.textPrimary`, etc.) are aliases into it. To add a new theme, duplicate one palette object and adjust the hex values — no ternaries to edit.
+
+Tokens in the palette objects: `background`, `surface`, `surfaceHover`, `surfaceBorder`, `textPrimary`, `textSecondary`, `textMuted`, `cardBackground`, `focusBorder`, `focusGlow`, `barBackground`, `sidebarActive`.
+
+Theme-independent tokens (`textOnDark`, `textOnDarkMuted`, `sidebarText`, `online`, `offline`, `warning`) remain standalone properties.
+
 ## Rules
 
 - NEVER use gold for text -- only as decorative accents (sleep button)
