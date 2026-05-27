@@ -38,9 +38,14 @@ FocusScope {
             else
                 homeFocusTimer.restart();
             event.accepted = true;
-        } else if (event.key === Qt.Key_Tab && NotificationManager.hasActiveError) {
+        }
+    }
+
+    Keys.onTabPressed: event => {
+        if (NotificationManager.hasActiveError) {
             NotificationManager.dismissErrors();
             errorLogViewer.opened = true;
+            errorLogViewer.forceActiveFocus();
             event.accepted = true;
         }
     }
