@@ -63,9 +63,14 @@ ShellRoot {
         id: streamManager
         shellState: root.state
         onStreamStarted: { root.state = "streaming" }
-        onStreamEnded: root.returnToShell()
+        onStreamEnded: {
+            Components.NotificationManager.notify("Stream Ended", "", {icon: "📡", source: "stream"})
+            root.returnToShell()
+        }
         onStreamCrashed: (attempts) => { root.state = "reconnecting" }
         onStreamFailed: {
+            var hostName = streamManager.currentTarget ? (streamManager.currentTarget.name || "") : ""
+            Components.NotificationManager.notify("Stream Failed", hostName, {icon: "📡", level: "error", source: "stream"})
             root.state = "idle"
             inputManager.grab()
         }
@@ -117,6 +122,8 @@ ShellRoot {
 
             color: root.state === "appRunning" ? "transparent" : Components.Theme.background
             focusable: true
+
+            onVisibleChanged: { Components.NotificationManager.shellVisible = visible }
 
             Components.ShellLayout {
                 id: layout

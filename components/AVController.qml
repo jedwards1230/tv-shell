@@ -7,6 +7,7 @@ Item {
     property bool systemOn: false
     property bool waking: false
     property string shellState: ""
+    property bool _initialized: false
 
     function wake() {
         if (waking || avWake.running || avWakeCooldown.running) return
@@ -61,5 +62,16 @@ Item {
         interval: 20000
         running: root.waking
         onTriggered: { root.waking = false }
+    }
+
+    onSystemOnChanged: {
+        if (!root._initialized) {
+            root._initialized = true
+            return
+        }
+        if (systemOn)
+            NotificationManager.notify("AV System On", "", {icon: "📺", source: "av"})
+        else
+            NotificationManager.notify("AV System Off", "", {icon: "📺", source: "av"})
     }
 }
