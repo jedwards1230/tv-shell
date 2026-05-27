@@ -325,7 +325,6 @@ FocusScope {
             clip: true
             model: root.navigationBindings
             focus: true
-            interactive: false
             keyNavigationEnabled: true
 
             KeyNavigation.down: systemList
@@ -430,7 +429,6 @@ FocusScope {
             spacing: 8
             clip: true
             model: root.systemBindings
-            interactive: false
             keyNavigationEnabled: true
 
             KeyNavigation.up: bindingsList
