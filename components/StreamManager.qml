@@ -77,19 +77,20 @@ Item {
     function stop() {
         reconnectTimer.stop();
         errorDismissTimer.stop();
-        moonlight.running = false;
+        _killMoonlight.running = true;
     }
 
     function suspend() {
         _suspending = true;
         reconnectTimer.stop();
         errorDismissTimer.stop();
-        moonlight.running = false;
+        _killMoonlight.running = true;
     }
 
     function forceKill() {
         _forceKilled = true;
-        stop();
+        reconnectTimer.stop();
+        errorDismissTimer.stop();
         _sessionCheckCancelled = true;
         sessionCheckProc.running = false;
         sessionQuit.running = false;
@@ -107,34 +108,39 @@ Item {
     }
 
     function _launchMoonlight() {
-        let args = ["env", "QT_QPA_PLATFORM=wayland", "LIBVA_DRIVER_NAME=radeonsi", "moonlight", "stream", currentTarget.host, currentTarget.app];
+        let mlArgs = ["moonlight", "stream", currentTarget.host, currentTarget.app];
         if (currentTarget.resolution === "3840x2160")
-            args.push("--4K");
+            mlArgs.push("--4K");
         // Sunshine min_fps_target defaults to 60 when clientRefreshRateX100 is 0.
         // The --fps flag sets the SDP maxFPS but won't raise the server-side floor
         // unless the client also advertises its display refresh rate.
         if (currentTarget.fps) {
-            args.push("--fps");
-            args.push(String(currentTarget.fps));
+            mlArgs.push("--fps");
+            mlArgs.push(String(currentTarget.fps));
         }
         if (currentTarget.hdr)
-            args.push("--hdr");
+            mlArgs.push("--hdr");
         if (currentTarget.codec) {
-            args.push("--video-codec");
-            args.push(currentTarget.codec);
+            mlArgs.push("--video-codec");
+            mlArgs.push(currentTarget.codec);
         }
         if (currentTarget.bitrate) {
-            args.push("--bitrate");
-            args.push(String(currentTarget.bitrate));
+            mlArgs.push("--bitrate");
+            mlArgs.push(String(currentTarget.bitrate));
         }
         if (currentTarget.audioConfig) {
-            args.push("--audio-config");
-            args.push(currentTarget.audioConfig);
+            mlArgs.push("--audio-config");
+            mlArgs.push(currentTarget.audioConfig);
         }
-        args.push("--display-mode", "fullscreen");
-        args.push("--no-quit-after");
-        args.push("--no-frame-pacing");
-        moonlight.command = args;
+        mlArgs.push("--display-mode", "fullscreen");
+        mlArgs.push("--no-quit-after");
+        mlArgs.push("--no-frame-pacing");
+        // Wrapper ignores TERM/HUP so moonlight survives shell restarts.
+        // Subshell resets traps so moonlight has normal signal handling.
+        let escaped = mlArgs.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(" ");
+        moonlight.command = ["bash", "-c",
+            "trap '' TERM HUP; (trap - TERM HUP; exec env QT_QPA_PLATFORM=wayland LIBVA_DRIVER_NAME=radeonsi " + escaped + ") & wait $!",
+        ];
         requestInputRelease();
         streamStarted();
         launchTimeout.restart();
@@ -259,8 +265,13 @@ Item {
     }
 
     Process {
+        id: _killMoonlight
+        command: ["pkill", "-f", "moonlight stream"]
+    }
+
+    Process {
         id: forceKillProc
-        command: ["bash", "-c", "pkill -f moonlight; pkill -f steam; true"]
+        command: ["bash", "-c", "pkill -f 'moonlight stream'; pkill -f steam; true"]
     }
 
     Timer {

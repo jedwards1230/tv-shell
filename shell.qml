@@ -71,9 +71,21 @@ ShellRoot {
         }
     }
 
+    Process {
+        id: orphanCheck
+        command: ["pgrep", "-f", "moonlight stream"]
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode === 0) {
+                root.state = "streaming";
+            } else {
+                inputManager.grab();
+            }
+        }
+    }
+
     Component.onCompleted: {
         loadTargets.running = true;
-        inputManager.grab();
+        orphanCheck.running = true;
         inputManager.startListening();
     }
 
