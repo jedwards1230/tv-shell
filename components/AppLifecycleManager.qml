@@ -74,6 +74,10 @@ Item {
     Process {
         id: appRunner
         command: ["echo"]
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode !== 0)
+                ErrorLog.log("app", "Failed to launch application", "Exit code " + exitCode)
+        }
     }
 
     HyprctlClients {

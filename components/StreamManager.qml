@@ -7,6 +7,8 @@ Item {
     property var currentTarget: null
     property int crashCount: 0
     property string shellState: ""
+    property string _lastStderr: ""
+    property var _stderrLines: []
 
     signal streamStarted
     signal streamEnded
@@ -22,6 +24,9 @@ Item {
         errorDismissTimer.stop();
         currentTarget = target;
         crashCount = 0;
+        _lastStderr = "";
+        _stderrLines = [];
+        ErrorLog.setCurrentTarget(target.name || target.app || "");
         requestOverlayShow("Launching " + (target.app || target.name) + "...");
         _launchMoonlight();
     }
@@ -62,6 +67,16 @@ Item {
 
     Process {
         id: moonlight
+        stderr: SplitParser {
+            onRead: (line) => {
+                root._lastStderr = line
+                var lines = root._stderrLines.slice()
+                lines.push(line)
+                if (lines.length > 50)
+                    lines = lines.slice(lines.length - 50)
+                root._stderrLines = lines
+            }
+        }
         onExited: (exitCode, exitStatus) => {
             if (exitCode === 0) {
                 root.requestOverlayHide();
@@ -74,11 +89,12 @@ Item {
                     root.streamCrashed(root.crashCount);
                     reconnectTimer.start();
                 } else {
-                    let msg = "Stream failed after 5 attempts";
+                    let msg = root._lastStderr || "Stream failed after 5 attempts";
                     root.requestOverlayShow(msg);
                     errorDismissTimer.start();
                     root.requestInputGrab();
                     root.streamFailed(msg);
+                    ErrorLog.log("moonlight", msg, root._stderrLines.join("\n"));
                 }
             }
         }
