@@ -27,8 +27,12 @@ FocusScope {
         id: setAppScale
         property real newScale: 1.75
         command: ["sh", "-c", "sed -i 's/env = QT_SCALE_FACTOR,.*/env = QT_SCALE_FACTOR," + newScale + "/' /opt/game-shell/config/hyprland.conf" + " && sed -i 's/env = GDK_SCALE,.*/env = GDK_SCALE," + (newScale <= 1.0 ? "1" : "2") + "/' /opt/game-shell/config/hyprland.conf" + " && hyprctl reload"]
-        onExited: {
-            root.appScale = newScale;
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode === 0) {
+                root.appScale = newScale;
+            } else {
+                getAppScale.running = true;
+            }
         }
     }
 
@@ -349,12 +353,24 @@ FocusScope {
             KeyNavigation.down: modeDropdownScope
 
             property var appScales: [1.0, 1.25, 1.5, 1.75, 2.0]
-            property int focusedIndex: {
+            property int focusedIndex: 3
+
+            function syncFocusIndex() {
                 for (let i = 0; i < appScales.length; i++) {
-                    if (Math.abs(appScales[i] - root.appScale) < 0.05)
-                        return i;
+                    if (Math.abs(appScales[i] - root.appScale) < 0.05) {
+                        focusedIndex = i;
+                        return;
+                    }
                 }
-                return 3;
+                focusedIndex = 3;
+            }
+
+            Component.onCompleted: syncFocusIndex()
+            Connections {
+                target: root
+                function onAppScaleChanged() {
+                    appScaleRow.syncFocusIndex();
+                }
             }
 
             Keys.onLeftPressed: {
@@ -370,59 +386,59 @@ FocusScope {
                 setAppScale.running = true;
             }
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 8
+            RowLayout {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 64
+                spacing: 16
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
+                Repeater {
+                    model: appScaleRow.appScales
 
-                    Repeater {
-                        model: appScaleRow.appScales
+                    FocusScope {
+                        id: appScaleScope
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
 
-                        FocusScope {
-                            id: appScaleScope
-                            required property var modelData
-                            required property int index
-                            width: appScaleBtn.width
-                            height: appScaleBtn.height
+                        SettingsButton {
+                            id: appScaleBtn
+                            text: parent.modelData + "x"
+                            anchors.fill: parent
 
-                            SettingsButton {
-                                id: appScaleBtn
-                                text: parent.modelData + "x"
+                            property bool isCurrent: Math.abs(root.appScale - parent.modelData) < 0.05
+                            property bool isFocused: appScaleRow.activeFocus && appScaleRow.focusedIndex === appScaleScope.index
+
+                            color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
+                            border.width: isFocused ? 2 : 1
+                            border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
+
+                            MouseArea {
                                 anchors.fill: parent
-
-                                property bool isCurrent: Math.abs(root.appScale - parent.modelData) < 0.05
-                                property bool isFocused: appScaleRow.activeFocus && appScaleRow.focusedIndex === appScaleScope.index
-
-                                color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
-                                border.width: isFocused ? 2 : 1
-                                border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        appScaleRow.forceActiveFocus();
-                                        appScaleRow.focusedIndex = appScaleScope.index;
-                                        setAppScale.newScale = appScaleScope.modelData;
-                                        setAppScale.running = true;
-                                    }
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    appScaleRow.forceActiveFocus();
+                                    appScaleRow.focusedIndex = appScaleScope.index;
+                                    setAppScale.newScale = appScaleScope.modelData;
+                                    setAppScale.running = true;
                                 }
                             }
                         }
                     }
                 }
+            }
 
-                Text {
-                    text: "Scales desktop apps for couch viewing. New apps use this scale immediately; reboot session for all apps."
-                    font.pixelSize: Theme.fontHint
-                    color: Theme.textMuted
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
+            Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                text: "Scales desktop apps for couch viewing. New apps use this scale immediately; reboot session for all apps."
+                font.pixelSize: Theme.fontHint
+                color: Theme.textMuted
+                wrapMode: Text.WordWrap
             }
         }
 
