@@ -296,129 +296,135 @@ FocusScope {
         }
     }
 
-    ListView {
-        id: bindingsList
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 8
-        clip: true
-        focus: true
-        model: root.bindings
-        onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
+        spacing: 16
 
-        section.property: "category"
-        section.delegate: Item {
-            required property string section
-            width: bindingsList.width
-            height: sectionLabel.implicitHeight + 24
+        ListView {
+            id: bindingsList
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 8
+            clip: true
+            focus: true
+            model: root.bindings
+            onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
 
-            Text {
-                id: sectionLabel
-                anchors.left: parent.left
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 8
-                text: section
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
-            }
-        }
+            section.property: "category"
+            section.delegate: Item {
+                required property string section
+                width: bindingsList.width
+                height: sectionLabel.implicitHeight + 24
 
-        Keys.onPressed: event => {
-            if (event.key === Qt.Key_Down) {
-                if (currentIndex < count - 1)
-                    currentIndex++;
-                else
-                    resetButton.forceActiveFocus();
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Up) {
-                if (currentIndex > 0)
-                    currentIndex--;
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                var binding = root.bindings[currentIndex];
-                if (root.remappableActions.indexOf(binding.action) >= 0)
-                    root.startCapture(currentIndex, binding.action, binding.label);
-                event.accepted = true;
-            }
-        }
-
-        delegate: Rectangle {
-            required property int index
-            required property var modelData
-            width: bindingsList.width
-            height: modelData.action === "drawer" ? 100 : 80
-            radius: 16
-            color: bindingsList.currentIndex === index && bindingsList.activeFocus ? Theme.surfaceHover : Theme.surface
-            border.width: 2
-            border.color: {
-                if (root.remappableActions.indexOf(modelData.action) >= 0 && bindingsList.currentIndex === index && bindingsList.activeFocus)
-                    return Theme.focusBorder;
-                return Theme.surfaceBorder;
-            }
-
-            Behavior on color {
-                ColorAnimation {
-                    duration: 150
+                Text {
+                    id: sectionLabel
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 8
+                    text: section
+                    font.pixelSize: Theme.fontBody
+                    font.bold: true
+                    color: Theme.textPrimary
                 }
             }
 
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 24
-                anchors.rightMargin: 24
-                spacing: 16
+            Keys.onPressed: event => {
+                if (event.key === Qt.Key_Down) {
+                    if (currentIndex < count - 1)
+                        currentIndex++;
+                    else
+                        resetButton.forceActiveFocus();
+                    event.accepted = true;
+                } else if (event.key === Qt.Key_Up) {
+                    if (currentIndex > 0)
+                        currentIndex--;
+                    event.accepted = true;
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    var binding = root.bindings[currentIndex];
+                    if (root.remappableActions.indexOf(binding.action) >= 0)
+                        root.startCapture(currentIndex, binding.action, binding.label);
+                    event.accepted = true;
+                }
+            }
 
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
+            delegate: Rectangle {
+                required property int index
+                required property var modelData
+                width: bindingsList.width
+                height: modelData.action === "drawer" ? 100 : 80
+                radius: 16
+                color: bindingsList.currentIndex === index && bindingsList.activeFocus ? Theme.surfaceHover : Theme.surface
+                border.width: 2
+                border.color: {
+                    if (root.remappableActions.indexOf(modelData.action) >= 0 && bindingsList.currentIndex === index && bindingsList.activeFocus)
+                        return Theme.focusBorder;
+                    return Theme.surfaceBorder;
+                }
 
-                    Text {
-                        text: modelData.label
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textPrimary
-                    }
-
-                    Text {
-                        text: "Also wakes AV system from standby"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textMuted
-                        visible: modelData.action === "drawer"
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
                     }
                 }
 
-                Row {
-                    Layout.alignment: Qt.AlignRight
-                    spacing: 8
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    spacing: 16
 
-                    Repeater {
-                        model: modelData.keys
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
 
-                        Row {
-                            spacing: 8
+                        Text {
+                            text: modelData.label
+                            font.pixelSize: Theme.fontSmall
+                            color: Theme.textPrimary
+                        }
 
-                            Text {
-                                text: "+"
-                                font.pixelSize: Theme.fontSmall
-                                color: Theme.textMuted
-                                visible: index > 0
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
+                        Text {
+                            text: "Also wakes AV system from standby"
+                            font.pixelSize: Theme.fontHint
+                            color: Theme.textMuted
+                            visible: modelData.action === "drawer"
+                        }
+                    }
 
-                            Rectangle {
-                                width: capText.implicitWidth + 24
-                                height: capText.implicitHeight + 16
-                                radius: 8
-                                color: Theme.surface
-                                border.width: 2
-                                border.color: Theme.ember
+                    Row {
+                        Layout.alignment: Qt.AlignRight
+                        spacing: 8
+
+                        Repeater {
+                            model: modelData.keys
+
+                            Row {
+                                spacing: 8
 
                                 Text {
-                                    id: capText
-                                    anchors.centerIn: parent
-                                    text: modelData
+                                    text: "+"
                                     font.pixelSize: Theme.fontSmall
-                                    color: Theme.textPrimary
+                                    color: Theme.textMuted
+                                    visible: index > 0
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Rectangle {
+                                    width: capText.implicitWidth + 24
+                                    height: capText.implicitHeight + 16
+                                    radius: 8
+                                    color: Theme.surface
+                                    border.width: 2
+                                    border.color: Theme.ember
+
+                                    Text {
+                                        id: capText
+                                        anchors.centerIn: parent
+                                        text: modelData
+                                        font.pixelSize: Theme.fontSmall
+                                        color: Theme.textPrimary
+                                    }
                                 }
                             }
                         }
@@ -427,15 +433,16 @@ FocusScope {
             }
         }
 
-        footer: Column {
-            width: bindingsList.width
-            spacing: 16
-            topPadding: 24
+        FocusScope {
+            id: resetScope
+            Layout.fillWidth: true
+            Layout.preferredHeight: resetButton.height
 
             SettingsButton {
                 id: resetButton
                 text: "Reset to Defaults"
                 anchors.horizontalCenter: parent.horizontalCenter
+                focus: parent.activeFocus
 
                 Keys.onUpPressed: {
                     bindingsList.currentIndex = bindingsList.count - 1;
@@ -443,13 +450,13 @@ FocusScope {
                 }
                 Keys.onReturnPressed: root.resetDefaults()
             }
+        }
 
-            Text {
-                text: "A: Edit binding  |  B: Back"
-                font.pixelSize: Theme.fontHint
-                color: Theme.textSecondary
-                anchors.horizontalCenter: parent.horizontalCenter
-            }
+        Text {
+            text: "A: Edit binding  |  B: Back"
+            font.pixelSize: Theme.fontHint
+            color: Theme.textSecondary
+            Layout.alignment: Qt.AlignHCenter
         }
     }
 
