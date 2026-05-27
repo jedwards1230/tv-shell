@@ -83,7 +83,7 @@ ShellRoot {
         }
         onHomeHeld: {
             if (root.state === "appRunning")
-                root.closeAndReturnToShell();
+                root.returnToShell();
         }
     }
 
