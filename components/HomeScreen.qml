@@ -237,7 +237,10 @@ except:
     Flickable {
         id: scrollView
         anchors.fill: parent
-        anchors.margins: Theme.padding
+        anchors.topMargin: Theme.padding
+        anchors.bottomMargin: Theme.padding
+        anchors.leftMargin: Theme.padding + 8
+        anchors.rightMargin: Theme.padding + 8
         contentHeight: contentColumn.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
@@ -482,11 +485,22 @@ except:
                     property var hostAppList: modelData.apps
                     property alias navigableRow: appViewNavRow
 
-                    Text {
-                        text: "Moonlight — " + hostData.name
-                        font.pixelSize: Theme.fontTitle
-                        font.bold: true
-                        color: Theme.textPrimary
+                    RowLayout {
+                        spacing: 12
+
+                        Text {
+                            text: "Moonlight — " + hostData.name
+                            font.pixelSize: Theme.fontTitle
+                            font.bold: true
+                            color: Theme.textPrimary
+                        }
+
+                        Rectangle {
+                            width: 14
+                            height: 14
+                            radius: 7
+                            color: hostAppList.length > 0 ? Theme.online : Theme.offline
+                        }
                     }
 
                     Item {
