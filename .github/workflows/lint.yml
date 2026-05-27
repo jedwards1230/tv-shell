@@ -19,7 +19,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.*"
+          version: "6.8.3"
           cache: true
 
       - name: Format QML files
@@ -30,12 +30,12 @@ jobs:
       - name: Check for changes
         id: diff
         run: |
-          if git diff --quiet; then
+          if git diff --quiet -- '*.qml'; then
             echo "formatted=false" >> "$GITHUB_OUTPUT"
           else
             echo "formatted=true" >> "$GITHUB_OUTPUT"
             echo "::warning::qmlformat modified files — pushing auto-format commit"
-            git diff --stat
+            git diff --stat -- '*.qml'
           fi
 
       - name: Push formatted files
@@ -43,7 +43,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add '*.qml'
           git commit -m "style: auto-format QML files"
           git push
 
