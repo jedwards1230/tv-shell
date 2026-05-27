@@ -124,11 +124,11 @@ ShellRoot {
             root.state = "streaming";
         }
         onStreamEnded: {
-            Components.NotificationManager.info("stream", "Stream Paused");
+            Components.NotificationManager.info("stream", "Stream Suspended");
             root.returnToShell();
         }
         onStreamSuspended: {
-            Components.NotificationManager.info("stream", "Stream Paused");
+            Components.NotificationManager.info("stream", "Stream Suspended");
             root.returnToShell();
         }
         onStreamCrashed: attempts => {
