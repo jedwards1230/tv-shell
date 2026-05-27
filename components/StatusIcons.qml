@@ -66,16 +66,9 @@ FocusScope {
             return;
         }
         if (root._wasConnected && !connected) {
-            NotificationManager.notify("Network Disconnected", "", {
-                icon: "📶",
-                level: "warning",
-                source: "network"
-            });
+            NotificationManager.warn("network", "Network Disconnected");
         } else if (!root._wasConnected && connected) {
-            NotificationManager.notify("Network Connected", ipAddress, {
-                icon: "📶",
-                source: "network"
-            });
+            NotificationManager.info("network", "Network Connected", ipAddress);
         }
         root._wasConnected = connected;
     }

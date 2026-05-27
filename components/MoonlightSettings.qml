@@ -110,13 +110,9 @@ FocusScope {
                 let updated = root.hostStatus;
                 updated[host] = "paired";
                 root.hostStatus = JSON.parse(JSON.stringify(updated));
-                NotificationManager.notify("Pairing Successful", host, {
-                    source: "moonlight"
-                });
+                NotificationManager.info("moonlight", "Pairing Successful", host);
             } else {
-                NotificationManager.notify("Pairing Failed", pairProcess._output.substring(0, 100), {
-                    source: "moonlight"
-                });
+                NotificationManager.warn("moonlight", "Pairing Failed", pairProcess._output.substring(0, 100));
             }
             pairProcess._output = "";
             root.pairingServerIndex = -1;

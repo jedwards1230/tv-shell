@@ -110,6 +110,42 @@ Item {
             root.unreadCount = root.unreadCount - 1;
     }
 
+    function _iconForSource(source) {
+        if (source === "stream" || source === "moonlight")
+            return "\u{1F4E1}";
+        if (source === "controller")
+            return "\u{1F3AE}";
+        if (source === "network")
+            return "\u{1F4F6}";
+        if (source === "av")
+            return "\u{1F4FA}";
+        return "";
+    }
+
+    function info(source, title, message) {
+        return notify(title, message || "", {
+            level: "info",
+            source: source,
+            icon: _iconForSource(source)
+        });
+    }
+
+    function warn(source, title, message) {
+        return notify(title, message || "", {
+            level: "warning",
+            source: source,
+            icon: _iconForSource(source)
+        });
+    }
+
+    function error(source, title, message) {
+        return notify(title, message || "", {
+            level: "error",
+            source: source,
+            icon: _iconForSource(source)
+        });
+    }
+
     function _enqueue(n) {
         if (root.activeList.length < root._maxVisible) {
             var list = root.activeList.slice();
