@@ -56,6 +56,7 @@ FocusScope {
     // Backdrop
     DimmedBackdrop {
         dimLevel: 0.85
+        onClicked: root.opened = false
     }
 
     // Content
