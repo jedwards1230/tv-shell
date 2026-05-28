@@ -289,5 +289,4 @@ On disconnect (`OSError` during event read), the daemon sends `controller-discon
 
 ## Known Issues
 
-- **`KeyBindingsSettings.qml` hardcodes socket path**: Uses `/run/user/1000/game-shell-input.sock` via `socat` instead of respecting `GAME_SHELL_SOCK`. Other QML components use Python one-liners that read the env var.
 - **`BTN_MODE` dual purpose**: The Home button serves both as a remappable action (`drawer`) and as the trigger for home-press/home-hold detection. These are independent code paths — the key mapping emits `KEY_HOMEPAGE` via uinput, while the hold/press detection fires subscriber events. Remapping `drawer` to a different button moves the keyboard emission but does not move the home-hold/press detection.

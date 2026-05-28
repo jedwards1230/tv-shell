@@ -15,7 +15,8 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
 - **gamepad-input.py** — async daemon that grabs the gamepad exclusively via evdev, emits keyboard events via uinput, and listens on a Unix socket for `grab`/`release`/`subscribe` commands
-- **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto modes persisted to `~/.config/game-shell/settings.json`
+- **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
+- **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
 
 ### File Layout
@@ -24,6 +25,7 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 shell.qml                    # Entry point, state machine
 components/
   Theme.qml                  # Singleton — colors, fonts, layout constants
+  SettingsStore.qml          # Singleton — centralized settings I/O + binding IPC
   HomeScreen.qml              # Hero clock, app rows, status icons
   AppCard.qml                 # Icon-centric app tile (Freedesktop icons)
   StreamCard.qml              # Moonlight streaming target card
@@ -53,7 +55,7 @@ scripts/
 ## Key Data Flows
 
 - **Streaming targets**: Loaded from `/opt/game-shell/targets.json` at startup (single-line JSON — see gotchas). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.
-- **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode` and `moonlightViewMode`. Add new fields to both `loadSettings` and `saveSettings` in Theme.qml.
+- **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `moonlightViewMode`, `controllerDebug` (QML-owned) and `keyBindings` (daemon-owned). All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore.
 - **Input daemon IPC**: See [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) for the full protocol specification. QML sends commands via Unix socket; the daemon streams events to subscribers.
 - **Settings panels**: SettingsPanel uses a Loader to swap between section components. Each section manages its own system calls via `Quickshell.Io.Process`.
 
