@@ -1,22 +1,21 @@
 pragma Singleton
-import Quickshell.Io
 import QtQuick
 
 Item {
-    // === Theme Mode ===
+    // === Theme Mode (persisted via SettingsStore) ===
     // "auto" (time-based), "light", "dark"
-    property string themeMode: "dark"
+    readonly property string themeMode: SettingsStore.themeMode
 
-    // === Moonlight View Mode ===
+    // === Moonlight View Mode (persisted via SettingsStore) ===
     // "servers" (one card per host) or "apps" (one row per host, cards = apps)
-    property string moonlightViewMode: "servers"
+    readonly property string moonlightViewMode: SettingsStore.moonlightViewMode
 
     // === Input Mode ===
     // true when mouse/right-stick is driving focus, false for controller/D-pad
     property bool mouseMode: false
 
-    // === Controller Debug Overlay ===
-    property bool controllerDebug: false
+    // === Controller Debug Overlay (persisted via SettingsStore) ===
+    readonly property bool controllerDebug: SettingsStore.controllerDebug
     property int _currentHour: new Date().getHours()
     property bool darkMode: {
         if (themeMode === "dark")
@@ -28,54 +27,18 @@ Item {
     }
 
     // === Settings Persistence ===
-    readonly property string _settingsDir: "~/.config/game-shell"
-    readonly property string _settingsFile: _settingsDir + "/settings.json"
-
-    Process {
-        id: loadSettings
-        command: ["bash", "-c", "cat " + _settingsFile + " 2>/dev/null || true"]
-        stdout: SplitParser {
-            onRead: line => {
-                try {
-                    var obj = JSON.parse(line);
-                    if (obj.themeMode === "auto" || obj.themeMode === "light" || obj.themeMode === "dark")
-                        themeMode = obj.themeMode;
-                    if (obj.moonlightViewMode === "servers" || obj.moonlightViewMode === "apps")
-                        moonlightViewMode = obj.moonlightViewMode;
-                    if (typeof obj.controllerDebug === "boolean")
-                        controllerDebug = obj.controllerDebug;
-                } catch (e) {
-                    console.log("Theme: failed to parse settings:", e);
-                }
-            }
-        }
-    }
-
-    // NOTE: Both Theme.qml and the input daemon do read-modify-write on
-    // settings.json without file locking.  This is acceptable for a single-user
-    // kiosk — the two writers update disjoint keys and rarely race in practice.
-    Process {
-        id: saveSettings
-        command: ["python3", "-c", "import json,os,pathlib;" + "p=pathlib.Path(os.path.expanduser('" + _settingsFile + "'));" + "p.parent.mkdir(parents=True,exist_ok=True);" + "d=json.loads(p.read_text()) if p.exists() else {};" + "d['themeMode']='" + themeMode + "';" + "d['moonlightViewMode']='" + moonlightViewMode + "';" + "d['controllerDebug']=" + (controllerDebug ? "True" : "False") + ";" + "p.write_text(json.dumps(d,separators=(',',':')))"]
-    }
-
+    // All settings I/O is centralized in SettingsStore; Theme delegates to it
+    // and exposes the values via the read-through properties above.
     function setThemeMode(mode) {
-        if (mode === "auto" || mode === "light" || mode === "dark") {
-            themeMode = mode;
-            saveSettings.running = true;
-        }
+        SettingsStore.setThemeMode(mode);
     }
 
     function setMoonlightViewMode(mode) {
-        if (mode === "servers" || mode === "apps") {
-            moonlightViewMode = mode;
-            saveSettings.running = true;
-        }
+        SettingsStore.setMoonlightViewMode(mode);
     }
 
     function setControllerDebug(enabled) {
-        controllerDebug = enabled;
-        saveSettings.running = true;
+        SettingsStore.setControllerDebug(enabled);
     }
 
     // Re-evaluate auto mode every 60 seconds
@@ -87,10 +50,6 @@ Item {
         onTriggered: {
             _currentHour = new Date().getHours();
         }
-    }
-
-    Component.onCompleted: {
-        loadSettings.running = true;
     }
 
     // === Base Palette (5 accent colors — shared across themes) ===
