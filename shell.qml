@@ -9,7 +9,6 @@ ShellRoot {
     id: root
 
     property string state: "idle"
-    property var targets: []
     property bool overlayDrawerOpen: false
     property var _applications: []
     property var _layout: null
@@ -57,22 +56,7 @@ ShellRoot {
         }
     }
 
-    Process {
-        id: loadTargets
-        command: ["cat", "/opt/game-shell/targets.json"]
-        stdout: SplitParser {
-            onRead: line => {
-                try {
-                    root.targets = JSON.parse(line);
-                } catch (e) {
-                    console.log("Failed to parse targets:", e);
-                }
-            }
-        }
-    }
-
     Component.onCompleted: {
-        loadTargets.running = true;
         inputManager.grab();
         inputManager.startListening();
     }
@@ -241,7 +225,6 @@ ShellRoot {
                     root._layout.focusHome();
                 }
                 shellState: root.state
-                targets: root.targets
                 runningWindows: appLifecycle.runningWindows
                 runningAppClass: appLifecycle.runningAppClass
                 overlayDrawerOpen: root.overlayDrawerOpen
@@ -254,8 +237,11 @@ ShellRoot {
                     streamManager.launch(target);
                 }
                 onStreamQuitRequested: target => {
-                    streamQuitProc.command = ["moonlight", "quit", target.host];
-                    streamQuitProc.running = true;
+                    let argv = Components.StreamProviders.active.quitArgs(target);
+                    if (argv.length > 0) {
+                        streamQuitProc.command = argv;
+                        streamQuitProc.running = true;
+                    }
                 }
                 onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
                 onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)

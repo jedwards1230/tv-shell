@@ -61,8 +61,15 @@ Item {
 
     function quitAndRelaunch() {
         _sessionCheckCancelled = false;
+        let quitCmd = StreamProviders.active.quitArgs(currentTarget);
+        if (!quitCmd || quitCmd.length === 0) {
+            // Provider has nothing to quit — launch directly.
+            requestOverlayShow("Launching " + (currentTarget.app || currentTarget.name) + "...");
+            _launchMoonlight();
+            return;
+        }
         requestOverlayShow("Quitting current session...");
-        sessionQuit.command = ["moonlight", "quit", currentTarget.host];
+        sessionQuit.command = quitCmd;
         sessionQuit.running = true;
     }
 
@@ -106,35 +113,19 @@ Item {
         sessionCheckProc.running = true;
     }
 
+    // Generic launch: the active provider supplies backend-specific argv; this
+    // manager owns the launch/timeout/reconnect state machine.
     function _launchMoonlight() {
-        let args = ["env", "QT_QPA_PLATFORM=wayland", "LIBVA_DRIVER_NAME=radeonsi", "moonlight", "stream", currentTarget.host, currentTarget.app];
-        if (currentTarget.resolution === "3840x2160")
-            args.push("--4K");
-        // Sunshine min_fps_target defaults to 60 when clientRefreshRateX100 is 0.
-        // The --fps flag sets the SDP maxFPS but won't raise the server-side floor
-        // unless the client also advertises its display refresh rate.
-        if (currentTarget.fps) {
-            args.push("--fps");
-            args.push(String(currentTarget.fps));
+        let cmd = StreamProviders.active.buildLaunchArgs(currentTarget);
+        if (!cmd || cmd.length === 0) {
+            // No streaming backend (or it can't build args) — fail cleanly
+            // instead of entering a bogus launching state with an empty command.
+            requestOverlayHide();
+            requestInputGrab();
+            streamFailed("No streaming backend available");
+            return;
         }
-        if (currentTarget.hdr)
-            args.push("--hdr");
-        if (currentTarget.codec) {
-            args.push("--video-codec");
-            args.push(currentTarget.codec);
-        }
-        if (currentTarget.bitrate) {
-            args.push("--bitrate");
-            args.push(String(currentTarget.bitrate));
-        }
-        if (currentTarget.audioConfig) {
-            args.push("--audio-config");
-            args.push(currentTarget.audioConfig);
-        }
-        args.push("--display-mode", "borderless");
-        args.push("--no-quit-after");
-        args.push("--no-frame-pacing");
-        moonlight.command = args;
+        moonlight.command = cmd;
         requestInputRelease();
         streamStarted();
         launchTimeout.restart();

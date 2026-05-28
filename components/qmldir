@@ -1,5 +1,10 @@
 module components
 singleton SettingsStore 1.0 SettingsStore.qml
+singleton AppDiscoveryManager 1.0 AppDiscoveryManager.qml
+singleton RecentsTracker 1.0 RecentsTracker.qml
+singleton StreamProviders 1.0 StreamProviders.qml
+TargetProvider 1.0 TargetProvider.qml
+MoonlightProvider 1.0 MoonlightProvider.qml
 singleton Theme 1.0 Theme.qml
 singleton Units 1.0 Units.qml
 singleton WindowMatcher 1.0 WindowMatcher.qml

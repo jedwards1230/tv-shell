@@ -5,14 +5,14 @@ FocusScope {
     id: root
 
     property string shellState: ""
-    property var targets: []
+    property var targets: StreamProviders.active.targets
     property var runningWindows: []
     property string runningAppClass: ""
     property bool overlayDrawerOpen: false
     property bool avSystemOn: false
     property bool avWaking: false
 
-    property var applications: homeScreen.applications
+    property var applications: AppDiscoveryManager.applications
     property alias homeScreen: homeScreen
     property alias settingsPanel: settingsPanel
     property alias navDrawer: navDrawer
