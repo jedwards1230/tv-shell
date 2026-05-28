@@ -1,10 +1,9 @@
-import Quickshell.Io
 import QtQuick
 import QtQuick.Layouts
 
-// IPC protocol: see docs/IPC_PROTOCOL.md
-// Commands used: get-bindings, set-binding, capture-next, capture-cancel
-// Known issue: hardcodes socket path /run/user/1000/ instead of using GAME_SHELL_SOCK
+// Binding IPC is routed through the SettingsStore singleton (which respects
+// GAME_SHELL_SOCK). See docs/IPC_PROTOCOL.md.
+// Commands used (via SettingsStore): get-bindings, set-binding, capture-next, capture-cancel
 FocusScope {
     id: root
 
@@ -197,101 +196,57 @@ FocusScope {
         editingAction = action;
         editingLabel = label;
         capturing = true;
-        captureProc.running = true;
+        SettingsStore.captureNext();
         captureOverlay.forceActiveFocus();
     }
 
-    function cancelCapture() {
+    function resetCaptureState() {
         capturing = false;
         editingIndex = -1;
         editingAction = "";
         editingLabel = "";
-        cancelCaptureProc.running = true;
+    }
+
+    // User-initiated cancel (Escape) — also tells the daemon to stop capturing.
+    function cancelCapture() {
+        resetCaptureState();
+        SettingsStore.cancelCapture();
     }
 
     function applyBinding(action, buttonName) {
         capturing = false;
         editingIndex = -1;
-        setBindingProc.command = ["bash", "-c", "echo 'set-binding " + action + " " + buttonName + "' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"];
-        setBindingProc.running = true;
+        SettingsStore.setBinding(action, buttonName);
     }
 
     function resetDefaults() {
         var actions = Object.keys(defaultBindingMap);
-        // Build a single command that sends all set-binding commands
-        var cmds = "";
-        for (var i = 0; i < actions.length; i++) {
-            if (i > 0)
-                cmds += " && ";
-            cmds += "echo 'set-binding " + actions[i] + " " + defaultBindingMap[actions[i]] + "' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock";
-        }
-        resetProc.command = ["bash", "-c", cmds];
-        resetProc.running = true;
+        for (var i = 0; i < actions.length; i++)
+            SettingsStore.setBinding(actions[i], defaultBindingMap[actions[i]]);
     }
 
-    // --- IPC Processes ---
-
-    Process {
-        id: getBindingsProc
-        command: ["bash", "-c", "echo 'get-bindings' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"]
-        stdout: SplitParser {
-            onRead: line => {
-                try {
-                    var daemonBindings = JSON.parse(line);
-                    root.updateBindingsFromDaemon(daemonBindings);
-                } catch (e) {
-                    console.log("KeyBindings: failed to parse bindings:", e);
-                }
-            }
+    // --- Binding IPC via the SettingsStore singleton ---
+    Connections {
+        target: SettingsStore
+        function onBindingsReceived(bindings) {
+            root.updateBindingsFromDaemon(bindings);
         }
-    }
-
-    Process {
-        id: captureProc
-        command: ["bash", "-c", "echo 'capture-next' | socat -t 15 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"]
-        stdout: SplitParser {
-            onRead: line => {
-                if (line.startsWith("captured:") && root.capturing) {
-                    var buttonName = line.substring(9);
-                    root.applyBinding(root.editingAction, buttonName);
-                } else if (line === "timeout" || line === "cancelled") {
-                    root.cancelCapture();
-                }
-            }
+        function onBindingCaptured(button) {
+            if (root.capturing)
+                root.applyBinding(root.editingAction, button);
         }
-        onExited: {
-            root.capturing = false;
-        }
-    }
-
-    Process {
-        id: cancelCaptureProc
-        command: ["bash", "-c", "echo 'capture-cancel' | socat -t 5 - UNIX-CONNECT:/run/user/1000/game-shell-input.sock"]
-    }
-
-    Process {
-        id: setBindingProc
-        // command set dynamically in applyBinding()
-        onExited: {
-            getBindingsProc.running = true;
-        }
-    }
-
-    Process {
-        id: resetProc
-        // command set dynamically in resetDefaults()
-        onExited: {
-            getBindingsProc.running = true;
+        function onCaptureCancelled() {
+            root.resetCaptureState();
         }
     }
 
     Component.onCompleted: {
-        getBindingsProc.running = true;
+        SettingsStore.getBindings();
     }
 
     onVisibleChanged: {
         if (visible) {
-            getBindingsProc.running = true;
+            SettingsStore.getBindings();
             bindingsList.forceActiveFocus();
         }
     }
