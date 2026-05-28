@@ -363,6 +363,16 @@ class InputDaemon:
                         "kbd-key code=%d raw=%s display=%r source=%s",
                         event.code, raw, display, source,
                     )
+                # Route Super_L / Super_R through the same tap-vs-hold
+                # logic as the `inject` socket command. Hyprland's `bindr`
+                # doesn't fire reliably for bare modifier-key releases,
+                # so we can't rely on a Hyprland-side keyup to terminate
+                # the timer — but evdev sees the release directly here.
+                if event.code in (ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA):
+                    if event.value == 1:
+                        self._handle_inject_keydown("meta")
+                    elif event.value == 0:
+                        await self._handle_inject_keyup("meta")
                 changed = False
                 if event.value == 1 and event.code not in self.kbd_held_keys:
                     self.kbd_held_keys.add(event.code)
