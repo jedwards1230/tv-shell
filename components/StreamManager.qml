@@ -62,7 +62,7 @@ Item {
     function quitAndRelaunch() {
         _sessionCheckCancelled = false;
         requestOverlayShow("Quitting current session...");
-        sessionQuit.command = ["moonlight", "quit", currentTarget.host];
+        sessionQuit.command = StreamProviders.active.quitArgs(currentTarget);
         sessionQuit.running = true;
     }
 
@@ -106,35 +106,10 @@ Item {
         sessionCheckProc.running = true;
     }
 
+    // Generic launch: the active provider supplies backend-specific argv; this
+    // manager owns the launch/timeout/reconnect state machine.
     function _launchMoonlight() {
-        let args = ["env", "QT_QPA_PLATFORM=wayland", "LIBVA_DRIVER_NAME=radeonsi", "moonlight", "stream", currentTarget.host, currentTarget.app];
-        if (currentTarget.resolution === "3840x2160")
-            args.push("--4K");
-        // Sunshine min_fps_target defaults to 60 when clientRefreshRateX100 is 0.
-        // The --fps flag sets the SDP maxFPS but won't raise the server-side floor
-        // unless the client also advertises its display refresh rate.
-        if (currentTarget.fps) {
-            args.push("--fps");
-            args.push(String(currentTarget.fps));
-        }
-        if (currentTarget.hdr)
-            args.push("--hdr");
-        if (currentTarget.codec) {
-            args.push("--video-codec");
-            args.push(currentTarget.codec);
-        }
-        if (currentTarget.bitrate) {
-            args.push("--bitrate");
-            args.push(String(currentTarget.bitrate));
-        }
-        if (currentTarget.audioConfig) {
-            args.push("--audio-config");
-            args.push(currentTarget.audioConfig);
-        }
-        args.push("--display-mode", "borderless");
-        args.push("--no-quit-after");
-        args.push("--no-frame-pacing");
-        moonlight.command = args;
+        moonlight.command = StreamProviders.active.buildLaunchArgs(currentTarget);
         requestInputRelease();
         streamStarted();
         launchTimeout.restart();
