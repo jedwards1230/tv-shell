@@ -5,7 +5,7 @@ Grabs a gamepad exclusively via EVIOCGRAB and emits keyboard events via uinput.
 Listens on a unix socket for grab/release/subscribe commands from the shell.
 
 IPC protocol: see docs/IPC_PROTOCOL.md
-Commands: grab, release, status, subscribe, get-bindings, set-binding, capture-next, capture-cancel
+Commands: grab, release, status, subscribe, get-bindings, set-binding, capture-next, capture-cancel, kbd-log
 Events (to subscribers): controller-wake, controller-disconnected, home-press, combo:*, input-mode:*, buttons:*, keys:*
 """
 
@@ -117,15 +117,33 @@ KEY_DISPLAY_NAMES = {
 }
 
 
-def _kbd_display_name(code: int) -> str:
-    if code in KEY_DISPLAY_NAMES:
-        return KEY_DISPLAY_NAMES[code]
+def _kbd_key_info(code: int) -> tuple[str, str, str]:
+    """Return (raw_kernel_name, display_name, source) for a keyboard
+    code, where source is one of:
+
+      mapped   — explicit entry in KEY_DISPLAY_NAMES
+      fallback — raw kernel name found, display computed by stripping
+                 `KEY_` prefix and titlecasing the rest
+      unknown  — evdev tables don't know this code at all
+
+    Used by both the debug overlay event format and the `kbd-key` log
+    line so we can spot unmapped / mis-mapped keys over time.
+    """
     raw = ecodes.bytype.get(ecodes.EV_KEY, {}).get(code)
     if raw:
         if isinstance(raw, (list, tuple)):
             raw = raw[0]
-        return raw.replace("KEY_", "").title()
-    return f"0x{code:x}"
+    else:
+        raw = f"0x{code:x}"
+    if code in KEY_DISPLAY_NAMES:
+        return raw, KEY_DISPLAY_NAMES[code], "mapped"
+    if raw.startswith("KEY_"):
+        return raw, raw.replace("KEY_", "").title(), "fallback"
+    return raw, raw, "unknown"
+
+
+def _kbd_display_name(code: int) -> str:
+    return _kbd_key_info(code)[1]
 
 
 # Home button hold detection
@@ -225,6 +243,13 @@ class InputDaemon:
         # used to emit `keys:<held>` debug events.
         self.kbd_held_keys: set[int] = set()
 
+        # When enabled (via the `kbd-log on` socket command), log every
+        # initial keydown with the raw evdev code, kernel name, and how
+        # we'd display it — so unmapped / mis-mapped keys are easy to
+        # find in the logs. Off by default to avoid keystroke history
+        # in normal use.
+        self._kbd_log_enabled = False
+
         # Trigger state
         self.left_trigger_held = False
         self.right_trigger_held = False
@@ -318,6 +343,12 @@ class InputDaemon:
                     continue
                 # value: 0=up, 1=down, 2=repeat. Only down/up change the
                 # held set; repeats keep the same state.
+                if self._kbd_log_enabled and event.value == 1:
+                    raw, display, source = _kbd_key_info(event.code)
+                    log.info(
+                        "kbd-key code=%d raw=%s display=%r source=%s",
+                        event.code, raw, display, source,
+                    )
                 changed = False
                 if event.value == 1 and event.code not in self.kbd_held_keys:
                     self.kbd_held_keys.add(event.code)
@@ -958,6 +989,14 @@ class InputDaemon:
                     if self._capture_future and not self._capture_future.done():
                         self._capture_future.cancel()
                     self._capture_future = None
+                    writer.write(b"ok\n")
+                elif cmd == "kbd-log on":
+                    self._kbd_log_enabled = True
+                    log.info("keyboard logging enabled")
+                    writer.write(b"ok\n")
+                elif cmd == "kbd-log off":
+                    self._kbd_log_enabled = False
+                    log.info("keyboard logging disabled")
                     writer.write(b"ok\n")
                 elif cmd == "subscribe":
                     self.subscribers.append(writer)

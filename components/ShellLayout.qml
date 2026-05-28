@@ -242,10 +242,14 @@ FocusScope {
 
         Process {
             id: debugSubscribe
-            command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
+            // Enables daemon-side `kbd-key` logging for this session and
+            // then subscribes to events. Re-sent on every reconnect so a
+            // daemon restart still results in logging being on while the
+            // overlay is visible.
+            command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'kbd-log on\\nsubscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
             stdout: SplitParser {
                 onRead: line => {
-                    if (line === "subscribed")
+                    if (line === "subscribed" || line === "ok")
                         return;
                     if (line.startsWith("buttons:")) {
                         debugOverlay.currentCombo = line.substring(8).trim();
@@ -258,6 +262,13 @@ FocusScope {
                 if (debugOverlay.visible)
                     reconnectDebug.start();
             }
+        }
+
+        // One-shot to turn off daemon-side `kbd-key` logging when the
+        // debug overlay closes (or controllerDebug is disabled).
+        Process {
+            id: kbdLogOff
+            command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'kbd-log off\\n');s.recv(64);s.close()"]
         }
 
         // Pin displayInput to the latest non-empty value and hold it
@@ -296,6 +307,7 @@ FocusScope {
                 currentCombo = "";
                 currentKeys = "";
                 displayInput = "";
+                kbdLogOff.running = true;
             } else {
                 debugSubscribe.running = true;
             }

@@ -88,6 +88,26 @@ Cancel a pending `capture-next` without waiting for timeout.
 
 **Response:** `ok\n`
 
+### `kbd-log on` / `kbd-log off`
+
+Toggle daemon-side logging of keyboard key events. When enabled, every initial keydown (auto-repeats excluded) emits a log line like:
+
+```
+game-shell-input: kbd-key code=125 raw=KEY_LEFTMETA display='Meta' source=mapped
+```
+
+`source` is one of:
+
+| Value | Meaning |
+|---|---|
+| `mapped` | Friendly name came from the explicit `KEY_DISPLAY_NAMES` table |
+| `fallback` | Raw kernel name found, display computed by stripping `KEY_` prefix and titlecasing |
+| `unknown` | The evdev tables don't recognize this code at all |
+
+This lets us build a history of pressed keys over time and find unmapped or mis-mapped keys to fold back into `KEY_DISPLAY_NAMES`. Off by default — the shell's debug overlay flips it on when it opens and off when it closes, so normal use doesn't accumulate keystroke history.
+
+**Response:** `ok\n`
+
 ### Unrecognized Commands
 
 Any command not listed above receives:
