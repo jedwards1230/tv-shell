@@ -12,7 +12,7 @@ RUN pacman -Syu --noconfirm && \
       libxkbcommon libxkbcommon-x11 \
       xcb-util-cursor xcb-util-keysyms xcb-util-image xcb-util-renderutil xcb-util-wm \
       wayland wayland-protocols libdrm mesa \
-      pciutils kmod \
+      pciutils kmod seatd \
       dbus python-yaml \
       ttf-dejavu noto-fonts-emoji && \
     pacman -Scc --noconfirm
@@ -55,7 +55,6 @@ ENV XDG_RUNTIME_DIR=/run/user/1000
 ENV WAYLAND_DISPLAY=wayland-1
 ENV QT_QPA_PLATFORM=wayland
 
-USER dev
 WORKDIR /opt/game-shell
 EXPOSE 5900 6080
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
