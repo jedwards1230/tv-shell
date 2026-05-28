@@ -237,8 +237,11 @@ ShellRoot {
                     streamManager.launch(target);
                 }
                 onStreamQuitRequested: target => {
-                    streamQuitProc.command = ["moonlight", "quit", target.host];
-                    streamQuitProc.running = true;
+                    let argv = Components.StreamProviders.active.quitArgs(target);
+                    if (argv.length > 0) {
+                        streamQuitProc.command = argv;
+                        streamQuitProc.running = true;
+                    }
                 }
                 onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
                 onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
