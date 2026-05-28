@@ -35,8 +35,7 @@ RUN git clone https://github.com/outfoxxed/quickshell.git /tmp/quickshell-src &&
     rm -rf /tmp/quickshell-src
 
 # Runtime user + XDG runtime dir
-RUN groupadd -r -g 992 render && groupadd -r -g 44 video && \
-    useradd -m -s /bin/bash -u 1000 -G render,video dev && \
+RUN useradd -m -s /bin/bash -u 1000 -G render,video dev && \
     mkdir -p /run/user/1000 && chmod 0700 /run/user/1000 && chown dev:dev /run/user/1000 && \
     mkdir -p /home/dev/.config/quickshell /home/dev/.cache/hyprland /home/dev/.local/share/hyprland && \
     chown -R dev:dev /home/dev/.config /home/dev/.cache /home/dev/.local
