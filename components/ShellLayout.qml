@@ -12,7 +12,7 @@ FocusScope {
     property bool avSystemOn: false
     property bool avWaking: false
 
-    property var applications: homeScreen.applications
+    property var applications: AppDiscoveryManager.applications
     property alias homeScreen: homeScreen
     property alias settingsPanel: settingsPanel
     property alias navDrawer: navDrawer
