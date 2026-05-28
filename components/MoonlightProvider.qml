@@ -49,6 +49,74 @@ TargetProvider {
         return ["moonlight", "quit", target.host];
     }
 
+    // === App discovery (`moonlight list` per host, sequentially) ===
+    property int _discoveryIndex: -1
+
+    function discoverApps() {
+        if (provider.discovering)
+            return;
+        provider.discovering = true;
+        provider._discoveryIndex = 0;
+        provider.hostApps = {};
+        provider._discoverNextHost();
+    }
+
+    function _discoverNextHost() {
+        if (provider._discoveryIndex >= provider.targets.length) {
+            provider.discovering = false;
+            // Force re-evaluation by reassigning
+            provider.hostApps = JSON.parse(JSON.stringify(provider.hostApps));
+            return;
+        }
+        let target = provider.targets[provider._discoveryIndex];
+        appDiscovery.currentHost = target.host || "";
+        if (appDiscovery.currentHost === "") {
+            provider._discoveryIndex++;
+            provider._discoverNextHost();
+            return;
+        }
+        // Clear previous results for this host before re-query
+        let updated = provider.hostApps;
+        updated[appDiscovery.currentHost] = [];
+        provider.hostApps = updated;
+        appDiscovery.running = true;
+    }
+
+    Process {
+        id: appDiscovery
+        property string currentHost: ""
+        command: ["moonlight", "list", currentHost]
+        stdout: SplitParser {
+            onRead: line => {
+                // moonlight list outputs lines like "1. Desktop" or just "Desktop"
+                let trimmed = line.trim();
+                if (trimmed === "" || trimmed.indexOf("Search") === 0 || trimmed.indexOf("Connect") === 0)
+                    return;
+                // Strip leading number+dot if present (e.g., "1. Desktop" -> "Desktop")
+                let match = trimmed.match(/^\d+\.\s+(.+)/);
+                let appName = match ? match[1] : trimmed;
+                if (appName === "")
+                    return;
+                let updated = provider.hostApps;
+                if (!updated[appDiscovery.currentHost])
+                    updated[appDiscovery.currentHost] = [];
+                updated[appDiscovery.currentHost].push(appName);
+                provider.hostApps = updated;
+            }
+        }
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode !== 0) {
+                // Host offline or moonlight list failed — mark empty
+                let updated = provider.hostApps;
+                updated[appDiscovery.currentHost] = [];
+                provider.hostApps = updated;
+            }
+            // Discover next host
+            provider._discoveryIndex++;
+            provider._discoverNextHost();
+        }
+    }
+
     // Streaming targets are loaded from /opt/game-shell/targets.json (single
     // line — SplitParser reads line-by-line).
     Process {

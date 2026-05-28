@@ -1,17 +1,11 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Io
 
 FocusScope {
     id: root
 
     property var targets: []
     property string shellState: "idle"
-
-    // App-view: discovered apps per host { "host": ["App1", "App2", ...] }
-    property var hostApps: ({})
-    property int _appDiscoveryIndex: -1
-    property bool _appDiscoveryRunning: false
 
     property var runningWindows: []
 
@@ -50,93 +44,26 @@ FocusScope {
         RecentsTracker.recordLaunch(app);
     }
 
-    // === Moonlight App Discovery ===
-    Process {
-        id: appDiscovery
-        property string currentHost: ""
-        command: ["moonlight", "list", currentHost]
-        stdout: SplitParser {
-            onRead: line => {
-                // moonlight list outputs lines like "1. Desktop" or just "Desktop"
-                let trimmed = line.trim();
-                if (trimmed === "" || trimmed.indexOf("Search") === 0 || trimmed.indexOf("Connect") === 0)
-                    return;
-                // Strip leading number+dot if present (e.g., "1. Desktop" -> "Desktop")
-                let match = trimmed.match(/^\d+\.\s+(.+)/);
-                let appName = match ? match[1] : trimmed;
-                if (appName === "")
-                    return;
-                let updated = root.hostApps;
-                if (!updated[appDiscovery.currentHost])
-                    updated[appDiscovery.currentHost] = [];
-                updated[appDiscovery.currentHost].push(appName);
-                root.hostApps = updated;
-            }
-        }
-        onExited: (exitCode, exitStatus) => {
-            if (exitCode !== 0) {
-                // Host offline or moonlight list failed — mark empty
-                let updated = root.hostApps;
-                updated[appDiscovery.currentHost] = [];
-                root.hostApps = updated;
-            }
-            // Discover next host
-            root._appDiscoveryIndex++;
-            root._discoverNextHost();
-        }
-    }
-
-    function _discoverNextHost() {
-        if (_appDiscoveryIndex >= root.targets.length) {
-            _appDiscoveryRunning = false;
-            // Force re-evaluation by reassigning
-            root.hostApps = JSON.parse(JSON.stringify(root.hostApps));
-            return;
-        }
-        let target = root.targets[_appDiscoveryIndex];
-        appDiscovery.currentHost = target.host || "";
-        if (appDiscovery.currentHost === "") {
-            _appDiscoveryIndex++;
-            _discoverNextHost();
-            return;
-        }
-        // Clear previous results for this host before re-query
-        let updated = root.hostApps;
-        updated[appDiscovery.currentHost] = [];
-        root.hostApps = updated;
-        appDiscovery.running = true;
-    }
-
-    function discoverAllApps() {
-        if (_appDiscoveryRunning)
-            return;
-        _appDiscoveryRunning = true;
-        _appDiscoveryIndex = 0;
-        // Clear all
-        root.hostApps = {};
-        _discoverNextHost();
-    }
-
-    // Refresh app discovery every 60 seconds when in app-view mode
+    // Moonlight app discovery lives in MoonlightProvider now; HomeScreen only
+    // decides WHEN to (re)discover based on the active view mode.
     Timer {
         id: appDiscoveryTimer
         interval: 60000
         running: Theme.moonlightViewMode === "apps"
         repeat: true
-        onTriggered: root.discoverAllApps()
+        onTriggered: StreamProviders.active.discoverApps()
     }
 
-    // Trigger discovery when targets arrive or view mode switches to apps
     onTargetsChanged: {
         if (Theme.moonlightViewMode === "apps" && root.targets.length > 0)
-            discoverAllApps();
+            StreamProviders.active.discoverApps();
     }
 
     Connections {
         target: Theme
         function onMoonlightViewModeChanged() {
             if (Theme.moonlightViewMode === "apps" && root.targets.length > 0)
-                root.discoverAllApps();
+                StreamProviders.active.discoverApps();
         }
     }
 
@@ -161,7 +88,7 @@ FocusScope {
     // Computed model for app-view rows, re-evaluated when targets or hostApps change
     property var _appViewRows: {
         // Explicitly reference both properties so QML re-evaluates this binding
-        let ha = root.hostApps;
+        let ha = StreamProviders.active.hostApps;
         let tgts = root.targets;
         let rows = [];
         for (let i = 0; i < tgts.length; i++) {
@@ -482,7 +409,7 @@ FocusScope {
 
                         // Offline state
                         Text {
-                            visible: hostAppList.length === 0 && !root._appDiscoveryRunning
+                            visible: hostAppList.length === 0 && !StreamProviders.active.discovering
                             anchors.centerIn: parent
                             text: "Offline or no apps found"
                             font.pixelSize: Theme.fontSmall
@@ -491,7 +418,7 @@ FocusScope {
 
                         // Loading state
                         Text {
-                            visible: hostAppList.length === 0 && root._appDiscoveryRunning
+                            visible: hostAppList.length === 0 && StreamProviders.active.discovering
                             anchors.centerIn: parent
                             text: "Discovering apps..."
                             font.pixelSize: Theme.fontSmall
