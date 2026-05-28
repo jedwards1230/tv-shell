@@ -6,7 +6,6 @@ FocusScope {
     id: root
 
     property var targets: []
-    property var applications: []
     property var recentApps: []
     property string shellState: "idle"
 
@@ -24,44 +23,6 @@ FocusScope {
     signal appCloseRequested(string windowClass)
     signal settingsRequested
     signal notificationCenterRequested
-
-    // Load installed applications
-    Process {
-        id: loadApps
-        command: ["python3", "-c", `
-import os, json, configparser
-apps = []
-seen = set()
-for d in ['/usr/share/applications', os.path.expanduser('~/.local/share/applications')]:
-    if not os.path.isdir(d): continue
-    for f in sorted(os.listdir(d)):
-        if not f.endswith('.desktop'): continue
-        cp = configparser.ConfigParser(interpolation=None)
-        cp.read(os.path.join(d, f))
-        if not cp.has_section('Desktop Entry'): continue
-        if cp.get('Desktop Entry', 'NoDisplay', fallback='false').lower() == 'true': continue
-        if cp.get('Desktop Entry', 'Hidden', fallback='false').lower() == 'true': continue
-        if cp.get('Desktop Entry', 'Type', fallback='') != 'Application': continue
-        name = cp.get('Desktop Entry', 'Name', fallback='')
-        if not name or name in seen: continue
-        seen.add(name)
-        ex = cp.get('Desktop Entry', 'Exec', fallback='')
-        for tok in ['%u','%U','%f','%F','%i','%c','%k']:
-            ex = ex.replace(tok, '')
-        apps.append({'name': name, 'exec': ex.strip(), 'icon': cp.get('Desktop Entry', 'Icon', fallback=''), 'comment': cp.get('Desktop Entry', 'Comment', fallback=''), 'wmClass': cp.get('Desktop Entry', 'StartupWMClass', fallback='')})
-apps.sort(key=lambda x: x['name'].lower())
-print(json.dumps(apps))
-`]
-        stdout: SplitParser {
-            onRead: line => {
-                try {
-                    root.applications = JSON.parse(line);
-                } catch (e) {
-                    console.log("Failed to parse apps:", e);
-                }
-            }
-        }
-    }
 
     // Load recent launches
     Process {
@@ -88,7 +49,6 @@ except:
     }
 
     Component.onCompleted: {
-        loadApps.running = true;
         loadRecents.running = true;
     }
 
@@ -664,7 +624,7 @@ except:
                         return moonlightRow;
                     return root._appViewRowItem(appViewRepeater.count - 1) || recentsRow;
                 }
-                model: root.applications
+                model: AppDiscoveryManager.applications
 
                 delegate: AppCard {
                     required property int index
