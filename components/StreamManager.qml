@@ -131,7 +131,7 @@ Item {
             args.push("--audio-config");
             args.push(currentTarget.audioConfig);
         }
-        args.push("--display-mode", "fullscreen");
+        args.push("--display-mode", "borderless");
         args.push("--no-quit-after");
         args.push("--no-frame-pacing");
         moonlight.command = args;
