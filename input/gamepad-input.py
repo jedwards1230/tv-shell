@@ -120,6 +120,33 @@ def find_gamepad() -> InputDevice | None:
     return None
 
 
+def find_keyboards() -> list[InputDevice]:
+    """Find keyboard-like input devices for read-only event snooping.
+
+    Match: device has KEY_A in EV_KEY capabilities, doesn't have BTN_SOUTH
+    (which would make it a gamepad).
+    Skip: our own uinput devices (game-shell-virtual-*) and ydotoold's
+    virtual device — reading those would feedback-loop on injected keys.
+    """
+    keyboards: list[InputDevice] = []
+    for path in sorted(evdev.list_devices()):
+        try:
+            dev = InputDevice(path)
+        except (OSError, PermissionError):
+            continue
+        name = dev.name or ""
+        if name.startswith("game-shell-virtual-") or "ydotoold" in name:
+            dev.close()
+            continue
+        caps = dev.capabilities(verbose=False)
+        keys = set(caps.get(ecodes.EV_KEY, []))
+        if ecodes.KEY_A in keys and ecodes.BTN_SOUTH not in keys:
+            keyboards.append(dev)
+        else:
+            dev.close()
+    return keyboards
+
+
 class InputDaemon:
     def __init__(self):
         self.gamepad: InputDevice | None = None
@@ -207,6 +234,57 @@ class InputDaemon:
 
         asyncio.create_task(self._serve_socket())
         asyncio.create_task(self._device_loop())
+        asyncio.create_task(self._keyboard_loop())
+
+    async def _keyboard_loop(self):
+        """Discover keyboard devices and read events without grabbing.
+        Read-only snoop for the debug overlay — never consumes keys, so
+        the rest of the system gets every keystroke normally.
+
+        Step 1 (this commit): log every key event. No socket events yet
+        and no QML changes — verify the daemon can see real keystrokes
+        before wiring up downstream consumers.
+        """
+        keyboards: list[InputDevice] = []
+        while self.running:
+            if not keyboards:
+                keyboards = find_keyboards()
+                if not keyboards:
+                    log.info("No keyboard devices found, retrying...")
+                    await asyncio.sleep(2)
+                    continue
+                log.info(
+                    "Watching %d keyboard device(s): %s",
+                    len(keyboards),
+                    ", ".join(f"{kb.name} ({kb.path})" for kb in keyboards),
+                )
+            try:
+                await asyncio.gather(
+                    *[self._read_keyboard(kb) for kb in keyboards]
+                )
+            except Exception as e:
+                log.warning("Keyboard loop error: %s", e)
+            for kb in keyboards:
+                try:
+                    kb.close()
+                except Exception:
+                    pass
+            keyboards = []
+            await asyncio.sleep(2)
+
+    async def _read_keyboard(self, kb: InputDevice):
+        try:
+            async for event in kb.async_read_loop():
+                if event.type != ecodes.EV_KEY:
+                    continue
+                name = _button_code_to_name(event.code)
+                state = {0: "up", 1: "down", 2: "repeat"}.get(
+                    event.value, str(event.value)
+                )
+                log.info("kbd %s: %s %s", kb.name, name, state)
+        except OSError as e:
+            log.warning("Read error on %s: %s", kb.name, e)
+            raise
 
     async def _device_loop(self):
         """Find gamepad, grab it, read events. Reconnect on disconnect."""
