@@ -5,8 +5,8 @@ Grabs a gamepad exclusively via EVIOCGRAB and emits keyboard events via uinput.
 Listens on a unix socket for grab/release/subscribe commands from the shell.
 
 IPC protocol: see docs/IPC_PROTOCOL.md
-Commands: grab, release, status, subscribe, get-bindings, set-binding, capture-next, capture-cancel
-Events (to subscribers): controller-wake, controller-disconnected, home-press, combo:*, input-mode:*, buttons:*
+Commands: grab, release, status, subscribe, get-bindings, set-binding, capture-next, capture-cancel, kbd-log
+Events (to subscribers): controller-wake, controller-disconnected, home-press, combo:*, input-mode:*, buttons:*, keys:*
 """
 
 import asyncio
@@ -92,6 +92,59 @@ DPAD_NAMES = {
     ecodes.KEY_RIGHT: "D-Right",
 }
 
+# Friendly display names for keyboard keys in the debug overlay's
+# `keys:<held>` events. Falls back to stripping `KEY_` and titlecasing.
+KEY_DISPLAY_NAMES = {
+    ecodes.KEY_LEFTMETA: "Meta",
+    ecodes.KEY_RIGHTMETA: "Meta",
+    ecodes.KEY_LEFTCTRL: "Ctrl",
+    ecodes.KEY_RIGHTCTRL: "Ctrl",
+    ecodes.KEY_LEFTSHIFT: "Shift",
+    ecodes.KEY_RIGHTSHIFT: "Shift",
+    ecodes.KEY_LEFTALT: "Alt",
+    ecodes.KEY_RIGHTALT: "Alt",
+    ecodes.KEY_UP: "↑",
+    ecodes.KEY_DOWN: "↓",
+    ecodes.KEY_LEFT: "←",
+    ecodes.KEY_RIGHT: "→",
+    ecodes.KEY_ENTER: "Enter",
+    ecodes.KEY_ESC: "Esc",
+    ecodes.KEY_BACKSPACE: "Backspace",
+    ecodes.KEY_SPACE: "Space",
+    ecodes.KEY_TAB: "Tab",
+    ecodes.KEY_HOMEPAGE: "Home",
+    ecodes.KEY_CAPSLOCK: "Caps",
+}
+
+
+def _kbd_key_info(code: int) -> tuple[str, str, str]:
+    """Return (raw_kernel_name, display_name, source) for a keyboard
+    code, where source is one of:
+
+      mapped   — explicit entry in KEY_DISPLAY_NAMES
+      fallback — raw kernel name found, display computed by stripping
+                 `KEY_` prefix and titlecasing the rest
+      unknown  — evdev tables don't know this code at all
+
+    Used by both the debug overlay event format and the `kbd-key` log
+    line so we can spot unmapped / mis-mapped keys over time.
+    """
+    raw = ecodes.bytype.get(ecodes.EV_KEY, {}).get(code)
+    if raw:
+        if isinstance(raw, (list, tuple)):
+            raw = raw[0]
+    else:
+        raw = f"0x{code:x}"
+    if code in KEY_DISPLAY_NAMES:
+        return raw, KEY_DISPLAY_NAMES[code], "mapped"
+    if raw.startswith("KEY_"):
+        return raw, raw.replace("KEY_", "").title(), "fallback"
+    return raw, raw, "unknown"
+
+
+def _kbd_display_name(code: int) -> str:
+    return _kbd_key_info(code)[1]
+
 
 # Home button hold detection
 HOME_HOLD_KEYS = {ecodes.BTN_MODE}
@@ -118,6 +171,33 @@ def find_gamepad() -> InputDevice | None:
             if ecodes.EV_KEY in caps and ecodes.BTN_SOUTH in caps[ecodes.EV_KEY]:
                 return dev
     return None
+
+
+def find_keyboards() -> list[InputDevice]:
+    """Find keyboard-like input devices for read-only event snooping.
+
+    Match: device has KEY_A in EV_KEY capabilities, doesn't have BTN_SOUTH
+    (which would make it a gamepad).
+    Skip: our own uinput devices (game-shell-virtual-*) and ydotoold's
+    virtual device — reading those would feedback-loop on injected keys.
+    """
+    keyboards: list[InputDevice] = []
+    for path in sorted(evdev.list_devices()):
+        try:
+            dev = InputDevice(path)
+        except (OSError, PermissionError):
+            continue
+        name = dev.name or ""
+        if name.startswith("game-shell-virtual-") or "ydotoold" in name:
+            dev.close()
+            continue
+        caps = dev.capabilities(verbose=False)
+        keys = set(caps.get(ecodes.EV_KEY, []))
+        if ecodes.KEY_A in keys and ecodes.BTN_SOUTH not in keys:
+            keyboards.append(dev)
+        else:
+            dev.close()
+    return keyboards
 
 
 class InputDaemon:
@@ -158,6 +238,17 @@ class InputDaemon:
 
         # Home button hold detection
         self._home_hold_task: asyncio.Task | None = None
+
+        # Currently held keyboard keys (across all watched keyboards),
+        # used to emit `keys:<held>` debug events.
+        self.kbd_held_keys: set[int] = set()
+
+        # When enabled (via the `kbd-log on` socket command), log every
+        # initial keydown with the raw evdev code, kernel name, and how
+        # we'd display it — so unmapped / mis-mapped keys are easy to
+        # find in the logs. Off by default to avoid keystroke history
+        # in normal use.
+        self._kbd_log_enabled = False
 
         # Trigger state
         self.left_trigger_held = False
@@ -207,6 +298,75 @@ class InputDaemon:
 
         asyncio.create_task(self._serve_socket())
         asyncio.create_task(self._device_loop())
+        asyncio.create_task(self._keyboard_loop())
+
+    async def _keyboard_loop(self):
+        """Discover keyboard devices and read events without grabbing.
+        Read-only snoop for the debug overlay — never consumes keys, so
+        the rest of the system gets every keystroke normally.
+
+        Step 1 (this commit): log every key event. No socket events yet
+        and no QML changes — verify the daemon can see real keystrokes
+        before wiring up downstream consumers.
+        """
+        keyboards: list[InputDevice] = []
+        while self.running:
+            if not keyboards:
+                keyboards = find_keyboards()
+                if not keyboards:
+                    log.info("No keyboard devices found, retrying...")
+                    await asyncio.sleep(2)
+                    continue
+                log.info(
+                    "Watching %d keyboard device(s): %s",
+                    len(keyboards),
+                    ", ".join(f"{kb.name} ({kb.path})" for kb in keyboards),
+                )
+            try:
+                await asyncio.gather(
+                    *[self._read_keyboard(kb) for kb in keyboards]
+                )
+            except Exception as e:
+                log.warning("Keyboard loop error: %s", e)
+            for kb in keyboards:
+                try:
+                    kb.close()
+                except Exception:
+                    pass
+            keyboards = []
+            await asyncio.sleep(2)
+
+    async def _read_keyboard(self, kb: InputDevice):
+        try:
+            async for event in kb.async_read_loop():
+                if event.type != ecodes.EV_KEY:
+                    continue
+                # value: 0=up, 1=down, 2=repeat. Only down/up change the
+                # held set; repeats keep the same state.
+                if self._kbd_log_enabled and event.value == 1:
+                    raw, display, source = _kbd_key_info(event.code)
+                    log.info(
+                        "kbd-key code=%d raw=%s display=%r source=%s",
+                        event.code, raw, display, source,
+                    )
+                changed = False
+                if event.value == 1 and event.code not in self.kbd_held_keys:
+                    self.kbd_held_keys.add(event.code)
+                    changed = True
+                elif event.value == 0 and event.code in self.kbd_held_keys:
+                    self.kbd_held_keys.discard(event.code)
+                    changed = True
+                if changed:
+                    await self._notify_held_keys()
+        except OSError as e:
+            log.warning("Read error on %s: %s", kb.name, e)
+            raise
+
+    async def _notify_held_keys(self):
+        if not self.subscribers:
+            return
+        names = [_kbd_display_name(c) for c in sorted(self.kbd_held_keys)]
+        await self._notify_subscribers("keys:" + " + ".join(names))
 
     async def _device_loop(self):
         """Find gamepad, grab it, read events. Reconnect on disconnect."""
@@ -829,6 +989,14 @@ class InputDaemon:
                     if self._capture_future and not self._capture_future.done():
                         self._capture_future.cancel()
                     self._capture_future = None
+                    writer.write(b"ok\n")
+                elif cmd == "kbd-log on":
+                    self._kbd_log_enabled = True
+                    log.info("keyboard logging enabled")
+                    writer.write(b"ok\n")
+                elif cmd == "kbd-log off":
+                    self._kbd_log_enabled = False
+                    log.info("keyboard logging disabled")
                     writer.write(b"ok\n")
                 elif cmd == "subscribe":
                     self.subscribers.append(writer)
