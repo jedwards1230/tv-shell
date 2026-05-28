@@ -1,0 +1,23 @@
+{
+  "name": "Game Shell Dev",
+  "build": {
+    "dockerfile": "../dev/Dockerfile",
+    "context": ".."
+  },
+  "forwardPorts": [5900, 6080],
+  "portsAttributes": {
+    "5900": { "label": "VNC", "protocol": "tcp" },
+    "6080": { "label": "noVNC Web", "protocol": "http" }
+  },
+  "postStartCommand": "/usr/local/bin/entrypoint.sh &",
+  "customizations": {
+    "vscode": {
+      "extensions": ["nickmillerdev.qml-format"]
+    }
+  },
+  "runArgs": ["--cap-add=SYS_NICE", "--platform=linux/amd64"],
+  "containerEnv": {
+    "WLR_BACKENDS": "headless",
+    "WLR_LIBINPUT_NO_DEVICES": "1"
+  }
+}

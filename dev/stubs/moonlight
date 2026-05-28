@@ -1,0 +1,18 @@
+#!/bin/bash
+# Stub for moonlight — returns fake streaming state for dev environment
+case "$1" in
+    list)
+        echo "1. Desktop"
+        echo "2. Steam Big Picture"
+        echo "3. RetroArch"
+        ;;
+    pair)
+        echo "Pairing successful"
+        ;;
+    stream)
+        echo "Stream started"
+        sleep 999999
+        ;;
+    *)
+        ;;
+esac

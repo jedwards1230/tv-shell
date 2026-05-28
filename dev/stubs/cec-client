@@ -1,0 +1,3 @@
+#!/bin/bash
+# Stub for cec-client — no-op for dev environment
+exit 0

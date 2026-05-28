@@ -1,0 +1,16 @@
+services:
+  game-shell-dev:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile
+    volumes:
+      - ..:/opt/game-shell
+      - game-shell-config:/home/dev/.config/game-shell
+    ports:
+      - "5900:5900"
+      - "6080:6080"
+    cap_add:
+      - SYS_NICE
+
+volumes:
+  game-shell-config:

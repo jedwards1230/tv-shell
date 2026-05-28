@@ -1,0 +1,1 @@
+[{"name":"Desktop","host":"192.168.8.10","app":"Desktop","resolution":"1920x1080","fps":60,"codec":"HEVC","hdr":false},{"name":"Steam","host":"192.168.8.10","app":"Steam Big Picture","resolution":"1920x1080","fps":60,"codec":"HEVC","hdr":false},{"name":"RetroArch","host":"192.168.8.10","app":"RetroArch","resolution":"1920x1080","fps":60,"codec":"H264","hdr":false}]

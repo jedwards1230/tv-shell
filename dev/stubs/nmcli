@@ -1,0 +1,18 @@
+#!/bin/bash
+# Stub for nmcli — returns fake network state for dev environment
+case "$*" in
+    *"connection show --active"*)
+        echo "Wired connection 1:802-3-ethernet:eth0"
+        ;;
+    *"device wifi list"*)
+        echo "HomeNetwork:85:WPA2:*"
+        echo "Neighbor5G:62:WPA2:"
+        echo "OpenGuest:45::"
+        ;;
+    *"device status"*)
+        echo "ethernet:eth0:connected:Wired connection 1"
+        echo "wifi:wlan0:disconnected:"
+        ;;
+    *)
+        ;;
+esac

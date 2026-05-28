@@ -1,0 +1,8 @@
+.git
+.github
+worktrees
+.claude
+aqtinstall.log
+docs
+*.md
+!dev/README.md

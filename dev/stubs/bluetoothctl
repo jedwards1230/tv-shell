@@ -1,0 +1,21 @@
+#!/bin/bash
+# Stub for bluetoothctl — returns fake bluetooth state for dev environment
+case "$1" in
+    show)
+        echo "Controller 00:11:22:33:44:55 (public)"
+        echo "	Name: game-shell-dev"
+        echo "	Powered: yes"
+        echo "	Discoverable: no"
+        echo "	Pairable: yes"
+        ;;
+    devices)
+        echo "Device AA:BB:CC:DD:EE:01 Xbox Wireless Controller"
+        echo "Device AA:BB:CC:DD:EE:02 DualSense Wireless"
+        ;;
+    power)
+        ;;
+    scan)
+        ;;
+    *)
+        ;;
+esac

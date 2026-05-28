@@ -1,0 +1,10 @@
+#!/bin/bash
+# Stub for systemctl — prevents actual power operations in dev environment
+case "$*" in
+    *suspend*|*reboot*|*poweroff*)
+        echo "dev-stub: power operation blocked ($*)"
+        ;;
+    *)
+        /usr/bin/systemctl "$@" 2>/dev/null || true
+        ;;
+esac

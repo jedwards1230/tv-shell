@@ -1,2 +1,4 @@
 aqtinstall.log
 worktrees/
+/targets.json
+/targets.yaml

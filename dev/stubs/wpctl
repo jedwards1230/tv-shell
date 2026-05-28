@@ -1,0 +1,12 @@
+#!/bin/bash
+# Stub for wpctl — returns fake audio state for dev environment
+case "$1" in
+    get-volume)
+        echo "Volume: 0.75"
+        ;;
+    set-volume|set-mute)
+        # No-op, just succeed
+        ;;
+    *)
+        ;;
+esac
