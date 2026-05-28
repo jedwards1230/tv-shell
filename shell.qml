@@ -92,19 +92,19 @@ ShellRoot {
         onHomePressed: {
             if (root.state === "appRunning") {
                 root.overlayDrawerOpen = !root.overlayDrawerOpen;
-            } else if (root.state === "idle") {
+            } else if (root.state === "idle" && root._layout) {
                 avController.wake();
-                layout.handleHomeTap();
+                root._layout.handleHomeTap();
             }
         }
         onHomeHeld: {
             if (root.state === "appRunning") {
                 root.returnToShell();
-            } else if (root.state === "idle") {
-                layout.navDrawer.opened = false;
-                layout.settingsPanel.visible = false;
-                layout.notificationCenter.opened = false;
-                layout.focusHome();
+            } else if (root.state === "idle" && root._layout) {
+                root._layout.navDrawer.opened = false;
+                root._layout.settingsPanel.visible = false;
+                root._layout.notificationCenter.opened = false;
+                root._layout.focusHome();
             }
         }
     }
