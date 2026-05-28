@@ -211,7 +211,11 @@ ShellRoot {
             }
 
             color: root.state === "appRunning" ? "transparent" : Components.Theme.background
-            focusable: true
+            // Exclusive keyboard focus so non-Hyprland-bound keys (arrows,
+            // Enter, Esc, etc.) reach focused QML widgets. Without this,
+            // the compositor gives keyboard input to whatever non-layer
+            // window happens to have focus.
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
             Binding {
                 target: Components.NotificationManager
