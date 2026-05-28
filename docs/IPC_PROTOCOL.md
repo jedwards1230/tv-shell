@@ -97,10 +97,15 @@ is lowercased; currently only `meta` is mapped to home-button semantics
 
 For each `meta` keydown:
 
-- Daemon starts a `INJECT_HOLD_SECS` (400 ms) timer.
+- Daemon starts a `HOME_HOLD_SECS` (2 s) timer.
 - If `keyup:meta` arrives before the timer fires → broadcast `home-press`.
 - If the timer fires first → broadcast `combo:home-hold`; the subsequent
   `keyup:meta` is a no-op.
+
+Every `inject keydown:<name>` also broadcasts a `keys:<name>` subscriber
+event, and every `inject keyup:<name>` broadcasts `keys:` — these let the
+debug overlay show externally-injected keys (Hyprland consumes Super
+globally so QML cannot observe it).
 
 This lets Hyprland's global Super key intercept route through the same
 event surface as the controller Home button, so keyboard works even
@@ -155,9 +160,12 @@ Mode events are only sent on transitions (not re-sent if already in that mode).
 
 | Event | Format |
 |-------|--------|
-| `buttons:<held>` | Space-and-plus-separated list of currently held inputs |
+| `buttons:<held>` | Space-and-plus-separated list of currently held controller inputs |
+| `keys:<name>` | Single externally-injected key currently held (`keys:\n` when released) |
 
-Sent on every button down/up, trigger threshold crossing, and stick axis change. The `<held>` portion is empty when nothing is held (i.e., `buttons:\n`). Includes button friendly names, D-pad directions, stick directions, and trigger state.
+`buttons:` is sent on every button down/up, trigger threshold crossing, and stick axis change. The `<held>` portion is empty when nothing is held (i.e., `buttons:\n`). Includes button friendly names, D-pad directions, stick directions, and trigger state.
+
+`keys:` is sent on every `inject keydown:<name>` / `inject keyup:<name>` so the shell's debug overlay can display keyboard keys that Hyprland intercepts globally (e.g. Super_L) and therefore never reach QML.
 
 Example: `buttons:Home + B + LT + L→ + R↑\n`
 

@@ -54,7 +54,16 @@ FocusScope {
         }
     }
 
+    // BeforeItem so this snoop sees every key before the focused leaf
+    // consumes it, but it never sets event.accepted = true unless it's a
+    // shell-level shortcut. Children still get to process navigation keys.
+    Keys.priority: Keys.BeforeItem
     Keys.onPressed: event => {
+        if (root.inputManager && !event.isAutoRepeat) {
+            const name = root.inputManager.describeKey(event.key, event.text);
+            if (name)
+                root.inputManager.noteKeySnoop(name);
+        }
         if (event.key === Qt.Key_HomePage) {
             if (root.inputManager)
                 root.inputManager.simulateHomeTap();
@@ -66,6 +75,11 @@ FocusScope {
     }
 
     Keys.onReleased: event => {
+        if (root.inputManager && !event.isAutoRepeat) {
+            const name = root.inputManager.describeKey(event.key, event.text);
+            if (name)
+                root.inputManager.clearKeySnoop(name);
+        }
         if (root.inputManager && root.inputManager.isMetaKey(event.key)) {
             root.inputManager.handleMetaRelease(event.isAutoRepeat);
             event.accepted = true;

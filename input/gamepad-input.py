@@ -98,9 +98,12 @@ HOME_HOLD_KEYS = {ecodes.BTN_MODE}
 HOME_HOLD_SECS = 2.0
 
 # Tap-vs-hold threshold for keys forwarded via the `inject` socket command
-# (e.g. keyboard Meta via Hyprland binds). Shorter than HOME_HOLD_SECS so
-# keyboard users get a snappier hold action.
-INJECT_HOLD_SECS = 0.4
+# (e.g. keyboard Meta via Hyprland binds). Matches HOME_HOLD_SECS so the
+# keyboard and controller Home buttons behave identically. Anything
+# shorter is risky: Hyprland's bind + bindr each spawn a Python process
+# that connects to this socket, adding ~100ms of latency to BOTH the
+# perceived press and release timestamps; a 0.4s threshold would
+# misclassify normal taps as holds.
 
 # Keys forwarded via `inject keydown:<name>` whose tap/hold behavior should
 # mirror the controller Home button (broadcast home-press on tap,
@@ -664,8 +667,10 @@ class InputDaemon:
         except asyncio.CancelledError:
             pass
 
-    def _handle_inject_keydown(self, name: str):
-        """Start tap-vs-hold tracking for a key forwarded via `inject`."""
+    async def _handle_inject_keydown(self, name: str):
+        """Start tap-vs-hold tracking for a key forwarded via `inject` and
+        broadcast a `keys:<name>` event so the debug overlay can display it
+        (Hyprland consumes the key globally so QML can't observe it)."""
         # Cancel any pending timer for the same key (e.g. duplicate keydown
         # from auto-repeat or a rapid press-press sequence).
         prev = self._inject_hold_tasks.get(name)
@@ -676,6 +681,7 @@ class InputDaemon:
             self._inject_hold_tasks[name] = asyncio.create_task(
                 self._inject_home_hold_timer(name)
             )
+        await self._notify_subscribers(f"keys:{name}")
 
     async def _handle_inject_keyup(self, name: str):
         """Resolve tap-vs-hold for a key forwarded via `inject`. Tap fires
@@ -687,10 +693,11 @@ class InputDaemon:
         if name in INJECT_HOME_NAMES and not fired:
             log.info("Injected %s tap detected", name)
             await self._notify_subscribers("home-press")
+        await self._notify_subscribers("keys:")
 
     async def _inject_home_hold_timer(self, name: str):
         try:
-            await asyncio.sleep(INJECT_HOLD_SECS)
+            await asyncio.sleep(HOME_HOLD_SECS)
             self._inject_hold_fired[name] = True
             log.info("Injected %s hold detected", name)
             await self._notify_subscribers("combo:home-hold")
@@ -883,7 +890,7 @@ class InputDaemon:
                 elif cmd.startswith("inject "):
                     arg = cmd[len("inject "):].strip()
                     if arg.startswith("keydown:"):
-                        self._handle_inject_keydown(arg[len("keydown:"):].lower())
+                        await self._handle_inject_keydown(arg[len("keydown:"):].lower())
                         writer.write(b"ok\n")
                     elif arg.startswith("keyup:"):
                         await self._handle_inject_keyup(arg[len("keyup:"):].lower())

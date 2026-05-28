@@ -3,7 +3,7 @@ import QtQuick
 
 // IPC protocol: see docs/IPC_PROTOCOL.md
 // Commands used: grab, release, subscribe
-// Events handled: combo:force-quit, combo:end-session, combo:suspend-stream, input-mode:*, controller-wake, controller-disconnected, home-press, combo:home-hold, buttons:*
+// Events handled: combo:force-quit, combo:end-session, combo:suspend-stream, input-mode:*, controller-wake, controller-disconnected, home-press, combo:home-hold, buttons:*, keys:*
 //
 // Also owns keyboard Meta/Super key tap-vs-hold detection so the keyboard
 // and controller Home button feed the same homePressed/homeHeld signals.
@@ -79,6 +79,57 @@ Item {
         root.homePressed();
     }
 
+    // Snoop helpers — set/clear currentKey from a focus-scope-level Keys
+    // handler so the debug overlay can display non-Meta keyboard input
+    // (arrow keys, Enter, Esc, etc.) that the daemon never sees.
+    // Keys that Hyprland intercepts globally (Super_L) come in via the
+    // socket `keys:` events instead and are already handled above.
+    function noteKeySnoop(name) {
+        if (name)
+            root.currentKey = name;
+    }
+    function clearKeySnoop(name) {
+        if (root.currentKey === name)
+            root.currentKey = "";
+    }
+
+    function describeKey(key, text) {
+        switch (key) {
+        case Qt.Key_Up:
+            return "Up";
+        case Qt.Key_Down:
+            return "Down";
+        case Qt.Key_Left:
+            return "Left";
+        case Qt.Key_Right:
+            return "Right";
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            return "Enter";
+        case Qt.Key_Escape:
+            return "Esc";
+        case Qt.Key_Space:
+            return "Space";
+        case Qt.Key_Tab:
+            return "Tab";
+        case Qt.Key_Backspace:
+            return "Backspace";
+        case Qt.Key_Home:
+            return "Home";
+        case Qt.Key_End:
+            return "End";
+        case Qt.Key_PageUp:
+            return "PgUp";
+        case Qt.Key_PageDown:
+            return "PgDn";
+        case Qt.Key_HomePage:
+            return "HomePage";
+        }
+        if (text && text.length)
+            return text;
+        return "";
+    }
+
     Timer {
         id: metaHoldTimer
         interval: root.metaHoldThreshold
@@ -135,6 +186,8 @@ Item {
                     root.homeHeld();
                 else if (line.startsWith("buttons:"))
                     root.currentControllerCombo = line.substring(8).trim();
+                else if (line.startsWith("keys:"))
+                    root.currentKey = line.substring(5).trim();
             }
         }
         onExited: {
