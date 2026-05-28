@@ -5,7 +5,7 @@ FocusScope {
     id: root
 
     property string shellState: ""
-    property var targets: []
+    property var targets: StreamProviders.active.targets
     property var runningWindows: []
     property string runningAppClass: ""
     property bool overlayDrawerOpen: false
