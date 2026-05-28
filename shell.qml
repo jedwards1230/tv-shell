@@ -250,6 +250,16 @@ ShellRoot {
                     if (root.state === "idle")
                         avController.wake();
                 }
+                onHomeKeyHeld: {
+                    if (root.state === "appRunning") {
+                        root.returnToShell();
+                    } else if (root.state === "idle") {
+                        layout.navDrawer.opened = false;
+                        layout.settingsPanel.visible = false;
+                        layout.notificationCenter.opened = false;
+                        layout.focusHome();
+                    }
+                }
                 onReturnToShellRequested: root.returnToShell()
                 onOverlayDrawerClosed: {
                     root.overlayDrawerOpen = false;

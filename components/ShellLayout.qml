@@ -25,30 +25,73 @@ FocusScope {
     signal appFocusRequested(string windowClass)
     signal appCloseRequested(string windowClass)
     signal homeKeyPressed
+    signal homeKeyHeld
     signal returnToShellRequested
     signal overlayDrawerClosed
 
     // Session conflict dialog — driven by StreamManager signals
     property alias sessionDialog: sessionDialog
 
+    // Meta-key tap-vs-hold tracking. The Meta/Super key on a keyboard
+    // mirrors the controller Home button: tap = drawer, hold = home.
+    property bool _metaPressed: false
+    property bool _metaHeld: false
+
     function focusHome() {
         homeFocusTimer.restart();
     }
 
+    function _handleHomeTap() {
+        root.homeKeyPressed();
+        if (notificationCenter.opened) {
+            notificationCenter.opened = false;
+            homeFocusTimer.restart();
+        } else {
+            navDrawer.opened = !navDrawer.opened;
+            if (navDrawer.opened)
+                navDrawer.forceActiveFocus();
+            else
+                homeFocusTimer.restart();
+        }
+    }
+
+    function _isMetaKey(key) {
+        return key === Qt.Key_Meta || key === Qt.Key_Super_L || key === Qt.Key_Super_R;
+    }
+
     Keys.onPressed: event => {
         if (event.key === Qt.Key_HomePage) {
-            root.homeKeyPressed();
-            if (notificationCenter.opened) {
-                notificationCenter.opened = false;
-                homeFocusTimer.restart();
-            } else {
-                navDrawer.opened = !navDrawer.opened;
-                if (navDrawer.opened)
-                    navDrawer.forceActiveFocus();
-                else
-                    homeFocusTimer.restart();
-            }
+            _handleHomeTap();
             event.accepted = true;
+        } else if (_isMetaKey(event.key) && !event.isAutoRepeat) {
+            root._metaPressed = true;
+            root._metaHeld = false;
+            metaHoldTimer.restart();
+            event.accepted = true;
+        }
+    }
+
+    Keys.onReleased: event => {
+        if (_isMetaKey(event.key) && !event.isAutoRepeat) {
+            if (root._metaPressed && !root._metaHeld) {
+                metaHoldTimer.stop();
+                _handleHomeTap();
+            }
+            root._metaPressed = false;
+            root._metaHeld = false;
+            event.accepted = true;
+        }
+    }
+
+    Timer {
+        id: metaHoldTimer
+        interval: 400
+        repeat: false
+        onTriggered: {
+            if (root._metaPressed) {
+                root._metaHeld = true;
+                root.homeKeyHeld();
+            }
         }
     }
 
