@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-# Ensure XDG runtime dir exists with correct perms
+# Ensure XDG runtime dir exists with correct perms (Wayland requires 0700)
 mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
 
 # Symlink game-shell as quickshell config
 ln -sfn /opt/game-shell "$HOME/.config/quickshell/game-shell"
@@ -28,7 +29,7 @@ for i in $(seq 1 30); do
 done
 
 # Export Hyprland instance signature for hyprctl
-export HYPRLAND_INSTANCE_SIGNATURE=$(ls "$XDG_RUNTIME_DIR/hypr/" 2>/dev/null | head -1)
+export HYPRLAND_INSTANCE_SIGNATURE=$(ls "$XDG_RUNTIME_DIR/hypr/" 2>/dev/null | tail -1)
 
 # Start wayvnc
 wayvnc --output=WL-1 0.0.0.0 5900 &

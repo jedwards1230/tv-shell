@@ -4,7 +4,7 @@ FROM archlinux:base-devel
 RUN pacman -Syu --noconfirm && \
     pacman -S --noconfirm \
       hyprland wayvnc grim \
-      python python-websockify python-numpy \
+      python python-numpy \
       qt6-base qt6-declarative qt6-wayland qt6-shadertools qt6-svg \
       cmake ninja git jemalloc pipewire pam cli11 \
       wayland wayland-protocols libdrm mesa \
@@ -12,8 +12,9 @@ RUN pacman -Syu --noconfirm && \
       ttf-dejavu noto-fonts-emoji && \
     pacman -Scc --noconfirm
 
-# noVNC web viewer
-RUN git clone --depth 1 https://github.com/novnc/noVNC.git /opt/novnc && \
+# noVNC web viewer + websockify
+RUN pip install --break-system-packages websockify && \
+    git clone --depth 1 https://github.com/novnc/noVNC.git /opt/novnc && \
     rm -rf /opt/novnc/.git
 
 # Build Quickshell from source
@@ -31,8 +32,8 @@ RUN git clone https://github.com/outfoxxed/quickshell.git /tmp/quickshell-src &&
 
 # Runtime user + XDG runtime dir
 RUN useradd -m -s /bin/bash -u 1000 dev && \
-    mkdir -p /run/user/1000 && chown dev:dev /run/user/1000 && \
-    mkdir -p /home/dev/.config/quickshell
+    mkdir -p /run/user/1000 && chmod 0700 /run/user/1000 && chown dev:dev /run/user/1000 && \
+    mkdir -p /home/dev/.config/quickshell && chown dev:dev /home/dev/.config/quickshell
 
 COPY dev/stubs/ /usr/local/bin/stubs/
 COPY dev/entrypoint.sh dev/restart.sh /usr/local/bin/

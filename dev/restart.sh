@@ -1,7 +1,7 @@
 #!/bin/bash
 # Restart Quickshell inside the dev container and check for errors.
 
-SIG=$(ls "$XDG_RUNTIME_DIR/hypr/" 2>/dev/null | head -1)
+SIG=$(ls "$XDG_RUNTIME_DIR/hypr/" 2>/dev/null | tail -1)
 export HYPRLAND_INSTANCE_SIGNATURE="$SIG"
 
 # Kill existing Quickshell

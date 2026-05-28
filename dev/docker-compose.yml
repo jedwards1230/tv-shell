@@ -1,5 +1,6 @@
 services:
   game-shell-dev:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: dev/Dockerfile
