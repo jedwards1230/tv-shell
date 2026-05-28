@@ -3,7 +3,10 @@ import QtQuick
 
 // IPC protocol: see docs/IPC_PROTOCOL.md
 // Commands used: grab, release, subscribe
-// Events handled: combo:force-quit, combo:end-session, combo:suspend-stream, input-mode:*, controller-wake, controller-disconnected, home-press, combo:home-hold
+// Events handled: combo:force-quit, combo:end-session, combo:suspend-stream, input-mode:*, controller-wake, controller-disconnected, home-press, combo:home-hold, buttons:*
+//
+// Also owns keyboard Meta/Super key tap-vs-hold detection so the keyboard
+// and controller Home button feed the same homePressed/homeHeld signals.
 Item {
     id: root
 
@@ -16,6 +19,16 @@ Item {
     signal homePressed
     signal homeHeld
 
+    // Live state for debug overlays. Updated from socket `buttons:` lines
+    // (controller) and from handleMetaPress/Release (keyboard).
+    property string currentControllerCombo: ""
+    property string currentKey: ""
+
+    // Meta key tap-vs-hold tracking.
+    property int metaHoldThreshold: 400
+    property bool _metaPressed: false
+    property bool _metaHeld: false
+
     function grab() {
         inputGrab.running = true;
     }
@@ -27,6 +40,55 @@ Item {
     }
     function endSession() {
         endSessionProc.running = true;
+    }
+
+    function isMetaKey(key) {
+        return key === Qt.Key_Meta || key === Qt.Key_Super_L || key === Qt.Key_Super_R;
+    }
+
+    // Forwarded from a focused FocusScope on Meta key press. Auto-repeat
+    // events are ignored so holding doesn't keep restarting the hold timer.
+    function handleMetaPress(isAutoRepeat) {
+        if (isAutoRepeat)
+            return;
+        root._metaPressed = true;
+        root._metaHeld = false;
+        root.currentKey = "Meta";
+        metaHoldTimer.restart();
+    }
+
+    // Forwarded from a focused FocusScope on Meta key release. Fires
+    // homePressed if the timer hasn't elapsed (tap); otherwise the hold
+    // signal was already emitted by the timer.
+    function handleMetaRelease(isAutoRepeat) {
+        if (isAutoRepeat)
+            return;
+        if (root._metaPressed && !root._metaHeld) {
+            metaHoldTimer.stop();
+            root.homePressed();
+        }
+        root._metaPressed = false;
+        root._metaHeld = false;
+        root.currentKey = "";
+    }
+
+    // For Qt.Key_HomePage — emitted by multimedia keyboards and the
+    // gamepad daemon's controller-Home uinput emission. Instant tap;
+    // hold semantics for controller come via the socket combo:home-hold.
+    function simulateHomeTap() {
+        root.homePressed();
+    }
+
+    Timer {
+        id: metaHoldTimer
+        interval: root.metaHoldThreshold
+        repeat: false
+        onTriggered: {
+            if (root._metaPressed) {
+                root._metaHeld = true;
+                root.homeHeld();
+            }
+        }
     }
 
     Process {
@@ -71,6 +133,8 @@ Item {
                     root.homePressed();
                 else if (line === "combo:home-hold")
                     root.homeHeld();
+                else if (line.startsWith("buttons:"))
+                    root.currentControllerCombo = line.substring(8).trim();
             }
         }
         onExited: {

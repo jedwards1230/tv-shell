@@ -90,12 +90,22 @@ ShellRoot {
                 avController.wake();
         }
         onHomePressed: {
-            if (root.state === "appRunning")
+            if (root.state === "appRunning") {
                 root.overlayDrawerOpen = !root.overlayDrawerOpen;
+            } else if (root.state === "idle") {
+                avController.wake();
+                layout.handleHomeTap();
+            }
         }
         onHomeHeld: {
-            if (root.state === "appRunning")
+            if (root.state === "appRunning") {
                 root.returnToShell();
+            } else if (root.state === "idle") {
+                layout.navDrawer.opened = false;
+                layout.settingsPanel.visible = false;
+                layout.notificationCenter.opened = false;
+                layout.focusHome();
+            }
         }
     }
 
@@ -222,6 +232,7 @@ ShellRoot {
             Components.ShellLayout {
                 id: layout
                 anchors.fill: parent
+                inputManager: inputManager
                 Component.onCompleted: {
                     root._layout = layout;
                     root._layout.focusHome();
@@ -246,20 +257,6 @@ ShellRoot {
                 onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
                 onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
                 onAppCloseRequested: windowClass => appLifecycle.closeAppByClass(windowClass)
-                onHomeKeyPressed: {
-                    if (root.state === "idle")
-                        avController.wake();
-                }
-                onHomeKeyHeld: {
-                    if (root.state === "appRunning") {
-                        root.returnToShell();
-                    } else if (root.state === "idle") {
-                        layout.navDrawer.opened = false;
-                        layout.settingsPanel.visible = false;
-                        layout.notificationCenter.opened = false;
-                        layout.focusHome();
-                    }
-                }
                 onReturnToShellRequested: root.returnToShell()
                 onOverlayDrawerClosed: {
                     root.overlayDrawerOpen = false;

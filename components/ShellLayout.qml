@@ -24,25 +24,24 @@ FocusScope {
     signal appLaunchRequested(var app)
     signal appFocusRequested(string windowClass)
     signal appCloseRequested(string windowClass)
-    signal homeKeyPressed
-    signal homeKeyHeld
     signal returnToShellRequested
     signal overlayDrawerClosed
 
+    // Owns tap/hold detection for the keyboard Meta/Super key and exposes
+    // shared debug state. Set from shell.qml.
+    property var inputManager: null
+
     // Session conflict dialog — driven by StreamManager signals
     property alias sessionDialog: sessionDialog
-
-    // Meta-key tap-vs-hold tracking. The Meta/Super key on a keyboard
-    // mirrors the controller Home button: tap = drawer, hold = home.
-    property bool _metaPressed: false
-    property bool _metaHeld: false
 
     function focusHome() {
         homeFocusTimer.restart();
     }
 
-    function _handleHomeTap() {
-        root.homeKeyPressed();
+    // Drawer-toggle behavior for the home-tap action (controller Home tap,
+    // Meta key tap, Qt.Key_HomePage). Public so shell.qml's onHomePressed
+    // handler can call it from idle state.
+    function handleHomeTap() {
         if (notificationCenter.opened) {
             notificationCenter.opened = false;
             homeFocusTimer.restart();
@@ -55,43 +54,21 @@ FocusScope {
         }
     }
 
-    function _isMetaKey(key) {
-        return key === Qt.Key_Meta || key === Qt.Key_Super_L || key === Qt.Key_Super_R;
-    }
-
     Keys.onPressed: event => {
         if (event.key === Qt.Key_HomePage) {
-            _handleHomeTap();
+            if (root.inputManager)
+                root.inputManager.simulateHomeTap();
             event.accepted = true;
-        } else if (_isMetaKey(event.key) && !event.isAutoRepeat) {
-            root._metaPressed = true;
-            root._metaHeld = false;
-            metaHoldTimer.restart();
+        } else if (root.inputManager && root.inputManager.isMetaKey(event.key)) {
+            root.inputManager.handleMetaPress(event.isAutoRepeat);
             event.accepted = true;
         }
     }
 
     Keys.onReleased: event => {
-        if (_isMetaKey(event.key) && !event.isAutoRepeat) {
-            if (root._metaPressed && !root._metaHeld) {
-                metaHoldTimer.stop();
-                _handleHomeTap();
-            }
-            root._metaPressed = false;
-            root._metaHeld = false;
+        if (root.inputManager && root.inputManager.isMetaKey(event.key)) {
+            root.inputManager.handleMetaRelease(event.isAutoRepeat);
             event.accepted = true;
-        }
-    }
-
-    Timer {
-        id: metaHoldTimer
-        interval: 400
-        repeat: false
-        onTriggered: {
-            if (root._metaPressed) {
-                root._metaHeld = true;
-                root.homeKeyHeld();
-            }
         }
     }
 
@@ -264,68 +241,49 @@ FocusScope {
     }
 
     // --- Debug Input Overlay ---
-    // IPC: subscribes to buttons:* events for real-time display (see docs/IPC_PROTOCOL.md)
+    // Reads live state from InputManager (controller combos via socket
+    // buttons:* events, keyboard via Meta key tap/hold handlers). No own
+    // socket subscription — InputManager is the single source of truth.
     Item {
         id: debugOverlay
         anchors.fill: parent
         visible: Theme.controllerDebug
         z: 100
 
-        property string currentCombo: ""
-        property string displayCombo: ""
-        property bool showingCombo: false
+        // Last non-empty input — kept on screen briefly after release so a
+        // quick tap is still readable.
+        property string displayInput: ""
+        property bool showingInput: false
 
-        Process {
-            id: debugSubscribe
-            command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
-            stdout: SplitParser {
-                onRead: line => {
-                    if (line === "subscribed")
-                        return;
-                    if (line.startsWith("buttons:")) {
-                        let combo = line.substring(8).trim();
-                        debugOverlay.currentCombo = combo;
-                        if (combo !== "") {
-                            debugOverlay.displayCombo = combo;
-                            debugOverlay.showingCombo = true;
-                            comboFadeTimer.restart();
-                        }
-                    }
-                }
-            }
-            onExited: {
-                if (debugOverlay.visible)
-                    reconnectDebug.start();
+        readonly property string controllerCombo: root.inputManager ? root.inputManager.currentControllerCombo : ""
+        readonly property string keyName: root.inputManager ? root.inputManager.currentKey : ""
+        readonly property string currentInput: {
+            if (controllerCombo !== "" && keyName !== "")
+                return controllerCombo + " + " + keyName;
+            return controllerCombo !== "" ? controllerCombo : keyName;
+        }
+
+        onCurrentInputChanged: {
+            if (currentInput !== "") {
+                displayInput = currentInput;
+                showingInput = true;
+                inputFadeTimer.restart();
             }
         }
 
         Timer {
-            id: reconnectDebug
-            interval: 2000
-            onTriggered: {
-                if (debugOverlay.visible)
-                    debugSubscribe.running = true;
-            }
-        }
-
-        Timer {
-            id: comboFadeTimer
+            id: inputFadeTimer
             interval: 1500
             onTriggered: {
-                if (debugOverlay.currentCombo === "")
-                    debugOverlay.showingCombo = false;
+                if (debugOverlay.currentInput === "")
+                    debugOverlay.showingInput = false;
             }
         }
 
         onVisibleChanged: {
             if (!visible) {
-                debugSubscribe.running = false;
-                reconnectDebug.running = false;
-                showingCombo = false;
-                currentCombo = "";
-                displayCombo = "";
-            } else {
-                debugSubscribe.running = true;
+                showingInput = false;
+                displayInput = "";
             }
         }
 
@@ -340,8 +298,8 @@ FocusScope {
             color: Qt.rgba(0, 0, 0, 0.8)
             border.width: 2
             border.color: Theme.ember
-            visible: debugOverlay.showingCombo
-            opacity: debugOverlay.currentCombo !== "" ? 1.0 : 0.4
+            visible: debugOverlay.showingInput
+            opacity: debugOverlay.currentInput !== "" ? 1.0 : 0.4
 
             Behavior on opacity {
                 NumberAnimation {
@@ -352,7 +310,7 @@ FocusScope {
             Text {
                 id: comboText
                 anchors.centerIn: parent
-                text: debugOverlay.displayCombo
+                text: debugOverlay.displayInput
                 font.pixelSize: Theme.fontBody
                 font.bold: true
                 color: Theme.textOnDark
