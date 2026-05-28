@@ -7,6 +7,9 @@ RUN pacman -Syu --noconfirm && \
       python python-pip python-numpy \
       qt6-base qt6-declarative qt6-wayland qt6-shadertools qt6-svg \
       cmake ninja git jemalloc pipewire pam cli11 \
+      vulkan-headers vulkan-icd-loader \
+      libxkbcommon libxkbcommon-x11 \
+      xcb-util-cursor xcb-util-keysyms xcb-util-image xcb-util-renderutil xcb-util-wm \
       wayland wayland-protocols libdrm mesa \
       dbus python-yaml \
       ttf-dejavu noto-fonts-emoji && \
