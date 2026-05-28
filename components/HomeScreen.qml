@@ -7,6 +7,10 @@ FocusScope {
     property var targets: []
     property string shellState: "idle"
 
+    // False when the no-streaming provider is active — collapses all streaming
+    // rows and removes them from the focus chain (pure app-launcher mode).
+    readonly property bool _streamingActive: StreamProviders.active.providerId !== "none"
+
     property var runningWindows: []
 
     signal streamRequested(var target)
@@ -283,6 +287,8 @@ FocusScope {
                     scrollView.ensureVisible(this)
                 nextRow: {
                     var _ = appViewRepeater.count;
+                    if (!root._streamingActive)
+                        return appsRow;
                     if (Theme.streamingViewMode === "servers")
                         return moonlightRow;
                     return root._appViewRowItem(0) || appsRow;
@@ -306,7 +312,7 @@ FocusScope {
 
             // Server view: single "Moonlight" row with one card per server
             Text {
-                visible: Theme.streamingViewMode === "servers"
+                visible: root._streamingActive && Theme.streamingViewMode === "servers"
                 text: "Moonlight"
                 font.pixelSize: Theme.fontTitle
                 font.bold: true
@@ -315,11 +321,11 @@ FocusScope {
 
             NavigableRow {
                 id: moonlightRow
-                visible: Theme.streamingViewMode === "servers"
+                visible: root._streamingActive && Theme.streamingViewMode === "servers"
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
-                focus: Theme.streamingViewMode === "servers" && !recentsRow.visible && !runningRow.visible
+                focus: root._streamingActive && Theme.streamingViewMode === "servers" && !recentsRow.visible && !runningRow.visible
                 previousRow: recentsRow
                 nextRow: appsRow
                 onActiveFocusChanged: if (activeFocus)
@@ -370,7 +376,7 @@ FocusScope {
             // App view: one row per host, each card is an available app
             Repeater {
                 id: appViewRepeater
-                model: Theme.streamingViewMode === "apps" ? root._appViewRows : []
+                model: root._streamingActive && Theme.streamingViewMode === "apps" ? root._appViewRows : []
 
                 delegate: ColumnLayout {
                     id: appViewRowDelegate
@@ -506,6 +512,8 @@ FocusScope {
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
                 previousRow: {
+                    if (!root._streamingActive)
+                        return recentsRow;
                     if (Theme.streamingViewMode === "servers")
                         return moonlightRow;
                     return root._appViewRowItem(appViewRepeater.count - 1) || recentsRow;
