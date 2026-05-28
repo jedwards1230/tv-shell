@@ -250,9 +250,13 @@ class InputDaemon:
         # Pending tap/hold timers for keys routed through the home-press
         # / combo:home-hold flow (see ROUTED_HOME_KEYS), and whether each
         # timer has already fired its hold event before the corresponding
-        # keyup arrived.
+        # keyup arrived. `_routed_chord_seen` tracks whether any other
+        # key was pressed during the hold — if so, treat the release as
+        # a chord cancel, not a tap, so e.g. Super+Tab doesn't toggle
+        # the drawer.
         self._routed_hold_tasks: dict[str, asyncio.Task] = {}
         self._routed_hold_fired: dict[str, bool] = {}
+        self._routed_chord_seen: dict[str, bool] = {}
 
         # Currently held keyboard keys (across all watched keyboards),
         # used to emit `keys:<held>` debug events.
@@ -370,11 +374,17 @@ class InputDaemon:
                 # controller Home button. Hyprland's `bindr` doesn't fire
                 # reliably for bare modifier-key releases, so we drive
                 # this from evdev where the keyup is observable directly.
+                # Any other key down while the hold is pending counts as
+                # a chord (e.g. Super+Tab) and suppresses the would-be
+                # tap on the eventual Meta release.
                 if event.code in (ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA):
                     if event.value == 1:
                         self._start_routed_hold("meta")
                     elif event.value == 0:
                         await self._resolve_routed_release("meta")
+                elif event.value == 1 and self._routed_hold_tasks:
+                    for routed_name in self._routed_hold_tasks:
+                        self._routed_chord_seen[routed_name] = True
                 changed = False
                 if event.value == 1 and event.code not in self.kbd_held_keys:
                     self.kbd_held_keys.add(event.code)
@@ -838,12 +848,14 @@ class InputDaemon:
 
         The matching `_resolve_routed_release` call decides whether to
         broadcast `home-press` (tap) or treat the keyup as a no-op
-        because the hold timer already fired.
+        because the hold timer already fired, or because a chord was
+        detected (another key pressed during the hold).
         """
         prev = self._routed_hold_tasks.get(name)
         if prev and not prev.done():
             prev.cancel()
         self._routed_hold_fired[name] = False
+        self._routed_chord_seen[name] = False
         if name in ROUTED_HOME_KEYS:
             self._routed_hold_tasks[name] = asyncio.create_task(
                 self._routed_hold_timer(name)
@@ -852,9 +864,10 @@ class InputDaemon:
     async def _resolve_routed_release(self, name: str):
         task = self._routed_hold_tasks.pop(name, None)
         fired = self._routed_hold_fired.pop(name, False)
+        chord = self._routed_chord_seen.pop(name, False)
         if task and not task.done():
             task.cancel()
-        if name in ROUTED_HOME_KEYS and not fired:
+        if name in ROUTED_HOME_KEYS and not fired and not chord:
             log.info("Routed %s tap detected", name)
             await self._notify_subscribers("home-press")
 
