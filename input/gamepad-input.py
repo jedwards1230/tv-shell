@@ -5,7 +5,7 @@ Grabs a gamepad exclusively via EVIOCGRAB and emits keyboard events via uinput.
 Listens on a unix socket for grab/release/subscribe commands from the shell.
 
 IPC protocol: see docs/IPC_PROTOCOL.md
-Commands: grab, release, status, subscribe, get-bindings, set-binding, capture-next, capture-cancel, kbd-log, inject
+Commands: grab, release, status, subscribe, get-bindings, set-binding, capture-next, capture-cancel, kbd-log
 Events (to subscribers): controller-wake, controller-disconnected, home-press, combo:*, input-mode:*, buttons:*, keys:*
 """
 
@@ -150,13 +150,13 @@ def _kbd_display_name(code: int) -> str:
 HOME_HOLD_KEYS = {ecodes.BTN_MODE}
 HOME_HOLD_SECS = 2.0
 
-# Names accepted by the `inject keydown:<name>` socket command. For
-# every name in this set the daemon runs its own tap-vs-hold timer
-# mirroring BTN_MODE — broadcasts `home-press` on tap (release before
-# HOME_HOLD_SECS) and `combo:home-hold` if the timer elapses first.
-# This lets external sources (e.g. a Hyprland bind on Super_L) feed
-# the same routing the controller Home button uses.
-INJECT_HOME_NAMES = {"meta"}
+# Keys (by lowercased name) that the keyboard read loop routes through
+# the same tap-vs-hold pattern BTN_MODE uses — broadcasts `home-press`
+# on tap (release before HOME_HOLD_SECS) or `combo:home-hold` if the
+# timer elapses first. Currently just the Super/Meta key, which is
+# claimed at the compositor by a Hyprland bind so focused apps don't
+# see it but is still observable here via evdev.
+ROUTED_HOME_KEYS = {"meta"}
 
 # Left analog stick configuration
 STICK_DEADZONE = 0.30  # 30% of half-range from center before triggering
@@ -247,11 +247,12 @@ class InputDaemon:
         # Home button hold detection
         self._home_hold_task: asyncio.Task | None = None
 
-        # Pending tap/hold timers for externally-injected keys (one per
-        # name in INJECT_HOME_NAMES), and whether each timer has already
-        # fired its hold event before the corresponding keyup arrived.
-        self._inject_hold_tasks: dict[str, asyncio.Task] = {}
-        self._inject_hold_fired: dict[str, bool] = {}
+        # Pending tap/hold timers for keys routed through the home-press
+        # / combo:home-hold flow (see ROUTED_HOME_KEYS), and whether each
+        # timer has already fired its hold event before the corresponding
+        # keyup arrived.
+        self._routed_hold_tasks: dict[str, asyncio.Task] = {}
+        self._routed_hold_fired: dict[str, bool] = {}
 
         # Currently held keyboard keys (across all watched keyboards),
         # used to emit `keys:<held>` debug events.
@@ -364,15 +365,16 @@ class InputDaemon:
                         event.code, raw, display, source,
                     )
                 # Route Super_L / Super_R through the same tap-vs-hold
-                # logic as the `inject` socket command. Hyprland's `bindr`
-                # doesn't fire reliably for bare modifier-key releases,
-                # so we can't rely on a Hyprland-side keyup to terminate
-                # the timer — but evdev sees the release directly here.
+                # pattern BTN_MODE uses, so the keyboard Meta key feeds
+                # `home-press` / `combo:home-hold` exactly like the
+                # controller Home button. Hyprland's `bindr` doesn't fire
+                # reliably for bare modifier-key releases, so we drive
+                # this from evdev where the keyup is observable directly.
                 if event.code in (ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA):
                     if event.value == 1:
-                        self._handle_inject_keydown("meta")
+                        self._start_routed_hold("meta")
                     elif event.value == 0:
-                        await self._handle_inject_keyup("meta")
+                        await self._resolve_routed_release("meta")
                 changed = False
                 if event.value == 1 and event.code not in self.kbd_held_keys:
                     self.kbd_held_keys.add(event.code)
@@ -831,37 +833,36 @@ class InputDaemon:
         except asyncio.CancelledError:
             pass
 
-    def _handle_inject_keydown(self, name: str):
-        """Start tap/hold tracking for a key forwarded via `inject`.
+    def _start_routed_hold(self, name: str):
+        """Start the BTN_MODE-style tap/hold timer for a routed key.
 
-        Mirrors the BTN_MODE pattern: we just start a hold timer here;
-        whether to broadcast `home-press` (tap) or treat the matching
-        keyup as a no-op (because the timer already fired hold) is
-        decided in `_handle_inject_keyup`.
+        The matching `_resolve_routed_release` call decides whether to
+        broadcast `home-press` (tap) or treat the keyup as a no-op
+        because the hold timer already fired.
         """
-        prev = self._inject_hold_tasks.get(name)
+        prev = self._routed_hold_tasks.get(name)
         if prev and not prev.done():
             prev.cancel()
-        self._inject_hold_fired[name] = False
-        if name in INJECT_HOME_NAMES:
-            self._inject_hold_tasks[name] = asyncio.create_task(
-                self._inject_home_hold_timer(name)
+        self._routed_hold_fired[name] = False
+        if name in ROUTED_HOME_KEYS:
+            self._routed_hold_tasks[name] = asyncio.create_task(
+                self._routed_hold_timer(name)
             )
 
-    async def _handle_inject_keyup(self, name: str):
-        task = self._inject_hold_tasks.pop(name, None)
-        fired = self._inject_hold_fired.pop(name, False)
+    async def _resolve_routed_release(self, name: str):
+        task = self._routed_hold_tasks.pop(name, None)
+        fired = self._routed_hold_fired.pop(name, False)
         if task and not task.done():
             task.cancel()
-        if name in INJECT_HOME_NAMES and not fired:
-            log.info("Injected %s tap detected", name)
+        if name in ROUTED_HOME_KEYS and not fired:
+            log.info("Routed %s tap detected", name)
             await self._notify_subscribers("home-press")
 
-    async def _inject_home_hold_timer(self, name: str):
+    async def _routed_hold_timer(self, name: str):
         try:
             await asyncio.sleep(HOME_HOLD_SECS)
-            self._inject_hold_fired[name] = True
-            log.info("Injected %s hold detected", name)
+            self._routed_hold_fired[name] = True
+            log.info("Routed %s hold detected", name)
             await self._notify_subscribers("combo:home-hold")
         except asyncio.CancelledError:
             pass
@@ -1057,16 +1058,6 @@ class InputDaemon:
                     self._kbd_log_enabled = False
                     log.info("keyboard logging disabled")
                     writer.write(b"ok\n")
-                elif cmd.startswith("inject "):
-                    arg = cmd[len("inject "):].strip()
-                    if arg.startswith("keydown:"):
-                        self._handle_inject_keydown(arg[len("keydown:"):].lower())
-                        writer.write(b"ok\n")
-                    elif arg.startswith("keyup:"):
-                        await self._handle_inject_keyup(arg[len("keyup:"):].lower())
-                        writer.write(b"ok\n")
-                    else:
-                        writer.write(b"error:usage: inject keydown:<name>|keyup:<name>\n")
                 elif cmd == "subscribe":
                     self.subscribers.append(writer)
                     writer.write(b"subscribed\n")
