@@ -35,7 +35,12 @@ DEFAULT_BINDINGS = {
     "back": (ecodes.BTN_EAST, ecodes.KEY_ESC),
     "altSelect": (ecodes.BTN_NORTH, ecodes.KEY_TAB),
     "confirm": (ecodes.BTN_START, ecodes.KEY_ENTER),
-    "drawer": (ecodes.BTN_MODE, ecodes.KEY_HOMEPAGE),
+    # BTN_MODE (Home) is intentionally NOT in this table — it's
+    # handled directly in `_handle_event` to broadcast `home-press`
+    # (tap) or `combo:home-hold` on the socket. Mapping it to a
+    # uinput key here would leak the keycode to whatever app has
+    # keyboard focus (browsers, for example, treat KEY_HOMEPAGE as
+    # "go to home page" and refresh).
 }
 
 REMAPPABLE_BUTTONS = {
