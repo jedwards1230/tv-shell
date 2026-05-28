@@ -31,8 +31,8 @@ done
 # Export Hyprland instance signature for hyprctl
 export HYPRLAND_INSTANCE_SIGNATURE=$(ls "$XDG_RUNTIME_DIR/hypr/" 2>/dev/null | tail -1)
 
-# Start wayvnc
-wayvnc --output=WL-1 0.0.0.0 5900 &
+# Start wayvnc — bind to whichever Hyprland output is active
+wayvnc 0.0.0.0 5900 &
 WAYVNC_PID=$!
 
 # Start noVNC websockify bridge
