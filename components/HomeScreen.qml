@@ -20,6 +20,7 @@ FocusScope {
     signal appCloseRequested(string windowClass)
     signal settingsRequested
     signal notificationCenterRequested
+    signal powerRequested
 
     onActiveFocusChanged: {
         if (activeFocus)
@@ -196,11 +197,12 @@ FocusScope {
                 }
 
                 // Status icons (right side)
-                StatusIcons {
+                QuickActions {
                     id: statusIcons
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
                     onSettingsRequested: root.settingsRequested()
                     onNotificationCenterRequested: root.notificationCenterRequested()
+                    onPowerRequested: root.powerRequested()
                     onFocusDownRequested: root._focusFirstVisibleRow()
                     onActiveFocusChanged: if (activeFocus)
                         scrollView.contentY = 0

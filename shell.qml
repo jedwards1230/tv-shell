@@ -88,6 +88,7 @@ ShellRoot {
                 root._layout.navDrawer.opened = false;
                 root._layout.settingsPanel.visible = false;
                 root._layout.notificationCenter.opened = false;
+                root._layout.powerOverlay.opened = false;
                 root._layout.focusHome();
             }
         }
@@ -170,6 +171,7 @@ ShellRoot {
             root._layout.navDrawer.opened = false;
             root._layout.settingsPanel.visible = false;
             root._layout.notificationCenter.opened = false;
+            root._layout.powerOverlay.opened = false;
             root._layout.focusHome();
         }
     }
@@ -180,6 +182,7 @@ ShellRoot {
         if (root._layout) {
             root._layout.overlay.hide();
             root._layout.settingsPanel.visible = false;
+            root._layout.powerOverlay.opened = false;
             root._layout.focusHome();
         }
     }

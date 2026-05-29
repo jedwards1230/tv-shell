@@ -18,6 +18,7 @@ FocusScope {
     property alias navDrawer: navDrawer
     property alias overlay: overlay
     property alias notificationCenter: notificationCenter
+    property alias powerOverlay: powerOverlay
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -40,7 +41,10 @@ FocusScope {
     // and routed through the daemon), and any future "home tap" surface
     // all converge here via the home-press socket event.
     function handleHomeTap() {
-        if (notificationCenter.opened) {
+        if (powerOverlay.opened) {
+            powerOverlay.opened = false;
+            homeFocusTimer.restart();
+        } else if (notificationCenter.opened) {
             notificationCenter.opened = false;
             homeFocusTimer.restart();
         } else {
@@ -58,7 +62,7 @@ FocusScope {
         visible: root.shellState === "idle"
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened
+        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened
 
         runningWindows: root.runningWindows
 
@@ -75,6 +79,10 @@ FocusScope {
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
         }
+        onPowerRequested: {
+            powerOverlay.opened = true;
+            powerOverlay.forceActiveFocus();
+        }
     }
 
     SettingsPanel {
@@ -90,7 +98,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -119,6 +127,11 @@ FocusScope {
             navDrawer.opened = false;
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
+        }
+        onPowerRequested: {
+            navDrawer.opened = false;
+            powerOverlay.opened = true;
+            powerOverlay.forceActiveFocus();
         }
         onHomeSelected: {
             navDrawer.opened = false;
@@ -157,6 +170,16 @@ FocusScope {
         }
     }
 
+    // === Power Overlay ===
+    PowerOverlay {
+        id: powerOverlay
+        z: 60
+        onCancelled: {
+            powerOverlay.opened = false;
+            homeFocusTimer.restart();
+        }
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
@@ -185,6 +208,11 @@ FocusScope {
                 root.returnToShellRequested();
                 notificationCenter.opened = true;
                 notificationCenter.forceActiveFocus();
+            }
+            onPowerRequested: {
+                root.returnToShellRequested();
+                powerOverlay.opened = true;
+                powerOverlay.forceActiveFocus();
             }
             onClosed: {
                 root.overlayDrawerClosed();
@@ -216,6 +244,14 @@ FocusScope {
         target: errorLogViewer
         function onOpenedChanged() {
             if (!errorLogViewer.opened)
+                homeFocusTimer.restart();
+        }
+    }
+
+    Connections {
+        target: powerOverlay
+        function onOpenedChanged() {
+            if (!powerOverlay.opened)
                 homeFocusTimer.restart();
         }
     }
