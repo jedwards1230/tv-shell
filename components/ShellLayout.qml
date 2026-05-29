@@ -41,7 +41,10 @@ FocusScope {
     // and routed through the daemon), and any future "home tap" surface
     // all converge here via the home-press socket event.
     function handleHomeTap() {
-        if (notificationCenter.opened) {
+        if (powerOverlay.opened) {
+            powerOverlay.opened = false;
+            homeFocusTimer.restart();
+        } else if (notificationCenter.opened) {
             notificationCenter.opened = false;
             homeFocusTimer.restart();
         } else {

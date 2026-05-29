@@ -88,6 +88,7 @@ ShellRoot {
                 root._layout.navDrawer.opened = false;
                 root._layout.settingsPanel.visible = false;
                 root._layout.notificationCenter.opened = false;
+                root._layout.powerOverlay.opened = false;
                 root._layout.focusHome();
             }
         }
