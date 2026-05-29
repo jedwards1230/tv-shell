@@ -40,6 +40,7 @@ StreamManager 1.0 StreamManager.qml
 ShellLayout 1.0 ShellLayout.qml
 singleton NotificationManager 1.0 NotificationManager.qml
 singleton NetworkManager 1.0 NetworkManager.qml
+singleton IconTheme 1.0 IconTheme.qml
 NotificationToast 1.0 NotificationToast.qml
 NotificationStack 1.0 NotificationStack.qml
 singleton ErrorLog 1.0 ErrorLog.qml

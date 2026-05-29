@@ -95,11 +95,6 @@ Drawer {
                     label: "Home",
                     icon: "\u{1F3E0}",
                     action: "home"
-                },
-                {
-                    label: "Notifications",
-                    icon: "\u{1F514}",
-                    action: "notifications"
                 }
             ]
             focus: true
@@ -145,15 +140,6 @@ Drawer {
                         font.pixelSize: Theme.fontTitle
                         color: Theme.textPrimary
                         Layout.fillWidth: true
-                    }
-
-                    Rectangle {
-                        visible: modelData.action === "notifications" && NotificationManager.unreadCount > 0
-                        width: 14
-                        height: 14
-                        radius: 7
-                        color: Theme.crimson
-                        Layout.alignment: Qt.AlignVCenter
                     }
                 }
 
@@ -233,10 +219,6 @@ Drawer {
         switch (items[index].action) {
         case "home":
             root.homeSelected();
-            break;
-        case "notifications":
-            root.closed();
-            root.notificationCenterRequested();
             break;
         }
     }

@@ -20,21 +20,6 @@ FocusScope {
     anchors.fill: parent
     focus: opened
 
-    // Breeze icon base probe (same approach as StatusIcons).
-    property string _iconBase: ""
-
-    Process {
-        id: iconThemeProbe
-        command: ["bash", "-c", "for d in /usr/share/icons/breeze /usr/share/icons/Adwaita /usr/share/icons/hicolor; do [ -d \"$d\" ] && echo \"$d\" && exit; done; echo ''"]
-        stdout: SplitParser {
-            onRead: line => {
-                root._iconBase = line.trim();
-            }
-        }
-    }
-
-    Component.onCompleted: iconThemeProbe.running = true
-
     // === Power commands (copied from PowerSettings) ===
     Process {
         id: suspendCmd
@@ -181,7 +166,7 @@ FocusScope {
                         Image {
                             id: actionIcon
                             anchors.centerIn: parent
-                            source: root._iconBase ? "file://" + root._iconBase + "/actions/22/" + modelData.icon + ".svg" : ""
+                            source: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/" + modelData.icon + ".svg" : ""
                             sourceSize: Qt.size(Units.iconSizeMD, Units.iconSizeMD)
                             width: Units.iconSizeMD
                             height: Units.iconSizeMD

@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell.Io
 
 // Horizontal row of quick-action icons, navigable left-to-right. Reused in
 // the top-right status strip (HomeScreen) and the navigation drawer. Icons
@@ -32,20 +31,6 @@ FocusScope {
 
     implicitWidth: Math.min(iconRow.implicitWidth, maxContentWidth)
     implicitHeight: iconSize
-
-    property string _iconBase: ""
-
-    Process {
-        id: iconThemeProbe
-        command: ["bash", "-c", "for d in /usr/share/icons/breeze /usr/share/icons/Adwaita /usr/share/icons/hicolor; do [ -d \"$d\" ] && echo \"$d\" && exit; done; echo ''"]
-        stdout: SplitParser {
-            onRead: line => {
-                root._iconBase = line.trim();
-            }
-        }
-    }
-
-    Component.onCompleted: iconThemeProbe.running = true
 
     function _ensureVisible() {
         var left = currentIndex * (iconSize + _spacing);
@@ -163,7 +148,7 @@ FocusScope {
                 Image {
                     id: notifIcon
                     anchors.centerIn: parent
-                    source: root._iconBase ? "file://" + root._iconBase + "/actions/22/" + (NotificationManager.unreadCount > 0 ? "notification-active.svg" : "notification-inactive.svg") : ""
+                    source: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/" + (NotificationManager.unreadCount > 0 ? "notification-active.svg" : "notification-inactive.svg") : ""
                     sourceSize: Qt.size(root.imgSize, root.imgSize)
                     width: root.imgSize
                     height: root.imgSize
@@ -225,7 +210,7 @@ FocusScope {
                 Image {
                     id: settingsIcon
                     anchors.centerIn: parent
-                    source: root._iconBase ? "file://" + root._iconBase + "/actions/22/configure.svg" : ""
+                    source: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/configure.svg" : ""
                     sourceSize: Qt.size(root.imgSize, root.imgSize)
                     width: root.imgSize
                     height: root.imgSize
@@ -262,32 +247,14 @@ FocusScope {
                     }
                 }
 
-                property string _themeIconPath: {
-                    if (!root._iconBase)
-                        return "";
-                    if (Theme.themeMode === "dark")
-                        return "file://" + root._iconBase + "/applets/48/weather-clear-night.svg";
-                    if (Theme.themeMode === "light")
-                        return "file://" + root._iconBase + "/applets/48/weather-clear.svg";
-                    return "file://" + root._iconBase + "/actions/22/brightness-high.svg";
-                }
-
-                Image {
-                    id: themeIcon
-                    anchors.centerIn: parent
-                    source: parent._themeIconPath
-                    sourceSize: Qt.size(root.imgSize, root.imgSize)
-                    width: root.imgSize
-                    height: root.imgSize
-                    fillMode: Image.PreserveAspectFit
-                    visible: status === Image.Ready
-                }
+                // Simple monochrome glyph — intentionally colorless so it
+                // reads the same in light and dark themes (no colored
+                // weather artwork). Adapts to the theme text color.
                 Text {
                     anchors.centerIn: parent
-                    text: Theme.themeMode === "dark" ? "☽" : Theme.themeMode === "light" ? "☀" : "◐"
+                    text: Theme.themeMode === "dark" ? "☾" : Theme.themeMode === "light" ? "☀" : "◐"
                     font.pixelSize: root.imgSize
-                    color: themeMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
-                    visible: themeIcon.status !== Image.Ready
+                    color: Theme.textPrimary
                 }
                 MouseArea {
                     id: themeMA
@@ -320,11 +287,11 @@ FocusScope {
                 }
 
                 property string _netIconPath: {
-                    if (!root._iconBase)
+                    if (!IconTheme.base)
                         return "";
                     if (NetworkManager.connected)
-                        return "file://" + root._iconBase + "/status/22/network-wired.svg";
-                    return "file://" + root._iconBase + "/actions/22/network-disconnect.svg";
+                        return "file://" + IconTheme.base + "/status/22/network-wired.svg";
+                    return "file://" + IconTheme.base + "/actions/22/network-disconnect.svg";
                 }
 
                 Image {
@@ -339,7 +306,7 @@ FocusScope {
                 }
                 Text {
                     anchors.centerIn: parent
-                    text: NetworkManager.connected ? "⛁" : "⚠"
+                    text: NetworkManager.connected ? "⇅" : "⚠"
                     font.pixelSize: root.imgSize
                     color: NetworkManager.connected ? Theme.textMuted : Theme.warning
                     visible: netIcon.status !== Image.Ready
@@ -368,7 +335,7 @@ FocusScope {
                 Image {
                     id: volIcon
                     anchors.centerIn: parent
-                    source: root._iconBase ? "file://" + root._iconBase + "/status/22/audio-volume-high.svg" : ""
+                    source: IconTheme.base ? "file://" + IconTheme.base + "/status/22/audio-volume-high.svg" : ""
                     sourceSize: Qt.size(root.imgSize, root.imgSize)
                     width: root.imgSize
                     height: root.imgSize
@@ -406,7 +373,7 @@ FocusScope {
                 Image {
                     id: powerIcon
                     anchors.centerIn: parent
-                    source: root._iconBase ? "file://" + root._iconBase + "/actions/22/system-shutdown.svg" : ""
+                    source: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/system-shutdown.svg" : ""
                     sourceSize: Qt.size(root.imgSize, root.imgSize)
                     width: root.imgSize
                     height: root.imgSize
