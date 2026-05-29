@@ -9,7 +9,7 @@ singleton Theme 1.0 Theme.qml
 singleton Units 1.0 Units.qml
 singleton WindowMatcher 1.0 WindowMatcher.qml
 StreamCard 1.0 StreamCard.qml
-StatusIcons 1.0 StatusIcons.qml
+QuickActions 1.0 QuickActions.qml
 StreamOverlay 1.0 StreamOverlay.qml
 SettingsPanel 1.0 SettingsPanel.qml
 SettingsButton 1.0 SettingsButton.qml
@@ -39,6 +39,7 @@ AppLifecycleManager 1.0 AppLifecycleManager.qml
 StreamManager 1.0 StreamManager.qml
 ShellLayout 1.0 ShellLayout.qml
 singleton NotificationManager 1.0 NotificationManager.qml
+singleton NetworkManager 1.0 NetworkManager.qml
 NotificationToast 1.0 NotificationToast.qml
 NotificationStack 1.0 NotificationStack.qml
 singleton ErrorLog 1.0 ErrorLog.qml

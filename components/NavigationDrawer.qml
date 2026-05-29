@@ -11,6 +11,7 @@ Drawer {
 
     signal settingsRequested
     signal notificationCenterRequested
+    signal powerRequested
     signal homeSelected
 
     onOpenedChanged: {
@@ -168,7 +169,7 @@ Drawer {
                 if (currentIndex < count - 1)
                     currentIndex++;
                 else
-                    bottomList.forceActiveFocus();
+                    drawerActions.forceActiveFocus();
             }
             Keys.onUpPressed: {
                 if (currentIndex > 0)
@@ -183,85 +184,45 @@ Drawer {
             Layout.fillHeight: true
         }
 
-        // === Bottom Section: Settings ===
+        // === Bottom Section: Quick Actions ===
         Rectangle {
             Layout.fillWidth: true
             height: 2
             color: Theme.surfaceBorder
         }
 
-        ListView {
-            id: bottomList
+        Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: contentHeight
-            model: [
-                {
-                    label: "Settings",
-                    icon: "⚙",
-                    action: "settings"
+            Layout.preferredHeight: Math.round(Units.gridUnit * 2.5)
+
+            QuickActions {
+                id: drawerActions
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Units.gridUnit
+                anchors.rightMargin: Units.gridUnit
+                anchors.verticalCenter: parent.verticalCenter
+                height: iconSize
+                // Bubble Escape/B up to the Drawer so it closes instead of
+                // opening Settings.
+                escapeRequestsSettings: false
+                // Cap width to the drawer so overflowing actions scroll.
+                maxContentWidth: width
+
+                onFocusUpRequested: navList.forceActiveFocus()
+                onSettingsRequested: {
+                    root.closed();
+                    root.settingsRequested();
                 }
-            ]
-            interactive: false
-            currentIndex: 0
-
-            delegate: Rectangle {
-                required property int index
-                required property var modelData
-                width: bottomList.width
-                height: Math.round(Units.gridUnit * 2.2)
-                color: bottomList.currentIndex === index && bottomList.activeFocus ? Theme.surfaceHover : "transparent"
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
+                onNotificationCenterRequested: {
+                    root.closed();
+                    root.notificationCenterRequested();
                 }
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 4
-                    height: parent.height - 16
-                    radius: 2
-                    color: Theme.focusBorder
-                    visible: bottomList.currentIndex === index && bottomList.activeFocus
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Units.gridUnit
-                    anchors.rightMargin: Units.gridUnit
-                    spacing: Units.spacingLG
-
-                    Text {
-                        text: modelData.icon
-                        font.pixelSize: Theme.fontTitle
-                        Layout.preferredWidth: Units.gridUnit
-                        horizontalAlignment: Text.AlignHCenter
-                    }
-                    Text {
-                        text: modelData.label
-                        font.pixelSize: Theme.fontTitle
-                        color: Theme.textPrimary
-                        Layout.fillWidth: true
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root._activateBottom(index)
+                onPowerRequested: {
+                    root.closed();
+                    root.powerRequested();
                 }
             }
-
-            Keys.onUpPressed: {
-                navList.forceActiveFocus();
-            }
-            Keys.onDownPressed: {
-                if (currentIndex < count - 1)
-                    currentIndex++;
-            }
-            Keys.onReturnPressed: root._activateBottom(currentIndex)
         }
     }
 
@@ -276,18 +237,6 @@ Drawer {
         case "notifications":
             root.closed();
             root.notificationCenterRequested();
-            break;
-        }
-    }
-
-    function _activateBottom(index) {
-        let items = bottomList.model;
-        if (index < 0 || index >= items.length)
-            return;
-        switch (items[index].action) {
-        case "settings":
-            root.closed();
-            root.settingsRequested();
             break;
         }
     }

@@ -197,7 +197,7 @@ FocusScope {
                 }
 
                 // Status icons (right side)
-                StatusIcons {
+                QuickActions {
                     id: statusIcons
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
                     onSettingsRequested: root.settingsRequested()

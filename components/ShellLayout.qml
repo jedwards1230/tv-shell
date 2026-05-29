@@ -128,6 +128,11 @@ FocusScope {
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
         }
+        onPowerRequested: {
+            navDrawer.opened = false;
+            powerOverlay.opened = true;
+            powerOverlay.forceActiveFocus();
+        }
         onHomeSelected: {
             navDrawer.opened = false;
             settingsPanel.visible = false;
@@ -203,6 +208,11 @@ FocusScope {
                 root.returnToShellRequested();
                 notificationCenter.opened = true;
                 notificationCenter.forceActiveFocus();
+            }
+            onPowerRequested: {
+                root.returnToShellRequested();
+                powerOverlay.opened = true;
+                powerOverlay.forceActiveFocus();
             }
             onClosed: {
                 root.overlayDrawerClosed();

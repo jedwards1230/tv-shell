@@ -133,9 +133,10 @@ FocusScope {
         event.accepted = true;
     }
 
-    // Backdrop
+    // Backdrop — near-opaque so the chooser reads as its own window
+    // on top of everything else, not a translucent layer.
     DimmedBackdrop {
-        dimLevel: 0.85
+        dimLevel: 0.97
         onClicked: root.cancelled()
     }
 
