@@ -69,3 +69,8 @@ targets:
 - Quickshell
 - python3-evdev
 - Moonlight Qt (built from source)
+
+## License
+
+Game Shell is free software licensed under the **GNU General Public License v3.0
+(GPL-3.0)**. See [LICENSE](LICENSE) for the full terms.
