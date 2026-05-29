@@ -247,8 +247,11 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             SettingsStore.getBindings();
-            bindingsList.forceActiveFocus();
         }
+    }
+
+    function focusFirst() {
+        bindingsList.forceActiveFocus();
     }
 
     ColumnLayout {

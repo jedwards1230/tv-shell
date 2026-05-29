@@ -99,13 +99,20 @@ FocusScope {
         listSinks.running = true;
     }
 
-    // Refresh when section becomes visible
+    // Refresh when section becomes visible. Do NOT grab focus here — focus
+    // entry is driven explicitly by SettingsPanel via focusFirst() on Right,
+    // so swapping to this page with A leaves focus on the sidebar.
     onVisibleChanged: {
         if (visible) {
             getVolume.running = true;
             listSinks.running = true;
-            volumeRow.forceActiveFocus();
         }
+    }
+
+    // First interactive element is the real key-handling FocusScope, not the
+    // bare volumeRow layout (which has no Keys handlers to receive focus).
+    function focusFirst() {
+        volDownScope.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -125,7 +132,6 @@ FocusScope {
             id: volumeRow
             Layout.fillWidth: true
             spacing: 24
-            focus: true
 
             FocusScope {
                 id: volDownScope

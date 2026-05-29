@@ -209,8 +209,11 @@ FocusScope {
         if (visible) {
             btPowerStatus.running = true;
             btListPaired.running = true;
-            powerToggleScope.forceActiveFocus();
         }
+    }
+
+    function focusFirst() {
+        powerToggleScope.forceActiveFocus();
     }
 
     ColumnLayout {

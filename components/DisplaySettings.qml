@@ -75,8 +75,11 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             getMonitors.running = true;
-            monitorList.forceActiveFocus();
         }
+    }
+
+    function focusFirst() {
+        monitorList.forceActiveFocus();
     }
 
     ColumnLayout {

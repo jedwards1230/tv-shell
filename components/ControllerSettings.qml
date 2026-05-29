@@ -120,12 +120,15 @@ except ImportError:
         if (visible) {
             scanControllers.running = true;
             daemonStatus.running = true;
-            // Focus first actionable element
-            if (root.controllers.length > 0)
-                controllerList.forceActiveFocus();
-            else
-                refreshScope.forceActiveFocus();
         }
+    }
+
+    // Focus first actionable element.
+    function focusFirst() {
+        if (root.controllers.length > 0)
+            controllerList.forceActiveFocus();
+        else
+            refreshScope.forceActiveFocus();
     }
 
     // --- Layout ---

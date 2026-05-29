@@ -254,9 +254,22 @@ Rectangle {
                         root.currentSection = currentIndex;
                     }
 
+                    // Right is a pure focus-shifter into the currently open
+                    // page — it must NOT swap which section is shown. Swapping
+                    // waits for A (Return). This lets you move the sidebar
+                    // cursor away from the open page and still fall back into
+                    // that page on right, instead of force-opening the hovered
+                    // item's submenu.
+                    //
+                    // Every page exposes focusFirst() which focuses its real
+                    // first interactive element. We call that instead of a bare
+                    // forceActiveFocus() on the page root, because root-level
+                    // focus only delegates correctly when the root points
+                    // focus:true at a real key-handling item — several pages
+                    // don't, and would dead-end on a silent layout.
                     Keys.onRightPressed: {
-                        root.currentSection = currentIndex;
-                        contentLoader.item.forceActiveFocus();
+                        if (contentLoader.item && contentLoader.item.focusFirst)
+                            contentLoader.item.focusFirst();
                     }
 
                     Keys.onUpPressed: {
