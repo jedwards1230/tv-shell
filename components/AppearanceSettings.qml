@@ -25,9 +25,11 @@ FocusScope {
         }
     ]
 
-    onVisibleChanged: {
-        if (visible)
-            modeList.forceActiveFocus();
+    // Focus entry is driven by SettingsPanel via focusFirst() on Right; start
+    // the cursor on the currently applied mode rather than always index 0.
+    function focusFirst() {
+        modeList.focusIndex = modeList.currentIndex;
+        modeList.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -64,9 +66,13 @@ FocusScope {
 
             property int focusIndex: 0
 
-            Keys.onLeftPressed: {
+            Keys.onLeftPressed: event => {
+                // At the leftmost card, let Left bubble to SettingsPanel so it
+                // returns focus to the sidebar instead of being swallowed.
                 if (focusIndex > 0)
                     focusIndex--;
+                else
+                    event.accepted = false;
             }
             Keys.onRightPressed: {
                 if (focusIndex < root.modes.length - 1)
@@ -87,8 +93,11 @@ FocusScope {
                     radius: Theme.cardRadius
                     color: Theme.surface
                     clip: true
-                    border.width: Theme.themeMode === modelData.id ? 3 : 2
-                    border.color: Theme.themeMode === modelData.id ? Theme.focusBorder : (modeList.focusIndex === index && modeList.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
+                    // Focus cursor (crimson ring) is independent of the applied
+                    // mode (green "Active" badge) so both are visible at once —
+                    // even when the cursor sits on the applied card.
+                    border.width: modeList.focusIndex === index && modeList.activeFocus ? 4 : 2
+                    border.color: modeList.focusIndex === index && modeList.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
 
                     Behavior on border.color {
                         ColorAnimation {
@@ -96,12 +105,34 @@ FocusScope {
                         }
                     }
 
-                    // Focus highlight background
+                    // Focus highlight background — shown wherever the cursor is.
                     Rectangle {
                         anchors.fill: parent
                         radius: parent.radius
                         color: Theme.surfaceHover
-                        visible: modeList.focusIndex === index && modeList.activeFocus && Theme.themeMode !== modelData.id
+                        visible: modeList.focusIndex === index && modeList.activeFocus
+                    }
+
+                    // Applied-mode badge — persistent, independent of focus.
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.margins: 16
+                        width: appliedLabel.implicitWidth + 28
+                        height: appliedLabel.implicitHeight + 14
+                        radius: height / 2
+                        color: Theme.online
+                        visible: Theme.themeMode === modelData.id
+                        z: 1
+
+                        Text {
+                            id: appliedLabel
+                            anchors.centerIn: parent
+                            text: "✓ Active"
+                            font.pixelSize: Theme.fontCaption
+                            font.bold: true
+                            color: Theme.textOnDark
+                        }
                     }
 
                     ColumnLayout {
@@ -116,7 +147,7 @@ FocusScope {
                         Text {
                             text: modelData.icon
                             font.pixelSize: Theme.fontTitle
-                            color: Theme.themeMode === modelData.id ? Theme.focusBorder : Theme.textPrimary
+                            color: Theme.themeMode === modelData.id ? Theme.online : Theme.textPrimary
                             Layout.alignment: Qt.AlignHCenter
                         }
 
