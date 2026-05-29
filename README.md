@@ -72,6 +72,5 @@ targets:
 
 ## License
 
-Game Shell is free software licensed under the **GNU General Public License v3.0**.
-You may use, modify, and redistribute it under the terms of the GPL — see [LICENSE](LICENSE)
-for the full text. Derivative works must remain open and credit the original.
+Game Shell is free software licensed under the **GNU General Public License v3.0
+(GPL-3.0)**. See [LICENSE](LICENSE) for the full terms.
