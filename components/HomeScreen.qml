@@ -20,6 +20,7 @@ FocusScope {
     signal appCloseRequested(string windowClass)
     signal settingsRequested
     signal notificationCenterRequested
+    signal powerRequested
 
     onActiveFocusChanged: {
         if (activeFocus)
@@ -201,6 +202,7 @@ FocusScope {
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
                     onSettingsRequested: root.settingsRequested()
                     onNotificationCenterRequested: root.notificationCenterRequested()
+                    onPowerRequested: root.powerRequested()
                     onFocusDownRequested: root._focusFirstVisibleRow()
                     onActiveFocusChanged: if (activeFocus)
                         scrollView.contentY = 0

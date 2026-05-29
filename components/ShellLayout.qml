@@ -18,6 +18,7 @@ FocusScope {
     property alias navDrawer: navDrawer
     property alias overlay: overlay
     property alias notificationCenter: notificationCenter
+    property alias powerOverlay: powerOverlay
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -58,7 +59,7 @@ FocusScope {
         visible: root.shellState === "idle"
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened
+        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened
 
         runningWindows: root.runningWindows
 
@@ -75,6 +76,10 @@ FocusScope {
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
         }
+        onPowerRequested: {
+            powerOverlay.opened = true;
+            powerOverlay.forceActiveFocus();
+        }
     }
 
     SettingsPanel {
@@ -90,7 +95,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -157,6 +162,16 @@ FocusScope {
         }
     }
 
+    // === Power Overlay ===
+    PowerOverlay {
+        id: powerOverlay
+        z: 60
+        onCancelled: {
+            powerOverlay.opened = false;
+            homeFocusTimer.restart();
+        }
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
@@ -216,6 +231,14 @@ FocusScope {
         target: errorLogViewer
         function onOpenedChanged() {
             if (!errorLogViewer.opened)
+                homeFocusTimer.restart();
+        }
+    }
+
+    Connections {
+        target: powerOverlay
+        function onOpenedChanged() {
+            if (!powerOverlay.opened)
                 homeFocusTimer.restart();
         }
     }

@@ -7,6 +7,7 @@ FocusScope {
 
     signal settingsRequested
     signal notificationCenterRequested
+    signal powerRequested
     signal focusDownRequested
 
     property string ipAddress: "..."
@@ -14,8 +15,8 @@ FocusScope {
     property bool _networkInitialized: false
     readonly property int _iconSize: 64
     readonly property int _imgSize: 32
-    // Must match the number of icon containers below (Notifications=0, Settings=1, Theme=2, Network=3, Volume=4)
-    readonly property int _iconCount: 5
+    // Must match the number of icon containers below (Notifications=0, Settings=1, Theme=2, Network=3, Volume=4, Power=5)
+    readonly property int _iconCount: 6
     property int currentIndex: 0
 
     implicitWidth: iconRow.implicitWidth
@@ -100,6 +101,9 @@ FocusScope {
             else
                 Theme.setThemeMode("auto");
             break;
+        case 5:
+            root.powerRequested();
+            break;
         }
     }
 
@@ -122,6 +126,9 @@ FocusScope {
                 root.forceActiveFocus();
             } else if (volumeMA.containsMouse) {
                 root.currentIndex = 4;
+                root.forceActiveFocus();
+            } else if (powerMA.containsMouse) {
+                root.currentIndex = 5;
                 root.forceActiveFocus();
             }
         }
@@ -374,6 +381,46 @@ FocusScope {
                 id: volumeMA
                 anchors.fill: parent
                 hoverEnabled: true
+            }
+        }
+
+        // Power (index 5)
+        Rectangle {
+            Layout.preferredWidth: root._iconSize
+            Layout.preferredHeight: root._iconSize
+            radius: root._iconSize / 2
+            color: powerMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
+            border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 5 ? 3 : 0
+            border.color: Theme.focusBorder
+            Behavior on color {
+                ColorAnimation {
+                    duration: 150
+                }
+            }
+
+            Image {
+                id: powerIcon
+                anchors.centerIn: parent
+                source: root._iconBase ? "file://" + root._iconBase + "/actions/22/system-shutdown.svg" : ""
+                sourceSize: Qt.size(root._imgSize, root._imgSize)
+                width: root._imgSize
+                height: root._imgSize
+                fillMode: Image.PreserveAspectFit
+                visible: status === Image.Ready
+            }
+            Text {
+                anchors.centerIn: parent
+                text: "⏻"
+                font.pixelSize: root._imgSize
+                color: powerMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                visible: powerIcon.status !== Image.Ready
+            }
+            MouseArea {
+                id: powerMA
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.powerRequested()
             }
         }
     }
