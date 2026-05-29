@@ -3,7 +3,9 @@ name: Lint
 on:
   push:
     branches: [main]
+    paths: ['**/*.qml']
   pull_request:
+    paths: ['**/*.qml']
 
 permissions:
   contents: write
