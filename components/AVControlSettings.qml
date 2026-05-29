@@ -140,12 +140,16 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             detectTools.running = true;
-            if (root.cecAvailable) {
-                wakeScope.forceActiveFocus();
-            } else {
-                root.forceActiveFocus();
-            }
         }
+    }
+
+    // Focus the Wake button when CEC is available, otherwise take scope-level
+    // focus on the root (read-only state) so entry registers and Left/B return.
+    function focusFirst() {
+        if (root.cecAvailable)
+            wakeScope.forceActiveFocus();
+        else
+            root.forceActiveFocus();
     }
 
     // --- Build scan command based on available tool ---

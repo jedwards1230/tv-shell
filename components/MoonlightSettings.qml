@@ -242,8 +242,13 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             loadServers.running = true;
-            viewModeRow.forceActiveFocus();
         }
+    }
+
+    // viewModeRow is a RowLayout but has Keys handlers, so it is a valid focus
+    // target. Focus entry is driven by SettingsPanel via focusFirst() on Right.
+    function focusFirst() {
+        viewModeRow.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -266,9 +271,13 @@ FocusScope {
 
             property int focusIndex: Theme.streamingViewMode === "apps" ? 1 : 0
 
-            Keys.onLeftPressed: {
+            Keys.onLeftPressed: event => {
+                // At the leftmost card, let Left bubble to SettingsPanel so it
+                // returns focus to the sidebar instead of being swallowed.
                 if (focusIndex > 0)
                     focusIndex--;
+                else
+                    event.accepted = false;
             }
             Keys.onRightPressed: {
                 if (focusIndex < 1)

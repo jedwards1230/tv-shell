@@ -118,6 +118,16 @@ FocusScope {
         }
     }
 
+    // Read-only page: focus the WiFi list when an adapter exists, otherwise
+    // take scope-level focus on the root so entry still registers and Left/B
+    // bubble back to the sidebar.
+    function focusFirst() {
+        if (root.hasWifi)
+            wifiList.forceActiveFocus();
+        else
+            root.forceActiveFocus();
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.padding

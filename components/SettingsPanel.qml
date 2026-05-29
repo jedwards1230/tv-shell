@@ -260,9 +260,16 @@ Rectangle {
                     // cursor away from the open page and still fall back into
                     // that page on right, instead of force-opening the hovered
                     // item's submenu.
+                    //
+                    // Every page exposes focusFirst() which focuses its real
+                    // first interactive element. We call that instead of a bare
+                    // forceActiveFocus() on the page root, because root-level
+                    // focus only delegates correctly when the root points
+                    // focus:true at a real key-handling item — several pages
+                    // don't, and would dead-end on a silent layout.
                     Keys.onRightPressed: {
-                        if (contentLoader.item)
-                            contentLoader.item.forceActiveFocus();
+                        if (contentLoader.item && contentLoader.item.focusFirst)
+                            contentLoader.item.focusFirst();
                     }
 
                     Keys.onUpPressed: {

@@ -23,8 +23,11 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             root.confirmAction = "";
-            suspendScope.forceActiveFocus();
         }
+    }
+
+    function focusFirst() {
+        suspendScope.forceActiveFocus();
     }
 
     ColumnLayout {
