@@ -120,6 +120,19 @@ pub fn load_db() -> ControllerDb {
     db
 }
 
+/// Virtual/synthetic input devices that must never be treated as a gamepad nor
+/// snooped as a keyboard: our own uinput devices and ydotoold's.
+///
+/// ydotoold's virtual device registers a broad keybit range that includes
+/// `BTN_SOUTH`, so without this guard `find_gamepad`'s "first BTN_SOUTH device"
+/// fallback grabs it as a bogus controller. That permanently fills the gamepad
+/// slot (the synthetic device never disconnects), so the 2 s reconnect poll
+/// stops running and a real pad plugged in later is never picked up. Mirrors the
+/// exclusion `find_keyboards` already applies.
+pub fn is_synthetic(name: &str) -> bool {
+    name.starts_with("game-shell-virtual-") || name.contains("ydotoold")
+}
+
 /// Parse a `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT`-style override (supports `0x`
 /// hex, like Python's `int(x, 0)`). Returns `None` if unset/unparseable.
 pub fn parse_id_env(var: &str) -> Option<u16> {
@@ -179,6 +192,11 @@ mod linux {
             if !has_btn_south(&dev) {
                 continue;
             }
+            // Skip our own uinput devices and ydotoold's: ydotoold advertises
+            // BTN_SOUTH and would otherwise be grabbed as a bogus gamepad.
+            if dev.name().is_some_and(super::is_synthetic) {
+                continue;
+            }
             let id = dev.input_id();
             let (vendor, product) = (id.vendor(), id.product());
 
@@ -231,7 +249,7 @@ mod linux {
         let mut out = Vec::new();
         for (path, dev) in devices {
             let name = dev.name().unwrap_or("").to_string();
-            if name.starts_with("game-shell-virtual-") || name.contains("ydotoold") {
+            if super::is_synthetic(&name) {
                 continue;
             }
             let Some(keys) = dev.supported_keys() else {
@@ -296,6 +314,18 @@ mod tests {
         let db = load_db();
         assert!(db.is_known(0x045e, 0x028e));
         assert!(db.is_known(0x054c, 0x09cc)); // DualShock 4 v2
+    }
+
+    #[test]
+    fn synthetic_devices_are_excluded() {
+        // Our own uinput devices and ydotoold must never be grabbed as a pad.
+        assert!(is_synthetic("game-shell-virtual-kb"));
+        assert!(is_synthetic("game-shell-virtual-mouse"));
+        assert!(is_synthetic("ydotoold virtual device"));
+        // Real controllers / keyboards are not synthetic.
+        assert!(!is_synthetic("Microsoft X-Box 360 pad"));
+        assert!(!is_synthetic("Logitech K400 Plus"));
+        assert!(!is_synthetic(""));
     }
 
     #[test]
