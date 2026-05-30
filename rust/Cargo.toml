@@ -31,5 +31,18 @@ libc = "0.2"
 # evdev/uinput are Linux kernel interfaces. Keep them off non-Linux hosts so
 # the pure-logic modules (protocol, config, device GUID math) still compile and
 # `cargo test` runs on a macOS/dev box. The full binary only links on Linux.
+#
+# zbus (NetworkManager/logind/UPower) and bluer (BlueZ) are the Phase 3 D-Bus
+# backbone. Both are pure-Rust (no system libdbus) but speak D-Bus, which only
+# exists on Linux, so they live here alongside evdev. The portable modules
+# (protocol parsing/Display, response builders) stay testable on macOS; the
+# bluetooth/network/power modules are `#[cfg(target_os = "linux")]`.
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = { version = "0.13", features = ["tokio"] }
+# zbus 5.x is the current line (5.16). The `tokio` feature matches the daemon
+# runtime and avoids pulling in async-io. default-features = false drops the
+# async-io reactor; we only use the tokio one.
+zbus = { version = "5.16", default-features = false, features = ["tokio"] }
+# bluer is the official BlueZ binding. `bluetoothd` gates the Session/Adapter/
+# Device API we need; default-features pull in extra protocol modules we don't.
+bluer = { version = "0.17.4", default-features = false, features = ["bluetoothd"] }

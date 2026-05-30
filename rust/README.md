@@ -35,10 +35,36 @@ parses `.desktop` files or hand-formats config JSON.
 | `device.rs` | SDL GUID + DB matching, device/keyboard discovery |
 | `state.rs` | Control messages + pure input logic (velocity, deadzone, combos) |
 | `input.rs` | Linux input runtime (evdev/uinput) — single state owner |
-| `ipc.rs` | Unix-socket server, `broadcast` event fan-out |
-| `main.rs` | Runtime wiring + signals |
+| `bluetooth.rs` | **Linux-only.** BlueZ actor via `bluer` — scan/pair/connect/trust + `bt:*` events |
+| `network.rs` | **Linux-only.** NetworkManager **read** actor via `zbus` — connectivity / AP list / `net:*` events |
+| `power.rs` | **Linux-only.** logind suspend + UPower battery via `zbus` — `power:*` events |
+| `ipc.rs` | Unix-socket server, `broadcast` event fan-out, D-Bus command routing |
+| `main.rs` | Runtime wiring + signals + D-Bus actor spawn |
 
 `apps.rs` and `recents.rs` are pure Rust — fully unit-tested on macOS.
+
+## Phase 3 — D-Bus backbone (`bluetooth.rs` / `network.rs` / `power.rs`)
+
+Each subsystem is a long-lived async actor on the IPC runtime owning a single
+`bluer::Session` or `zbus::Connection` (single-owner; no `Arc<Mutex>` across
+`.await`). They answer request/response query commands and stream `bt:*` /
+`net:*` / `power:*` events onto the existing `subscribe` bus. This deletes the
+QML shell-outs that *read* system state:
+
+- **Bluetooth** (`bluer`/BlueZ): `bt-power-*`, `bt-scan-*`, `bt-list`,
+  `bt-connect`/`bt-disconnect`/`bt-pair`/`bt-trust`.
+- **Wi-Fi reads** (`zbus`/NetworkManager): `net-status`, `net-wifi-list`,
+  `net-wifi-rescan`. Wi-Fi **join** stays an `nmcli` shell-out.
+- **Power/idle** (`zbus`/logind + UPower): `power-can-suspend`, `power-suspend`,
+  `power-battery` (graceful "no battery" on a desktop).
+
+These three modules are `#[cfg(target_os = "linux")]` (D-Bus is Linux-only) —
+they are excluded from the macOS build, so the rest of the crate still compiles
+and unit-tests there. The protocol parsing/response builders for every Phase 3
+command stay cross-platform and are unit-tested. **The D-Bus paths can only be
+exercised on-device** (no D-Bus on macOS / CI); each actor degrades to `error:*`
+replies if BlueZ/NetworkManager/logind/UPower is absent, never panicking the
+daemon. See `docs/IPC_PROTOCOL.md` for the full command/event reference.
 
 ## Build & test
 
@@ -62,6 +88,7 @@ and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
 
 ## Status
 
-The Python daemon stays the default until this is hardware-verified. Phases 3–4
-(zbus/Bluetooth/WiFi/power, Hyprland/CEC/health) are tracked in #28 and out of
-scope here.
+The Python daemon stays the default until this is hardware-verified. Phase 3
+(zbus/Bluetooth/Wi-Fi-read/power) is implemented above but **requires on-device
+verification** — the D-Bus modules don't compile or run on macOS/CI. Phase 4
+(Hyprland/CEC/health) is tracked in #28 and out of scope here.

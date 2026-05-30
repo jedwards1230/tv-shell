@@ -22,6 +22,16 @@ mod state;
 #[cfg(target_os = "linux")]
 mod input;
 
+// Phase 3 D-Bus backbone. Linux-only: bluetooth speaks BlueZ via `bluer`;
+// network/power speak NetworkManager/logind/UPower via `zbus`. Excluded from
+// the macOS build entirely (no system D-Bus).
+#[cfg(target_os = "linux")]
+mod bluetooth;
+#[cfg(target_os = "linux")]
+mod network;
+#[cfg(target_os = "linux")]
+mod power;
+
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
     use tokio::sync::{broadcast, mpsc};
@@ -48,12 +58,23 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(input::run(control_rx, input_events));
         })?;
 
-    // Main runtime: IPC server + signal handling.
+    // Main runtime: IPC server + signal handling + Phase 3 D-Bus actors.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     rt.block_on(async move {
-        let ipc_task = tokio::spawn(ipc::serve(sock_path, control_tx.clone(), events_tx.clone()));
+        // Spawn the Phase 3 D-Bus actors on the IPC runtime. Each owns its own
+        // connection and pushes events onto the shared broadcast bus. They log
+        // and never panic the daemon if BlueZ/NetworkManager/logind/UPower are
+        // absent, so spawning them unconditionally is safe.
+        let dbus = spawn_dbus_actors(&events_tx);
+
+        let ipc_task = tokio::spawn(ipc::serve(
+            sock_path,
+            control_tx.clone(),
+            events_tx.clone(),
+            dbus,
+        ));
         wait_for_signal().await;
         tracing::info!("signal received, shutting down");
         let _ = control_tx.send(state::Control::Shutdown).await;
@@ -63,6 +84,53 @@ fn main() -> anyhow::Result<()> {
     // Let the input thread reset stick state and close uinput devices.
     let _ = input_thread.join();
     Ok(())
+}
+
+/// Build the Phase 3 D-Bus actor channels and spawn each actor on the current
+/// (IPC) runtime. Returns the [`ipc::DbusSenders`] the IPC server uses to route
+/// Bluetooth/Network/Power commands. Channels use the same size (64) as the
+/// input control channel. Each actor logs and exits cleanly if its service is
+/// absent; the IPC side degrades those commands to `error:*`.
+#[cfg(target_os = "linux")]
+fn spawn_dbus_actors(
+    events_tx: &tokio::sync::broadcast::Sender<protocol::Event>,
+) -> ipc::DbusSenders {
+    use tokio::sync::mpsc;
+
+    let (bt_tx, bt_rx) = mpsc::channel(64);
+    let (net_tx, net_rx) = mpsc::channel(64);
+    let (power_tx, power_rx) = mpsc::channel(64);
+
+    {
+        let events_tx = events_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = bluetooth::run(bt_rx, events_tx).await {
+                tracing::warn!("bluetooth actor exited: {e}");
+            }
+        });
+    }
+    {
+        let events_tx = events_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = network::run(net_rx, events_tx).await {
+                tracing::warn!("network actor exited: {e}");
+            }
+        });
+    }
+    {
+        let events_tx = events_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = power::run(power_rx, events_tx).await {
+                tracing::warn!("power actor exited: {e}");
+            }
+        });
+    }
+
+    ipc::DbusSenders {
+        bt: Some(bt_tx),
+        net: Some(net_tx),
+        power: Some(power_tx),
+    }
 }
 
 #[cfg(target_os = "linux")]

@@ -47,6 +47,48 @@ pub enum Command {
     RecordLaunchUsage,
     /// Return recent launches as a compact JSON array.
     GetRecents,
+
+    // --- Phase 3: Bluetooth (bluer / BlueZ) ---
+    /// Adapter power state -> `bt:on` / `bt:off` / `error:*`.
+    BtPowerStatus,
+    /// Power the default adapter on.
+    BtPowerOn,
+    /// Power the default adapter off.
+    BtPowerOff,
+    /// Start discovery; results arrive asynchronously as `bt:device` events.
+    BtScanOn,
+    /// Stop discovery.
+    BtScanOff,
+    /// List known devices as a compact JSON array.
+    BtList,
+    /// Connect to a device by MAC address.
+    BtConnect(String),
+    /// Disconnect a device by MAC address.
+    BtDisconnect(String),
+    /// Pair a device by MAC address (just-works via BlueZ default agent).
+    BtPair(String),
+    /// Trust a device by MAC address.
+    BtTrust(String),
+    /// A `bt-connect`/`bt-disconnect`/`bt-pair`/`bt-trust` with a missing MAC.
+    /// `which` is the bare command word (e.g. `bt-connect`) for the usage line.
+    BtMacUsage(&'static str),
+
+    // --- Phase 3: Network READ (zbus / NetworkManager) ---
+    /// Connectivity + primary connection as a compact JSON object.
+    NetStatus,
+    /// Visible Wi-Fi access points as a compact JSON array.
+    NetWifiList,
+    /// Trigger a Wi-Fi rescan (`RequestScan`).
+    NetWifiRescan,
+
+    // --- Phase 3: Power / idle (zbus / logind + UPower) ---
+    /// Whether the system can suspend -> `yes` / `no` / `error:*`.
+    PowerCanSuspend,
+    /// Suspend the system (logind `Suspend(false)`).
+    PowerSuspend,
+    /// Battery state as a compact JSON object (`{"present":false}` on a desktop).
+    PowerBattery,
+
     /// Anything unrecognized -> the daemon replies `unknown`.
     Unknown,
 }
@@ -83,6 +125,19 @@ impl Command {
             "list-apps" => Command::ListApps,
             "get-config" => Command::GetConfig,
             "get-recents" => Command::GetRecents,
+            // Phase 3 bare commands (no body).
+            "bt-power-status" => Command::BtPowerStatus,
+            "bt-power-on" => Command::BtPowerOn,
+            "bt-power-off" => Command::BtPowerOff,
+            "bt-scan-on" => Command::BtScanOn,
+            "bt-scan-off" => Command::BtScanOff,
+            "bt-list" => Command::BtList,
+            "net-status" => Command::NetStatus,
+            "net-wifi-list" => Command::NetWifiList,
+            "net-wifi-rescan" => Command::NetWifiRescan,
+            "power-can-suspend" => Command::PowerCanSuspend,
+            "power-suspend" => Command::PowerSuspend,
+            "power-battery" => Command::PowerBattery,
             _ => {
                 // `set-config <json>` / `record-launch <json>`: the rest of the
                 // line is a compact single-line JSON body. The command word must
@@ -102,6 +157,27 @@ impl Command {
                     } else {
                         Command::RecordLaunch(body.to_string())
                     };
+                }
+                // Phase 3 MAC-argument commands: `bt-connect <mac>` etc. The body
+                // is a single MAC token (whitespace-trimmed); a missing body is a
+                // usage error. `command_body` enforces the word boundary so e.g.
+                // `bt-connectX` is not mistaken for `bt-connect`. Order matters:
+                // `bt-connect` is a prefix of nothing else here, but check the
+                // longer-or-equal words explicitly to avoid surprises.
+                for word in ["bt-connect", "bt-disconnect", "bt-pair", "bt-trust"] {
+                    if let Some(body) = command_body(cmd, word) {
+                        if body.is_empty() {
+                            return Command::BtMacUsage(word);
+                        }
+                        let mac = body.to_string();
+                        return match word {
+                            "bt-connect" => Command::BtConnect(mac),
+                            "bt-disconnect" => Command::BtDisconnect(mac),
+                            "bt-pair" => Command::BtPair(mac),
+                            "bt-trust" => Command::BtTrust(mac),
+                            _ => unreachable!("word came from the literal list above"),
+                        };
+                    }
                 }
                 // Python keys `set-binding` off the `"set-binding "` prefix
                 // (with trailing space), so a bare `set-binding` is `unknown`.
@@ -147,6 +223,30 @@ pub enum Event {
     Buttons(String),
     /// Space-and-plus joined held keyboard keys (may be empty).
     Keys(String),
+
+    // --- Phase 3 events ---
+    /// Bluetooth adapter power changed (`bt:powered:on` / `bt:powered:off`).
+    BtPowered(bool),
+    /// A device was discovered/updated; payload is a compact JSON object
+    /// (same shape as a `bt-list` element). Wire: `bt:device:<json>`.
+    BtDevice(String),
+    /// A device was removed from discovery; payload is the MAC.
+    /// Wire: `bt:device-removed:<mac>`.
+    BtDeviceRemoved(String),
+    /// Discovery (scan) started/stopped (`bt:scanning:on` / `bt:scanning:off`).
+    BtScanning(bool),
+    /// NetworkManager connectivity changed; payload is a state word
+    /// (`none`/`portal`/`limited`/`full`/`unknown`). Wire: `net:connectivity:<state>`.
+    NetConnectivity(String),
+    /// Wi-Fi state changed; payload is a compact JSON object (same shape as a
+    /// `net-status` body). Wire: `net:wifi:<json>`.
+    NetWifi(String),
+    /// Primary connection changed; payload is its id/name (may be empty).
+    /// Wire: `net:primary:<id>`.
+    NetPrimary(String),
+    /// Battery state changed; payload is a compact JSON object (same shape as a
+    /// `power-battery` body). Wire: `power:battery:<json>`.
+    PowerBattery(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,7 +279,24 @@ impl fmt::Display for Event {
             Event::InputMode(m) => write!(f, "input-mode:{}", m.as_str()),
             Event::Buttons(s) => write!(f, "buttons:{s}"),
             Event::Keys(s) => write!(f, "keys:{s}"),
+            Event::BtPowered(on) => write!(f, "bt:powered:{}", on_off(*on)),
+            Event::BtDevice(json) => write!(f, "bt:device:{json}"),
+            Event::BtDeviceRemoved(mac) => write!(f, "bt:device-removed:{mac}"),
+            Event::BtScanning(on) => write!(f, "bt:scanning:{}", on_off(*on)),
+            Event::NetConnectivity(state) => write!(f, "net:connectivity:{state}"),
+            Event::NetWifi(json) => write!(f, "net:wifi:{json}"),
+            Event::NetPrimary(id) => write!(f, "net:primary:{id}"),
+            Event::PowerBattery(json) => write!(f, "power:battery:{json}"),
         }
+    }
+}
+
+/// `on`/`off` for boolean wire payloads (bt:powered, bt:scanning).
+fn on_off(on: bool) -> &'static str {
+    if on {
+        "on"
+    } else {
+        "off"
     }
 }
 
@@ -240,6 +357,42 @@ pub fn resp_error(msg: &str) -> String {
 
 pub fn resp_timeout() -> String {
     "timeout".to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 response builders (D-Bus query replies).
+// ---------------------------------------------------------------------------
+
+/// Returned when a Phase 3 command is issued on a host where the D-Bus backbone
+/// isn't wired (e.g. non-Linux builds where the module is `cfg`-excluded). The
+/// IPC layer substitutes this for the `Some(tx)` round-trip when the channel is
+/// `None`.
+pub fn resp_unsupported() -> String {
+    "error:unsupported on this platform".to_string()
+}
+
+/// Bluetooth adapter power status reply (`bt-power-status`).
+pub fn resp_bt_power(on: bool) -> String {
+    if on {
+        "bt:on".to_string()
+    } else {
+        "bt:off".to_string()
+    }
+}
+
+/// Usage line for a `bt-connect`/`bt-disconnect`/`bt-pair`/`bt-trust` issued
+/// without a MAC. `which` is the bare command word.
+pub fn resp_bt_mac_usage(which: &str) -> String {
+    format!("error:usage: {which} <mac>")
+}
+
+/// `power-can-suspend` reply: `yes` / `no`.
+pub fn resp_yes_no(yes: bool) -> String {
+    if yes {
+        "yes".to_string()
+    } else {
+        "no".to_string()
+    }
 }
 
 pub fn resp_cancelled() -> String {
@@ -435,6 +588,115 @@ mod tests {
         assert_eq!(resp_captured("BTN_SOUTH"), "captured:BTN_SOUTH");
         assert_eq!(resp_timeout(), "timeout");
         assert_eq!(resp_cancelled(), "cancelled");
+    }
+
+    #[test]
+    fn parses_phase3_bare_commands() {
+        assert_eq!(Command::parse("bt-power-status"), Command::BtPowerStatus);
+        assert_eq!(Command::parse("bt-power-on"), Command::BtPowerOn);
+        assert_eq!(Command::parse("bt-power-off"), Command::BtPowerOff);
+        assert_eq!(Command::parse("bt-scan-on"), Command::BtScanOn);
+        assert_eq!(Command::parse("bt-scan-off"), Command::BtScanOff);
+        assert_eq!(Command::parse("bt-list"), Command::BtList);
+        assert_eq!(Command::parse("net-status"), Command::NetStatus);
+        assert_eq!(Command::parse("net-wifi-list"), Command::NetWifiList);
+        assert_eq!(Command::parse("net-wifi-rescan"), Command::NetWifiRescan);
+        assert_eq!(
+            Command::parse("power-can-suspend"),
+            Command::PowerCanSuspend
+        );
+        assert_eq!(Command::parse("power-suspend"), Command::PowerSuspend);
+        assert_eq!(Command::parse("power-battery"), Command::PowerBattery);
+        assert_eq!(Command::parse("  bt-list  "), Command::BtList);
+    }
+
+    #[test]
+    fn parses_phase3_mac_commands() {
+        assert_eq!(
+            Command::parse("bt-connect AA:BB:CC:DD:EE:FF"),
+            Command::BtConnect("AA:BB:CC:DD:EE:FF".into())
+        );
+        assert_eq!(
+            Command::parse("bt-disconnect AA:BB:CC:DD:EE:FF"),
+            Command::BtDisconnect("AA:BB:CC:DD:EE:FF".into())
+        );
+        assert_eq!(
+            Command::parse("bt-pair AA:BB:CC:DD:EE:FF"),
+            Command::BtPair("AA:BB:CC:DD:EE:FF".into())
+        );
+        assert_eq!(
+            Command::parse("bt-trust AA:BB:CC:DD:EE:FF"),
+            Command::BtTrust("AA:BB:CC:DD:EE:FF".into())
+        );
+        // Body is trimmed.
+        assert_eq!(
+            Command::parse("bt-connect   AA:BB:CC:DD:EE:FF  "),
+            Command::BtConnect("AA:BB:CC:DD:EE:FF".into())
+        );
+    }
+
+    #[test]
+    fn phase3_mac_usage_and_word_boundary() {
+        assert_eq!(
+            Command::parse("bt-connect"),
+            Command::BtMacUsage("bt-connect")
+        );
+        assert_eq!(
+            Command::parse("bt-disconnect   "),
+            Command::BtMacUsage("bt-disconnect")
+        );
+        assert_eq!(Command::parse("bt-pair"), Command::BtMacUsage("bt-pair"));
+        assert_eq!(Command::parse("bt-trust"), Command::BtMacUsage("bt-trust"));
+        // Word boundary: a longer word is NOT a MAC command.
+        assert_eq!(Command::parse("bt-connectX"), Command::Unknown);
+        assert_eq!(Command::parse("bt-listX"), Command::Unknown);
+    }
+
+    #[test]
+    fn phase3_event_wire_strings() {
+        assert_eq!(Event::BtPowered(true).to_string(), "bt:powered:on");
+        assert_eq!(Event::BtPowered(false).to_string(), "bt:powered:off");
+        assert_eq!(
+            Event::BtDevice(r#"{"mac":"AA","name":"Pad"}"#.into()).to_string(),
+            r#"bt:device:{"mac":"AA","name":"Pad"}"#
+        );
+        assert_eq!(
+            Event::BtDeviceRemoved("AA:BB:CC:DD:EE:FF".into()).to_string(),
+            "bt:device-removed:AA:BB:CC:DD:EE:FF"
+        );
+        assert_eq!(Event::BtScanning(true).to_string(), "bt:scanning:on");
+        assert_eq!(Event::BtScanning(false).to_string(), "bt:scanning:off");
+        assert_eq!(
+            Event::NetConnectivity("full".into()).to_string(),
+            "net:connectivity:full"
+        );
+        assert_eq!(
+            Event::NetWifi(r#"{"connectivity":"full"}"#.into()).to_string(),
+            r#"net:wifi:{"connectivity":"full"}"#
+        );
+        assert_eq!(
+            Event::NetPrimary("Wired connection 1".into()).to_string(),
+            "net:primary:Wired connection 1"
+        );
+        assert_eq!(Event::NetPrimary(String::new()).to_string(), "net:primary:");
+        assert_eq!(
+            Event::PowerBattery(r#"{"present":false}"#.into()).to_string(),
+            r#"power:battery:{"present":false}"#
+        );
+    }
+
+    #[test]
+    fn phase3_response_strings() {
+        assert_eq!(resp_unsupported(), "error:unsupported on this platform");
+        assert_eq!(resp_bt_power(true), "bt:on");
+        assert_eq!(resp_bt_power(false), "bt:off");
+        assert_eq!(resp_yes_no(true), "yes");
+        assert_eq!(resp_yes_no(false), "no");
+        assert_eq!(
+            resp_bt_mac_usage("bt-connect"),
+            "error:usage: bt-connect <mac>"
+        );
+        assert_eq!(resp_bt_mac_usage("bt-pair"), "error:usage: bt-pair <mac>");
     }
 
     #[test]

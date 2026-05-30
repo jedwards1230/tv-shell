@@ -64,13 +64,20 @@ scripts/
 
 | Tool | Used For |
 |------|----------|
-| input daemon (IPC) | Gamepad grab/release, settings I/O (`get/set-config`), app discovery (`list-apps`), recents (`get/record`) — see [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) |
+| input daemon (IPC) | Gamepad grab/release, settings I/O (`get/set-config`), app discovery (`list-apps`), recents (`get/record`), Bluetooth (`bt-*`), network reads (`net-*`), suspend/battery (`power-*`) — see [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) |
 | `wpctl` | Audio volume/mute/sink switching (WirePlumber/PipeWire) |
-| `bluetoothctl` | Bluetooth device scanning and pairing |
-| `nmcli` | Network connection management |
+| `nmcli` | WiFi *join* only (`device wifi connect`) — reads go through the daemon's `net-*` IPC |
 | `hyprctl` | Monitor mode/scale changes, app launching, reload |
-| `systemctl` | Power management (suspend/reboot/poweroff) |
+| `systemctl` | Reboot/poweroff one-shots — suspend goes through the daemon's `power-suspend` IPC |
 | `moonlight` | Game streaming client (`stream`, `list`, `pair`) |
+
+The daemon's `bt-*` (BlueZ/`bluer`), `net-*` (NetworkManager/`zbus`, read-only),
+and `power-*` (logind + UPower/`zbus`) IPC commands are the **D-Bus backbone**
+(Phase 3, #28). They replace the QML shell-outs that *read* system state. These
+modules are Linux-only and unverifiable on macOS/CI — they need on-device
+verification on game-client-1. What deliberately stays a shell-out: Wi-Fi
+**join** (`nmcli`), audio (`wpctl`), one-shot compositor actions (`hyprctl`),
+and reboot/poweroff (`systemctl`).
 
 ## Development
 

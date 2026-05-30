@@ -16,12 +16,37 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::codec::{Framed, LinesCodec};
 
+#[cfg(target_os = "linux")]
+use crate::bluetooth::BtReq;
+#[cfg(target_os = "linux")]
+use crate::network::NetReq;
+#[cfg(target_os = "linux")]
+use crate::power::PowerReq;
+
+/// Senders to the Phase 3 D-Bus actors (Bluetooth, Network, Power).
+///
+/// These actors are Linux-only, so their request types only exist on Linux. To
+/// keep [`serve`] callable with one signature on every platform, this struct
+/// carries the `Option<mpsc::Sender<…>>` fields on Linux and is empty elsewhere.
+/// `None` (or non-Linux) makes the corresponding commands reply
+/// `error:unsupported on this platform`.
+#[derive(Clone, Default)]
+pub struct DbusSenders {
+    #[cfg(target_os = "linux")]
+    pub bt: Option<mpsc::Sender<BtReq>>,
+    #[cfg(target_os = "linux")]
+    pub net: Option<mpsc::Sender<NetReq>>,
+    #[cfg(target_os = "linux")]
+    pub power: Option<mpsc::Sender<PowerReq>>,
+}
+
 /// Bind the socket (removing any stale file), chmod 0o600, and serve until the
 /// process exits.
 pub async fn serve(
     sock_path: String,
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
+    dbus: DbusSenders,
 ) -> Result<()> {
     let _ = std::fs::remove_file(&sock_path);
     let listener = UnixListener::bind(&sock_path)
@@ -35,8 +60,9 @@ pub async fn serve(
             Ok((stream, _addr)) => {
                 let control_tx = control_tx.clone();
                 let events_tx = events_tx.clone();
+                let dbus = dbus.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, control_tx, events_tx).await {
+                    if let Err(e) = handle_client(stream, control_tx, events_tx, dbus).await {
                         tracing::debug!("client connection ended: {e}");
                     }
                 });
@@ -58,10 +84,35 @@ where
     reply_rx.await.ok()
 }
 
+/// Send a request to one of the Phase 3 D-Bus actors and await its reply line.
+///
+/// `tx` is `None` when the actor isn't wired (non-Linux build, or the actor
+/// failed to start) — in that case the command replies
+/// `error:unsupported on this platform`. A closed channel / dropped reply also
+/// degrades to the same unsupported reply so a missing actor never wedges a
+/// client. `make` builds the request enum from a fresh `oneshot` sender.
+#[cfg(target_os = "linux")]
+async fn request_dbus<T, F>(tx: &Option<mpsc::Sender<T>>, make: F) -> String
+where
+    F: FnOnce(oneshot::Sender<String>) -> T,
+{
+    let Some(tx) = tx else {
+        return protocol::resp_unsupported();
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    if tx.send(make(reply_tx)).await.is_err() {
+        return protocol::resp_unsupported();
+    }
+    reply_rx
+        .await
+        .unwrap_or_else(|_| protocol::resp_unsupported())
+}
+
 async fn handle_client(
     stream: UnixStream,
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
+    dbus: DbusSenders,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LinesCodec::new());
 
@@ -73,7 +124,7 @@ async fn handle_client(
                 return stream_events(framed, events_tx).await;
             }
             cmd => {
-                let response = dispatch(&control_tx, cmd).await;
+                let response = dispatch(&control_tx, &dbus, cmd).await;
                 framed.send(response).await?;
             }
         }
@@ -151,8 +202,11 @@ where
 }
 
 /// Resolve a non-subscribe command to its response line.
-async fn dispatch(control_tx: &mpsc::Sender<Control>, cmd: Command) -> String {
+async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: Command) -> String {
     if let Some(resp) = dispatch_stateless(&cmd).await {
+        return resp;
+    }
+    if let Some(resp) = dispatch_dbus(dbus, &cmd).await {
         return resp;
     }
     let fallback = protocol::resp_unknown();
@@ -186,8 +240,102 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, cmd: Command) -> String {
         | Command::RecordLaunch(_)
         | Command::RecordLaunchUsage
         | Command::GetRecents => return protocol::resp_unknown(),
+        // Phase 3 D-Bus commands are consumed by `dispatch_dbus` above (which
+        // returns early); they never reach this match. The MAC-usage variant is
+        // a stateless error reply handled there too.
+        Command::BtPowerStatus
+        | Command::BtPowerOn
+        | Command::BtPowerOff
+        | Command::BtScanOn
+        | Command::BtScanOff
+        | Command::BtList
+        | Command::BtConnect(_)
+        | Command::BtDisconnect(_)
+        | Command::BtPair(_)
+        | Command::BtTrust(_)
+        | Command::BtMacUsage(_)
+        | Command::NetStatus
+        | Command::NetWifiList
+        | Command::NetWifiRescan
+        | Command::PowerCanSuspend
+        | Command::PowerSuspend
+        | Command::PowerBattery => return protocol::resp_unknown(),
     }
     .unwrap_or(fallback)
+}
+
+/// Route the Phase 3 Bluetooth/Network/Power commands to their D-Bus actors.
+///
+/// Returns `Some(reply)` for any Phase 3 command (including the MAC-usage error,
+/// which is stateless), or `None` for everything else so the caller falls
+/// through to the input-runtime dispatch. The `BtMacUsage` arm is handled here
+/// regardless of platform.
+///
+/// On non-Linux builds the D-Bus actors don't exist, so every routed command
+/// (except the usage error) replies `error:unsupported on this platform`.
+#[cfg(target_os = "linux")]
+async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
+    let resp = match cmd {
+        Command::BtPowerStatus => request_dbus(&dbus.bt, BtReq::PowerStatus).await,
+        Command::BtPowerOn => request_dbus(&dbus.bt, BtReq::PowerOn).await,
+        Command::BtPowerOff => request_dbus(&dbus.bt, BtReq::PowerOff).await,
+        Command::BtScanOn => request_dbus(&dbus.bt, BtReq::ScanOn).await,
+        Command::BtScanOff => request_dbus(&dbus.bt, BtReq::ScanOff).await,
+        Command::BtList => request_dbus(&dbus.bt, BtReq::List).await,
+        Command::BtConnect(mac) => {
+            let mac = mac.clone();
+            request_dbus(&dbus.bt, move |reply| BtReq::Connect { mac, reply }).await
+        }
+        Command::BtDisconnect(mac) => {
+            let mac = mac.clone();
+            request_dbus(&dbus.bt, move |reply| BtReq::Disconnect { mac, reply }).await
+        }
+        Command::BtPair(mac) => {
+            let mac = mac.clone();
+            request_dbus(&dbus.bt, move |reply| BtReq::Pair { mac, reply }).await
+        }
+        Command::BtTrust(mac) => {
+            let mac = mac.clone();
+            request_dbus(&dbus.bt, move |reply| BtReq::Trust { mac, reply }).await
+        }
+        Command::BtMacUsage(which) => protocol::resp_bt_mac_usage(which),
+        Command::NetStatus => request_dbus(&dbus.net, NetReq::Status).await,
+        Command::NetWifiList => request_dbus(&dbus.net, NetReq::WifiList).await,
+        Command::NetWifiRescan => request_dbus(&dbus.net, NetReq::WifiRescan).await,
+        Command::PowerCanSuspend => request_dbus(&dbus.power, PowerReq::CanSuspend).await,
+        Command::PowerSuspend => request_dbus(&dbus.power, PowerReq::Suspend).await,
+        Command::PowerBattery => request_dbus(&dbus.power, PowerReq::Battery).await,
+        _ => return None,
+    };
+    Some(resp)
+}
+
+/// Non-Linux stub: the D-Bus actors don't exist, so every Phase 3 command
+/// (other than the stateless MAC-usage error) is unsupported. Keeps `dispatch`
+/// and the protocol parsing/tests cross-platform.
+#[cfg(not(target_os = "linux"))]
+async fn dispatch_dbus(_dbus: &DbusSenders, cmd: &Command) -> Option<String> {
+    let resp = match cmd {
+        Command::BtMacUsage(which) => protocol::resp_bt_mac_usage(which),
+        Command::BtPowerStatus
+        | Command::BtPowerOn
+        | Command::BtPowerOff
+        | Command::BtScanOn
+        | Command::BtScanOff
+        | Command::BtList
+        | Command::BtConnect(_)
+        | Command::BtDisconnect(_)
+        | Command::BtPair(_)
+        | Command::BtTrust(_)
+        | Command::NetStatus
+        | Command::NetWifiList
+        | Command::NetWifiRescan
+        | Command::PowerCanSuspend
+        | Command::PowerSuspend
+        | Command::PowerBattery => protocol::resp_unsupported(),
+        _ => return None,
+    };
+    Some(resp)
 }
 
 /// Stream broadcast events to a subscribed client until it disconnects.
@@ -280,7 +428,15 @@ mod tests {
         let (events_tx, _) = broadcast::channel(16);
 
         tokio::spawn(fake_runtime(control_rx));
-        let server = tokio::spawn(serve(sock.clone(), control_tx, events_tx.clone()));
+        // No D-Bus actors are wired in the test (Default = all None on Linux,
+        // empty on macOS), so Phase 3 query commands reply `unsupported` while
+        // the stateless MAC-usage error still works.
+        let server = tokio::spawn(serve(
+            sock.clone(),
+            control_tx,
+            events_tx.clone(),
+            DbusSenders::default(),
+        ));
 
         // Wait for the socket to appear.
         for _ in 0..100 {
@@ -343,6 +499,25 @@ mod tests {
         assert_eq!(
             send_line(&mut s, "set-config [1,2,3]").await,
             "error:set-config body must be a JSON object"
+        );
+
+        // Phase 3 commands: with no D-Bus actor wired, query commands report
+        // unsupported, but the stateless MAC-usage error is platform-independent.
+        assert_eq!(
+            send_line(&mut s, "bt-power-status").await,
+            "error:unsupported on this platform"
+        );
+        assert_eq!(
+            send_line(&mut s, "net-status").await,
+            "error:unsupported on this platform"
+        );
+        assert_eq!(
+            send_line(&mut s, "power-can-suspend").await,
+            "error:unsupported on this platform"
+        );
+        assert_eq!(
+            send_line(&mut s, "bt-connect").await,
+            "error:usage: bt-connect <mac>"
         );
         drop(s);
 
