@@ -10,12 +10,14 @@ A 10-foot couch gaming UI built with [Quickshell](https://quickshell.org/) (QML)
 
 ```
 SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
-                               └── game-shell-input (Rust daemon: EVIOCGRAB → uinput
-                                   + backend IPC)
+       │                                  │  ▲ intent:* control-surface stream + Keys
+       │  Super → super-intent.sh ────────┼──┘ (keyboard global-escape)
+                               └── game-shell-input (Rust daemon: EVIOCGRAB the
+                                   gamepad fleet → per-player uinput; backend IPC)
 ```
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
-- **game-shell-input** (Rust daemon, `rust/`) — the sole backend: grabs the gamepad exclusively via evdev, emits keyboard/mouse via uinput, and serves the full Unix-socket IPC (input `grab`/`release`/`subscribe`, settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). Build with `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
+- **game-shell-input** (Rust daemon, `rust/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots (#98), and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED, #99/#100/#101), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); the bare `Super` press is a Hyprland bind → `intent home` (`scripts/super-intent.sh`). Build with `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
 - **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
 - **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
@@ -51,6 +53,7 @@ rust/                        # Rust backend daemon (game-shell-input) — sole b
   README.md                  # daemon architecture + phase notes
 scripts/
   game-shell-session.sh       # Session wrapper launched by SDDM
+  super-intent.sh             # Hyprland Super bind -> `intent home` (keyboard escape)
 ```
 
 ## Key Data Flows

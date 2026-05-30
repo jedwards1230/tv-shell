@@ -668,7 +668,13 @@ so QML has exactly one shell-intent vocabulary regardless of source.
 | Event | Trigger | Details |
 |-------|---------|---------|
 | `combo:end-session` | `BTN_MODE` + `BTN_EAST` (Home+B) held for 3 seconds | Timed combo |
-| `combo:force-quit` | `BTN_SELECT` + `BTN_MODE` + `BTN_TL` + `BTN_TR` (Back+Home+LB+RB) all held | Instant, no hold timer. When ungrabbed, also emits `Ctrl+Alt+Shift+Q` via uinput to quit Moonlight |
+| `combo:force-quit` | `BTN_SELECT` + `BTN_MODE` + `BTN_TL` + `BTN_TR` (Back+Home+LB+RB) all held | Instant, no hold timer. In the **game presenter** (an app/stream owns the screen) also emits `Ctrl+Alt+Shift+Q` via uinput to quit Moonlight; the shell presenter has no app to quit |
+| `combo:suspend-stream` | `BTN_START` + `BTN_TL` + `BTN_TR` (Start+LB+RB) all held, and **not** the force-quit combo | Instant, no hold timer. Gamepad-only safety combo; QML routes it to a stream suspend |
+
+All three combos are **gamepad-button** based (matched against the fleet's held
+buttons), never keyboard chords — they survived the Phase 2 keyboard-snoop
+deletion unchanged. Any pad in the fleet can fire them (shared/deduped at the
+fleet level).
 
 ### Input Mode
 
