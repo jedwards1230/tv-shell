@@ -7,7 +7,7 @@ screenshot batch. Keep this updated as views are added or changed.
 
 See the `game-shell-dev` skill ("Driving the UI for Screenshots"). In short:
 - Inject navigation with `wtype -k <Left|Right|Up|Down|Return|Escape|Tab>` (reaches the focused shell surface).
-- The **left nav drawer** opens via the gamepad **Home** button (tap), the keyboard **Tab**, or a bare **Super** press on the K400. Super is a Hyprland bind → `super-intent.sh` → the daemon control surface (`intent:menu`) — the daemon no longer snoops the keyboard (it's not a "home-press" anymore). Note `wtype` can't synthesize the bare-Super bind, so the drawer still needs `wtype -k Tab` or a press at the TV. (Super+Escape = return-to-shell escape; Super+Backspace = reset.)
+- The **left nav drawer** opens via the gamepad **Home** button (tap), the keyboard **Tab**, or a bare **Super** press on the K400. Super is a Hyprland bind → `super-intent.sh` → the daemon control surface (`intent:menu`) — the daemon no longer snoops the keyboard (it's not a "home-press" anymore). `wtype -k Tab` reaches it (bare-Super can't be synthesized by `wtype`). (Super+Escape = return-to-shell escape; Super+Backspace = reset.)
 - Screenshots are 4K (~2000 tokens each) — shoot in **tiers** (below), not all at once.
 
 ## Home screen index map (QuickActions, top-right)
@@ -79,11 +79,11 @@ capturable with a live stream/app.
 
 ## Capturability summary
 - **wtype-reachable now:** A1–A9, B10–B11, C13–C14, C16, C19, all of D, E, F.
-- **Needs a press at the TV:** C12 (drawer — Super/Home).
+- **Drawer (C12):** now `wtype -k Tab`-reachable (or gamepad Home / bare Super at the TV).
 - **Needs a real condition:** C15 (toast timing), C17 (stream conflict), C18 (stream overlay), G (live stream/app).
 
 ## Suggested tiered batch
 1. **Tier 1 — static views, dark mode:** A1–A9, B10–B11, D20–D30 + settings substates, C13/C14/C16/C19.
 2. **Tier 2 — light mode** re-shoot of the core set (E).
 3. **Tier 3 — input-mode** variants (F) where visually distinct.
-4. **Tier 4 — manual/condition:** drawer (C12, your Super press), then condition-dependent (C15/C17/C18/G).
+4. **Tier 4 — manual/condition:** drawer (C12, `wtype -k Tab` or a TV press), then condition-dependent (C15/C17/C18/G).

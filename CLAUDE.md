@@ -126,6 +126,12 @@ install -m755 target/release/game-shell-input /opt/game-shell/bin/game-shell-inp
 
 Requires Linux with evdev and uinput access. Auto-discovers gamepad by vendor/product ID (defaults: Xbox controller `045e:028e`, configurable via `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` env vars). The Linux-only evdev/uinput/D-Bus modules build only on the target (or CI); the cross-platform subset (`protocol`, `config`, `state`, `device` GUID math, `apps`, `health`, `recents`) builds and tests on any host.
 
+### QA Screenshots
+
+Catalog of views/overlays/states to capture for visual QA (and how to reach each) — [`docs/qa-screenshot-views.md`](docs/qa-screenshot-views.md):
+
+@docs/qa-screenshot-views.md
+
 ## Design Constraints
 
 - **10-foot UI at 4K**: All font sizes and layout constants in Theme.qml are sized for couch-distance reading. Don't shrink them.
