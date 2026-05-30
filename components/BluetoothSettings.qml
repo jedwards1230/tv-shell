@@ -85,7 +85,7 @@ FocusScope {
                     root.powered = true;
                 else if (t === "bt:off")
                     root.powered = false;
-            // "error" leaves the prior state untouched.
+                // "error" leaves the prior state untouched.
             }
         }
         onExited: {
