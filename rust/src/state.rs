@@ -40,6 +40,15 @@ pub enum Control {
         name: String,
         reply: Reply,
     },
+    /// `rumble <id> <ms>`: fire a rumble (FF_RUMBLE) effect on the pad whose
+    /// stable wire id is `id` for `ms` milliseconds. A no-op (still replies `ok`)
+    /// when no pad matches `id`, the pad has no `EV_FF` support, or the persisted
+    /// `rumbleEnabled` setting is off. The reply is `ok` or `error:*`.
+    Rumble {
+        id: String,
+        ms: u32,
+        reply: Reply,
+    },
     Shutdown,
 }
 

@@ -444,6 +444,39 @@ the daemon free of any focus/state knowledge.
 echo "intent home" | nc -U "$GAME_SHELL_SOCK"
 ```
 
+### `rumble <id> <ms>`
+
+Fire a rumble (haptic `FF_RUMBLE`) effect on the pad whose stable wire `id` (the
+`get-pads` / `pad:*` id) is `<id>`, for `<ms>` milliseconds. Part of the fleet
+*outputs* ride-along (#99). The shell fires this on meaningful events (e.g. a
+launch confirmation); the daemon itself also pulses a connecting pad.
+
+`<id>` is a single whitespace-trimmed token (the wire id, which may itself
+contain `:`); `<ms>` is a non-negative integer.
+
+This is a **best-effort, cap-gated no-op**:
+
+- a no-op (still `ok`) if no pad has that wire id,
+- a no-op if the pad has no force feedback (`EV_FF` / `FF_RUMBLE`),
+- a no-op if the persisted **`rumbleEnabled`** setting is `false` (default
+  `true`).
+
+| Condition | Response |
+|-----------|----------|
+| Accepted (fired, or a cap-gated no-op) | `ok\n` |
+| Missing/incomplete `<id> <ms>`, or non-integer `<ms>` | `error:usage: rumble <id> <ms>\n` |
+
+**Example (automation):**
+
+```
+echo "rumble uniq:e4:17:d8:01:02:03 200" | nc -U "$GAME_SHELL_SOCK"
+```
+
+> **`rumbleEnabled` setting.** A QML-owned boolean in `settings.json`
+> (default `true`) gating all daemon-fired rumble — both the `rumble` command and
+> the connect pulse. Read by the daemon via `get-config`; toggled like any other
+> QML-owned key via `set-config`.
+
 ## Phase 4 Commands (Hyprland + Sunshine)
 
 Phase 4 adds two subsystems: a Hyprland compositor actor (`hyprland` crate, async
@@ -569,11 +602,34 @@ Subscribers (registered via `subscribe`) receive these events as newline-termina
 | `controller-disconnected` | A gamepad stream errored during event read (USB disconnect; fires per leaving pad) |
 | `pad:connected:<json>` | A pad joined the fleet and was assigned a player slot. Payload: compact `{id,index,name}` object (#101) |
 | `pad:disconnected:<id>` | A pad left the fleet; its slot is freed for reuse. Payload: the pad's stable wire `id` |
+| `pad:index:<json>` | A pad's player-indicator LED was lit to match its slot at assignment (#101 LED). Payload: compact `{id,index}` object. Only emitted for pads with a controllable LED (`EV_LED`); a no-op for pads (most wired pads) without one |
+| `pad:battery:<json>` | A pad's battery level/charging state changed (#100). Payload: compact `{id,level,charging}` object (`level` 0–100, `charging` bool). Only emitted for pads that report a battery (wireless); wired pads emit none |
 
 `controller-wake` / `controller-disconnected` are the legacy single-pad signals
 and still fire for every join/leave (so existing QML wake handling is unchanged).
 The `pad:*` events carry the fleet-aware per-pad detail (stable id + player
 index). Example: `pad:connected:{"id":"uniq:e4:17:...","index":0,"name":"Xbox Wireless Controller"}\n`.
+
+**Fleet outputs (ride-along, #99/#100/#101).** On top of join/leave, the daemon
+drives three per-pad *outputs*, each cap-gated and degrading to a clean no-op
+when the pad lacks the hardware:
+
+- **LED (#101):** at slot assignment the daemon lights the pad's player LED
+  (`EV_LED`, LED code == player slot) and emits `pad:index:{id,index}`. No LED →
+  no event.
+- **Battery (#100):** the daemon polls the pad's `power_supply` sysfs and emits
+  `pad:battery:{id,level,charging}` on change (and once at connect). Wired pads
+  report no battery → no event.
+- **Rumble (#99):** a short haptic pulse on connect, plus the `rumble <id> <ms>`
+  command. Gated by `FF_RUMBLE` support and the `rumbleEnabled` setting; there is
+  no rumble *event* (it's an output, not a notification).
+
+Example wire lines:
+
+```
+pad:index:{"id":"uniq:e4:17:...","index":0}
+pad:battery:{"id":"uniq:e4:17:...","level":80,"charging":false}
+```
 
 ### Home Button
 

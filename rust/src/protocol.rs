@@ -42,6 +42,19 @@ pub enum Command {
     Intent(String),
     /// `intent` with a missing/empty `<name>` body.
     IntentUsage,
+    /// `rumble <id> <ms>` — fire a rumble (FF_RUMBLE) effect on the pad whose
+    /// stable wire id is `<id>` for `<ms>` milliseconds. Served by the input
+    /// runtime (Phase 5.5 ride-along, #99); a no-op for pads without `EV_FF`
+    /// support or when the persisted `rumbleEnabled` setting is off. `<id>` is a
+    /// single token (the wire id, which may itself contain `:`), `<ms>` a
+    /// non-negative integer.
+    Rumble {
+        id: String,
+        ms: u32,
+    },
+    /// `rumble` with a missing/incomplete `<id> <ms>` body, or a non-integer
+    /// `<ms>`.
+    RumbleUsage,
     /// Scan installed `.desktop` apps; reply is a compact JSON array.
     /// Stateless (no input-runtime round-trip).
     ListApps,
@@ -240,6 +253,24 @@ impl Command {
                         Command::Intent(body.to_string())
                     };
                 }
+                // `rumble <id> <ms>`: two whitespace-separated tokens — the pad
+                // wire id and a non-negative millisecond duration. A missing
+                // token or a non-integer `<ms>` is a usage error.
+                // `command_body` enforces the word boundary so e.g. `rumbleX`
+                // is not mistaken for `rumble`.
+                if let Some(body) = command_body(cmd, "rumble") {
+                    let mut toks = body.split_whitespace();
+                    return match (toks.next(), toks.next()) {
+                        (Some(id), Some(ms)) => match ms.parse::<u32>() {
+                            Ok(ms) => Command::Rumble {
+                                id: id.to_string(),
+                                ms,
+                            },
+                            Err(_) => Command::RumbleUsage,
+                        },
+                        _ => Command::RumbleUsage,
+                    };
+                }
                 // Phase 3 MAC-argument commands: `bt-connect <mac>` etc. The body
                 // is a single MAC token (whitespace-trimmed); a missing body is a
                 // usage error. `command_body` enforces the word boundary so e.g.
@@ -319,6 +350,18 @@ pub enum Event {
     /// pad's stable wire id. Wire: `pad:disconnected:<id>`. Complements
     /// `controller-disconnected`.
     PadDisconnected(String),
+    /// A pad's player LED was assigned (#101 LED, Phase 5.5). Payload is a
+    /// compact JSON object `{id,index}`: `id` the stable wire id, `index` the
+    /// player slot whose LED was lit. Wire: `pad:index:<json>`. Emitted at slot
+    /// assignment only when the pad has a controllable LED (`EV_LED`); a no-op
+    /// for pads without one.
+    PadIndex(String),
+    /// A pad's battery state changed (#100 battery, Phase 5.5). Payload is a
+    /// compact JSON object `{id,level,charging}`: `id` the stable wire id,
+    /// `level` the charge percentage (0..=100), `charging` whether it is
+    /// charging. Wire: `pad:battery:<json>`. Only emitted for pads that report a
+    /// battery (wireless); wired pads emit none.
+    PadBattery(String),
     ComboEndSession,
     ComboForceQuit,
     ComboSuspendStream,
@@ -387,6 +430,8 @@ impl fmt::Display for Event {
             Event::ControllerDisconnected => f.write_str("controller-disconnected"),
             Event::PadConnected(json) => write!(f, "pad:connected:{json}"),
             Event::PadDisconnected(id) => write!(f, "pad:disconnected:{id}"),
+            Event::PadIndex(json) => write!(f, "pad:index:{json}"),
+            Event::PadBattery(json) => write!(f, "pad:battery:{json}"),
             Event::ComboEndSession => f.write_str("combo:end-session"),
             Event::ComboForceQuit => f.write_str("combo:force-quit"),
             Event::ComboSuspendStream => f.write_str("combo:suspend-stream"),
@@ -468,6 +513,11 @@ pub fn resp_record_launch_usage() -> String {
 
 pub fn resp_intent_usage() -> String {
     "error:usage: intent <name>".to_string()
+}
+
+/// Usage line for a `rumble` issued without a valid `<id> <ms>` body.
+pub fn resp_rumble_usage() -> String {
+    "error:usage: rumble <id> <ms>".to_string()
 }
 
 /// Error reply for an `intent <name>` whose name is outside the closed
@@ -559,6 +609,26 @@ fn pad_value(id: &str, index: u8, name: &str, grabbed: Option<bool>) -> serde_js
 /// Compact single-line JSON object for a `pad:connected:<json>` event body.
 pub fn pad_connected_json(id: &str, index: u8, name: &str) -> String {
     serde_json::to_string(&pad_value(id, index, name, None)).expect("pad serialize")
+}
+
+/// Compact single-line JSON object for a `pad:index:<json>` event body
+/// (#101 LED). Shape: `{"id":..,"index":..}`.
+pub fn pad_index_json(id: &str, index: u8) -> String {
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+    obj.insert("index".into(), serde_json::Value::Number(index.into()));
+    serde_json::to_string(&serde_json::Value::Object(obj)).expect("pad index serialize")
+}
+
+/// Compact single-line JSON object for a `pad:battery:<json>` event body
+/// (#100 battery). Shape: `{"id":..,"level":..,"charging":..}` where `level` is
+/// the charge percentage (0..=100) and `charging` a bool.
+pub fn pad_battery_json(id: &str, level: u8, charging: bool) -> String {
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+    obj.insert("level".into(), serde_json::Value::Number(level.into()));
+    obj.insert("charging".into(), serde_json::Value::Bool(charging));
+    serde_json::to_string(&serde_json::Value::Object(obj)).expect("pad battery serialize")
 }
 
 /// Compact single-line JSON array body for the `get-pads` reply. `pads` is
@@ -999,6 +1069,79 @@ mod tests {
         assert_eq!(
             pad_connected_json("uniq:aa:bb", 1, "DualSense"),
             r#"{"id":"uniq:aa:bb","index":1,"name":"DualSense"}"#
+        );
+    }
+
+    #[test]
+    fn parses_rumble_command() {
+        assert_eq!(
+            Command::parse("rumble uniq:aa:bb 200"),
+            Command::Rumble {
+                id: "uniq:aa:bb".into(),
+                ms: 200
+            }
+        );
+        // Surrounding/internal whitespace collapses like split_whitespace.
+        assert_eq!(
+            Command::parse("  rumble   vp:045e:028e:/dev/input/event5   50  "),
+            Command::Rumble {
+                id: "vp:045e:028e:/dev/input/event5".into(),
+                ms: 50
+            }
+        );
+        // Zero duration is a valid (instant/cancel) request.
+        assert_eq!(
+            Command::parse("rumble uniq:aa 0"),
+            Command::Rumble {
+                id: "uniq:aa".into(),
+                ms: 0
+            }
+        );
+        // Missing ms / bare command / non-integer ms / negative -> usage.
+        assert_eq!(Command::parse("rumble uniq:aa"), Command::RumbleUsage);
+        assert_eq!(Command::parse("rumble"), Command::RumbleUsage);
+        assert_eq!(Command::parse("rumble uniq:aa abc"), Command::RumbleUsage);
+        assert_eq!(Command::parse("rumble uniq:aa -5"), Command::RumbleUsage);
+        // Word boundary: `rumbleX` is NOT rumble.
+        assert_eq!(Command::parse("rumbleX"), Command::Unknown);
+    }
+
+    #[test]
+    fn rumble_usage_string() {
+        assert_eq!(resp_rumble_usage(), "error:usage: rumble <id> <ms>");
+    }
+
+    #[test]
+    fn pad_index_and_battery_event_wire_strings() {
+        // `pad:index:<json>` carries a compact `{id,index}` object (#101 LED).
+        assert_eq!(
+            Event::PadIndex(r#"{"id":"uniq:aa","index":0}"#.into()).to_string(),
+            r#"pad:index:{"id":"uniq:aa","index":0}"#
+        );
+        // `pad:battery:<json>` carries a compact `{id,level,charging}` object (#100).
+        assert_eq!(
+            Event::PadBattery(r#"{"id":"uniq:aa","level":80,"charging":false}"#.into()).to_string(),
+            r#"pad:battery:{"id":"uniq:aa","level":80,"charging":false}"#
+        );
+    }
+
+    #[test]
+    fn pad_index_json_is_compact_object() {
+        assert_eq!(
+            pad_index_json("uniq:aa:bb", 2),
+            r#"{"id":"uniq:aa:bb","index":2}"#
+        );
+    }
+
+    #[test]
+    fn pad_battery_json_is_compact_object() {
+        assert_eq!(
+            pad_battery_json("uniq:aa:bb", 73, true),
+            r#"{"id":"uniq:aa:bb","level":73,"charging":true}"#
+        );
+        assert_eq!(
+            pad_battery_json("phys:usb-1", 100, false),
+            r#"{"id":"phys:usb-1","level":100,"charging":false}"#
         );
     }
 
