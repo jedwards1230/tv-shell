@@ -335,7 +335,7 @@ FocusScope {
                     id: networkMA
                     anchors.fill: parent
                     hoverEnabled: true
-                // Mouse-mode on real click only — not hover/scroll-under-cursor (#45).
+                    // Mouse-mode on real click only — not hover/scroll-under-cursor (#45).
                 }
             }
 
@@ -374,7 +374,7 @@ FocusScope {
                     id: volumeMA
                     anchors.fill: parent
                     hoverEnabled: true
-                // Mouse-mode on real click only — not hover/scroll-under-cursor (#45).
+                    // Mouse-mode on real click only — not hover/scroll-under-cursor (#45).
                 }
             }
 
