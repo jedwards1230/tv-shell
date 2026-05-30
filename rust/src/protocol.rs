@@ -29,6 +29,15 @@ pub enum Command {
     CaptureNext,
     CaptureCancel,
     KbdLog(bool),
+    /// `intent <name>` — inject a shell intent into the broadcast bus. `<name>`
+    /// is validated against the closed vocabulary by the input runtime: a valid
+    /// name re-broadcasts as `intent:<name>` and replies `ok`; an unknown name
+    /// replies `error:unknown intent '<name>'`. This is the headless control
+    /// surface for keyboard global-escape and automation (see
+    /// `docs/IPC_PROTOCOL.md`). Pure broadcast — touches no device.
+    Intent(String),
+    /// `intent` with a missing/empty `<name>` body.
+    IntentUsage,
     /// Scan installed `.desktop` apps; reply is a compact JSON array.
     /// Stateless (no input-runtime round-trip).
     ListApps,
@@ -114,6 +123,40 @@ pub enum Command {
     Unknown,
 }
 
+/// The closed vocabulary of shell intents accepted by the `intent <name>`
+/// command and re-broadcast as `intent:<name>` events. Single source of truth
+/// shared by the input runtime's validator and the IPC tests.
+///
+/// Semantics (mapped to shell actions by QML):
+/// - `home` — global return-to-shell escape (keyboard Super, automation);
+///   distinct from the gamepad neutrals below.
+/// - `home-tap` / `home-hold` — gamepad Home neutrals (QML routes tap->menu,
+///   hold->home/reset from the focus it owns).
+/// - `menu` — nav-drawer toggle.
+/// - `nav-up` / `nav-down` / `nav-left` / `nav-right` — directional navigation.
+/// - `select` / `back` — confirm / cancel.
+/// - `settings` — open settings.
+/// - `power` — power menu.
+pub const INTENT_VOCAB: &[&str] = &[
+    "home",
+    "home-tap",
+    "home-hold",
+    "menu",
+    "nav-up",
+    "nav-down",
+    "nav-left",
+    "nav-right",
+    "select",
+    "back",
+    "settings",
+    "power",
+];
+
+/// True if `name` is in the closed intent vocabulary.
+pub fn is_known_intent(name: &str) -> bool {
+    INTENT_VOCAB.contains(&name)
+}
+
 /// If `cmd` is `word` (exact) or `word` followed by whitespace, return the
 /// trimmed remainder (the body). `Some("")` means the bare command with no body;
 /// `None` means `cmd` isn't this command at all (e.g. `set-configX`).
@@ -180,6 +223,18 @@ impl Command {
                         Command::RecordLaunchUsage
                     } else {
                         Command::RecordLaunch(body.to_string())
+                    };
+                }
+                // `intent <name>`: a single intent-name token (whitespace-
+                // trimmed). A missing body is a usage error. `command_body`
+                // enforces the word boundary so e.g. `intentX` is not mistaken
+                // for `intent`. The closed-vocabulary check happens in the
+                // input runtime, not here (parsing stays validation-free).
+                if let Some(body) = command_body(cmd, "intent") {
+                    return if body.is_empty() {
+                        Command::IntentUsage
+                    } else {
+                        Command::Intent(body.to_string())
                     };
                 }
                 // Phase 3 MAC-argument commands: `bt-connect <mac>` etc. The body
@@ -256,6 +311,11 @@ pub enum Event {
     ComboEndSession,
     ComboForceQuit,
     ComboSuspendStream,
+    /// A shell intent broadcast (`intent:<name>`), re-emitted from an accepted
+    /// `intent <name>` command. `<name>` is one of the closed vocabulary
+    /// (see `docs/IPC_PROTOCOL.md`). The control surface for keyboard
+    /// global-escape and automation; QML maps each name to a shell action.
+    Intent(String),
     InputMode(InputMode),
     /// Space-and-plus joined held controller inputs (may be empty).
     Buttons(String),
@@ -321,6 +381,7 @@ impl fmt::Display for Event {
             Event::ComboEndSession => f.write_str("combo:end-session"),
             Event::ComboForceQuit => f.write_str("combo:force-quit"),
             Event::ComboSuspendStream => f.write_str("combo:suspend-stream"),
+            Event::Intent(name) => write!(f, "intent:{name}"),
             Event::InputMode(m) => write!(f, "input-mode:{}", m.as_str()),
             Event::Buttons(s) => write!(f, "buttons:{s}"),
             Event::Keys(s) => write!(f, "keys:{s}"),
@@ -395,6 +456,16 @@ pub fn resp_set_config_usage() -> String {
 
 pub fn resp_record_launch_usage() -> String {
     "error:usage: record-launch <json-object>".to_string()
+}
+
+pub fn resp_intent_usage() -> String {
+    "error:usage: intent <name>".to_string()
+}
+
+/// Error reply for an `intent <name>` whose name is outside the closed
+/// vocabulary.
+pub fn resp_unknown_intent(name: &str) -> String {
+    format!("error:unknown intent '{name}'")
 }
 
 /// Generic error reply for a malformed config/recents body.
@@ -571,6 +642,58 @@ mod tests {
     }
 
     #[test]
+    fn parses_intent_command() {
+        // Valid name token -> Intent (vocabulary is NOT checked at parse time).
+        assert_eq!(
+            Command::parse("intent home-tap"),
+            Command::Intent("home-tap".into())
+        );
+        assert_eq!(
+            Command::parse("intent home"),
+            Command::Intent("home".into())
+        );
+        // An unknown-but-well-formed token still parses; the runtime rejects it.
+        assert_eq!(
+            Command::parse("intent frobnicate"),
+            Command::Intent("frobnicate".into())
+        );
+        // Body is whitespace-trimmed.
+        assert_eq!(
+            Command::parse("  intent   nav-up  "),
+            Command::Intent("nav-up".into())
+        );
+        // Bare command (no name) -> usage.
+        assert_eq!(Command::parse("intent"), Command::IntentUsage);
+        assert_eq!(Command::parse("intent   "), Command::IntentUsage);
+        // Word boundary: `intentX` is NOT intent.
+        assert_eq!(Command::parse("intentX"), Command::Unknown);
+    }
+
+    #[test]
+    fn intent_event_wire_strings_round_trip() {
+        // Each closed-vocabulary intent renders as `intent:<name>`.
+        for name in [
+            "home",
+            "home-tap",
+            "home-hold",
+            "menu",
+            "nav-up",
+            "nav-down",
+            "nav-left",
+            "nav-right",
+            "select",
+            "back",
+            "settings",
+            "power",
+        ] {
+            assert_eq!(
+                Event::Intent(name.to_string()).to_string(),
+                format!("intent:{name}")
+            );
+        }
+    }
+
+    #[test]
     fn phase2_usage_strings() {
         assert_eq!(
             resp_set_config_usage(),
@@ -581,6 +704,11 @@ mod tests {
             "error:usage: record-launch <json-object>"
         );
         assert_eq!(resp_error("bad body"), "error:bad body");
+        assert_eq!(resp_intent_usage(), "error:usage: intent <name>");
+        assert_eq!(
+            resp_unknown_intent("frobnicate"),
+            "error:unknown intent 'frobnicate'"
+        );
     }
 
     #[test]

@@ -16,8 +16,8 @@ use crate::config as cfg;
 use crate::config::{self, Binding};
 use crate::device::{self, ControllerDb, GamepadHandle};
 use crate::protocol::{
-    resp_cancelled, resp_captured, resp_invalid_button, resp_ok, resp_status, resp_timeout,
-    resp_unknown_action, Event, InputMode,
+    is_known_intent, resp_cancelled, resp_captured, resp_invalid_button, resp_ok, resp_status,
+    resp_timeout, resp_unknown_action, resp_unknown_intent, Event, InputMode,
 };
 use crate::state::{self, Control, Reply};
 use evdev::uinput::VirtualDevice;
@@ -432,6 +432,18 @@ impl Daemon {
                     if on { "enabled" } else { "disabled" }
                 );
                 let _ = r.send(resp_ok());
+            }
+            Control::Intent { name, reply } => {
+                // Pure broadcast: validate against the closed vocabulary and, if
+                // valid, re-emit `intent:<name>` to all subscribers. Touches no
+                // device — the control surface for keyboard global-escape and
+                // automation.
+                if is_known_intent(&name) {
+                    self.publish(Event::Intent(name));
+                    let _ = reply.send(resp_ok());
+                } else {
+                    let _ = reply.send(resp_unknown_intent(&name));
+                }
             }
             Control::Shutdown => return false,
         }

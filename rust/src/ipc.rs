@@ -240,7 +240,11 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         Command::CaptureNext => request(control_tx, Control::CaptureNext).await,
         Command::CaptureCancel => request(control_tx, Control::CaptureCancel).await,
         Command::KbdLog(on) => request(control_tx, move |reply| Control::KbdLog(on, reply)).await,
+        Command::Intent(name) => {
+            request(control_tx, move |reply| Control::Intent { name, reply }).await
+        }
         // Handled without a round-trip to the runtime:
+        Command::IntentUsage => return protocol::resp_intent_usage(),
         Command::SetBindingUsage => return protocol::resp_set_binding_usage(),
         Command::Unknown => return protocol::resp_unknown(),
         // Subscribe is handled by the caller before dispatch.
@@ -425,6 +429,16 @@ mod tests {
                 Control::CaptureNext(r) => {
                     let _ = r.send(protocol::resp_captured("BTN_SOUTH"));
                 }
+                Control::Intent { name, reply } => {
+                    // Mirror the runtime: accept the closed vocabulary, reject
+                    // anything else. The fake doesn't actually broadcast.
+                    let resp = if protocol::is_known_intent(&name) {
+                        protocol::resp_ok()
+                    } else {
+                        protocol::resp_unknown_intent(&name)
+                    };
+                    let _ = reply.send(resp);
+                }
                 Control::Shutdown => break,
             }
         }
@@ -543,6 +557,19 @@ mod tests {
             send_line(&mut s, "bt-connect").await,
             "error:usage: bt-connect <mac>"
         );
+
+        // Intent control surface: a closed-vocabulary name is accepted; an
+        // unknown name is rejected; a bare command is a usage error.
+        assert_eq!(send_line(&mut s, "intent home-tap").await, "ok");
+        assert_eq!(send_line(&mut s, "intent home").await, "ok");
+        assert_eq!(
+            send_line(&mut s, "intent frobnicate").await,
+            "error:unknown intent 'frobnicate'"
+        );
+        assert_eq!(
+            send_line(&mut s, "intent").await,
+            "error:usage: intent <name>"
+        );
         drop(s);
 
         // Subscribe receives broadcast events.
@@ -553,6 +580,14 @@ mod tests {
         let mut buf = vec![0u8; 64];
         let n = sub.read(&mut buf).await.unwrap();
         assert_eq!(String::from_utf8_lossy(&buf[..n]).trim_end(), "home-press");
+
+        // A broadcast `intent:*` event reaches the subscriber on the wire.
+        events_tx.send(Event::Intent("home-tap".into())).unwrap();
+        let n = sub.read(&mut buf).await.unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&buf[..n]).trim_end(),
+            "intent:home-tap"
+        );
 
         server.abort();
     }
