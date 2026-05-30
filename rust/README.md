@@ -162,18 +162,46 @@ raw Unix sockets (no crate, no system deps).
 1. `cargo build --release`
 2. Install `target/release/game-shell-input` to `/opt/game-shell/bin/`
 
-No launch-line edit is needed: `scripts/game-shell-session.sh` auto-prefers the
-binary on the next session when it's present, and falls back to the Python daemon
-if the binary is absent or exits immediately at startup.
+`scripts/game-shell-session.sh` spawns the binary directly — it is the sole
+backend (the Python rollback was retired in #96).
 
 Honors `GAME_SHELL_SOCK`, `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` (exact-pin override),
 and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
 
+## Logging & debugging
+
+Logs go to stderr via `tracing`, filtered by `RUST_LOG` (default `info`). Tiers:
+
+| Level | Shows |
+|-------|-------|
+| `info` (default) | startup/actors, pad join/leave + grab, **presenter ↔ Shell/Game transitions** (the grab-handoff that's most bug-prone), warnings/errors |
+| `debug` | every **published broadcast event** at the `publish()` chokepoint — `intent:*`, combos, `pad:*`, `input-mode:*`, `controller-wake`, status pushes |
+| `trace` | every **raw evdev event** from each pad (slot + type/code/value) and every `emit_key`/`emit_mouse_button` to the shared virtual devices |
+
+```bash
+# Full input pipeline trace for one run (scoped to the input module):
+RUST_LOG=game_shell_input::input=trace /opt/game-shell/bin/game-shell-input
+# High-level event flow only (intents/combos/pad events), less noise:
+RUST_LOG=game_shell_input::input=debug ...
+```
+
+The live **`subscribe`** IPC stream is the other debug surface — it shows the
+daemon's outbound events in real time without restarting:
+
+```bash
+printf 'subscribe\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"
+```
+
+Inject a control-surface intent by hand (e.g. to test the keyboard escape path):
+
+```bash
+printf 'intent home\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"   # -> ok
+```
+
 ## Status
 
-The Python daemon stays the default until this is hardware-verified. Phase 3
-(zbus/Bluetooth/Wi-Fi-read/power) and Phase 4 (Hyprland + Sunshine `health`) are
-implemented above but **require on-device verification** — the Linux-only modules
-(D-Bus, `hyprland`) don't compile or run on macOS/CI, and `health`'s live fetch
-needs a reachable Sunshine host. **HDMI-CEC remains deferred** (still a
-`cec-client` shell-out in `AVController.qml`) as a follow-up.
+Phase 3 (zbus/Bluetooth/Wi-Fi-read/power) and Phase 4 (Hyprland + Sunshine
+`health`) **require on-device verification** — the Linux-only modules (D-Bus,
+`hyprland`) don't compile or run on macOS/CI, and `health`'s live fetch needs a
+reachable Sunshine host. **HDMI-CEC remains deferred** (still a `cec-client`
+shell-out in `AVController.qml`) as a follow-up.
