@@ -77,6 +77,12 @@ cargo test            # runs everywhere (protocol/config/apps/recents/device/sta
 cargo build --release # Linux only -> target/release/game-shell-input
 ```
 
+**Linux build deps:** the Phase 3 Bluetooth module uses `bluer`, which pulls in
+`libdbus-sys`, so a Linux build needs the D-Bus headers + pkg-config:
+`apt-get install libdbus-1-dev pkg-config` (Debian/CI) — on Arch / game-client-1
+these come with the core `dbus`/`base-devel`. `zbus` (network/power) is pure Rust
+and needs nothing.
+
 ## Deploy (later, on game-client-1)
 
 1. `cargo build --release`

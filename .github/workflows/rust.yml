@@ -31,6 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # bluer (BlueZ binding) pulls in libdbus-sys, which needs the system
+      # libdbus headers + pkg-config at build time. zbus is pure-Rust and needs
+      # nothing. game-client-1 has libdbus at runtime (dbus is core on Arch).
+      - name: Install D-Bus build deps
+        run: apt-get update && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
       - name: Add rustfmt + clippy
         run: rustup component add rustfmt clippy
 
