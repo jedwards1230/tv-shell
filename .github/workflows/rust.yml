@@ -1,0 +1,76 @@
+# Rust CI for the game-shell input daemon (rust/).
+#
+# Builds, formats, lints, and tests the Rust crate on a Linux runner — the only
+# place the evdev/uinput code compiles (it is excluded on non-Linux dev hosts).
+# Runs inside a slim official `rust` container (toolchain preinstalled, ~1.5 GB
+# vs the ~30 GB ubuntu-latest image; no system libs needed — evdev is pure Rust).
+# Scoped to rust/** so QML-only PRs don't trigger it.
+
+name: Rust
+
+run-name: "Rust CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}"
+
+on:
+  push:
+    branches: [main]
+    paths: ['rust/**', '.github/workflows/rust.yml']
+  pull_request:
+    paths: ['rust/**', '.github/workflows/rust.yml']
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: rust:1-bookworm
+    steps:
+      - uses: actions/checkout@v6
+
+      # bluer (BlueZ binding) pulls in libdbus-sys, which needs the system
+      # libdbus headers + pkg-config at build time. zbus is pure-Rust and needs
+      # nothing. game-client-1 has libdbus at runtime (dbus is core on Arch).
+      - name: Install D-Bus build deps
+        run: apt-get update && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - name: Add rustfmt + clippy
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Format check
+        id: fmt
+        run: cargo fmt --check
+
+      - name: Clippy
+        id: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        id: build
+        run: cargo build --release
+
+      - name: Test
+        id: test
+        run: cargo test
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Rust CI — \`rust/\`"
+            echo ""
+            echo "| Step | Result |"
+            echo "|------|--------|"
+            echo "| Format | ${{ steps.fmt.outcome }} |"
+            echo "| Clippy | ${{ steps.clippy.outcome }} |"
+            echo "| Build (release) | ${{ steps.build.outcome }} |"
+            echo "| Test | ${{ steps.test.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

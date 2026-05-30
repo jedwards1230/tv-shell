@@ -2,6 +2,15 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
+// Network settings — rewired (Phase 3) to read system network state from the
+// input daemon's NetworkManager-over-zbus backbone instead of shelling out to
+// `nmcli` / `ip`. This page is READ-ONLY: WiFi *join* still belongs to
+// `nmcli device wifi connect` and is intentionally not implemented here.
+//
+// IPC commands used (see docs/IPC_PROTOCOL.md):
+//   net-status     -> {connectivity, primaryType, hasWifi, ipv4, activeConnections:[{name,type,device}]}
+//   net-wifi-list  -> [{ssid, signal, security, inUse}]
+//   net-wifi-rescan -> ok|error (NetworkManager RequestScan)
 FocusScope {
     id: root
 
@@ -10,112 +19,88 @@ FocusScope {
     property var wifiNetworks: []
     property bool hasWifi: false
 
-    // --- Processes ---
-
-    Process {
-        id: getActiveConns
-        command: ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"]
-        stdout: SplitParser {
-            property var collected: []
-            onRead: line => {
-                let parts = line.trim().split(":");
-                if (parts.length >= 3) {
-                    collected.push({
-                        name: parts[0],
-                        type: parts[1],
-                        device: parts[2]
-                    });
-                    if (parts[1] === "802-11-wireless")
-                        root.hasWifi = true;
-                }
-            }
-        }
-        onExited: {
-            root.activeConnections = getActiveConns.stdout.collected;
-            getActiveConns.stdout.collected = [];
-        }
+    // --- Socket helper: read until the FIRST newline (the daemon keeps the
+    // connection open after replying). Mirrors the Phase 2 SettingsStore pattern. ---
+    function _ipc(cmd) {
+        return "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(20);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'" + cmd + "\\n');buf=b'';exec(\"while b'\\\\n' not in buf:\\n c=s.recv(65536)\\n if not c: break\\n buf+=c\");s.close();print(buf.split(b'\\n',1)[0].decode())";
     }
 
+    // --- Processes ---
+
+    // Single round-trip for connectivity, primary type, IPv4, and the active
+    // connection list — replaces three separate nmcli/ip/bash invocations.
     Process {
-        id: getIP
-        command: ["bash", "-c", "ip -4 -o addr show | grep -v '127.0.0.1' | head -3 | awk '{print $2\": \"$4}'"]
+        id: getStatus
+        command: ["python3", "-c", root._ipc("net-status")]
         stdout: SplitParser {
-            property var lines: []
             onRead: line => {
-                lines.push(line.trim());
+                try {
+                    let obj = JSON.parse(line);
+                    root.activeConnections = Array.isArray(obj.activeConnections) ? obj.activeConnections : [];
+                    root.ipAddress = obj.ipv4 || "";
+                    root.hasWifi = obj.hasWifi === true;
+                    if (root.hasWifi)
+                        getWifi.running = true;
+                } catch (e) {
+                    console.log("NetworkSettings: failed to parse net-status:", e);
+                }
             }
-        }
-        onExited: {
-            root.ipAddress = getIP.stdout.lines.join("\n");
-            getIP.stdout.lines = [];
         }
     }
 
     Process {
         id: getWifi
-        command: ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list", "--rescan", "auto"]
+        command: ["python3", "-c", root._ipc("net-wifi-list")]
         stdout: SplitParser {
-            property var collected: []
             onRead: line => {
-                let parts = line.trim().split(":");
-                if (parts.length >= 3 && parts[0] !== "") {
-                    collected.push({
-                        ssid: parts[0],
-                        signal: parseInt(parts[1]) || 0,
-                        security: parts[2] || "Open",
-                        inUse: parts.length >= 4 && parts[3] === "*"
+                try {
+                    let nets = JSON.parse(line);
+                    // Deduplicate by SSID, keep highest signal.
+                    let seen = {};
+                    for (let i = 0; i < nets.length; i++) {
+                        let net = nets[i];
+                        if (!net.ssid || net.ssid === "")
+                            continue;
+                        if (!seen[net.ssid] || net.signal > seen[net.ssid].signal)
+                            seen[net.ssid] = net;
+                    }
+                    let deduped = [];
+                    for (let ssid in seen)
+                        deduped.push(seen[ssid]);
+                    deduped.sort(function (a, b) {
+                        return b.signal - a.signal;
                     });
+                    root.wifiNetworks = deduped;
+                } catch (e) {
+                    console.log("NetworkSettings: failed to parse net-wifi-list:", e);
                 }
             }
-        }
-        onExited: {
-            // Deduplicate by SSID, keep highest signal
-            let seen = {};
-            let deduped = [];
-            for (let i = 0; i < getWifi.stdout.collected.length; i++) {
-                let net = getWifi.stdout.collected[i];
-                if (!seen[net.ssid] || net.signal > seen[net.ssid].signal) {
-                    seen[net.ssid] = net;
-                }
-            }
-            for (let ssid in seen)
-                deduped.push(seen[ssid]);
-            // Sort by signal descending
-            deduped.sort(function (a, b) {
-                return b.signal - a.signal;
-            });
-            root.wifiNetworks = deduped;
-            getWifi.stdout.collected = [];
         }
     }
 
+    // Ask NetworkManager to rescan, then refresh status (which pulls the list).
     Process {
-        id: checkWifiDevice
-        command: ["nmcli", "-t", "-f", "TYPE,DEVICE", "device", "status"]
-        stdout: SplitParser {
-            onRead: line => {
-                if (line.indexOf("wifi") >= 0)
-                    root.hasWifi = true;
-            }
-        }
+        id: rescanWifi
+        command: ["python3", "-c", root._ipc("net-wifi-rescan")]
         onExited: {
-            if (root.hasWifi)
-                getWifi.running = true;
+            getStatus.running = true;
         }
+    }
+
+    function refresh() {
+        // A rescan kicks off discovery; net-status/net-wifi-list then read the
+        // freshest results. On a wired-only host the rescan is a harmless no-op.
+        rescanWifi.running = true;
     }
 
     Component.onCompleted: {
-        getActiveConns.running = true;
-        getIP.running = true;
-        checkWifiDevice.running = true;
+        getStatus.running = true;
+        rescanWifi.running = true;
     }
 
     onVisibleChanged: {
-        if (visible) {
-            getActiveConns.running = true;
-            getIP.running = true;
-            checkWifiDevice.running = true;
-        }
+        if (visible)
+            refresh();
     }
 
     // Read-only page: focus the WiFi list when an adapter exists, otherwise
@@ -167,8 +152,8 @@ FocusScope {
                     spacing: 16
 
                     Rectangle {
-                        width: 20
-                        height: 20
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 20
                         radius: 10
                         color: Theme.online
                     }
@@ -213,7 +198,7 @@ FocusScope {
 
         Rectangle {
             Layout.fillWidth: true
-            height: ipLabel.implicitHeight + 48
+            Layout.preferredHeight: ipLabel.implicitHeight + 48
             radius: 16
             color: Theme.surface
 

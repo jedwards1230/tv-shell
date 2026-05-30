@@ -2,6 +2,17 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
+// Bluetooth settings — rewired (Phase 3) to talk to the input daemon's D-Bus
+// (bluer) backbone over the Unix socket instead of shelling out to
+// `bluetoothctl`. Reads adapter power, lists devices, and drives
+// connect/disconnect/pair/trust via IPC. Scan results arrive asynchronously as
+// `bt:device` subscriber events.
+//
+// IPC commands used (see docs/IPC_PROTOCOL.md):
+//   bt-power-status, bt-power-on, bt-power-off, bt-scan-on, bt-scan-off,
+//   bt-list, bt-connect <mac>, bt-disconnect <mac>, bt-pair <mac>, bt-trust <mac>
+// Streamed events consumed: bt:device:<json>, bt:device-removed:<mac>,
+//   bt:powered:on|off, bt:scanning:on|off
 FocusScope {
     id: root
 
@@ -11,23 +22,81 @@ FocusScope {
     property var availableDevices: []
     property string statusMessage: ""
 
+    // --- Socket helpers (read until the FIRST newline; the daemon keeps the
+    // connection open after replying, so reading to EOF would block until the
+    // socket timeout). Mirrors the Phase 2 pattern in SettingsStore. ---
+    function _ipc(cmd) {
+        return "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(20);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'" + cmd + "\\n');buf=b'';exec(\"while b'\\\\n' not in buf:\\n c=s.recv(65536)\\n if not c: break\\n buf+=c\");s.close();print(buf.split(b'\\n',1)[0].decode())";
+    }
+
+    // Subscribe helper: streams events line-by-line (the daemon holds the
+    // connection open and emits `bt:*` events). Used to fold scan results into
+    // the available-devices list as they arrive.
+    function _ipcSubscribe() {
+        return "import socket,os,sys;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');f=s.makefile('r');\nfor line in f:\n sys.stdout.write(line);sys.stdout.flush()";
+    }
+
+    // Merge a device object (from bt-list or a bt:device event) into the
+    // paired/available lists, partitioning by its `paired` flag. Replaces any
+    // existing entry with the same mac (most-recent-wins) so live RSSI/state
+    // updates from scan events refresh in place.
+    function _mergeDevice(dev) {
+        if (!dev || !dev.mac)
+            return;
+        // Strip from both lists first, then re-insert into the right bucket.
+        let paired = [];
+        for (let i = 0; i < root.pairedDevices.length; i++)
+            if (root.pairedDevices[i].mac !== dev.mac)
+                paired.push(root.pairedDevices[i]);
+        let avail = [];
+        for (let j = 0; j < root.availableDevices.length; j++)
+            if (root.availableDevices[j].mac !== dev.mac)
+                avail.push(root.availableDevices[j]);
+        if (dev.paired)
+            paired.push(dev);
+        else
+            avail.push(dev);
+        root.pairedDevices = paired;
+        root.availableDevices = avail;
+    }
+
+    function _removeDevice(mac) {
+        let paired = [];
+        for (let i = 0; i < root.pairedDevices.length; i++)
+            if (root.pairedDevices[i].mac !== mac)
+                paired.push(root.pairedDevices[i]);
+        let avail = [];
+        for (let j = 0; j < root.availableDevices.length; j++)
+            if (root.availableDevices[j].mac !== mac)
+                avail.push(root.availableDevices[j]);
+        root.pairedDevices = paired;
+        root.availableDevices = avail;
+    }
+
     // --- Processes ---
 
     Process {
         id: btPowerStatus
-        command: ["bluetoothctl", "show"]
+        command: ["python3", "-c", root._ipc("bt-power-status")]
         stdout: SplitParser {
             onRead: line => {
-                if (line.indexOf("Powered:") >= 0) {
-                    root.powered = line.indexOf("yes") >= 0;
-                }
+                let t = line.trim();
+                if (t === "bt:on")
+                    root.powered = true;
+                else if (t === "bt:off")
+                    root.powered = false;
+                // "error" leaves the prior state untouched.
             }
+        }
+        onExited: {
+            if (root.powered)
+                btList.running = true;
         }
     }
 
     Process {
         id: btPowerOn
-        command: ["bluetoothctl", "power", "on"]
+        command: ["python3", "-c", root._ipc("bt-power-on")]
         onExited: {
             btPowerStatus.running = true;
             pairedRefreshTimer.start();
@@ -36,151 +105,161 @@ FocusScope {
 
     Process {
         id: btPowerOff
-        command: ["bluetoothctl", "power", "off"]
+        command: ["python3", "-c", root._ipc("bt-power-off")]
         onExited: {
             root.scanning = false;
+            root.availableDevices = [];
             btPowerStatus.running = true;
         }
     }
 
+    // Full device list — daemon returns a compact JSON array of
+    // {mac,name,paired,connected,trusted,rssi}. Partition into paired/available.
     Process {
-        id: btListPaired
-        command: ["bluetoothctl", "devices", "Paired"]
-        stdout: SplitParser {
-            property var collected: []
-            onRead: line => {
-                // "Device AA:BB:CC:DD:EE:FF Device Name"
-                let match = line.trim().match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
-                if (match) {
-                    collected.push({
-                        mac: match[1],
-                        name: match[2]
-                    });
-                }
-            }
-        }
-        onExited: {
-            root.pairedDevices = btListPaired.stdout.collected;
-            btListPaired.stdout.collected = [];
-            // Check connection status for each
-            if (root.pairedDevices.length > 0) {
-                btInfoDevice.mac = root.pairedDevices[0].mac;
-                btInfoDevice.deviceIndex = 0;
-                btInfoDevice.running = true;
-            }
-        }
-    }
-
-    Process {
-        id: btInfoDevice
-        property string mac: ""
-        property int deviceIndex: 0
-        command: ["bluetoothctl", "info", mac]
+        id: btList
+        command: ["python3", "-c", root._ipc("bt-list")]
         stdout: SplitParser {
             onRead: line => {
-                if (line.indexOf("Connected:") >= 0) {
-                    let connected = line.indexOf("yes") >= 0;
-                    let idx = btInfoDevice.deviceIndex;
-                    if (idx >= 0 && idx < root.pairedDevices.length) {
-                        let devs = root.pairedDevices;
-                        devs[idx].connected = connected;
-                        root.pairedDevices = devs;
+                try {
+                    let devs = JSON.parse(line);
+                    let paired = [];
+                    let avail = [];
+                    for (let i = 0; i < devs.length; i++) {
+                        if (devs[i].paired)
+                            paired.push(devs[i]);
+                        else
+                            avail.push(devs[i]);
                     }
+                    root.pairedDevices = paired;
+                    root.availableDevices = avail;
+                } catch (e) {
+                    console.log("BluetoothSettings: failed to parse bt-list:", e);
                 }
-            }
-        }
-        onExited: {
-            let next = btInfoDevice.deviceIndex + 1;
-            if (next < root.pairedDevices.length) {
-                btInfoDevice.mac = root.pairedDevices[next].mac;
-                btInfoDevice.deviceIndex = next;
-                btInfoDevice.running = true;
             }
         }
     }
 
     Process {
         id: btScanOn
-        command: ["bash", "-c", "timeout 10 bluetoothctl scan on 2>&1 || true"]
-        onStarted: {
-            root.scanning = true;
-        }
-        onExited: {
-            root.scanning = false;
-            btListAvailable.running = true;
+        command: ["python3", "-c", root._ipc("bt-scan-on")]
+        // `python3` exits 0 even when the daemon replies `error:*`, so gate the
+        // scanning state on the parsed reply line, not the exit code. Results
+        // stream as bt:device events; auto-stop after a fixed window.
+        stdout: SplitParser {
+            onRead: line => {
+                if (line.trim() === "ok") {
+                    root.scanning = true;
+                    scanStopTimer.restart();
+                } else {
+                    root.scanning = false;
+                    root.statusMessage = "Bluetooth unavailable";
+                }
+            }
         }
     }
 
     Process {
-        id: btListAvailable
-        command: ["bluetoothctl", "devices"]
-        stdout: SplitParser {
-            property var collected: []
-            onRead: line => {
-                let match = line.trim().match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
-                if (match) {
-                    // Exclude already paired
-                    let isPaired = false;
-                    for (let i = 0; i < root.pairedDevices.length; i++) {
-                        if (root.pairedDevices[i].mac === match[1]) {
-                            isPaired = true;
-                            break;
-                        }
-                    }
-                    if (!isPaired) {
-                        collected.push({
-                            mac: match[1],
-                            name: match[2]
-                        });
-                    }
-                }
-            }
-        }
+        id: btScanOff
+        command: ["python3", "-c", root._ipc("bt-scan-off")]
         onExited: {
-            root.availableDevices = btListAvailable.stdout.collected;
-            btListAvailable.stdout.collected = [];
+            root.scanning = false;
         }
     }
 
     Process {
         id: btConnect
         property string mac: ""
-        command: ["bluetoothctl", "connect", mac]
+        command: ["python3", "-c", root._ipc("bt-connect " + mac)]
         onStarted: {
             root.statusMessage = "Connecting...";
         }
-        onExited: exitCode => {
-            root.statusMessage = exitCode === 0 ? "Connected" : "Connection failed";
+        stdout: SplitParser {
+            onRead: line => {
+                root.statusMessage = line.trim() === "ok" ? "Connected" : "Connection failed";
+            }
+        }
+        onExited: {
             statusClearTimer.start();
-            btListPaired.running = true;
+            btList.running = true;
         }
     }
 
     Process {
         id: btDisconnect
         property string mac: ""
-        command: ["bluetoothctl", "disconnect", mac]
+        command: ["python3", "-c", root._ipc("bt-disconnect " + mac)]
         onStarted: {
             root.statusMessage = "Disconnecting...";
         }
-        onExited: exitCode => {
-            root.statusMessage = exitCode === 0 ? "Disconnected" : "Disconnect failed";
+        stdout: SplitParser {
+            onRead: line => {
+                root.statusMessage = line.trim() === "ok" ? "Disconnected" : "Disconnect failed";
+            }
+        }
+        onExited: {
             statusClearTimer.start();
-            btListPaired.running = true;
+            btList.running = true;
         }
     }
 
     Process {
         id: btPair
         property string mac: ""
-        command: ["bash", "-c", "echo 'yes' | bluetoothctl pair " + mac]
+        command: ["python3", "-c", root._ipc("bt-pair " + mac)]
         onStarted: {
             root.statusMessage = "Pairing...";
         }
-        onExited: exitCode => {
-            root.statusMessage = exitCode === 0 ? "Paired" : "Pairing failed";
+        stdout: SplitParser {
+            onRead: line => {
+                root.statusMessage = line.trim() === "ok" ? "Paired" : "Pairing failed";
+            }
+        }
+        onExited: {
             statusClearTimer.start();
-            btListPaired.running = true;
+            // BlueZ just-works pairing; trust so it auto-reconnects, then refresh.
+            if (btPair.mac !== "") {
+                btTrust.mac = btPair.mac;
+                btTrust.running = true;
+            }
+            btList.running = true;
+        }
+    }
+
+    Process {
+        id: btTrust
+        property string mac: ""
+        command: ["python3", "-c", root._ipc("bt-trust " + mac)]
+    }
+
+    // Live scan-result stream. Subscribed while the page is visible; folds
+    // bt:device / bt:device-removed / bt:powered / bt:scanning events into state.
+    Process {
+        id: btEvents
+        command: ["python3", "-c", root._ipcSubscribe()]
+        stdout: SplitParser {
+            onRead: line => {
+                let t = line.trim();
+                if (t.startsWith("bt:device-removed:")) {
+                    root._removeDevice(t.substring(18));
+                } else if (t.startsWith("bt:device:")) {
+                    try {
+                        root._mergeDevice(JSON.parse(t.substring(10)));
+                    } catch (e) {
+                        console.log("BluetoothSettings: failed to parse bt:device:", e);
+                    }
+                } else if (t === "bt:powered:on") {
+                    root.powered = true;
+                    btList.running = true;
+                } else if (t === "bt:powered:off") {
+                    root.powered = false;
+                    root.scanning = false;
+                    root.availableDevices = [];
+                } else if (t === "bt:scanning:on") {
+                    root.scanning = true;
+                } else if (t === "bt:scanning:off") {
+                    root.scanning = false;
+                }
+            }
         }
     }
 
@@ -196,19 +275,31 @@ FocusScope {
         id: pairedRefreshTimer
         interval: 500
         onTriggered: {
-            btListPaired.running = true;
+            btList.running = true;
+        }
+    }
+
+    // Mirrors the previous `timeout 10 bluetoothctl scan on` window: stop the
+    // daemon scan after 10s so the UI returns to idle.
+    Timer {
+        id: scanStopTimer
+        interval: 10000
+        onTriggered: {
+            if (root.scanning)
+                btScanOff.running = true;
         }
     }
 
     Component.onCompleted: {
         btPowerStatus.running = true;
-        btListPaired.running = true;
+        btEvents.running = true;
     }
 
     onVisibleChanged: {
         if (visible) {
             btPowerStatus.running = true;
-            btListPaired.running = true;
+            if (!btEvents.running)
+                btEvents.running = true;
         }
     }
 
@@ -234,8 +325,8 @@ FocusScope {
             }
 
             Rectangle {
-                width: 160
-                height: 56
+                Layout.preferredWidth: 160
+                Layout.preferredHeight: 56
                 radius: 28
                 color: root.powered ? Theme.online : Theme.textSecondary
 
@@ -256,8 +347,8 @@ FocusScope {
 
             FocusScope {
                 id: powerToggleScope
-                width: powerToggleBtn.width
-                height: powerToggleBtn.height
+                Layout.preferredWidth: powerToggleBtn.implicitWidth
+                Layout.preferredHeight: powerToggleBtn.implicitHeight
                 focus: true
                 activeFocusOnTab: true
 
@@ -294,8 +385,8 @@ FocusScope {
 
             FocusScope {
                 id: scanScope
-                width: scanBtn.width
-                height: scanBtn.height
+                Layout.preferredWidth: scanBtn.implicitWidth
+                Layout.preferredHeight: scanBtn.implicitHeight
                 activeFocusOnTab: true
                 visible: root.powered
 
@@ -384,8 +475,8 @@ FocusScope {
                     spacing: 16
 
                     Rectangle {
-                        width: 20
-                        height: 20
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 20
                         radius: 10
                         color: modelData.connected ? Theme.online : Theme.textSecondary
                     }
