@@ -1,7 +1,7 @@
 # QA Screenshot Views
 
 A living catalog of game-shell views/overlays/states worth capturing in a visual-QA
-screenshot batch. Keep this updated as views are added or change.
+screenshot batch. Keep this updated as views are added or changed.
 
 ## How to capture
 
@@ -50,8 +50,8 @@ Left/Right move; Return activates; Down drops focus into the app rows.
 | C19 | Error log viewer (`ErrorLogViewer`) | notification center → error log | wtype |
 
 ## D. Settings panel + pages + substates
-| # | View | Notes |
-|---|------|-------|
+| # | View | How to reach / notes |
+|---|------|----------------------|
 | D20 | Settings sidebar (panel open) | QuickActions idx 1 → Return |
 | D21–30 | Pages: Audio, Bluetooth, Network, Display, Controllers, Key Bindings, AV Control, Moonlight, Appearance, Power | Down/Up sidebar, Right enters content |
 | — | Bluetooth — scanning + device list | substate |
