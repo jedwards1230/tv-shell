@@ -11,33 +11,11 @@
 //! scheduler. The two communicate over an `mpsc` control channel and a
 //! `broadcast` event bus.
 
-mod apps;
-mod config;
-mod device;
-mod health;
-mod ipc;
-mod protocol;
-mod recents;
-mod state;
-
+// Daemon modules live in the library crate (`game_shell_input`); this binary
+// only wires them together. (lib+bin split — see lib.rs — so the cross-platform
+// modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
-mod input;
-
-// Phase 3 D-Bus backbone. Linux-only: bluetooth speaks BlueZ via `bluer`;
-// network/power speak NetworkManager/logind/UPower via `zbus`. Excluded from
-// the macOS build entirely (no system D-Bus).
-#[cfg(target_os = "linux")]
-mod bluetooth;
-#[cfg(target_os = "linux")]
-mod network;
-#[cfg(target_os = "linux")]
-mod power;
-
-// Phase 4 Hyprland subsystem. Linux-only: speaks the Hyprland IPC socket via the
-// `hyprland` crate. Excluded from the macOS build (no Hyprland). The Sunshine
-// session-detection (`health.rs`) is cross-platform (`reqwest`) and lives above.
-#[cfg(target_os = "linux")]
-mod hyprland;
+use game_shell_input::{bluetooth, hyprland, input, ipc, network, power, protocol, state};
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
