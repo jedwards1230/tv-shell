@@ -239,7 +239,6 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         }
         Command::CaptureNext => request(control_tx, Control::CaptureNext).await,
         Command::CaptureCancel => request(control_tx, Control::CaptureCancel).await,
-        Command::KbdLog(on) => request(control_tx, move |reply| Control::KbdLog(on, reply)).await,
         Command::Intent(name) => {
             request(control_tx, move |reply| Control::Intent { name, reply }).await
         }
@@ -409,9 +408,6 @@ mod tests {
         while let Some(msg) = rx.recv().await {
             match msg {
                 Control::Grab(r) | Control::Release(r) | Control::CaptureCancel(r) => {
-                    let _ = r.send(protocol::resp_ok());
-                }
-                Control::KbdLog(_, r) => {
                     let _ = r.send(protocol::resp_ok());
                 }
                 Control::Status(r) => {

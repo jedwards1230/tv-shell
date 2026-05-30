@@ -14,7 +14,7 @@
 
 use crate::config as cfg;
 use crate::config::{self, Binding};
-use crate::device::{self, ControllerDb, GamepadHandle};
+use crate::device::{self, ControllerDb};
 use crate::protocol::{
     is_known_intent, resp_cancelled, resp_captured, resp_invalid_button, resp_ok, resp_status,
     resp_timeout, resp_unknown_action, resp_unknown_intent, Event, InputMode,
@@ -22,7 +22,7 @@ use crate::protocol::{
 use crate::state::{self, Control, Reply};
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventStream, EventType, InputEvent, KeyCode, RelativeAxisCode};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -53,16 +53,8 @@ enum Internal {
     HomeHoldFired(u64),
     /// Home + B held past the threshold.
     ComboEndSessionFired(u64),
-    /// A routed keyboard key (e.g. Meta) held past the threshold.
-    RoutedHoldFired(&'static str, u64),
     /// A pending `capture-next` timed out.
     CaptureTimeout(u64),
-    /// A keyboard key event from a snooped (un-grabbed) keyboard.
-    Kbd {
-        code: u16,
-        value: i32,
-        raw_name: Option<String>,
-    },
 }
 
 struct Daemon {
@@ -116,14 +108,6 @@ struct Daemon {
     home_hold_gen: u64,
     combo_task: Option<JoinHandle<()>>,
     combo_gen: u64,
-    routed_hold_tasks: HashMap<&'static str, JoinHandle<()>>,
-    routed_hold_fired: HashMap<&'static str, bool>,
-    routed_chord_seen: HashMap<&'static str, bool>,
-    routed_hold_gen: HashMap<&'static str, u64>,
-
-    // Keyboard snoop
-    kbd_held_keys: BTreeSet<u16>,
-    kbd_log_enabled: bool,
 
     // Capture (keybinding reassignment)
     pending_capture: Option<Reply>,
@@ -196,19 +180,10 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
         home_hold_gen: 0,
         combo_task: None,
         combo_gen: 0,
-        routed_hold_tasks: HashMap::new(),
-        routed_hold_fired: HashMap::new(),
-        routed_chord_seen: HashMap::new(),
-        routed_hold_gen: HashMap::new(),
-        kbd_held_keys: BTreeSet::new(),
-        kbd_log_enabled: false,
         pending_capture: None,
         capture_timeout_task: None,
         capture_gen: 0,
     };
-
-    // Read-only keyboard snoop for the debug overlay.
-    tokio::spawn(keyboard_supervisor(internal_tx.clone()));
 
     let mut gamepad: Option<EventStream> = None;
 
@@ -372,21 +347,6 @@ impl Daemon {
         self.publish(Event::Buttons(payload));
     }
 
-    fn notify_held_keys(&self) {
-        if self.events.receiver_count() == 0 {
-            return;
-        }
-        let names: Vec<String> = self
-            .kbd_held_keys
-            .iter()
-            .map(|&code| {
-                let raw = format!("{:?}", KeyCode::new(code));
-                config::kbd_display_name(code, Some(&raw))
-            })
-            .collect();
-        self.publish(Event::Keys(names.join(" + ")));
-    }
-
     // --- control handling -------------------------------------------------
 
     /// Returns false to stop the loop (shutdown).
@@ -423,14 +383,6 @@ impl Daemon {
             Control::CaptureNext(r) => self.arm_capture(r),
             Control::CaptureCancel(r) => {
                 self.cancel_capture();
-                let _ = r.send(resp_ok());
-            }
-            Control::KbdLog(on, r) => {
-                self.kbd_log_enabled = on;
-                info!(
-                    "keyboard logging {}",
-                    if on { "enabled" } else { "disabled" }
-                );
                 let _ = r.send(resp_ok());
             }
             Control::Intent { name, reply } => {
@@ -720,14 +672,6 @@ impl Daemon {
                     self.publish(Event::ComboEndSession);
                 }
             }
-            Internal::RoutedHoldFired(name, generation) => {
-                if self.routed_hold_gen.get(name) != Some(&generation) {
-                    return; // stale: a prior routed-hold that was released/replaced
-                }
-                self.routed_hold_fired.insert(name, true);
-                info!("Routed {name} hold detected");
-                self.publish(Event::ComboHomeHold);
-            }
             Internal::CaptureTimeout(generation) => {
                 if generation != self.capture_gen {
                     return; // stale: the capture was already resolved/cancelled
@@ -737,11 +681,6 @@ impl Daemon {
                     let _ = r.send(resp_timeout());
                 }
             }
-            Internal::Kbd {
-                code,
-                value,
-                raw_name,
-            } => self.handle_kbd(code, value, raw_name),
         }
     }
 
@@ -1112,144 +1051,10 @@ impl Daemon {
             let _ = tx.send(Internal::HomeHoldFired(generation)).await;
         }));
     }
-
-    // --- keyboard snoop ---------------------------------------------------
-
-    fn handle_kbd(&mut self, code: u16, value: i32, raw_name: Option<String>) {
-        if self.kbd_log_enabled && value == 1 {
-            let (raw, disp, source) = config::kbd_key_info(code, raw_name.as_deref());
-            // The local is `disp`, not `display`: a `display` identifier collides
-            // with `tracing::field::display` inside the `info!` macro expansion.
-            info!(
-                "kbd-key code={} raw={} display={:?} source={}",
-                code,
-                raw,
-                disp,
-                source.as_str()
-            );
-        }
-
-        // Route Meta (Super) through the same tap-vs-hold flow as BTN_MODE.
-        if code == cfg::KEY_LEFTMETA || code == cfg::KEY_RIGHTMETA {
-            if value == 1 {
-                self.start_routed_hold("meta");
-            } else if value == 0 {
-                self.resolve_routed_release("meta");
-            }
-        } else if value == 1 && !self.routed_hold_tasks.is_empty() {
-            let names: Vec<&'static str> = self.routed_hold_tasks.keys().copied().collect();
-            for name in names {
-                self.routed_chord_seen.insert(name, true);
-            }
-        }
-
-        let mut changed = false;
-        if value == 1 && !self.kbd_held_keys.contains(&code) {
-            self.kbd_held_keys.insert(code);
-            changed = true;
-        } else if value == 0 && self.kbd_held_keys.contains(&code) {
-            self.kbd_held_keys.remove(&code);
-            changed = true;
-        }
-        if changed {
-            self.notify_held_keys();
-        }
-    }
-
-    fn start_routed_hold(&mut self, name: &'static str) {
-        if let Some(prev) = self.routed_hold_tasks.remove(name) {
-            prev.abort();
-        }
-        self.routed_hold_fired.insert(name, false);
-        self.routed_chord_seen.insert(name, false);
-        // ROUTED_HOME_KEYS is currently just {"meta"}.
-        if name == "meta" {
-            let generation = self.next_generation();
-            self.routed_hold_gen.insert(name, generation);
-            let tx = self.internal_tx.clone();
-            let handle = tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs_f64(config::HOME_HOLD_SECS)).await;
-                let _ = tx.send(Internal::RoutedHoldFired(name, generation)).await;
-            });
-            self.routed_hold_tasks.insert(name, handle);
-        }
-    }
-
-    fn resolve_routed_release(&mut self, name: &'static str) {
-        if let Some(task) = self.routed_hold_tasks.remove(name) {
-            task.abort();
-        }
-        // Invalidate a possibly-queued RoutedHoldFired for this key.
-        let generation = self.next_generation();
-        self.routed_hold_gen.insert(name, generation);
-        let fired = self.routed_hold_fired.remove(name).unwrap_or(false);
-        let chord = self.routed_chord_seen.remove(name).unwrap_or(false);
-        if name == "meta" && !fired && !chord {
-            info!("Routed {name} tap detected");
-            self.publish(Event::HomePress);
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Axis {
     X,
     Y,
-}
-
-/// Discover keyboards and forward their key events to the input loop, without
-/// grabbing (so focused apps still receive every keystroke). Mirrors Python's
-/// `_keyboard_loop`: re-discover every 2s; when any reader errors, drop them
-/// all and rediscover.
-async fn keyboard_supervisor(tx: mpsc::Sender<Internal>) {
-    loop {
-        let keyboards: Vec<GamepadHandle> = device::find_keyboards();
-        if keyboards.is_empty() {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
-        }
-        info!("Watching {} keyboard device(s)", keyboards.len());
-
-        let mut readers = Vec::new();
-        for handle in keyboards {
-            match handle.device.into_event_stream() {
-                Ok(stream) => readers.push(Box::pin(read_keyboard(stream, tx.clone()))),
-                Err(e) => warn!("could not open keyboard stream: {e}"),
-            }
-        }
-        if readers.is_empty() {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
-        }
-        // Resolve when the first reader ends (error/disconnect); drop the rest
-        // and rediscover after a short delay.
-        let _ = futures::future::select_all(readers).await;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-}
-
-async fn read_keyboard(mut stream: EventStream, tx: mpsc::Sender<Internal>) {
-    loop {
-        match stream.next_event().await {
-            Ok(ev) => {
-                if ev.event_type() == EventType::KEY {
-                    let code = ev.code();
-                    let value = ev.value();
-                    let raw_name = Some(format!("{:?}", KeyCode::new(code)));
-                    if tx
-                        .send(Internal::Kbd {
-                            code,
-                            value,
-                            raw_name,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-            }
-            Err(_) => return,
-        }
-    }
 }

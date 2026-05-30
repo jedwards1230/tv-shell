@@ -73,23 +73,51 @@ ShellRoot {
             if (root.state === "idle")
                 avController.wake();
         }
-        onHomePressed: {
+
+        // --- Control-surface intents (de-overloaded "home") ---
+        // intent:home is the GLOBAL escape (keyboard Super / automation):
+        // always leave the running app, regardless of focus.
+        onIntentHome: root.returnToShell()
+
+        // intent:home-tap is the gamepad Home neutral (short press). The shell
+        // owns the focus, so it decides: over an app -> return to shell; on the
+        // home screen -> toggle the nav drawer (the `menu` action).
+        onIntentHomeTap: {
             if (root.state === "appRunning") {
                 root.overlayDrawerOpen = !root.overlayDrawerOpen;
             } else if (root.state === "idle" && root._layout) {
                 avController.wake();
-                root._layout.handleHomeTap();
+                root._layout.toggleMenu();
             }
         }
-        onHomeHeld: {
-            if (root.state === "appRunning") {
-                root.returnToShell();
-            } else if (root.state === "idle" && root._layout) {
-                root._layout.navDrawer.opened = false;
-                root._layout.settingsPanel.visible = false;
-                root._layout.notificationCenter.opened = false;
-                root._layout.powerOverlay.opened = false;
-                root._layout.focusHome();
+
+        // intent:home-hold is the gamepad Home neutral (long press) -> reset.
+        onIntentHomeHold: root.resetToHome()
+
+        // The keyboard triple-Super multi-stroke fires the SAME reset path
+        // (counted in InputManager, per resolved OQ1).
+        onResetRequested: root.resetToHome()
+
+        // intent:menu toggles the nav drawer (focus-scoped; on-screen button
+        // or keyboard Tab when the shell is focused).
+        onIntentMenu: {
+            if (root.state === "appRunning")
+                root.overlayDrawerOpen = !root.overlayDrawerOpen;
+            else if (root.state === "idle" && root._layout)
+                root._layout.toggleMenu();
+        }
+
+        // intent:settings / intent:power open their panels from the home screen.
+        onIntentSettings: {
+            if (root.state === "idle" && root._layout) {
+                root._layout.settingsPanel.visible = true;
+                root._layout.settingsPanel.forceActiveFocus();
+            }
+        }
+        onIntentPower: {
+            if (root.state === "idle" && root._layout) {
+                root._layout.powerOverlay.opened = true;
+                root._layout.powerOverlay.forceActiveFocus();
             }
         }
     }
@@ -190,6 +218,22 @@ ShellRoot {
     function closeAndReturnToShell() {
         appLifecycle.closeApp();
         returnToShell();
+    }
+
+    // Full reset to a clean home screen. Triggered by the gamepad Home-hold
+    // (intent:home-hold) and the keyboard triple-Super multi-stroke
+    // (resetRequested). Over a running app it returns to the shell; on the home
+    // screen it dismisses every overlay/drawer and refocuses Home.
+    function resetToHome() {
+        if (root.state === "appRunning") {
+            root.returnToShell();
+        } else if (root.state === "idle" && root._layout) {
+            root._layout.navDrawer.opened = false;
+            root._layout.settingsPanel.visible = false;
+            root._layout.notificationCenter.opened = false;
+            root._layout.powerOverlay.opened = false;
+            root._layout.focusHome();
+        }
     }
 
     Variants {

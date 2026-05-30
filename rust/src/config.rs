@@ -244,7 +244,8 @@ pub fn dpad_display_name(code: u16) -> Option<&'static str> {
     })
 }
 
-/// Keyboard source classification for the `keys:` event and `kbd-log` line.
+/// Keyboard source classification used when resolving a keyboard key's
+/// friendly display name from its kernel code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KbdSource {
     Mapped,
@@ -324,11 +325,6 @@ pub fn kbd_key_info(code: u16, raw_kernel_name: Option<&str>) -> (String, String
     }
     let display = raw.clone();
     (raw, display, KbdSource::Unknown)
-}
-
-/// Display name for a held keyboard key in the `keys:` event.
-pub fn kbd_display_name(code: u16, raw_kernel_name: Option<&str>) -> String {
-    kbd_key_info(code, raw_kernel_name).1
 }
 
 // ---------------------------------------------------------------------------

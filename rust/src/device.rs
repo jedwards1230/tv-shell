@@ -120,15 +120,14 @@ pub fn load_db() -> ControllerDb {
     db
 }
 
-/// Virtual/synthetic input devices that must never be treated as a gamepad nor
-/// snooped as a keyboard: our own uinput devices and ydotoold's.
+/// Virtual/synthetic input devices that must never be treated as a gamepad:
+/// our own uinput devices and ydotoold's.
 ///
 /// ydotoold's virtual device registers a broad keybit range that includes
 /// `BTN_SOUTH`, so without this guard `find_gamepad`'s "first BTN_SOUTH device"
 /// fallback grabs it as a bogus controller. That permanently fills the gamepad
 /// slot (the synthetic device never disconnects), so the 2 s reconnect poll
-/// stops running and a real pad plugged in later is never picked up. Mirrors the
-/// exclusion `find_keyboards` already applies.
+/// stops running and a real pad plugged in later is never picked up.
 pub fn is_synthetic(name: &str) -> bool {
     name.starts_with("game-shell-virtual-") || name.contains("ydotoold")
 }
@@ -151,12 +150,11 @@ pub fn parse_id_env(var: &str) -> Option<u16> {
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "linux")]
-pub use linux::{find_gamepad, find_keyboards, GamepadHandle};
+pub use linux::{find_gamepad, GamepadHandle};
 
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use crate::config;
     use evdev::{Device, KeyCode};
     use std::path::PathBuf;
 
@@ -238,29 +236,6 @@ mod linux {
             name,
             path,
         }
-    }
-
-    /// Keyboard-like devices for read-only snooping: have `KEY_A`, lack
-    /// `BTN_SOUTH`, and are not our own virtual devices or ydotoold's.
-    pub fn find_keyboards() -> Vec<GamepadHandle> {
-        let mut devices: Vec<(PathBuf, Device)> = evdev::enumerate().collect();
-        devices.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let mut out = Vec::new();
-        for (path, dev) in devices {
-            let name = dev.name().unwrap_or("").to_string();
-            if super::is_synthetic(&name) {
-                continue;
-            }
-            let Some(keys) = dev.supported_keys() else {
-                continue;
-            };
-            // `KeyCode::new(KEY_A)` — config::KEY_A is the kernel code.
-            if keys.contains(KeyCode::new(config::KEY_A)) && !keys.contains(KeyCode::BTN_SOUTH) {
-                out.push(make_handle(dev, path));
-            }
-        }
-        out
     }
 }
 
