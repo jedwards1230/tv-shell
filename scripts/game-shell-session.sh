@@ -8,13 +8,24 @@ export XDG_CURRENT_DESKTOP=Hyprland
 export GAME_SHELL_TARGETS="${GAME_SHELL_TARGETS:-$SHELL_DIR/targets.yaml}"
 export GAME_SHELL_SOCK="/run/user/$(id -u)/game-shell-input.sock"
 
-# Start input daemon.
-# The Python daemon remains the default. A drop-in Rust replacement lives in
-# `rust/` (same socket, same wire protocol). Once it is built and installed on
-# the target (`cargo build --release` -> `$SHELL_DIR/bin/game-shell-input`),
-# switch the line below to:
-#   "$SHELL_DIR/bin/game-shell-input" &
-python3 "$SHELL_DIR/input/gamepad-input.py" &
+# Start the input/backend daemon: prefer the Rust binary, fall back to Python.
+#
+# IMPORTANT: the QML shell now sends backend commands the Python daemon does NOT
+# implement (get-config/set-config, list-apps, record-launch/get-recents, bt-*,
+# net-*, power-*, hypr-*, sunshine-status). The Rust daemon (`rust/`) answers all
+# of them; gamepad-input.py answers only the original input commands. With Python
+# running, gamepad input still works, but the Settings / app-discovery / system
+# pages degrade (they get `unknown` replies) until the Rust daemon is present.
+#
+# Cutover = just build + install the binary; no edit here. Build on the target
+# with `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`;
+# this script then auto-uses it on the next session. Python stays only as a
+# rollback (delete/rename the binary to fall back).
+if [ -x "$SHELL_DIR/bin/game-shell-input" ]; then
+    "$SHELL_DIR/bin/game-shell-input" &
+else
+    python3 "$SHELL_DIR/input/gamepad-input.py" &
+fi
 INPUT_PID=$!
 
 cleanup() {

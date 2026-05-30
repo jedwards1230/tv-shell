@@ -1,8 +1,13 @@
 # game-shell-input (Rust)
 
-A drop-in Rust replacement for `input/gamepad-input.py`. Same Unix socket, same
-newline-delimited wire protocol (`docs/IPC_PROTOCOL.md`) — the QML shell is
-unchanged. Phases 1–2 of [#28](https://github.com/jedwards1230/game-shell/issues/28).
+A Rust backend daemon replacing `input/gamepad-input.py` and the QML shell's
+inline `python3`/shell-out parsers. Same Unix socket + newline-delimited wire
+protocol (`docs/IPC_PROTOCOL.md`). Phases 1–4 of
+[#28](https://github.com/jedwards1230/game-shell/issues/28) (CEC deferred).
+
+Note: the QML now depends on this daemon for the Settings / app-discovery /
+system pages — the Python daemon only answers the original input commands. See
+`scripts/game-shell-session.sh` (prefer-Rust-else-Python launcher).
 
 ## What it does
 
