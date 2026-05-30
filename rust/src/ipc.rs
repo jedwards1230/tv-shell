@@ -192,8 +192,10 @@ async fn dispatch_stateless(cmd: &Command) -> Option<String> {
         Command::RecordLaunchUsage => Some(protocol::resp_record_launch_usage()),
         // Phase 4 Sunshine session detection. Stateless and cross-platform
         // (`reqwest` runs everywhere), so it's served here like `list-apps`
-        // rather than via a Linux-only actor. The fetch+parse degrades a missing
-        // host to the offline JSON (`{"online":false,...}`).
+        // rather than via a Linux-only actor. Missing/empty `<host> <port>` is a
+        // usage error (`SunshineStatusUsage`); a reachable-but-failing fetch
+        // (network/TLS/parse error) degrades to the offline JSON
+        // (`{"online":false,...}`).
         Command::SunshineStatus { host, port } => {
             Some(health::handle_sunshine_status(host, port).await)
         }

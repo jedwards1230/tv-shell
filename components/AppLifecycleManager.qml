@@ -302,7 +302,10 @@ Item {
     // extra poll on transitions, so the public behavior is unchanged.
     Process {
         id: hyprEventListener
-        command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
+        // Filter to `hypr:` lines on the Python side (the subscribe stream also
+        // carries high-frequency buttons:/keys: events we don't want), and read
+        // via makefile('r') for proper UTF-8 line framing across recv chunks.
+        command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');f=s.makefile('r');[print(line.rstrip(),flush=True) for line in f if line.startswith('hypr:')]"]
         stdout: SplitParser {
             onRead: line => {
                 if (line.indexOf("hypr:activewindow:") === 0) {

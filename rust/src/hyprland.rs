@@ -24,6 +24,7 @@ use hyprland::data::{Client, Clients};
 use hyprland::event_listener::AsyncEventListener;
 use hyprland::shared::{HyprData, HyprDataActiveOptional};
 use serde_json::json;
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
 /// Requests from the IPC server to the Hyprland actor. Each carries a `oneshot`
@@ -49,11 +50,20 @@ pub async fn run(
 ) -> Result<()> {
     // Spawn the event listener on its own task so the request loop never blocks
     // on it. It owns its own listener (single-owner; no shared mutable state).
+    // Retry with capped backoff so it self-heals if Hyprland isn't running yet
+    // at daemon start or restarts later — otherwise `hypr:*` events would never
+    // resume without a daemon restart.
     {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = watch_events(events_tx).await {
-                tracing::warn!("hyprland: event listener stopped: {e}");
+            let mut backoff = Duration::from_secs(1);
+            loop {
+                match watch_events(events_tx.clone()).await {
+                    Ok(()) => backoff = Duration::from_secs(1), // ended cleanly; re-attach
+                    Err(e) => tracing::warn!("hyprland: event listener stopped: {e}; retrying"),
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(30));
             }
         });
     }

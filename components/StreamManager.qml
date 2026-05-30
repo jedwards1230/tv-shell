@@ -121,7 +121,7 @@ try:
     sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sk.settimeout(10)
     sk.connect(os.environ.get('GAME_SHELL_SOCK', '/run/user/' + str(os.getuid()) + '/game-shell-input.sock'))
-    sk.sendall(b'sunshine-status ${host} ${port}\\n')
+    sk.sendall(('sunshine-status ' + sys.argv[1] + ' ' + sys.argv[2] + '\\n').encode())
     buf = b''
     while b'\\n' not in buf:
         c = sk.recv(65536)
@@ -148,7 +148,7 @@ try:
 except Exception:
     out = ""
 print(out)
-`];
+`, String(host), String(port)];
         sessionCheckProc.running = true;
     }
 

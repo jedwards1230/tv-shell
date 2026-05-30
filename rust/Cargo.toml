@@ -32,10 +32,7 @@ libc = "0.2"
 # the system OpenSSL; we also enable danger/accept-invalid-certs at call time for
 # Sunshine's self-signed cert. The XML/JSON response *parser* is a pure function
 # (unit-tested on macOS); only the fetch needs the runtime/TLS.
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
-    "json",
-] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 # evdev/uinput are Linux kernel interfaces. Keep them off non-Linux hosts so
 # the pure-logic modules (protocol, config, device GUID math) still compile and
