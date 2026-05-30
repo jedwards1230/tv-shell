@@ -321,8 +321,8 @@ FocusScope {
 
                     FocusScope {
                         id: confirmYesScope
-                        Layout.preferredWidth: confirmYesBtn.width
-                        Layout.preferredHeight: confirmYesBtn.height
+                        Layout.preferredWidth: confirmYesBtn.implicitWidth
+                        Layout.preferredHeight: confirmYesBtn.implicitHeight
                         activeFocusOnTab: true
 
                         KeyNavigation.right: confirmNoScope
@@ -349,8 +349,8 @@ FocusScope {
 
                     FocusScope {
                         id: confirmNoScope
-                        Layout.preferredWidth: confirmNoBtn.width
-                        Layout.preferredHeight: confirmNoBtn.height
+                        Layout.preferredWidth: confirmNoBtn.implicitWidth
+                        Layout.preferredHeight: confirmNoBtn.implicitHeight
                         focus: root.confirmAction !== ""
                         activeFocusOnTab: true
 

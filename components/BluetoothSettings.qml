@@ -347,8 +347,8 @@ FocusScope {
 
             FocusScope {
                 id: powerToggleScope
-                Layout.preferredWidth: powerToggleBtn.width
-                Layout.preferredHeight: powerToggleBtn.height
+                Layout.preferredWidth: powerToggleBtn.implicitWidth
+                Layout.preferredHeight: powerToggleBtn.implicitHeight
                 focus: true
                 activeFocusOnTab: true
 
@@ -385,8 +385,8 @@ FocusScope {
 
             FocusScope {
                 id: scanScope
-                Layout.preferredWidth: scanBtn.width
-                Layout.preferredHeight: scanBtn.height
+                Layout.preferredWidth: scanBtn.implicitWidth
+                Layout.preferredHeight: scanBtn.implicitHeight
                 activeFocusOnTab: true
                 visible: root.powered
 
