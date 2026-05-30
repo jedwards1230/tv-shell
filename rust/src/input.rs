@@ -230,7 +230,6 @@ struct PadDevice {
     path: PathBuf,
     player_slot: u8,
     grabbed: bool,
-    connected: bool,
 
     held_keys: HashSet<u16>,
     left_trigger_held: bool,
@@ -317,7 +316,6 @@ impl PadDevice {
             path,
             player_slot: slot,
             grabbed: false,
-            connected: true,
             held_keys: HashSet::new(),
             left_trigger_held: false,
             right_trigger_held: false,
@@ -1599,7 +1597,7 @@ fn try_join(sh: &mut Shared, fleet: &mut Fleet) {
                 continue;
             }
         };
-        let fd = stream.as_raw_fd();
+        let fd = stream.device().as_raw_fd();
         // A freshly-opened physical pad's fd can't already be in the fleet;
         // guard anyway so a duplicate enumeration never double-inserts.
         if fleet.pads.contains_key(&fd) {
