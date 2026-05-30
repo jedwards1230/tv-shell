@@ -39,8 +39,9 @@ use crate::protocol::{
 use crate::state::{self, Control, Reply};
 use evdev::uinput::VirtualDevice;
 use evdev::{
-    AbsoluteAxisCode, AttributeSet, Device, EventStream, EventType, InputEvent, KeyCode,
-    RelativeAxisCode, UinputAbsSetup,
+    AbsoluteAxisCode, AttributeSet, Device, EventStream, EventType, FFEffect, FFEffectCode,
+    FFEffectData, FFEffectKind, FFReplay, FFTrigger, InputEvent, KeyCode, RelativeAxisCode,
+    UinputAbsSetup,
 };
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, RawFd};
@@ -52,6 +53,14 @@ use tracing::{error, info, warn};
 
 const EV_KEY: u16 = config::EV_KEY;
 const EV_REL: u16 = config::EV_REL;
+/// `EV_LED` event type (kernel `input-event-codes.h`). Used to drive a
+/// controller's player-indicator LED (#101). Cap-gated by the pad advertising
+/// `EventType::LED`; absent on pads without controllable LEDs (most wired pads).
+const EV_LED: u16 = 0x11;
+
+/// Duration (ms) of the short haptic pulse fired when a pad connects (#99).
+/// Tasteful and brief — a single confirmation buzz, not a sustained rumble.
+const CONNECT_RUMBLE_MS: u16 = 150;
 
 /// Messages posted back into the select loop by timer/reader tasks.
 ///
@@ -263,21 +272,27 @@ struct PadDevice {
     /// `None` in shell mode. Registered in `Shared.reg` at creation, dropped +
     /// unregistered on leave.
     virtual_pad: Option<VirtualDevice>,
-    /// Latest battery snapshot (#100), if the pad exposes one. Populated by the
-    /// Phase 5.5 UPower/sysfs ride-along; the slot is reserved here so the fleet
-    /// struct is final for Phase 4.
-    #[allow(dead_code)] // wired in Phase 5.5 (#100); field reserved in Phase 4
+    /// Latest battery snapshot (#100). `None` until first read or for a wired
+    /// pad with no reported battery. Updated by the sysfs battery poll; a change
+    /// emits `pad:battery:{id,level,charging}`.
     battery: Option<BatteryState>,
-    /// Player LED index assigned at slot allocation (#101), if `EV_LED`-capable.
-    /// Set by the Phase 5.5 LED ride-along; reserved here.
-    #[allow(dead_code)] // wired in Phase 5.5 (#101 LED); field reserved in Phase 4
+    /// Player LED index lit at slot allocation (#101), if the pad is
+    /// `EV_LED`-capable. `None` for pads without a controllable LED.
     led_index: Option<u8>,
+    /// The uploaded rumble (FF_RUMBLE) effect (#99), if the pad supports force
+    /// feedback. Uploaded lazily on the first `rumble` and kept alive here (its
+    /// `Drop` erases the kernel effect), re-uploaded when the requested duration
+    /// changes. `None` for pads without `EV_FF`/`FF_RUMBLE`.
+    ff_effect: Option<FFEffect>,
+    /// The replay length (ms) of the currently-uploaded `ff_effect`, so a repeat
+    /// rumble at the same duration replays the cached effect instead of
+    /// re-uploading it.
+    ff_length_ms: u16,
 }
 
-/// Battery snapshot for a pad (#100). Populated by the Phase 5.5 UPower/sysfs
-/// ride-along; `None` battery on a pad means "no reported battery". The fields
-/// are read when the ride-along emits `pad:battery:{level,charging}`.
-#[allow(dead_code)] // fields read by the Phase 5.5 battery ride-along (#100)
+/// Battery snapshot for a pad (#100). `None` on a pad means "no reported
+/// battery" (a wired pad). Compared across polls to emit `pad:battery:*` only on
+/// change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BatteryState {
     /// Charge percentage 0..=100.
@@ -334,6 +349,8 @@ impl PadDevice {
             virtual_pad: None,
             battery: None,
             led_index: None,
+            ff_effect: None,
+            ff_length_ms: 0,
         }
     }
 
@@ -951,6 +968,185 @@ impl PadDevice {
             );
         }
     }
+
+    // --- fleet outputs: LED / rumble / battery (ride-along, Phase 5.5) -----
+
+    /// Light this pad's player-indicator LED to match its slot (#101 LED).
+    ///
+    /// Cap-gated: a no-op unless the pad advertises `EV_LED` with an LED code
+    /// equal to the player slot (`LED_0..` semantics — LED code == player index).
+    /// Most wired pads expose no controllable LED, so this silently does nothing.
+    /// On success records `led_index` and publishes `pad:index:{id,index}`.
+    /// Idempotent for the same slot.
+    fn set_player_led(&mut self, sh: &mut Shared) {
+        if self.led_index == Some(self.player_slot) {
+            return; // already lit for this slot
+        }
+        // Cap-gate: the pad must support EV_LED with an LED code == player slot.
+        let supported = self
+            .event_stream
+            .device()
+            .supported_leds()
+            .is_some_and(|leds| leds.iter().any(|l| l.0 == self.player_slot as u16));
+        if !supported {
+            return; // no controllable player LED on this pad -> no-op
+        }
+        // Light the LED whose code == the player slot (LED_0.. convention).
+        let ev = InputEvent::new(EV_LED, self.player_slot as u16, 1);
+        match self.event_stream.device_mut().send_events(&[ev]) {
+            Ok(()) => {
+                self.led_index = Some(self.player_slot);
+                info!(
+                    "Lit player LED {} for slot {} ({})",
+                    self.player_slot, self.player_slot, self.wire_id
+                );
+                sh.publish(Event::PadIndex(crate::protocol::pad_index_json(
+                    &self.wire_id,
+                    self.player_slot,
+                )));
+            }
+            Err(e) => warn!("Failed to set player LED on {}: {e}", self.wire_id),
+        }
+    }
+
+    /// Fire a rumble (FF_RUMBLE) effect for `ms` milliseconds (#99).
+    ///
+    /// Cap-gated: a no-op unless the pad advertises `EV_FF` with `FF_RUMBLE`.
+    /// The effect is uploaded lazily and cached; a repeat at the same duration
+    /// replays the cached effect, a different duration re-uploads. A zero `ms`
+    /// is treated as a no-op (nothing to play). Failures are logged and
+    /// swallowed — rumble is best-effort and must never wedge input handling.
+    fn rumble(&mut self, ms: u16) {
+        if ms == 0 {
+            return;
+        }
+        // Cap-gate: require EV_FF advertising FF_RUMBLE.
+        let supports_rumble = self
+            .event_stream
+            .device()
+            .supported_ff()
+            .is_some_and(|ff| ff.contains(FFEffectCode::FF_RUMBLE));
+        if !supports_rumble {
+            return; // no force feedback on this pad -> no-op
+        }
+        // (Re)upload the effect if we don't have one or the duration changed.
+        if self.ff_effect.is_none() || self.ff_length_ms != ms {
+            let data = rumble_effect_data(ms);
+            match self.event_stream.device_mut().upload_ff_effect(data) {
+                Ok(effect) => {
+                    self.ff_effect = Some(effect);
+                    self.ff_length_ms = ms;
+                }
+                Err(e) => {
+                    warn!("Failed to upload rumble effect on {}: {e}", self.wire_id);
+                    return;
+                }
+            }
+        }
+        if let Some(effect) = self.ff_effect.as_mut() {
+            if let Err(e) = effect.play(1) {
+                warn!("Failed to play rumble on {}: {e}", self.wire_id);
+            }
+        }
+    }
+
+    /// Re-read this pad's battery from sysfs and, if it changed, emit
+    /// `pad:battery:{id,level,charging}` (#100). A no-op for wired pads (no
+    /// matching `power_supply`). Called on join and on the periodic poll.
+    fn poll_battery(&mut self, sh: &mut Shared) {
+        let Some(state) = read_pad_battery(&self.name) else {
+            return; // no battery reported (wired pad) -> nothing to emit
+        };
+        if self.battery == Some(state) {
+            return; // unchanged
+        }
+        self.battery = Some(state);
+        sh.publish(Event::PadBattery(crate::protocol::pad_battery_json(
+            &self.wire_id,
+            state.level,
+            state.charging,
+        )));
+    }
+}
+
+/// Build the `FFEffectData` for a tasteful one-shot rumble of `ms` milliseconds.
+/// A medium dual-motor rumble (both the heavy and light motors) that auto-stops
+/// after `length`; the effect plays once via `FFEffect::play(1)`.
+fn rumble_effect_data(ms: u16) -> FFEffectData {
+    FFEffectData {
+        direction: 0,
+        trigger: FFTrigger::default(),
+        replay: FFReplay {
+            length: ms,
+            delay: 0,
+        },
+        kind: FFEffectKind::Rumble {
+            strong_magnitude: 0x8000,
+            weak_magnitude: 0x8000,
+        },
+    }
+}
+
+/// Best-effort sysfs battery read for a gamepad whose device name is `pad_name`.
+///
+/// Scans `/sys/class/power_supply/*` for a `Battery`-type supply that looks like
+/// a game controller (its `model_name` matches the pad name, or its supply name
+/// carries a controller marker). Returns `(level, charging)` or `None` when no
+/// matching battery is found — the normal case for a wired pad. Conservative on
+/// purpose: a non-match degrades to "no battery", never a wrong reading.
+fn read_pad_battery(pad_name: &str) -> Option<BatteryState> {
+    let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    let pad_lower = pad_name.to_lowercase();
+    for entry in dir.flatten() {
+        let base = entry.path();
+        // Only battery-type supplies.
+        let kind = read_sysfs_trimmed(&base.join("type")).unwrap_or_default();
+        if !kind.eq_ignore_ascii_case("Battery") {
+            continue;
+        }
+        let supply_name = entry.file_name().to_string_lossy().to_lowercase();
+        let model = read_sysfs_trimmed(&base.join("model_name"))
+            .unwrap_or_default()
+            .to_lowercase();
+        // Match on the pad's model name, or a controller marker in the supply
+        // name (joydev/xpad/sony/nintendo power supplies use such names).
+        let looks_like_pad = (!model.is_empty()
+            && (model.contains(&pad_lower) || pad_lower.contains(&model)))
+            || [
+                "controller",
+                "gamepad",
+                "xpad",
+                "sony",
+                "nintendo",
+                "joypad",
+            ]
+            .iter()
+            .any(|m| supply_name.contains(m));
+        if !looks_like_pad {
+            continue;
+        }
+        let Some(capacity) =
+            read_sysfs_trimmed(&base.join("capacity")).and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let status = read_sysfs_trimmed(&base.join("status")).unwrap_or_default();
+        let charging =
+            status.eq_ignore_ascii_case("Charging") || status.eq_ignore_ascii_case("Full");
+        return Some(BatteryState {
+            level: capacity.min(100) as u8,
+            charging,
+        });
+    }
+    None
+}
+
+/// Read a sysfs attribute file and return its trimmed contents, or `None` on any
+/// I/O error (an absent attribute is common and not worth logging).
+fn read_sysfs_trimmed(path: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Build a clean per-player virtual gamepad mirroring the physical pad's
@@ -1023,6 +1219,13 @@ impl Fleet {
         self.pads
             .values()
             .any(|p| p.held_keys.contains(&cfg::BTN_MODE))
+    }
+
+    /// Find a pad by its stable wire id (for the `rumble` command, #99). Linear
+    /// scan — the fleet is tiny (a handful of pads) so a map keyed by wire id
+    /// isn't worth the extra bookkeeping alongside the fd-keyed map.
+    fn find_by_wire_id_mut(&mut self, wire_id: &str) -> Option<&mut PadDevice> {
+        self.pads.values_mut().find(|p| p.wire_id == wire_id)
     }
 
     /// The `get-pads` reply: one JSON object per pad in ascending player-slot
@@ -1118,9 +1321,14 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
                     sh.home_hold_active = false;
                 }
             }
-            // Reconnect / hot-join poll: discover any new pad not already owned.
+            // Reconnect / hot-join poll: discover any new pad not already owned,
+            // and refresh each pad's battery (#100) — a change emits
+            // `pad:battery:*`. A no-op for wired pads.
             _ = tokio::time::sleep(Duration::from_secs(2)) => {
                 try_join(&mut sh, &mut fleet);
+                for pad in fleet.pads.values_mut() {
+                    pad.poll_battery(&mut sh);
+                }
             }
         }
     }
@@ -1252,6 +1460,19 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             } else {
                 let _ = reply.send(resp_unknown_intent(&name));
             }
+        }
+        Control::Rumble { id, ms, reply } => {
+            // Fire a rumble on the pad with this wire id (#99). Gated by the
+            // persisted `rumbleEnabled` setting and the pad's FF capability;
+            // a missing pad / disabled setting / no-FF pad is a clean no-op that
+            // still replies `ok` (the shell shouldn't treat "no rumble hardware"
+            // as an error). `ms` is clamped to u16 (kernel FF replay length).
+            if config::rumble_enabled(&config::settings_path()) {
+                if let Some(pad) = fleet.find_by_wire_id_mut(&id) {
+                    pad.rumble(ms.min(u16::MAX as u32) as u16);
+                }
+            }
+            let _ = reply.send(resp_ok());
         }
         Control::Shutdown => return false,
     }
@@ -1401,6 +1622,16 @@ fn try_join(sh: &mut Shared, fleet: &mut Fleet) {
         pad.grab(sh);
         if sh.presenter == Presenter::Game {
             pad.enter_game(sh);
+        }
+        // Fleet outputs (ride-along, Phase 5.5): light the player LED to match
+        // the slot (#101 LED) and read the initial battery (#100). Both no-op on
+        // pads lacking the capability. A short connect rumble (#99) gives haptic
+        // feedback that the pad is live, gated by the `rumbleEnabled` setting and
+        // the pad's FF support.
+        pad.set_player_led(sh);
+        pad.poll_battery(sh);
+        if config::rumble_enabled(&config::settings_path()) {
+            pad.rumble(CONNECT_RUMBLE_MS);
         }
         fleet.pads.insert(fd, pad);
 

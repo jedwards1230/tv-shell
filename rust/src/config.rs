@@ -475,6 +475,33 @@ pub fn load_config_json(path: &Path) -> String {
     serde_json::to_string(&doc).expect("settings serialize")
 }
 
+/// Default for the `rumbleEnabled` setting when the key is absent or malformed.
+/// Rumble is tasteful and on by default (#99); the user can disable it.
+pub const RUMBLE_ENABLED_DEFAULT: bool = true;
+
+/// Read the `rumbleEnabled` setting from a parsed settings document. Returns
+/// [`RUMBLE_ENABLED_DEFAULT`] when the key is absent or not a JSON bool, so a
+/// stale/garbage value never silently disables rumble. Pure (no I/O) — the
+/// caller supplies the parsed document — so it unit-tests on any host.
+pub fn rumble_enabled_from(settings: &serde_json::Value) -> bool {
+    settings
+        .get("rumbleEnabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(RUMBLE_ENABLED_DEFAULT)
+}
+
+/// Read the `rumbleEnabled` setting from `settings.json` on disk. A missing or
+/// unparseable file (or a non-bool value) yields [`RUMBLE_ENABLED_DEFAULT`].
+pub fn rumble_enabled(path: &Path) -> bool {
+    let parsed = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    match parsed {
+        Some(v) => rumble_enabled_from(&v),
+        None => RUMBLE_ENABLED_DEFAULT,
+    }
+}
+
 /// Apply a `set-config` update to disk: read existing, merge, write single-line.
 /// Returns the new document text on success. `updates` must be a JSON object.
 pub fn set_config(path: &Path, updates: &serde_json::Value) -> std::io::Result<String> {
@@ -678,5 +705,50 @@ mod tests {
     fn merge_config_rejects_non_object_body() {
         assert!(merge_config(None, &serde_json::json!([1, 2, 3])).is_none());
         assert!(merge_config(None, &serde_json::json!("string")).is_none());
+    }
+
+    #[test]
+    fn rumble_enabled_reads_bool_with_default() {
+        // Explicit values pass through.
+        assert!(rumble_enabled_from(
+            &serde_json::json!({ "rumbleEnabled": true })
+        ));
+        assert!(!rumble_enabled_from(
+            &serde_json::json!({ "rumbleEnabled": false })
+        ));
+        // Absent key -> default (on).
+        assert_eq!(
+            rumble_enabled_from(&serde_json::json!({ "themeMode": "dark" })),
+            RUMBLE_ENABLED_DEFAULT
+        );
+        // Non-bool value -> default (never silently disables).
+        assert_eq!(
+            rumble_enabled_from(&serde_json::json!({ "rumbleEnabled": "yes" })),
+            RUMBLE_ENABLED_DEFAULT
+        );
+        // The default is on (#99): an absent setting should never silence rumble.
+        assert!(
+            rumble_enabled_from(&serde_json::json!({})),
+            "rumble defaults on"
+        );
+    }
+
+    #[test]
+    fn rumble_enabled_from_disk_round_trips() {
+        let path = std::env::temp_dir().join(format!(
+            "gs-rumble-{}-{:?}.json",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        // Missing file -> default.
+        assert_eq!(rumble_enabled(&path), RUMBLE_ENABLED_DEFAULT);
+        // Explicit off.
+        std::fs::write(&path, r#"{"rumbleEnabled":false}"#).unwrap();
+        assert!(!rumble_enabled(&path));
+        // Garbage file -> default.
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(rumble_enabled(&path), RUMBLE_ENABLED_DEFAULT);
+        let _ = std::fs::remove_file(&path);
     }
 }

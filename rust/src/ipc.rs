@@ -243,8 +243,12 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         Command::Intent(name) => {
             request(control_tx, move |reply| Control::Intent { name, reply }).await
         }
+        Command::Rumble { id, ms } => {
+            request(control_tx, move |reply| Control::Rumble { id, ms, reply }).await
+        }
         // Handled without a round-trip to the runtime:
         Command::IntentUsage => return protocol::resp_intent_usage(),
+        Command::RumbleUsage => return protocol::resp_rumble_usage(),
         Command::SetBindingUsage => return protocol::resp_set_binding_usage(),
         Command::Unknown => return protocol::resp_unknown(),
         // Subscribe is handled by the caller before dispatch.
@@ -444,6 +448,11 @@ mod tests {
                     };
                     let _ = reply.send(resp);
                 }
+                Control::Rumble { reply, .. } => {
+                    // The real runtime no-ops when the pad/capability/setting is
+                    // absent but still replies `ok`; the fake mirrors that.
+                    let _ = reply.send(protocol::resp_ok());
+                }
                 Control::Shutdown => break,
             }
         }
@@ -574,6 +583,14 @@ mod tests {
         assert_eq!(
             send_line(&mut s, "intent").await,
             "error:usage: intent <name>"
+        );
+
+        // Rumble control surface: a well-formed command round-trips the runtime
+        // (the fake replies ok); a malformed body is a stateless usage error.
+        assert_eq!(send_line(&mut s, "rumble uniq:test 200").await, "ok");
+        assert_eq!(
+            send_line(&mut s, "rumble uniq:test").await,
+            "error:usage: rumble <id> <ms>"
         );
 
         // get-pads round-trips the runtime and returns the fleet JSON array.
