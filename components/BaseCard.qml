@@ -35,12 +35,12 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            // A real Wayland pointer event flips mouse-mode on directly — the
-            // K400 mouse never reaches the daemon, so there is no input-mode
-            // event for it (#45). Hover + movement both count as "the mouse is
-            // driving" so a stationary-then-wiggle motion is caught.
-            onEntered: Theme.enterMouseMode()
-            onPositionChanged: Theme.enterMouseMode()
+            // Mouse-mode engages on a real click only. We deliberately do NOT
+            // flip on onEntered/onPositionChanged: when a row scrolls to center
+            // the controller-focused card, cards slide under a *stationary*
+            // cursor and fire those handlers, hijacking focus mid-nav (#45).
+            // Proper hover-to-mouse-mode needs a real global-cursor-delta check;
+            // deferred — controller nav reliability wins.
             onClicked: {
                 Theme.enterMouseMode();
                 root.forceActiveFocus();

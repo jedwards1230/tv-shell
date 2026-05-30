@@ -37,9 +37,9 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        // Real pointer events flip mouse-mode directly (#45) — no daemon hop.
-        onEntered: Theme.enterMouseMode()
-        onPositionChanged: Theme.enterMouseMode()
+        // Mouse-mode engages on a real click only — NOT onEntered/onPositionChanged,
+        // which fire when content scrolls under a stationary cursor and hijack
+        // controller-nav focus (#45 hover-mode deferred; needs a global-cursor delta).
         onClicked: {
             Theme.enterMouseMode();
             root.forceActiveFocus();

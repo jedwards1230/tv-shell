@@ -202,9 +202,8 @@ FocusScope {
                     id: notifMA
                     anchors.fill: parent
                     hoverEnabled: true
-                    // Real pointer events flip mouse-mode on (#45) — no daemon hop.
-                    onEntered: Theme.enterMouseMode()
-                    onPositionChanged: Theme.enterMouseMode()
+                    // Mouse-mode on real click only — not onEntered/onPositionChanged,
+                    // which fire on content-scroll under a stationary cursor (#45).
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.notificationCenterRequested()
                 }
@@ -245,9 +244,8 @@ FocusScope {
                     id: settingsMA
                     anchors.fill: parent
                     hoverEnabled: true
-                    // Real pointer events flip mouse-mode on (#45) — no daemon hop.
-                    onEntered: Theme.enterMouseMode()
-                    onPositionChanged: Theme.enterMouseMode()
+                    // Mouse-mode on real click only — not onEntered/onPositionChanged,
+                    // which fire on content-scroll under a stationary cursor (#45).
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.settingsRequested()
                 }
@@ -280,9 +278,8 @@ FocusScope {
                     id: themeMA
                     anchors.fill: parent
                     hoverEnabled: true
-                    // Real pointer events flip mouse-mode on (#45) — no daemon hop.
-                    onEntered: Theme.enterMouseMode()
-                    onPositionChanged: Theme.enterMouseMode()
+                    // Mouse-mode on real click only — not onEntered/onPositionChanged,
+                    // which fire on content-scroll under a stationary cursor (#45).
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         if (Theme.themeMode === "auto")
@@ -338,9 +335,7 @@ FocusScope {
                     id: networkMA
                     anchors.fill: parent
                     hoverEnabled: true
-                    // Real pointer events flip mouse-mode on (#45) — no daemon hop.
-                    onEntered: Theme.enterMouseMode()
-                    onPositionChanged: Theme.enterMouseMode()
+                // Mouse-mode on real click only — not hover/scroll-under-cursor (#45).
                 }
             }
 
@@ -379,9 +374,7 @@ FocusScope {
                     id: volumeMA
                     anchors.fill: parent
                     hoverEnabled: true
-                    // Real pointer events flip mouse-mode on (#45) — no daemon hop.
-                    onEntered: Theme.enterMouseMode()
-                    onPositionChanged: Theme.enterMouseMode()
+                // Mouse-mode on real click only — not hover/scroll-under-cursor (#45).
                 }
             }
 
@@ -420,9 +413,8 @@ FocusScope {
                     id: powerMA
                     anchors.fill: parent
                     hoverEnabled: true
-                    // Real pointer events flip mouse-mode on (#45) — no daemon hop.
-                    onEntered: Theme.enterMouseMode()
-                    onPositionChanged: Theme.enterMouseMode()
+                    // Mouse-mode on real click only — not onEntered/onPositionChanged,
+                    // which fire on content-scroll under a stationary cursor (#45).
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.powerRequested()
                 }
