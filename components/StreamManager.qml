@@ -106,10 +106,49 @@ Item {
     function _checkActiveSession() {
         let host = currentTarget.host;
         let port = currentTarget.sunshinePort || "47990";
-        let user = currentTarget.sunshineUser;
-        let pass = currentTarget.sunshinePass;
         sessionCheckProc._response = "";
-        sessionCheckProc.command = ["curl", "-sk", "--connect-timeout", "3", "--max-time", "5", "--user", user + ":" + pass, "https://" + host + ":" + port + "/api/currentClient"];
+        // Ask the daemon for the Sunshine session state via the `sunshine-status`
+        // IPC command (see docs/IPC_PROTOCOL.md), replacing the inline
+        // `curl /api/currentClient` poll. The daemon owns the /serverinfo HTTPS
+        // fetch and returns {online,paired,currentApp,...} where currentApp is the
+        // busy game id (or "" when idle). We resolve that id to a friendly name
+        // from the local Moonlight.conf and re-emit a {"currentApp":<name>} object
+        // so the onExited conflict logic below is unchanged.
+        sessionCheckProc.command = ["python3", "-c", `
+import socket, os, json, configparser, sys
+out = ""
+try:
+    sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sk.settimeout(10)
+    sk.connect(os.environ.get('GAME_SHELL_SOCK', '/run/user/' + str(os.getuid()) + '/game-shell-input.sock'))
+    sk.sendall(('sunshine-status ' + sys.argv[1] + ' ' + sys.argv[2] + '\\n').encode())
+    buf = b''
+    while b'\\n' not in buf:
+        c = sk.recv(65536)
+        if not c:
+            break
+        buf += c
+    sk.close()
+    data = json.loads(buf.split(b'\\n', 1)[0].decode())
+    game_id = str(data.get("currentApp", "") or "")
+    name = ""
+    if game_id not in ("", "0"):
+        name = "Unknown App"
+        conf = os.path.expanduser("~/.config/Moonlight Game Streaming Project/Moonlight.conf")
+        if os.path.exists(conf):
+            cp = configparser.ConfigParser()
+            cp.read(conf)
+            for k, v in cp.items("hosts"):
+                if k.endswith("\\\\id") and v == game_id:
+                    name_key = k.replace("\\\\id", "\\\\name")
+                    if cp.has_option("hosts", name_key):
+                        name = cp.get("hosts", name_key)
+                    break
+    out = json.dumps({"currentApp": name})
+except Exception:
+    out = ""
+print(out)
+`, String(host), String(port)];
         sessionCheckProc.running = true;
     }
 

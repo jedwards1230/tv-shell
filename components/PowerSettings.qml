@@ -6,6 +6,19 @@ FocusScope {
     id: root
 
     property string confirmAction: ""
+    // Whether logind reports suspend is available (queried via the daemon).
+    // Defaults true so the Sleep button is enabled until told otherwise.
+    property bool canSuspend: true
+
+    // Suspend is routed through the input daemon's logind-over-zbus backbone
+    // (Phase 3). Reboot/poweroff remain one-shot `systemctl` actions — they are
+    // not system-state reads and have no daemon equivalent in scope.
+    //
+    // Socket helper: read until the FIRST newline (the daemon keeps the
+    // connection open after replying). Mirrors the Phase 2 SettingsStore pattern.
+    function _ipc(cmd) {
+        return "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(20);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'" + cmd + "\\n');buf=b'';exec(\"while b'\\\\n' not in buf:\\n c=s.recv(65536)\\n if not c: break\\n buf+=c\");s.close();print(buf.split(b'\\n',1)[0].decode())";
+    }
 
     Process {
         id: powerOff
@@ -15,14 +28,33 @@ FocusScope {
         id: rebootCmd
         command: ["systemctl", "reboot"]
     }
+    // logind Suspend (false = no interactive polkit prompt) via the daemon.
     Process {
         id: suspendCmd
-        command: ["systemctl", "suspend"]
+        command: ["python3", "-c", root._ipc("power-suspend")]
     }
+    // Query logind CanSuspend so the Sleep button reflects availability.
+    Process {
+        id: canSuspendProc
+        command: ["python3", "-c", root._ipc("power-can-suspend")]
+        stdout: SplitParser {
+            onRead: line => {
+                let t = line.trim();
+                if (t === "yes")
+                    root.canSuspend = true;
+                else if (t === "no")
+                    root.canSuspend = false;
+                // "error" leaves the optimistic default untouched.
+            }
+        }
+    }
+
+    Component.onCompleted: canSuspendProc.running = true
 
     onVisibleChanged: {
         if (visible) {
             root.confirmAction = "";
+            canSuspendProc.running = true;
         }
     }
 
@@ -54,8 +86,8 @@ FocusScope {
 
             FocusScope {
                 id: suspendScope
-                width: 500
-                height: 120
+                Layout.preferredWidth: 500
+                Layout.preferredHeight: 120
                 focus: true
                 activeFocusOnTab: true
 
@@ -87,7 +119,7 @@ FocusScope {
                         }
 
                         Text {
-                            text: "Suspend to RAM"
+                            text: root.canSuspend ? "Suspend to RAM" : "Suspend unavailable"
                             font.pixelSize: Theme.fontSmall
                             color: suspendScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
                             Layout.alignment: Qt.AlignHCenter
@@ -100,20 +132,22 @@ FocusScope {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             suspendScope.forceActiveFocus();
-                            root.confirmAction = "suspend";
+                            if (root.canSuspend)
+                                root.confirmAction = "suspend";
                         }
                     }
                 }
 
                 Keys.onReturnPressed: {
-                    root.confirmAction = "suspend";
+                    if (root.canSuspend)
+                        root.confirmAction = "suspend";
                 }
             }
 
             FocusScope {
                 id: restartScope
-                width: 500
-                height: 120
+                Layout.preferredWidth: 500
+                Layout.preferredHeight: 120
                 activeFocusOnTab: true
 
                 KeyNavigation.up: suspendScope
@@ -170,8 +204,8 @@ FocusScope {
 
             FocusScope {
                 id: shutdownScope
-                width: 500
-                height: 120
+                Layout.preferredWidth: 500
+                Layout.preferredHeight: 120
                 activeFocusOnTab: true
 
                 KeyNavigation.up: restartScope
@@ -287,8 +321,8 @@ FocusScope {
 
                     FocusScope {
                         id: confirmYesScope
-                        width: confirmYesBtn.width
-                        height: confirmYesBtn.height
+                        Layout.preferredWidth: confirmYesBtn.implicitWidth
+                        Layout.preferredHeight: confirmYesBtn.implicitHeight
                         activeFocusOnTab: true
 
                         KeyNavigation.right: confirmNoScope
@@ -315,8 +349,8 @@ FocusScope {
 
                     FocusScope {
                         id: confirmNoScope
-                        width: confirmNoBtn.width
-                        height: confirmNoBtn.height
+                        Layout.preferredWidth: confirmNoBtn.implicitWidth
+                        Layout.preferredHeight: confirmNoBtn.implicitHeight
                         focus: root.confirmAction !== ""
                         activeFocusOnTab: true
 
