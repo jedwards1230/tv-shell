@@ -1,4 +1,4 @@
-//! Gamepad / keyboard discovery.
+//! Gamepad discovery + device identity.
 //!
 //! Replaces the Python daemon's hardcoded Xbox `0x045e:0x028e` vendor/product
 //! match with SDL-style controller identification: compute the SDL joystick
@@ -6,10 +6,21 @@
 //! `SDL_GameControllerDB`. This lets the daemon grab an *arbitrary* known
 //! controller, not just the Xbox pad.
 //!
-//! The GUID math and DB parsing are platform-independent and unit-tested; the
-//! actual `/dev/input/event*` enumeration and grab live behind `cfg(linux)`.
+//! Device identity has two layers:
+//!   * **in-process ownership** — a [`VirtualRegistry`] of the raw fds of every
+//!     uinput device *we* create (virtual keyboard/mouse, per-player virtual
+//!     pads). Discovery skips any device whose open fd we already own. This
+//!     replaces the old `is_synthetic` name-string match.
+//!   * **stable wire id** — a per-pad string derived from evdev `uniq`/`phys`
+//!     (else `vendor:product:path`), used in `pad:*` IPC payloads so the UI can
+//!     track a physical pad across reconnects. The in-process key stays the fd.
+//!
+//! The GUID math, the registry, and the wire-id derivation are all
+//! platform-independent and unit-tested; the actual `/dev/input/event*`
+//! enumeration and grab live behind `cfg(linux)`.
 
 use std::collections::HashSet;
+use std::os::fd::RawFd;
 
 /// Compute the 16-byte SDL joystick GUID for a Linux device.
 ///
@@ -120,16 +131,87 @@ pub fn load_db() -> ControllerDb {
     db
 }
 
-/// Virtual/synthetic input devices that must never be treated as a gamepad:
-/// our own uinput devices and ydotoold's.
+/// Registry of the raw fds of every uinput device the daemon owns.
 ///
-/// ydotoold's virtual device registers a broad keybit range that includes
-/// `BTN_SOUTH`, so without this guard `find_gamepad`'s "first BTN_SOUTH device"
-/// fallback grabs it as a bogus controller. That permanently fills the gamepad
-/// slot (the synthetic device never disconnects), so the 2 s reconnect poll
-/// stops running and a real pad plugged in later is never picked up.
-pub fn is_synthetic(name: &str) -> bool {
-    name.starts_with("game-shell-virtual-") || name.contains("ydotoold")
+/// The daemon both *produces* virtual input devices (the virtual keyboard and
+/// mouse, plus one clean virtual gamepad per player in local-multiplayer mode)
+/// and *consumes* physical gamepads. Without a way to tell its own devices
+/// apart it would re-grab them during the next discovery pass — the old code
+/// papered over this with `is_synthetic`, a brittle name-string match against
+/// `game-shell-virtual-*` and `ydotoold`.
+///
+/// We replace that with ownership by fd: every uinput device registers its open
+/// fd at creation, and discovery skips any enumerated device whose fd we own.
+/// The fd is the daemon's stable in-process key for a device for the whole
+/// fleet (Phase 4); registering it here is the single source of truth for "this
+/// is ours."
+///
+/// Note this guards only *our own* devices. Rejecting a *foreign* software
+/// injector such as ydotoold (which also advertises `BTN_SOUTH`) is handled
+/// separately by the DB-match gate in [`find_gamepad`] — fd ownership and the
+/// DB gate are complementary, not redundant.
+#[derive(Debug, Default, Clone)]
+pub struct VirtualRegistry {
+    owned_fds: HashSet<RawFd>,
+}
+
+impl VirtualRegistry {
+    pub fn new() -> VirtualRegistry {
+        VirtualRegistry {
+            owned_fds: HashSet::new(),
+        }
+    }
+
+    /// Record a uinput device's raw fd as daemon-owned.
+    pub fn register(&mut self, fd: RawFd) {
+        self.owned_fds.insert(fd);
+    }
+
+    /// Forget a uinput device's fd (e.g. a virtual pad torn down on player leave).
+    pub fn unregister(&mut self, fd: RawFd) {
+        self.owned_fds.remove(&fd);
+    }
+
+    /// True if `fd` belongs to a uinput device the daemon created.
+    pub fn owns(&self, fd: RawFd) -> bool {
+        self.owned_fds.contains(&fd)
+    }
+
+    pub fn len(&self) -> usize {
+        self.owned_fds.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.owned_fds.is_empty()
+    }
+}
+
+/// Derive a stable wire id for a pad from its evdev identity.
+///
+/// Preference order, most-to-least stable:
+///   1. `uniq` (evdev "unique name" — a controller serial / BT MAC) when present;
+///   2. `phys` (the physical port/path the device hangs off) when present;
+///   3. `vendor:product:path` as a last resort (path keeps two identical pads on
+///      different ports distinct, even if neither exposes uniq/phys).
+///
+/// Empty `uniq`/`phys` strings (the kernel reports `""` rather than absent for
+/// some devices) are treated as missing. The result is purely for `pad:*` IPC
+/// payloads so the UI can follow a physical pad across reconnects; the daemon's
+/// own in-process key stays the fd.
+pub fn derive_wire_id(
+    uniq: Option<&str>,
+    phys: Option<&str>,
+    vendor: u16,
+    product: u16,
+    path: &str,
+) -> String {
+    if let Some(u) = uniq.map(str::trim).filter(|s| !s.is_empty()) {
+        return format!("uniq:{u}");
+    }
+    if let Some(p) = phys.map(str::trim).filter(|s| !s.is_empty()) {
+        return format!("phys:{p}");
+    }
+    format!("vp:{vendor:04x}:{product:04x}:{path}")
 }
 
 /// Parse a `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT`-style override (supports `0x`
@@ -156,13 +238,16 @@ pub use linux::{find_gamepad, GamepadHandle};
 mod linux {
     use super::*;
     use evdev::{Device, KeyCode};
+    use std::os::fd::AsRawFd;
     use std::path::PathBuf;
 
-    /// A discovered gamepad: its evdev device plus its display name/path.
+    /// A discovered gamepad: its evdev device plus its display name/path and the
+    /// stable wire id derived at discovery time.
     pub struct GamepadHandle {
         pub device: Device,
         pub name: String,
         pub path: PathBuf,
+        pub wire_id: String,
     }
 
     fn has_btn_south(dev: &Device) -> bool {
@@ -172,11 +257,22 @@ mod linux {
 
     /// Find a gamepad. Selection order:
     /// 1. If both `GAMEPAD_VENDOR` and `GAMEPAD_PRODUCT` are set -> exact match
-    ///    (legacy operator pin).
-    /// 2. Else prefer the first BTN_SOUTH device whose vendor/product is in the
-    ///    controller DB.
-    /// 3. Else fall back to the first BTN_SOUTH device (arbitrary controller).
-    pub fn find_gamepad(db: &ControllerDb) -> Option<GamepadHandle> {
+    ///    (legacy operator pin). The pin is an explicit operator decision, so it
+    ///    bypasses the DB gate.
+    /// 2. Else require a controller-DB GUID match.
+    ///
+    /// In every case we skip devices whose fd we already own (our own uinput
+    /// keyboard/mouse/virtual pads), tracked by `reg`.
+    ///
+    /// There is deliberately **no bare-`BTN_SOUTH` fallback**. ydotoold's virtual
+    /// device advertises `BTN_SOUTH` but is not in any controller DB, so a "grab
+    /// the first `BTN_SOUTH` device" fallback would grab it as a bogus pad —
+    /// that is the exact failure the old `is_synthetic` name match patched over.
+    /// Requiring a DB match rejects foreign injectors structurally. An operator
+    /// with a controller the bundled DB doesn't know can either pin it via
+    /// `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` or extend the DB via
+    /// `GAME_SHELL_GAMECONTROLLERDB`.
+    pub fn find_gamepad(db: &ControllerDb, reg: &VirtualRegistry) -> Option<GamepadHandle> {
         let pin_vendor = parse_id_env("GAMEPAD_VENDOR");
         let pin_product = parse_id_env("GAMEPAD_PRODUCT");
         let pinned = matches!((pin_vendor, pin_product), (Some(_), Some(_)));
@@ -185,14 +281,14 @@ mod linux {
         // Deterministic order (mirrors Python's sorted(list_devices())).
         devices.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut fallback: Option<GamepadHandle> = None;
         for (path, dev) in devices {
             if !has_btn_south(&dev) {
                 continue;
             }
-            // Skip our own uinput devices and ydotoold's: ydotoold advertises
-            // BTN_SOUTH and would otherwise be grabbed as a bogus gamepad.
-            if dev.name().is_some_and(super::is_synthetic) {
+            // Skip our own uinput devices by fd ownership. (A freshly-opened
+            // physical pad can never collide with one of our control fds, so
+            // this only ever filters devices we created.)
+            if reg.owns(dev.as_raw_fd()) {
                 continue;
             }
             let id = dev.input_id();
@@ -222,19 +318,32 @@ mod linux {
             if db.is_known(vendor, product) {
                 return Some(make_handle(dev, path));
             }
-            if fallback.is_none() {
-                fallback = Some(make_handle(dev, path));
-            }
+            // Unknown vendor/product and not pinned: reject (foreign injector or
+            // an unrecognized pad the operator must pin / teach to the DB).
+            tracing::debug!(
+                "skipping unknown BTN_SOUTH device {} (vendor={vendor:04x} product={product:04x}): \
+                 not in controller DB and not pinned",
+                dev.name().unwrap_or("unknown"),
+            );
         }
-        fallback
+        None
     }
 
     fn make_handle(dev: Device, path: PathBuf) -> GamepadHandle {
         let name = dev.name().unwrap_or("unknown").to_string();
+        let id = dev.input_id();
+        let wire_id = super::derive_wire_id(
+            dev.unique_name(),
+            dev.physical_path(),
+            id.vendor(),
+            id.product(),
+            &path.to_string_lossy(),
+        );
         GamepadHandle {
             device: dev,
             name,
             path,
+            wire_id,
         }
     }
 }
@@ -292,15 +401,82 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_devices_are_excluded() {
-        // Our own uinput devices and ydotoold must never be grabbed as a pad.
-        assert!(is_synthetic("game-shell-virtual-kb"));
-        assert!(is_synthetic("game-shell-virtual-mouse"));
-        assert!(is_synthetic("ydotoold virtual device"));
-        // Real controllers / keyboards are not synthetic.
-        assert!(!is_synthetic("Microsoft X-Box 360 pad"));
-        assert!(!is_synthetic("Logitech K400 Plus"));
-        assert!(!is_synthetic(""));
+    fn virtual_registry_tracks_ownership() {
+        let mut reg = VirtualRegistry::new();
+        assert!(reg.is_empty());
+        assert!(!reg.owns(7));
+
+        reg.register(7);
+        reg.register(9);
+        assert_eq!(reg.len(), 2);
+        assert!(reg.owns(7));
+        assert!(reg.owns(9));
+        assert!(!reg.owns(8));
+
+        // Idempotent registration.
+        reg.register(7);
+        assert_eq!(reg.len(), 2);
+
+        reg.unregister(7);
+        assert!(!reg.owns(7));
+        assert!(reg.owns(9));
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn wire_id_prefers_uniq() {
+        // uniq present -> used regardless of phys/path.
+        let id = derive_wire_id(
+            Some("e4:17:d8:01:02:03"),
+            Some("usb-0000:00:14.0-1/input0"),
+            0x045e,
+            0x028e,
+            "/dev/input/event5",
+        );
+        assert_eq!(id, "uniq:e4:17:d8:01:02:03");
+    }
+
+    #[test]
+    fn wire_id_falls_back_to_phys_then_vp() {
+        // No uniq -> phys.
+        let id = derive_wire_id(
+            None,
+            Some("usb-0000:00:14.0-1/input0"),
+            0x045e,
+            0x028e,
+            "/dev/input/event5",
+        );
+        assert_eq!(id, "phys:usb-0000:00:14.0-1/input0");
+
+        // Neither uniq nor phys -> vendor:product:path.
+        let id = derive_wire_id(None, None, 0x045e, 0x028e, "/dev/input/event5");
+        assert_eq!(id, "vp:045e:028e:/dev/input/event5");
+    }
+
+    #[test]
+    fn wire_id_treats_empty_strings_as_missing() {
+        // The kernel reports "" (not None) for some devices' uniq/phys.
+        let id = derive_wire_id(Some(""), Some("  "), 0x054c, 0x09cc, "/dev/input/event3");
+        assert_eq!(id, "vp:054c:09cc:/dev/input/event3");
+
+        // Empty uniq but real phys -> phys wins.
+        let id = derive_wire_id(
+            Some(""),
+            Some("usb-1/input0"),
+            0x054c,
+            0x09cc,
+            "/dev/input/event3",
+        );
+        assert_eq!(id, "phys:usb-1/input0");
+    }
+
+    #[test]
+    fn wire_id_distinguishes_identical_pads_on_different_ports() {
+        // Two identical pads with no uniq/phys must not collide: the path keeps
+        // them distinct so the fleet allocates separate slots.
+        let a = derive_wire_id(None, None, 0x045e, 0x028e, "/dev/input/event5");
+        let b = derive_wire_id(None, None, 0x045e, 0x028e, "/dev/input/event7");
+        assert_ne!(a, b);
     }
 
     #[test]
