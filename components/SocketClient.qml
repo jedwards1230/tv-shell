@@ -59,6 +59,7 @@ Item {
     property bool _running: false      // subscribe: should stay connected
     property bool _gotResponse: false  // request: a reply line was delivered
     property string _pendingCommand: ""
+    property bool _reconnecting: false  // request: closing to replace an in-flight request, not a failure
 
     function _socketPath() {
         let override = Quickshell.env("GAME_SHELL_SOCK");
@@ -82,9 +83,14 @@ Item {
         let line = (body !== undefined && body !== null && String(body).length > 0) ? (cmd + " " + body) : cmd;
         client._pendingCommand = line;
         client._gotResponse = false;
-        // Reconnect cleanly if a previous request socket is still open.
-        if (sock.connected)
+        // Reconnect cleanly if a previous request socket is still open. Flag the
+        // close as intentional so the disconnect handler does NOT report it as a
+        // failure for this new request (it would otherwise emit a spurious
+        // requestFailed() before the reconnect sends _pendingCommand).
+        if (sock.connected) {
+            client._reconnecting = true;
             sock.connected = false;
+        }
         sock.connected = true;
     }
 
@@ -127,6 +133,10 @@ Item {
                 if (client.subscribe) {
                     if (client._running)
                         reconnectTimer.restart();
+                } else if (client._reconnecting) {
+                    // Intentional close to replace an in-flight request — the
+                    // immediately-following reconnect will send the new command.
+                    client._reconnecting = false;
                 } else if (!client._gotResponse) {
                     // Request socket closed before any reply line.
                     client.requestFailed();
