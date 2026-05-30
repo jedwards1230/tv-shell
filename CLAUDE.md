@@ -127,7 +127,7 @@ Requires Linux with evdev and uinput access. Auto-discovers gamepad by vendor/pr
 
 ### QA Screenshots
 
-Catalog of views/overlays/states to capture for visual QA (and how to reach each):
+Catalog of views/overlays/states to capture for visual QA (and how to reach each) — [`docs/qa-screenshot-views.md`](docs/qa-screenshot-views.md):
 
 @docs/qa-screenshot-views.md
 
