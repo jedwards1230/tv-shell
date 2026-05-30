@@ -30,7 +30,6 @@ pub enum Control {
     /// `cancelled`).
     CaptureNext(Reply),
     CaptureCancel(Reply),
-    KbdLog(bool, Reply),
     /// `intent <name>`: validate `<name>` against the closed vocabulary and, if
     /// valid, broadcast `intent:<name>` to all subscribers. Pure broadcast —
     /// touches no device. The reply is `ok` or `error:unknown intent '<name>'`.

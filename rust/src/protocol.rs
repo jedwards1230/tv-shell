@@ -28,7 +28,6 @@ pub enum Command {
     SetBindingUsage,
     CaptureNext,
     CaptureCancel,
-    KbdLog(bool),
     /// `intent <name>` — inject a shell intent into the broadcast bus. `<name>`
     /// is validated against the closed vocabulary by the input runtime: a valid
     /// name re-broadcasts as `intent:<name>` and replies `ok`; an unknown name
@@ -184,8 +183,6 @@ impl Command {
             "get-bindings" => Command::GetBindings,
             "capture-next" => Command::CaptureNext,
             "capture-cancel" => Command::CaptureCancel,
-            "kbd-log on" => Command::KbdLog(true),
-            "kbd-log off" => Command::KbdLog(false),
             "list-apps" => Command::ListApps,
             "get-config" => Command::GetConfig,
             "get-recents" => Command::GetRecents,
@@ -319,8 +316,6 @@ pub enum Event {
     InputMode(InputMode),
     /// Space-and-plus joined held controller inputs (may be empty).
     Buttons(String),
-    /// Space-and-plus joined held keyboard keys (may be empty).
-    Keys(String),
 
     // --- Phase 3 events ---
     /// Bluetooth adapter power changed (`bt:powered:on` / `bt:powered:off`).
@@ -384,7 +379,6 @@ impl fmt::Display for Event {
             Event::Intent(name) => write!(f, "intent:{name}"),
             Event::InputMode(m) => write!(f, "input-mode:{}", m.as_str()),
             Event::Buttons(s) => write!(f, "buttons:{s}"),
-            Event::Keys(s) => write!(f, "keys:{s}"),
             Event::BtPowered(on) => write!(f, "bt:powered:{}", on_off(*on)),
             Event::BtDevice(json) => write!(f, "bt:device:{json}"),
             Event::BtDeviceRemoved(mac) => write!(f, "bt:device-removed:{mac}"),
@@ -545,8 +539,6 @@ mod tests {
         assert_eq!(Command::parse("get-bindings"), Command::GetBindings);
         assert_eq!(Command::parse("capture-next"), Command::CaptureNext);
         assert_eq!(Command::parse("capture-cancel"), Command::CaptureCancel);
-        assert_eq!(Command::parse("kbd-log on"), Command::KbdLog(true));
-        assert_eq!(Command::parse("kbd-log off"), Command::KbdLog(false));
     }
 
     #[test]
@@ -601,6 +593,8 @@ mod tests {
     #[test]
     fn unrecognized_is_unknown() {
         assert_eq!(Command::parse("frobnicate"), Command::Unknown);
+        // `kbd-log` is gone entirely (keyboard snoop removed in Phase 2).
+        assert_eq!(Command::parse("kbd-log on"), Command::Unknown);
         assert_eq!(Command::parse("kbd-log maybe"), Command::Unknown);
         assert_eq!(Command::parse(""), Command::Unknown);
     }
@@ -739,11 +733,6 @@ mod tests {
             "buttons:Home + B"
         );
         assert_eq!(Event::Buttons(String::new()).to_string(), "buttons:");
-        assert_eq!(
-            Event::Keys("Ctrl + Shift + A".into()).to_string(),
-            "keys:Ctrl + Shift + A"
-        );
-        assert_eq!(Event::Keys(String::new()).to_string(), "keys:");
     }
 
     #[test]

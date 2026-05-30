@@ -3,7 +3,10 @@ import QtQuick
 
 // IPC protocol: see docs/IPC_PROTOCOL.md
 // Commands used: grab, release, subscribe
-// Events handled: combo:force-quit, combo:end-session, combo:suspend-stream, input-mode:*, controller-wake, controller-disconnected, home-press, combo:home-hold
+// Events handled: combo:force-quit, combo:end-session, combo:suspend-stream,
+//   input-mode:*, controller-wake, controller-disconnected, intent:* (the
+//   control-surface stream), and — TEMPORARILY — the legacy gamepad
+//   home-press / combo:home-hold events (see the Phase 5 bridge below).
 Item {
     id: root
 
@@ -13,8 +16,27 @@ Item {
     signal inputModeChanged(string mode)
     signal controllerWake
     signal controllerDisconnected
-    signal homePressed
-    signal homeHeld
+
+    // --- Control-surface intents (Channel B: global, focus-independent) ---
+    // Mapped from the daemon `intent:*` broadcast stream. QML owns the focus,
+    // so it decides what each gamepad-neutral (home-tap/home-hold) means.
+    signal intentHome          // global return-to-shell escape (always leaves app)
+    signal intentHomeTap        // gamepad Home neutral — short press
+    signal intentHomeHold       // gamepad Home neutral — long press (reset)
+    signal intentMenu           // toggle nav drawer
+    signal intentNav(string direction)  // up | down | left | right
+    signal intentSelect
+    signal intentBack
+    signal intentSettings
+    signal intentPower
+
+    // Multi-stroke keyboard reset: three intent:home within the window below
+    // invokes the SAME reset action the gamepad Home-hold triggers. Counted
+    // here (in QML), NOT in the daemon (per resolved OQ1).
+    signal resetRequested
+
+    readonly property int homeTapWindowMs: 1500
+    property int _homeTapCount: 0
 
     function grab() {
         inputGrab.running = true;
@@ -27,6 +49,33 @@ Item {
     }
     function endSession() {
         endSessionProc.running = true;
+    }
+
+    // intent:home arrives (keyboard Super / automation). The first tap arms a
+    // window; a single tap that survives the window is a plain global escape,
+    // three taps inside the window is the reset multi-stroke.
+    function _onIntentHome() {
+        _homeTapCount += 1;
+        if (_homeTapCount >= 3) {
+            homeTapTimer.stop();
+            _homeTapCount = 0;
+            root.resetRequested();
+            return;
+        }
+        homeTapTimer.restart();
+    }
+
+    Timer {
+        id: homeTapTimer
+        interval: root.homeTapWindowMs
+        onTriggered: {
+            // The window closed with fewer than three taps. A lone tap is the
+            // global escape; we deliberately do NOT replay buffered taps as
+            // multiple escapes — a quick double-tap collapses to one escape.
+            if (root._homeTapCount > 0)
+                root.intentHome();
+            root._homeTapCount = 0;
+        }
     }
 
     Process {
@@ -67,14 +116,66 @@ Item {
                 } else if (line === "controller-disconnected") {
                     root.controllerDisconnected();
                     NotificationManager.warn("controller", "Controller Disconnected");
-                } else if (line === "home-press")
-                    root.homePressed();
+                } else if (line.startsWith("intent:")) {
+                    root._handleIntent(line.substring(7));
+                }
+                // --- TEMPORARY dual-source bridge (DELETE in Phase 5) ---
+                // The daemon still emits the legacy gamepad home-press /
+                // combo:home-hold events alongside the new intent:* stream.
+                // Route them to the same neutral signals so the rest of the
+                // shell already speaks the intent vocabulary. Phase 5 deletes
+                // the daemon producers and these two arms together.
+                else if (line === "home-press")
+                    root.intentHomeTap();
                 else if (line === "combo:home-hold")
-                    root.homeHeld();
+                    root.intentHomeHold();
             }
         }
         onExited: {
             comboReconnect.start();
+        }
+    }
+
+    // Map a closed-vocabulary intent name to its QML signal. `home` is the
+    // multi-tap-aware global escape; the rest fan out 1:1.
+    function _handleIntent(name) {
+        switch (name) {
+        case "home":
+            _onIntentHome();
+            break;
+        case "home-tap":
+            root.intentHomeTap();
+            break;
+        case "home-hold":
+            root.intentHomeHold();
+            break;
+        case "menu":
+            root.intentMenu();
+            break;
+        case "nav-up":
+            root.intentNav("up");
+            break;
+        case "nav-down":
+            root.intentNav("down");
+            break;
+        case "nav-left":
+            root.intentNav("left");
+            break;
+        case "nav-right":
+            root.intentNav("right");
+            break;
+        case "select":
+            root.intentSelect();
+            break;
+        case "back":
+            root.intentBack();
+            break;
+        case "settings":
+            root.intentSettings();
+            break;
+        case "power":
+            root.intentPower();
+            break;
         }
     }
 
