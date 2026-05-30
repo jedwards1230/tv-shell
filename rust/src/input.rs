@@ -49,7 +49,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const EV_KEY: u16 = config::EV_KEY;
 const EV_REL: u16 = config::EV_REL;
@@ -156,14 +156,23 @@ struct Shared {
 
 impl Shared {
     fn publish(&self, ev: Event) {
+        // One chokepoint for every broadcast event — `RUST_LOG=…input=debug`
+        // turns this into a full event tracer (intents, combos, pad:*,
+        // input-mode, controller-wake, status pushes).
+        debug!(event = %ev, "publish");
         let _ = self.events.send(ev);
     }
 
     fn emit_key(&mut self, key: u16, value: i32) {
+        // value: 1=press, 0=release, 2=autorepeat. The nav keys/intents the
+        // shell sees originate here; trace-level so a stick auto-repeat burst
+        // doesn't drown the debug stream.
+        trace!(key, value, "emit_key");
         let _ = self.kb.emit(&[InputEvent::new(EV_KEY, key, value)]);
     }
 
     fn emit_mouse_button(&mut self, button: u16, value: i32) {
+        trace!(button, value, "emit_mouse_button");
         let _ = self.mouse.emit(&[InputEvent::new(EV_KEY, button, value)]);
     }
 
@@ -494,6 +503,16 @@ impl PadDevice {
     // --- event handling --------------------------------------------------
 
     fn handle_event(&mut self, sh: &mut Shared, ev: InputEvent) {
+        // Deepest debug level: every raw evdev event from the physical pad.
+        // `RUST_LOG=game_shell_input::input=trace` shows the full input stream
+        // (slot + type/code/value) for diagnosing a misbehaving button/axis.
+        trace!(
+            slot = self.player_slot,
+            ev_type = ev.event_type().0,
+            code = ev.code(),
+            value = ev.value(),
+            "pad event"
+        );
         // Route by the active presenter, not the physical grab: the pad stays
         // grabbed in both modes (Phase 5), so `grabbed` no longer discriminates.
         match sh.presenter {
@@ -1515,6 +1534,7 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
 /// shell presenter routes pad input to nav keys + `intent:*` on the shared
 /// virtual keyboard/mouse.
 fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
+    info!(pads = fleet.pads.len(), "presenter -> Shell (grab)");
     sh.presenter = Presenter::Shell;
     for pad in fleet.pads.values_mut() {
         pad.grab(sh); // no-op if already grabbed; re-grabs if somehow released
@@ -1527,6 +1547,7 @@ fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
 /// leaks to the compositor), and create one clean virtual gamepad per pad. The
 /// game reads the virtual pads; Home is intercepted into `intent:home-*`.
 fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
+    info!(pads = fleet.pads.len(), "presenter -> Game (release)");
     sh.presenter = Presenter::Game;
     for pad in fleet.pads.values_mut() {
         // Keep the physical grab; only ensure it's grabbed (it is, post-join).
