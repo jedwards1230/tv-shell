@@ -398,6 +398,47 @@ This lets us build a history of pressed keys over time and find unmapped or mis-
 
 **Response:** `ok\n`
 
+### `intent <name>`
+
+Inject a shell *intent* into the broadcast bus — the daemon's first-class,
+headless **control surface**. Any accepted `intent <name>` re-broadcasts to all
+`subscribe` clients as an `intent:<name>` event (see
+[Intents](#intents)). The daemon does not know or care who issued it, so the
+keyboard global-escape (Hyprland `Super` bind), screenshot/automation, and the
+daemon's own gamepad logic all ride the **identical** path.
+
+`<name>` is a single whitespace-trimmed token validated against a **closed
+vocabulary**. Unknown names are rejected; the command **touches no device** (it
+is a pure broadcast).
+
+| Intent | Meaning |
+|--------|---------|
+| `home` | Global return-to-shell escape (keyboard `Super`, automation). Always leaves the running app. Distinct from the gamepad neutrals below. |
+| `home-tap` | Gamepad Home neutral — a short Home press. QML routes it (typically to `menu` when the shell is focused). |
+| `home-hold` | Gamepad Home neutral — a long Home press. QML routes it (typically to the return-to-shell / reset path). |
+| `menu` | Toggle the navigation drawer. |
+| `nav-up` / `nav-down` / `nav-left` / `nav-right` | Directional menu navigation. |
+| `select` | Confirm / activate the focused element. |
+| `back` | Cancel / go back. |
+| `settings` | Open settings. |
+| `power` | Open the power menu. |
+
+`home` is the global escape; `home-tap`/`home-hold` are the **neutral** gamepad
+Home signals (QML, which owns focus, decides what each means). This split keeps
+the daemon free of any focus/state knowledge.
+
+| Condition | Response |
+|-----------|----------|
+| `<name>` in the closed vocabulary | `ok\n` (and an `intent:<name>` event is broadcast) |
+| `<name>` outside the vocabulary | `error:unknown intent '<name>'\n` (no event) |
+| Missing/empty `<name>` body | `error:usage: intent <name>\n` |
+
+**Example (automation):**
+
+```
+echo "intent home" | nc -U "$GAME_SHELL_SOCK"
+```
+
 ## Phase 4 Commands (Hyprland + Sunshine)
 
 Phase 4 adds two subsystems: a Hyprland compositor actor (`hyprland` crate, async
@@ -528,6 +569,22 @@ Subscribers (registered via `subscribe`) receive these events as newline-termina
 |-------|---------|
 | `home-press` | `BTN_MODE` released before the 2-second hold threshold |
 | `combo:home-hold` | `BTN_MODE` held for 2 seconds |
+
+### Intents
+
+Every accepted [`intent <name>`](#intent-name) command re-broadcasts here as an
+`intent:<name>` event. This is the global control-surface stream: keyboard
+global-escape, automation, and (in later phases) the daemon's own gamepad logic
+all surface through it, so QML consumes **one** vocabulary regardless of source.
+
+| Event | Payload (`<name>`) |
+|-------|--------------------|
+| `intent:<name>` | One of `home`, `home-tap`, `home-hold`, `menu`, `nav-up`, `nav-down`, `nav-left`, `nav-right`, `select`, `back`, `settings`, `power` |
+
+`intent:home` is the global return-to-shell escape; `intent:home-tap` /
+`intent:home-hold` are the neutral gamepad Home signals (QML maps them by the
+focus it owns). `intent:menu` toggles the navigation drawer. The existing
+gamepad `home-press` / `combo:home-hold` events are unchanged in this phase.
 
 ### Combo Events
 
