@@ -32,7 +32,13 @@ BaseCard {
         }
     }
 
-    // Query GS serverinfo + local Moonlight config to resolve running app name.
+    // Resolve the running app name via the daemon's `sunshine-status` IPC command
+    // (see docs/IPC_PROTOCOL.md) + the local Moonlight config. The daemon owns the
+    // Sunshine /serverinfo HTTPS fetch and returns {online,paired,currentApp,...},
+    // where currentApp is the busy game id (or "" when idle). This replaced the
+    // inline urllib /serverinfo poll; the game-id -> friendly-name resolution
+    // against Moonlight.conf stays local, preserving the prior output contract
+    // ("IDLE" / resolved name / "Unknown App").
     Process {
         id: sessionCheck
         property string _response: ""
@@ -63,17 +69,32 @@ BaseCard {
             if (sessionCheck.running)
                 return;
             let host = root.target.host || "127.0.0.1";
+            let port = root.target.sunshinePort || "47990";
             sessionCheck._response = "";
+            // Ask the daemon for the Sunshine session state (sunshine-status reply
+            // is one compact JSON line; read until the first newline since the
+            // daemon holds the connection open). Then resolve the busy game id to a
+            // friendly name from the local Moonlight.conf, exactly as before.
             sessionCheck.command = ["python3", "-c", `
-import urllib.request, re, configparser, os, sys
+import socket, os, json, configparser, sys
 try:
-    r = urllib.request.urlopen("http://${host}:47989/serverinfo", timeout=3).read().decode()
-    state = re.search(r"<state>([^<]+)</state>", r)
-    gid = re.search(r"<currentgame>([^<]+)</currentgame>", r)
-    if not state or state.group(1) != "SUNSHINE_SERVER_BUSY" or not gid or gid.group(1) == "0":
+    sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sk.settimeout(10)
+    sk.connect(os.environ.get('GAME_SHELL_SOCK', '/run/user/' + str(os.getuid()) + '/game-shell-input.sock'))
+    sk.sendall(b'sunshine-status ${host} ${port}\\n')
+    buf = b''
+    while b'\\n' not in buf:
+        c = sk.recv(65536)
+        if not c:
+            break
+        buf += c
+    sk.close()
+    resp = buf.split(b'\\n', 1)[0].decode()
+    data = json.loads(resp)
+    game_id = str(data.get("currentApp", "") or "")
+    if game_id == "" or game_id == "0":
         print("IDLE")
         sys.exit(0)
-    game_id = gid.group(1)
     conf = os.path.expanduser("~/.config/Moonlight Game Streaming Project/Moonlight.conf")
     if os.path.exists(conf):
         cp = configparser.ConfigParser()

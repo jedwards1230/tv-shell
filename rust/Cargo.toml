@@ -27,6 +27,15 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc = "0.2"
+# Sunshine session detection (health.rs). Cross-platform HTTP client over its
+# self-signed HTTPS endpoint. default-features = false + rustls-tls keeps us off
+# the system OpenSSL; we also enable danger/accept-invalid-certs at call time for
+# Sunshine's self-signed cert. The XML/JSON response *parser* is a pure function
+# (unit-tested on macOS); only the fetch needs the runtime/TLS.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+] }
 
 # evdev/uinput are Linux kernel interfaces. Keep them off non-Linux hosts so
 # the pure-logic modules (protocol, config, device GUID math) still compile and
@@ -46,3 +55,8 @@ zbus = { version = "5.16", default-features = false, features = ["tokio"] }
 # bluer is the official BlueZ binding. `bluetoothd` gates the Session/Adapter/
 # Device API we need; default-features pull in extra protocol modules we don't.
 bluer = { version = "0.17.4", default-features = false, features = ["bluetoothd"] }
+# hyprland speaks the Hyprland IPC socket (Linux compositor only). The `tokio`
+# feature provides the async event listener + async data getters used by the
+# hyprland.rs actor. Pinned exact; the data module replaces the QML's
+# `hyprctl clients -j` shell-out.
+hyprland = { version = "=0.3.13", default-features = false, features = ["tokio"] }

@@ -9,6 +9,13 @@ Item {
     property var applications: []
     property string shellState: ""
 
+    // Last active-window class reported by the daemon's `hypr:activewindow`
+    // subscribe event (empty when no window is focused). Mirrors the compositor's
+    // focus state without an extra query.
+    property string activeWindowClass: ""
+    // Last fullscreen state reported by the daemon's `hypr:fullscreen` event.
+    property bool activeWindowFullscreen: false
+
     property var _prelaunchClasses: []
     property var _pendingApp: null
     property var _launchedApps: Object.create(null)
@@ -285,5 +292,49 @@ Item {
             if (!windowPoller.running)
                 windowPoller.running = true;
         }
+    }
+
+    // Subscribe to the daemon's Hyprland window events (hypr:activewindow,
+    // hypr:fullscreen — see docs/IPC_PROTOCOL.md) so window open/close/focus
+    // changes are reflected immediately instead of waiting for the next poll
+    // tick. The periodic windowPoller above remains the source of truth for the
+    // runningWindows model and appClosed detection; these events just kick an
+    // extra poll on transitions, so the public behavior is unchanged.
+    Process {
+        id: hyprEventListener
+        command: ["python3", "-c", "import socket,os;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(os.environ.get('GAME_SHELL_SOCK','/run/user/'+str(os.getuid())+'/game-shell-input.sock'));s.sendall(b'subscribe\\n');[print(l,flush=True) for d in iter(lambda:s.recv(1024),b'') for l in d.decode().splitlines()]"]
+        stdout: SplitParser {
+            onRead: line => {
+                if (line.indexOf("hypr:activewindow:") === 0) {
+                    root.activeWindowClass = line.substring("hypr:activewindow:".length);
+                    root._onHyprWindowEvent();
+                } else if (line.indexOf("hypr:fullscreen:") === 0) {
+                    root.activeWindowFullscreen = line.substring("hypr:fullscreen:".length) === "1";
+                    root._onHyprWindowEvent();
+                }
+            }
+        }
+        onExited: {
+            hyprEventReconnect.start();
+        }
+    }
+
+    Timer {
+        id: hyprEventReconnect
+        interval: 2000
+        onTriggered: {
+            hyprEventListener.running = true;
+        }
+    }
+
+    function _onHyprWindowEvent() {
+        // Kick an immediate poll on window transitions while the shell is the
+        // active state owner; the poller itself guards against re-entry.
+        if ((root.shellState === "idle" || root.shellState === "appRunning") && !windowPoller.running)
+            windowPoller.running = true;
+    }
+
+    Component.onCompleted: {
+        hyprEventListener.running = true;
     }
 }

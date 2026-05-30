@@ -14,6 +14,7 @@
 mod apps;
 mod config;
 mod device;
+mod health;
 mod ipc;
 mod protocol;
 mod recents;
@@ -31,6 +32,12 @@ mod bluetooth;
 mod network;
 #[cfg(target_os = "linux")]
 mod power;
+
+// Phase 4 Hyprland subsystem. Linux-only: speaks the Hyprland IPC socket via the
+// `hyprland` crate. Excluded from the macOS build (no Hyprland). The Sunshine
+// session-detection (`health.rs`) is cross-platform (`reqwest`) and lives above.
+#[cfg(target_os = "linux")]
+mod hyprland;
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -100,6 +107,7 @@ fn spawn_dbus_actors(
     let (bt_tx, bt_rx) = mpsc::channel(64);
     let (net_tx, net_rx) = mpsc::channel(64);
     let (power_tx, power_rx) = mpsc::channel(64);
+    let (hypr_tx, hypr_rx) = mpsc::channel(64);
 
     {
         let events_tx = events_tx.clone();
@@ -125,11 +133,20 @@ fn spawn_dbus_actors(
             }
         });
     }
+    {
+        let events_tx = events_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = hyprland::run(hypr_rx, events_tx).await {
+                tracing::warn!("hyprland actor exited: {e}");
+            }
+        });
+    }
 
     ipc::DbusSenders {
         bt: Some(bt_tx),
         net: Some(net_tx),
         power: Some(power_tx),
+        hypr: Some(hypr_tx),
     }
 }
 

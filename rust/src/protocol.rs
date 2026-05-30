@@ -89,6 +89,27 @@ pub enum Command {
     /// Battery state as a compact JSON object (`{"present":false}` on a desktop).
     PowerBattery,
 
+    // --- Phase 4: Hyprland (hyprland crate) ---
+    /// Active window as a compact JSON object `{class,title,address}` (`{}` if
+    /// none). Replaces `Client::get_active_async`-style reads in QML.
+    HyprActive,
+    /// All Hyprland clients as a compact JSON array (mirrors `hyprctl clients -j`:
+    /// at least `class,title,address,workspace`). Replaces the QML
+    /// `hyprctl clients -j` shell-out.
+    HyprClients,
+
+    // --- Phase 4: Sunshine session detection (reqwest) ---
+    /// `sunshine-status <host> <port>` -> compact JSON object
+    /// `{online,paired,currentApp,httpsPort}` parsed from Sunshine's
+    /// `/serverinfo` response. The body is `<host> <port>` (two whitespace-
+    /// separated tokens) after the command word. Stateless (cross-platform).
+    SunshineStatus {
+        host: String,
+        port: String,
+    },
+    /// `sunshine-status` with a missing/incomplete `<host> <port>` body.
+    SunshineStatusUsage,
+
     /// Anything unrecognized -> the daemon replies `unknown`.
     Unknown,
 }
@@ -138,6 +159,9 @@ impl Command {
             "power-can-suspend" => Command::PowerCanSuspend,
             "power-suspend" => Command::PowerSuspend,
             "power-battery" => Command::PowerBattery,
+            // Phase 4 bare commands (no body).
+            "hypr-active" => Command::HyprActive,
+            "hypr-clients" => Command::HyprClients,
             _ => {
                 // `set-config <json>` / `record-launch <json>`: the rest of the
                 // line is a compact single-line JSON body. The command word must
@@ -178,6 +202,20 @@ impl Command {
                             _ => unreachable!("word came from the literal list above"),
                         };
                     }
+                }
+                // Phase 4 `sunshine-status <host> <port>`: the body is two
+                // whitespace-separated tokens. A missing/incomplete body is a
+                // usage error. `command_body` enforces the word boundary so
+                // e.g. `sunshine-statusX` is not mistaken for the command.
+                if let Some(body) = command_body(cmd, "sunshine-status") {
+                    let mut toks = body.split_whitespace();
+                    return match (toks.next(), toks.next()) {
+                        (Some(host), Some(port)) => Command::SunshineStatus {
+                            host: host.to_string(),
+                            port: port.to_string(),
+                        },
+                        _ => Command::SunshineStatusUsage,
+                    };
                 }
                 // Python keys `set-binding` off the `"set-binding "` prefix
                 // (with trailing space), so a bare `set-binding` is `unknown`.
@@ -247,6 +285,13 @@ pub enum Event {
     /// Battery state changed; payload is a compact JSON object (same shape as a
     /// `power-battery` body). Wire: `power:battery:<json>`.
     PowerBattery(String),
+
+    // --- Phase 4 events (Hyprland) ---
+    /// Active window changed; payload is the active window's class (may be empty
+    /// when no window is focused). Wire: `hypr:activewindow:<class>`.
+    HyprActiveWindow(String),
+    /// Active window fullscreen state changed. Wire: `hypr:fullscreen:<0|1>`.
+    HyprFullscreen(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,6 +332,8 @@ impl fmt::Display for Event {
             Event::NetWifi(json) => write!(f, "net:wifi:{json}"),
             Event::NetPrimary(id) => write!(f, "net:primary:{id}"),
             Event::PowerBattery(json) => write!(f, "power:battery:{json}"),
+            Event::HyprActiveWindow(class) => write!(f, "hypr:activewindow:{class}"),
+            Event::HyprFullscreen(fs) => write!(f, "hypr:fullscreen:{}", if *fs { 1 } else { 0 }),
         }
     }
 }
@@ -384,6 +431,11 @@ pub fn resp_bt_power(on: bool) -> String {
 /// without a MAC. `which` is the bare command word.
 pub fn resp_bt_mac_usage(which: &str) -> String {
     format!("error:usage: {which} <mac>")
+}
+
+/// Usage line for `sunshine-status` issued without a `<host> <port>` body.
+pub fn resp_sunshine_status_usage() -> String {
+    "error:usage: sunshine-status <host> <port>".to_string()
 }
 
 /// `power-can-suspend` reply: `yes` / `no`.
@@ -682,6 +734,72 @@ mod tests {
         assert_eq!(
             Event::PowerBattery(r#"{"present":false}"#.into()).to_string(),
             r#"power:battery:{"present":false}"#
+        );
+    }
+
+    #[test]
+    fn parses_phase4_bare_commands() {
+        assert_eq!(Command::parse("hypr-active"), Command::HyprActive);
+        assert_eq!(Command::parse("hypr-clients"), Command::HyprClients);
+        assert_eq!(Command::parse("  hypr-active  "), Command::HyprActive);
+        // Word boundary: a longer word is NOT a hypr command.
+        assert_eq!(Command::parse("hypr-activeX"), Command::Unknown);
+        assert_eq!(Command::parse("hypr-clientsX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_sunshine_status_body() {
+        assert_eq!(
+            Command::parse("sunshine-status 192.168.8.10 47990"),
+            Command::SunshineStatus {
+                host: "192.168.8.10".into(),
+                port: "47990".into()
+            }
+        );
+        // Surrounding/internal whitespace collapses like split_whitespace.
+        assert_eq!(
+            Command::parse("sunshine-status   host   1234  "),
+            Command::SunshineStatus {
+                host: "host".into(),
+                port: "1234".into()
+            }
+        );
+        // Missing port -> usage; bare command -> usage.
+        assert_eq!(
+            Command::parse("sunshine-status host"),
+            Command::SunshineStatusUsage
+        );
+        assert_eq!(
+            Command::parse("sunshine-status"),
+            Command::SunshineStatusUsage
+        );
+        // Word boundary: `sunshine-statusX` is NOT sunshine-status.
+        assert_eq!(Command::parse("sunshine-statusX"), Command::Unknown);
+    }
+
+    #[test]
+    fn phase4_event_wire_strings() {
+        assert_eq!(
+            Event::HyprActiveWindow("firefox".into()).to_string(),
+            "hypr:activewindow:firefox"
+        );
+        // Empty class is allowed (no focused window).
+        assert_eq!(
+            Event::HyprActiveWindow(String::new()).to_string(),
+            "hypr:activewindow:"
+        );
+        assert_eq!(Event::HyprFullscreen(true).to_string(), "hypr:fullscreen:1");
+        assert_eq!(
+            Event::HyprFullscreen(false).to_string(),
+            "hypr:fullscreen:0"
+        );
+    }
+
+    #[test]
+    fn phase4_usage_string() {
+        assert_eq!(
+            resp_sunshine_status_usage(),
+            "error:usage: sunshine-status <host> <port>"
         );
     }
 

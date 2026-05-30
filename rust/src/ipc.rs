@@ -8,7 +8,7 @@
 
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
-use crate::{apps, config, recents};
+use crate::{apps, config, health, recents};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::os::unix::fs::PermissionsExt;
@@ -18,6 +18,8 @@ use tokio_util::codec::{Framed, LinesCodec};
 
 #[cfg(target_os = "linux")]
 use crate::bluetooth::BtReq;
+#[cfg(target_os = "linux")]
+use crate::hyprland::HyprReq;
 #[cfg(target_os = "linux")]
 use crate::network::NetReq;
 #[cfg(target_os = "linux")]
@@ -38,6 +40,8 @@ pub struct DbusSenders {
     pub net: Option<mpsc::Sender<NetReq>>,
     #[cfg(target_os = "linux")]
     pub power: Option<mpsc::Sender<PowerReq>>,
+    #[cfg(target_os = "linux")]
+    pub hypr: Option<mpsc::Sender<HyprReq>>,
 }
 
 /// Bind the socket (removing any stale file), chmod 0o600, and serve until the
@@ -186,6 +190,14 @@ async fn dispatch_stateless(cmd: &Command) -> Option<String> {
             )
         }
         Command::RecordLaunchUsage => Some(protocol::resp_record_launch_usage()),
+        // Phase 4 Sunshine session detection. Stateless and cross-platform
+        // (`reqwest` runs everywhere), so it's served here like `list-apps`
+        // rather than via a Linux-only actor. The fetch+parse degrades a missing
+        // host to the offline JSON (`{"online":false,...}`).
+        Command::SunshineStatus { host, port } => {
+            Some(health::handle_sunshine_status(host, port).await)
+        }
+        Command::SunshineStatusUsage => Some(protocol::resp_sunshine_status_usage()),
         _ => None,
     }
 }
@@ -239,7 +251,10 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         | Command::SetConfigUsage
         | Command::RecordLaunch(_)
         | Command::RecordLaunchUsage
-        | Command::GetRecents => return protocol::resp_unknown(),
+        | Command::GetRecents
+        // Phase 4 Sunshine is stateless (consumed by `dispatch_stateless`).
+        | Command::SunshineStatus { .. }
+        | Command::SunshineStatusUsage => return protocol::resp_unknown(),
         // Phase 3 D-Bus commands are consumed by `dispatch_dbus` above (which
         // returns early); they never reach this match. The MAC-usage variant is
         // a stateless error reply handled there too.
@@ -259,7 +274,10 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         | Command::NetWifiRescan
         | Command::PowerCanSuspend
         | Command::PowerSuspend
-        | Command::PowerBattery => return protocol::resp_unknown(),
+        | Command::PowerBattery
+        // Phase 4 Hyprland commands are consumed by `dispatch_dbus` above.
+        | Command::HyprActive
+        | Command::HyprClients => return protocol::resp_unknown(),
     }
     .unwrap_or(fallback)
 }
@@ -305,6 +323,8 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         Command::PowerCanSuspend => request_dbus(&dbus.power, PowerReq::CanSuspend).await,
         Command::PowerSuspend => request_dbus(&dbus.power, PowerReq::Suspend).await,
         Command::PowerBattery => request_dbus(&dbus.power, PowerReq::Battery).await,
+        Command::HyprActive => request_dbus(&dbus.hypr, HyprReq::Active).await,
+        Command::HyprClients => request_dbus(&dbus.hypr, HyprReq::Clients).await,
         _ => return None,
     };
     Some(resp)
@@ -332,7 +352,9 @@ async fn dispatch_dbus(_dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         | Command::NetWifiRescan
         | Command::PowerCanSuspend
         | Command::PowerSuspend
-        | Command::PowerBattery => protocol::resp_unsupported(),
+        | Command::PowerBattery
+        | Command::HyprActive
+        | Command::HyprClients => protocol::resp_unsupported(),
         _ => return None,
     };
     Some(resp)

@@ -64,20 +64,29 @@ scripts/
 
 | Tool | Used For |
 |------|----------|
-| input daemon (IPC) | Gamepad grab/release, settings I/O (`get/set-config`), app discovery (`list-apps`), recents (`get/record`), Bluetooth (`bt-*`), network reads (`net-*`), suspend/battery (`power-*`) — see [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) |
+| input daemon (IPC) | Gamepad grab/release, settings I/O (`get/set-config`), app discovery (`list-apps`), recents (`get/record`), Bluetooth (`bt-*`), network reads (`net-*`), suspend/battery (`power-*`), Hyprland reads (`hypr-active`/`hypr-clients` + `hypr:*` events), Sunshine pre-flight (`sunshine-status`) — see [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) |
 | `wpctl` | Audio volume/mute/sink switching (WirePlumber/PipeWire) |
 | `nmcli` | WiFi *join* only (`device wifi connect`) — reads go through the daemon's `net-*` IPC |
-| `hyprctl` | Monitor mode/scale changes, app launching, reload |
+| `hyprctl` | Monitor mode/scale changes, app launching, reload, one-shot `dispatch` actions — window/client *reads* go through the daemon's `hypr-*` IPC |
 | `systemctl` | Reboot/poweroff one-shots — suspend goes through the daemon's `power-suspend` IPC |
+| `cec-client` | HDMI-CEC TV/AVR control (`AVController.qml`) — **deferred**, still a shell-out (follow-up) |
 | `moonlight` | Game streaming client (`stream`, `list`, `pair`) |
 
 The daemon's `bt-*` (BlueZ/`bluer`), `net-*` (NetworkManager/`zbus`, read-only),
 and `power-*` (logind + UPower/`zbus`) IPC commands are the **D-Bus backbone**
-(Phase 3, #28). They replace the QML shell-outs that *read* system state. These
-modules are Linux-only and unverifiable on macOS/CI — they need on-device
-verification on game-client-1. What deliberately stays a shell-out: Wi-Fi
-**join** (`nmcli`), audio (`wpctl`), one-shot compositor actions (`hyprctl`),
-and reboot/poweroff (`systemctl`).
+(Phase 3, #28). **Phase 4** adds Hyprland reads (`hypr-active`/`hypr-clients` +
+`hypr:activewindow`/`hypr:fullscreen` events via the `hyprland` crate, replacing
+the `hyprctl clients -j` shell-out and feeding `AppLifecycleManager.qml`) and
+Sunshine session detection (`sunshine-status <host> <port>` via `reqwest`/rustls
+against Sunshine's self-signed `/serverinfo`, replacing the inline HTTP polls in
+`StreamManager.qml`/`StreamCard.qml`/`MoonlightSettings.qml`). These replace the
+QML shell-outs/HTTP polls that *read* system state. The Linux-only modules
+(D-Bus, Hyprland) are unverifiable on macOS/CI and need on-device verification on
+game-client-1; `sunshine-status` runs cross-platform but its live fetch needs a
+reachable host (its response parser is pure and unit-tested). What deliberately
+stays a shell-out: Wi-Fi **join** (`nmcli`), audio (`wpctl`), one-shot compositor
+*actions* (`hyprctl dispatch`), reboot/poweroff (`systemctl`), and **HDMI-CEC**
+(`cec-client` in `AVController.qml`, deferred as a follow-up).
 
 ## Development
 

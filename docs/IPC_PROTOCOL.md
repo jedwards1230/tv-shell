@@ -14,7 +14,7 @@ The gamepad input daemon (`input/gamepad-input.py`) communicates with QML compon
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, and the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, and the Phase 4 query replies `hypr-active`, `hypr-clients`, and `sunshine-status`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -398,6 +398,113 @@ This lets us build a history of pressed keys over time and find unmapped or mis-
 
 **Response:** `ok\n`
 
+## Phase 4 Commands (Hyprland + Sunshine)
+
+Phase 4 adds two subsystems: a Hyprland compositor actor (`hyprland` crate, async
+event listener + data getters) and a Sunshine session detector (`reqwest` over
+the host's self-signed HTTPS endpoint).
+
+The **Hyprland** commands replace the `hyprctl clients -j` read in
+`components/HyprctlClients.qml` and feed `components/AppLifecycleManager.qml`'s
+window-event watching. They are **Linux-only** (the Hyprland IPC socket): on a
+non-Linux build (or any host where the Hyprland actor failed to start), they
+reply `error:unsupported on this platform\n`. One-shot compositor *actions*
+(`hyprctl dispatch exec/closewindow/focuswindow/fullscreen`) stay shell-outs in
+the QML.
+
+The **Sunshine** command (`sunshine-status`) is **stateless and cross-platform**
+— served directly by the daemon's IPC layer (no actor round-trip, like
+`list-apps`), since `reqwest` runs everywhere. It replaces the inline Sunshine
+HTTP polls in `components/StreamManager.qml`, `StreamCard.qml`, and
+`MoonlightSettings.qml`. The streamed Phase 4 events are documented under
+[Phase 4 Events](#phase-4-events).
+
+### Hyprland (`hyprland` crate)
+
+#### `hypr-active`
+
+Query the active window. Uses the crate's `Client::get_active_async` (no
+`hyprctl` shell-out).
+
+**Response:** A compact single-line JSON **object** describing the active window,
+or `{}` when no window is focused (or on any IPC failure, e.g. the Hyprland
+socket is absent):
+
+```json
+{"class":"firefox","title":"Mozilla Firefox","address":"0x55a1b2c3d4e5"}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `class` | string | Active window's class (empty string allowed) |
+| `title` | string | Active window's title |
+| `address` | string | Hyprland window address (e.g. `0x…`) |
+
+On a non-Linux build: `error:unsupported on this platform\n`.
+
+#### `hypr-clients`
+
+List all Hyprland clients, mirroring what `hyprctl clients -j` gave the QML. Uses
+the crate's `Clients::get_async` (no `hyprctl` shell-out).
+
+**Response:** A compact single-line JSON **array** of client objects:
+
+```json
+[{"class":"firefox","title":"Mozilla Firefox","address":"0x55a1b2c3d4e5","workspace":"1"}]
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `class` | string | Window class |
+| `title` | string | Window title |
+| `address` | string | Hyprland window address |
+| `workspace` | string | Workspace name (matches the QML's `workspace.name` read) |
+
+An empty result (or any IPC failure) is `[]`. On a non-Linux build:
+`error:unsupported on this platform\n`.
+
+### Sunshine session detection (`reqwest`)
+
+#### `sunshine-status <host> <port>`
+
+Pre-flight check the QML shell runs before launching a Moonlight stream: is the
+host up, are we paired, and is another app already streaming? The `<host>` and
+`<port>` are two whitespace-trimmed tokens after the command word; `<port>` is
+the host's HTTPS port (Sunshine's self-signed `/serverinfo` endpoint, e.g.
+`47990`). The fetch accepts the self-signed cert (rustls
+`danger_accept_invalid_certs`).
+
+Stateless and cross-platform — served directly by the daemon's IPC layer (no
+actor round-trip), so it works on every platform, including a non-Linux build.
+
+**Response:** A compact single-line JSON **object**:
+
+```json
+{"online":true,"paired":true,"currentApp":"881448767","httpsPort":47990}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `online` | bool | The host responded with a parseable `/serverinfo` document |
+| `paired` | bool | `<PairStatus>1</PairStatus>` — this client is paired with the host |
+| `currentApp` | string | Id of the app currently streaming, or `""` when idle. Busy only when `<state>` ends in `SERVER_BUSY` **and** `<currentgame>` is a non-zero id |
+| `httpsPort` | number | `<HttpsPort>` from the document (`0` when absent/unparseable) |
+
+A host that is unreachable / times out / returns a non-2xx or non-serverinfo
+body degrades to the offline object (the command does not error):
+
+```json
+{"online":false,"paired":false,"currentApp":"","httpsPort":0}
+```
+
+| Condition | Response |
+|-----------|----------|
+| Success / host unreachable | The JSON object above |
+| Missing or incomplete `<host> <port>` body | `error:usage: sunshine-status <host> <port>\n` |
+
+The response *parser* is a pure, unit-tested function (parses Sunshine's
+`/serverinfo` XML into the object above).
+
 ### Unrecognized Commands
 
 Any command not listed above receives:
@@ -501,6 +608,27 @@ net:connectivity:full
 net:wifi:{"connectivity":"full","primaryType":"802-11-wireless","hasWifi":true,"ipv4":"wlan0: 192.168.8.50","activeConnections":[]}
 net:primary:Wired connection 1
 power:battery:{"present":true,"percentage":74,"state":"discharging","onBattery":true,"icon":"battery-good-symbolic"}
+```
+
+### Phase 4 Events
+
+Streamed to `subscribe` clients by the Hyprland actor (Linux-only; never emitted
+on a non-Linux build). Each follows the bare-text `name:payload` convention.
+`AppLifecycleManager.qml` watches these to track window open/close/focus and
+fullscreen transitions.
+
+| Event | Trigger | Payload |
+|-------|---------|---------|
+| `hypr:activewindow:<class>` | The active window changed | The new active window's class. An empty class is allowed (e.g. `hypr:activewindow:` when no window is focused) |
+| `hypr:fullscreen:<0|1>` | The active window's fullscreen state changed | `1` when fullscreen, `0` otherwise |
+
+Example wire lines:
+
+```
+hypr:activewindow:firefox
+hypr:activewindow:
+hypr:fullscreen:1
+hypr:fullscreen:0
 ```
 
 ## Default Button Mappings

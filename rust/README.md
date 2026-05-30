@@ -38,10 +38,13 @@ parses `.desktop` files or hand-formats config JSON.
 | `bluetooth.rs` | **Linux-only.** BlueZ actor via `bluer` — scan/pair/connect/trust + `bt:*` events |
 | `network.rs` | **Linux-only.** NetworkManager **read** actor via `zbus` — connectivity / AP list / `net:*` events |
 | `power.rs` | **Linux-only.** logind suspend + UPower battery via `zbus` — `power:*` events |
+| `hyprland.rs` | **Linux-only.** Hyprland actor via `hyprland` crate — active-window/clients queries + `hypr:*` events |
+| `health.rs` | Sunshine session detection via `reqwest`/rustls (cross-platform) — `sunshine-status` |
 | `ipc.rs` | Unix-socket server, `broadcast` event fan-out, D-Bus command routing |
 | `main.rs` | Runtime wiring + signals + D-Bus actor spawn |
 
-`apps.rs` and `recents.rs` are pure Rust — fully unit-tested on macOS.
+`apps.rs`, `recents.rs`, and `health.rs`'s response parser are pure Rust —
+fully unit-tested on macOS.
 
 ## Phase 3 — D-Bus backbone (`bluetooth.rs` / `network.rs` / `power.rs`)
 
@@ -66,6 +69,35 @@ exercised on-device** (no D-Bus on macOS / CI); each actor degrades to `error:*`
 replies if BlueZ/NetworkManager/logind/UPower is absent, never panicking the
 daemon. See `docs/IPC_PROTOCOL.md` for the full command/event reference.
 
+## Phase 4 — Hyprland + Sunshine (`hyprland.rs` / `health.rs`)
+
+Two more subsystems replace the remaining QML *reads*:
+
+- **Hyprland** (`hyprland.rs`): a `#[cfg(target_os = "linux")]` async actor (same
+  single-owner shape as Phase 3) over the `hyprland` crate. It answers
+  `hypr-active` (active window `{class,title,address}`) and `hypr-clients`
+  (`hyprctl clients -j`-equivalent `{class,title,address,workspace}` array) via
+  the crate's async data getters, and streams `hypr:activewindow:<class>` /
+  `hypr:fullscreen:<0|1>` events from the async event listener. This replaces the
+  `hyprctl clients -j` shell-out in `components/HyprctlClients.qml` and feeds
+  `AppLifecycleManager.qml`. One-shot `hyprctl dispatch` *actions* stay in QML.
+- **Sunshine** (`health.rs`): the `sunshine-status <host> <port>` pre-flight check
+  the shell runs before a Moonlight stream. It's **stateless and cross-platform**
+  (a plain `ipc.rs` handler, not a Linux-only actor) over `reqwest` with
+  `rustls-tls` + `danger_accept_invalid_certs` for Sunshine's self-signed HTTPS.
+  The `/serverinfo` response **parser is a pure function unit-tested on macOS**;
+  only the fetch needs the runtime. Returns
+  `{online,paired,currentApp,httpsPort}`, replacing the inline Sunshine HTTP polls
+  in `StreamManager.qml` / `StreamCard.qml` / `MoonlightSettings.qml`.
+
+`hyprland.rs` is Linux-only (the Hyprland IPC socket); it's excluded from the
+macOS build and verifiable only on-device. `health.rs` runs everywhere, but its
+live fetch needs a reachable Sunshine host.
+
+**HDMI-CEC was deferred** — `AVController.qml` / `AVControlSettings.qml` still
+shell out to `cec-client` and were intentionally left untouched. That subsystem
+is a follow-up.
+
 ## Build & test
 
 The full binary only links on **Linux** (`evdev`/`uinput` are kernel
@@ -80,8 +112,8 @@ cargo build --release # Linux only -> target/release/game-shell-input
 **Linux build deps:** the Phase 3 Bluetooth module uses `bluer`, which pulls in
 `libdbus-sys`, so a Linux build needs the D-Bus headers + pkg-config:
 `apt-get install libdbus-1-dev pkg-config` (Debian/CI) — on Arch / game-client-1
-these come with the core `dbus`/`base-devel`. `zbus` (network/power) is pure Rust
-and needs nothing.
+these come with the core `dbus`/`base-devel`. `zbus` (network/power),
+`hyprland`, and `reqwest`/`rustls-tls` (health) are pure Rust and need nothing.
 
 ## Deploy (later, on game-client-1)
 
@@ -95,6 +127,8 @@ and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
 ## Status
 
 The Python daemon stays the default until this is hardware-verified. Phase 3
-(zbus/Bluetooth/Wi-Fi-read/power) is implemented above but **requires on-device
-verification** — the D-Bus modules don't compile or run on macOS/CI. Phase 4
-(Hyprland/CEC/health) is tracked in #28 and out of scope here.
+(zbus/Bluetooth/Wi-Fi-read/power) and Phase 4 (Hyprland + Sunshine `health`) are
+implemented above but **require on-device verification** — the Linux-only modules
+(D-Bus, `hyprland`) don't compile or run on macOS/CI, and `health`'s live fetch
+needs a reachable Sunshine host. **HDMI-CEC remains deferred** (still a
+`cec-client` shell-out in `AVController.qml`) as a follow-up.
