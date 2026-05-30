@@ -7,10 +7,13 @@
 //! controller, not just the Xbox pad.
 //!
 //! Device identity has two layers:
-//!   * **in-process ownership** — a [`VirtualRegistry`] of the raw fds of every
-//!     uinput device *we* create (virtual keyboard/mouse, per-player virtual
-//!     pads). Discovery skips any device whose open fd we already own. This
-//!     replaces the old `is_synthetic` name-string match.
+//!   * **devnode ownership** — a [`VirtualRegistry`] of the `/dev/input/eventN`
+//!     paths of the per-player virtual pads *we* create. Discovery skips any
+//!     device whose devnode we own. The devnode is stable across reopening
+//!     (unlike a raw fd, which differs every time `evdev::enumerate` opens the
+//!     same device), so it actually filters our own virtual pads — which copy
+//!     the physical pad's `input_id` and would otherwise pass the DB gate and be
+//!     grabbed as bogus pads. This replaces the old `is_synthetic` name match.
 //!   * **stable wire id** — a per-pad string derived from evdev `uniq`/`phys`
 //!     (else `vendor:product:path`), used in `pad:*` IPC payloads so the UI can
 //!     track a physical pad across reconnects. The in-process key stays the fd.
@@ -20,7 +23,7 @@
 //! enumeration and grab live behind `cfg(linux)`.
 
 use std::collections::HashSet;
-use std::os::fd::RawFd;
+use std::path::{Path, PathBuf};
 
 /// Compute the 16-byte SDL joystick GUID for a Linux device.
 ///
@@ -140,49 +143,54 @@ pub fn load_db() -> ControllerDb {
 /// papered over this with `is_synthetic`, a brittle name-string match against
 /// `game-shell-virtual-*` and `ydotoold`.
 ///
-/// We replace that with ownership by fd: every uinput device registers its open
-/// fd at creation, and discovery skips any enumerated device whose fd we own.
-/// The fd is the daemon's stable in-process key for a device for the whole
-/// fleet (Phase 4); registering it here is the single source of truth for "this
-/// is ours."
+/// We replace that with ownership by **devnode path**: every per-player virtual
+/// pad we create registers its `/dev/input/eventN` node(s), and discovery skips
+/// any enumerated device whose devnode we own. Unlike a raw fd — which is a
+/// fresh number every time `evdev::enumerate` reopens the device — the devnode
+/// path is stable across reopens, so the skip actually fires. This matters
+/// because a virtual pad copies the physical pad's `input_id` and would
+/// otherwise pass the DB-match gate and be grabbed as a bogus second pad on the
+/// next discovery poll.
 ///
 /// Note this guards only *our own* devices. Rejecting a *foreign* software
 /// injector such as ydotoold (which also advertises `BTN_SOUTH`) is handled
-/// separately by the DB-match gate in [`find_gamepad`] — fd ownership and the
-/// DB gate are complementary, not redundant.
+/// separately by the DB-match gate in [`find_gamepad`] — devnode ownership and
+/// the DB gate are complementary, not redundant. (Our virtual keyboard/mouse
+/// are not registered: they don't advertise `BTN_SOUTH`, so discovery's
+/// `has_btn_south` filter already excludes them as candidates.)
 #[derive(Debug, Default, Clone)]
 pub struct VirtualRegistry {
-    owned_fds: HashSet<RawFd>,
+    owned_paths: HashSet<PathBuf>,
 }
 
 impl VirtualRegistry {
     pub fn new() -> VirtualRegistry {
         VirtualRegistry {
-            owned_fds: HashSet::new(),
+            owned_paths: HashSet::new(),
         }
     }
 
-    /// Record a uinput device's raw fd as daemon-owned.
-    pub fn register(&mut self, fd: RawFd) {
-        self.owned_fds.insert(fd);
+    /// Record a uinput device's evdev devnode path as daemon-owned.
+    pub fn register(&mut self, path: PathBuf) {
+        self.owned_paths.insert(path);
     }
 
-    /// Forget a uinput device's fd (e.g. a virtual pad torn down on player leave).
-    pub fn unregister(&mut self, fd: RawFd) {
-        self.owned_fds.remove(&fd);
+    /// Forget a devnode (e.g. a virtual pad torn down on player leave).
+    pub fn unregister(&mut self, path: &Path) {
+        self.owned_paths.remove(path);
     }
 
-    /// True if `fd` belongs to a uinput device the daemon created.
-    pub fn owns(&self, fd: RawFd) -> bool {
-        self.owned_fds.contains(&fd)
+    /// True if `path` is the devnode of a uinput device the daemon created.
+    pub fn owns(&self, path: &Path) -> bool {
+        self.owned_paths.contains(path)
     }
 
     pub fn len(&self) -> usize {
-        self.owned_fds.len()
+        self.owned_paths.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.owned_fds.is_empty()
+        self.owned_paths.is_empty()
     }
 }
 
@@ -298,8 +306,6 @@ pub use linux::{find_gamepad, find_gamepads, GamepadHandle};
 mod linux {
     use super::*;
     use evdev::{Device, KeyCode};
-    use std::os::fd::AsRawFd;
-    use std::path::PathBuf;
 
     /// A discovered gamepad: its evdev device plus its display name/path and the
     /// stable wire id derived at discovery time.
@@ -322,8 +328,8 @@ mod linux {
     ///    bypasses the DB gate.
     /// 2. Else require a controller-DB GUID match.
     ///
-    /// In every case we skip devices whose fd we already own (our own uinput
-    /// keyboard/mouse/virtual pads), tracked by `reg`.
+    /// In every case we skip devices whose devnode we already own (our own
+    /// per-player virtual pads), tracked by `reg`.
     ///
     /// There is deliberately **no bare-`BTN_SOUTH` fallback**. ydotoold's virtual
     /// device advertises `BTN_SOUTH` but is not in any controller DB, so a "grab
@@ -335,10 +341,10 @@ mod linux {
     /// `GAME_SHELL_GAMECONTROLLERDB`.
     ///
     /// Returns one handle per matching device, in ascending `/dev/input/eventN`
-    /// path order (deterministic). The fleet caller dedups against pads it
-    /// already owns by **device path** — an already-grabbed pad re-enumerates at
-    /// the same path but a fresh fd, so fd-ownership alone can't dedup the
-    /// physical pad; the path is the stable enumeration key.
+    /// path order (deterministic). The fleet caller additionally dedups against
+    /// physical pads it already owns by **device path** — an already-grabbed pad
+    /// re-enumerates at the same path but a fresh fd, so the path is the stable
+    /// enumeration key for both our virtual-pad skip and the fleet's dedup.
     pub fn find_gamepads(db: &ControllerDb, reg: &VirtualRegistry) -> Vec<GamepadHandle> {
         let pin_vendor = parse_id_env("GAMEPAD_VENDOR");
         let pin_product = parse_id_env("GAMEPAD_PRODUCT");
@@ -353,10 +359,11 @@ mod linux {
             if !has_btn_south(&dev) {
                 continue;
             }
-            // Skip our own uinput devices by fd ownership. (A freshly-opened
-            // physical pad can never collide with one of our control fds, so
-            // this only ever filters devices we created.)
-            if reg.owns(dev.as_raw_fd()) {
+            // Skip our own per-player virtual pads by devnode path. The path is
+            // stable across this fresh `enumerate` reopen (the fd is not), so
+            // this reliably filters the virtual pads we created — which copy the
+            // physical pad's `input_id` and would otherwise pass the DB gate.
+            if reg.owns(&path) {
                 continue;
             }
             let id = dev.input_id();
@@ -478,24 +485,27 @@ mod tests {
 
     #[test]
     fn virtual_registry_tracks_ownership() {
+        let p7 = PathBuf::from("/dev/input/event7");
+        let p8 = PathBuf::from("/dev/input/event8");
+        let p9 = PathBuf::from("/dev/input/event9");
         let mut reg = VirtualRegistry::new();
         assert!(reg.is_empty());
-        assert!(!reg.owns(7));
+        assert!(!reg.owns(&p7));
 
-        reg.register(7);
-        reg.register(9);
+        reg.register(p7.clone());
+        reg.register(p9.clone());
         assert_eq!(reg.len(), 2);
-        assert!(reg.owns(7));
-        assert!(reg.owns(9));
-        assert!(!reg.owns(8));
+        assert!(reg.owns(&p7));
+        assert!(reg.owns(&p9));
+        assert!(!reg.owns(&p8));
 
         // Idempotent registration.
-        reg.register(7);
+        reg.register(p7.clone());
         assert_eq!(reg.len(), 2);
 
-        reg.unregister(7);
-        assert!(!reg.owns(7));
-        assert!(reg.owns(9));
+        reg.unregister(&p7);
+        assert!(!reg.owns(&p7));
+        assert!(reg.owns(&p9));
         assert_eq!(reg.len(), 1);
     }
 

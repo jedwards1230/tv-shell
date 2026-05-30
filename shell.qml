@@ -80,8 +80,9 @@ ShellRoot {
         onIntentHome: root.returnToShell()
 
         // intent:home-tap is the gamepad Home neutral (short press). The shell
-        // owns the focus, so it decides: over an app -> return to shell; on the
-        // home screen -> toggle the nav drawer (the `menu` action).
+        // owns the focus, so it decides: over a running app -> toggle the app
+        // overlay drawer (the full return-to-shell is Home-hold / intent:home);
+        // on the home screen -> toggle the nav drawer (the `menu` action).
         onIntentHomeTap: {
             if (root.state === "appRunning") {
                 root.overlayDrawerOpen = !root.overlayDrawerOpen;

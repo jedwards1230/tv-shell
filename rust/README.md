@@ -74,7 +74,7 @@ method, so there is still a single state owner and no `Arc<Mutex>` across `.awai
 - **Shared focus (shell mode):** combos / Home-hold are detected
   **per-pad-complete** — a single pad must hold the whole key set, so two pads
   each holding *half* a combo never trigger it. A fleet-level latch publishes
-  `combo:home-hold` once even when two pads hold Home simultaneously. For a
+  `intent:home-hold` once even when two pads hold Home simultaneously. For a
   single connected pad this is byte-identical to the pre-fleet behavior.
 - **Wire compat:** `status` reports the fleet aggregate (`connected` = any pad,
   `grabbed` = any pad) — identical to the old reply for one pad. `get-pads`

@@ -939,8 +939,8 @@ impl PadDevice {
             return;
         }
         match build_virtual_pad(self.event_stream.device(), self.player_slot) {
-            Ok(vpad) => {
-                sh.reg.register(vpad.as_raw_fd());
+            Ok(mut vpad) => {
+                register_vpad_devnodes(&mut sh.reg, &mut vpad);
                 info!(
                     "Created virtual pad game-shell-virtual-pad-{} for slot {} ({})",
                     self.player_slot, self.player_slot, self.wire_id
@@ -958,8 +958,8 @@ impl PadDevice {
     /// fd. The physical pad stays grabbed; events route back through the shell
     /// presenter ([`PadDevice::handle_shell`]). Idempotent.
     fn enter_shell(&mut self, sh: &mut Shared) {
-        if let Some(vpad) = self.virtual_pad.take() {
-            sh.reg.unregister(vpad.as_raw_fd());
+        if let Some(mut vpad) = self.virtual_pad.take() {
+            unregister_vpad_devnodes(&mut sh.reg, &mut vpad);
             info!(
                 "Dropped virtual pad for slot {} ({})",
                 self.player_slot, self.wire_id
@@ -1183,6 +1183,38 @@ fn build_virtual_pad(src: &Device, slot: u8) -> std::io::Result<VirtualDevice> {
     Ok(vpad)
 }
 
+/// Register a virtual pad's `/dev/input/eventN` devnode(s) as daemon-owned so
+/// fleet discovery skips it. The devnode is the identity that survives
+/// `evdev::enumerate` reopening the device (the raw fd is not), which is what
+/// discovery actually compares against — a virtual pad copies the physical
+/// pad's `input_id`, so without this it would pass the DB gate and be grabbed
+/// as a bogus pad on the next discovery poll.
+fn register_vpad_devnodes(reg: &mut VirtualRegistry, vpad: &mut VirtualDevice) {
+    match vpad.enumerate_dev_nodes_blocking() {
+        Ok(nodes) => {
+            let mut any = false;
+            for node in nodes.flatten() {
+                reg.register(node);
+                any = true;
+            }
+            if !any {
+                warn!("virtual pad devnode not present yet; discovery may briefly see it as a candidate");
+            }
+        }
+        Err(e) => warn!("could not enumerate virtual pad devnodes for ownership: {e}"),
+    }
+}
+
+/// Forget a virtual pad's devnode(s) on teardown (re-enumerates the same paths
+/// while the device is still alive).
+fn unregister_vpad_devnodes(reg: &mut VirtualRegistry, vpad: &mut VirtualDevice) {
+    if let Ok(nodes) = vpad.enumerate_dev_nodes_blocking() {
+        for node in nodes.flatten() {
+            reg.unregister(&node);
+        }
+    }
+}
+
 /// The gamepad fleet: physical pads keyed by raw fd, plus the stable player-slot
 /// allocator (#101).
 struct Fleet {
@@ -1257,12 +1289,12 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
         }
     };
 
-    // Track our own uinput devices by fd so discovery never re-grabs them
-    // (replaces the old `is_synthetic` name match). Per-player virtual pads
-    // created later (Phase 5) register here at creation, too.
-    let mut reg = VirtualRegistry::new();
-    reg.register(kb.as_raw_fd());
-    reg.register(mouse.as_raw_fd());
+    // Device-ownership registry (replaces the old `is_synthetic` name match).
+    // Only per-player virtual pads need registering — they advertise BTN_SOUTH
+    // and copy the physical pad's input_id, so discovery would otherwise grab
+    // them. The virtual keyboard/mouse don't advertise BTN_SOUTH, so discovery's
+    // has_btn_south filter already excludes them; no need to track them here.
+    let reg = VirtualRegistry::new();
 
     let db = device::load_db();
     if db.is_empty() {
@@ -1655,9 +1687,9 @@ fn on_pad_leave(sh: &mut Shared, fleet: &mut Fleet, fd: RawFd) {
     );
     pad.reset_stick_state(sh);
     pad.abort_all_tasks();
-    // Drop any per-player virtual pad and forget its fd (Phase 5 game presenter).
-    if let Some(vpad) = pad.virtual_pad.take() {
-        sh.reg.unregister(vpad.as_raw_fd());
+    // Drop any per-player virtual pad and forget its devnode (Phase 5 game presenter).
+    if let Some(mut vpad) = pad.virtual_pad.take() {
+        unregister_vpad_devnodes(&mut sh.reg, &mut vpad);
     }
     let slot = pad.player_slot;
     let wire_id = pad.wire_id.clone();
