@@ -2,6 +2,8 @@
 #
 # Builds, formats, lints, and tests the Rust crate on a Linux runner — the only
 # place the evdev/uinput code compiles (it is excluded on non-Linux dev hosts).
+# Runs inside a slim official `rust` container (toolchain preinstalled, ~1.5 GB
+# vs the ~30 GB ubuntu-latest image; no system libs needed — evdev is pure Rust).
 # Scoped to rust/** so QML-only PRs don't trigger it.
 
 name: Rust
@@ -25,13 +27,12 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: rust:1-bookworm
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Add rustfmt + clippy
+        run: rustup component add rustfmt clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

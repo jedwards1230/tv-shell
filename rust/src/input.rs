@@ -253,10 +253,11 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
         .into_iter()
         .map(KeyCode::new)
         .collect();
+    // RelativeAxisCode is a tuple struct `RelativeAxisCode(pub u16)` (no `new`).
     let axes: AttributeSet<RelativeAxisCode> =
         [cfg::REL_X, cfg::REL_Y, cfg::REL_WHEEL, cfg::REL_HWHEEL]
             .into_iter()
-            .map(RelativeAxisCode::new)
+            .map(RelativeAxisCode)
             .collect();
     let mouse = VirtualDeviceBuilder::new()?
         .name("game-shell-virtual-mouse")
@@ -549,8 +550,8 @@ impl Daemon {
             return;
         };
         for (axis, info) in absinfo {
-            let center = (info.minimum + info.maximum) / 2;
-            let half_range = (info.maximum - info.minimum) / 2;
+            let center = (info.minimum() + info.maximum()) / 2;
+            let half_range = (info.maximum() - info.minimum()) / 2;
             let threshold = (half_range as f64 * config::STICK_DEADZONE) as i32;
             match axis.0 {
                 cfg::ABS_X => {
@@ -1016,8 +1017,13 @@ impl Daemon {
     fn handle_kbd(&mut self, code: u16, value: i32, raw_name: Option<String>) {
         if self.kbd_log_enabled && value == 1 {
             let (raw, display, source) = config::kbd_key_info(code, raw_name.as_deref());
+            // Positional args: an inline `display={display:?}` capture collides
+            // with tracing's `display = ...` field shorthand.
             info!(
-                "kbd-key code={code} raw={raw} display={display:?} source={}",
+                "kbd-key code={} raw={} display={:?} source={}",
+                code,
+                raw,
+                display,
                 source.as_str()
             );
         }
