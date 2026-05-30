@@ -14,7 +14,7 @@
 
 use crate::config as cfg;
 use crate::config::{self, Binding};
-use crate::device::{self, ControllerDb};
+use crate::device::{self, ControllerDb, VirtualRegistry};
 use crate::protocol::{
     is_known_intent, resp_cancelled, resp_captured, resp_invalid_button, resp_ok, resp_status,
     resp_timeout, resp_unknown_action, resp_unknown_intent, Event, InputMode,
@@ -23,6 +23,7 @@ use crate::state::{self, Control, Reply};
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventStream, EventType, InputEvent, KeyCode, RelativeAxisCode};
 use std::collections::{HashMap, HashSet};
+use std::os::fd::AsRawFd;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -63,6 +64,8 @@ struct Daemon {
     kb: VirtualDevice,
     mouse: VirtualDevice,
     db: ControllerDb,
+    /// fds of the uinput devices we own, so discovery never re-grabs them.
+    reg: VirtualRegistry,
 
     grabbed: bool,
     connected: bool,
@@ -133,9 +136,16 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
         }
     };
 
+    // Track our own uinput devices by fd so discovery never re-grabs them
+    // (replaces the old `is_synthetic` name match). Per-player virtual pads
+    // created later (Phase 4/5) register here at creation, too.
+    let mut reg = VirtualRegistry::new();
+    reg.register(kb.as_raw_fd());
+    reg.register(mouse.as_raw_fd());
+
     let db = device::load_db();
     if db.is_empty() {
-        warn!("controller DB is empty; relying on the BTN_SOUTH fallback for discovery");
+        warn!("controller DB is empty; non-pinned discovery will reject all pads — set GAME_SHELL_GAMECONTROLLERDB or pin GAMEPAD_VENDOR/GAMEPAD_PRODUCT");
     } else {
         info!("controller DB loaded: {} known models", db.len());
     }
@@ -146,6 +156,7 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
         kb,
         mouse,
         db,
+        reg,
         grabbed: false,
         connected: false,
         bindings,
@@ -522,13 +533,14 @@ impl Daemon {
     }
 
     fn try_connect(&mut self, gamepad: &mut Option<EventStream>) {
-        let Some(handle) = device::find_gamepad(&self.db) else {
+        let Some(handle) = device::find_gamepad(&self.db, &self.reg) else {
             return;
         };
         info!(
-            "Found gamepad: {} at {}",
+            "Found gamepad: {} at {} (id={})",
             handle.name,
-            handle.path.display()
+            handle.path.display(),
+            handle.wire_id,
         );
         self.calibrate(&handle.device);
         match handle.device.into_event_stream() {
