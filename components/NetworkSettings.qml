@@ -152,8 +152,8 @@ FocusScope {
                     spacing: 16
 
                     Rectangle {
-                        width: 20
-                        height: 20
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 20
                         radius: 10
                         color: Theme.online
                     }
@@ -198,7 +198,7 @@ FocusScope {
 
         Rectangle {
             Layout.fillWidth: true
-            height: ipLabel.implicitHeight + 48
+            Layout.preferredHeight: ipLabel.implicitHeight + 48
             radius: 16
             color: Theme.surface
 

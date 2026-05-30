@@ -85,7 +85,7 @@ FocusScope {
                     root.powered = true;
                 else if (t === "bt:off")
                     root.powered = false;
-                // "error" leaves the prior state untouched.
+            // "error" leaves the prior state untouched.
             }
         }
         onExited: {
@@ -325,8 +325,8 @@ FocusScope {
             }
 
             Rectangle {
-                width: 160
-                height: 56
+                Layout.preferredWidth: 160
+                Layout.preferredHeight: 56
                 radius: 28
                 color: root.powered ? Theme.online : Theme.textSecondary
 
@@ -347,8 +347,8 @@ FocusScope {
 
             FocusScope {
                 id: powerToggleScope
-                width: powerToggleBtn.width
-                height: powerToggleBtn.height
+                Layout.preferredWidth: powerToggleBtn.width
+                Layout.preferredHeight: powerToggleBtn.height
                 focus: true
                 activeFocusOnTab: true
 
@@ -385,8 +385,8 @@ FocusScope {
 
             FocusScope {
                 id: scanScope
-                width: scanBtn.width
-                height: scanBtn.height
+                Layout.preferredWidth: scanBtn.width
+                Layout.preferredHeight: scanBtn.height
                 activeFocusOnTab: true
                 visible: root.powered
 
@@ -475,8 +475,8 @@ FocusScope {
                     spacing: 16
 
                     Rectangle {
-                        width: 20
-                        height: 20
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 20
                         radius: 10
                         color: modelData.connected ? Theme.online : Theme.textSecondary
                     }

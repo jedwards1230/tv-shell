@@ -44,7 +44,7 @@ FocusScope {
                     root.canSuspend = true;
                 else if (t === "no")
                     root.canSuspend = false;
-                // "error" leaves the optimistic default untouched.
+            // "error" leaves the optimistic default untouched.
             }
         }
     }
@@ -86,8 +86,8 @@ FocusScope {
 
             FocusScope {
                 id: suspendScope
-                width: 500
-                height: 120
+                Layout.preferredWidth: 500
+                Layout.preferredHeight: 120
                 focus: true
                 activeFocusOnTab: true
 
@@ -146,8 +146,8 @@ FocusScope {
 
             FocusScope {
                 id: restartScope
-                width: 500
-                height: 120
+                Layout.preferredWidth: 500
+                Layout.preferredHeight: 120
                 activeFocusOnTab: true
 
                 KeyNavigation.up: suspendScope
@@ -204,8 +204,8 @@ FocusScope {
 
             FocusScope {
                 id: shutdownScope
-                width: 500
-                height: 120
+                Layout.preferredWidth: 500
+                Layout.preferredHeight: 120
                 activeFocusOnTab: true
 
                 KeyNavigation.up: restartScope
@@ -321,8 +321,8 @@ FocusScope {
 
                     FocusScope {
                         id: confirmYesScope
-                        width: confirmYesBtn.width
-                        height: confirmYesBtn.height
+                        Layout.preferredWidth: confirmYesBtn.width
+                        Layout.preferredHeight: confirmYesBtn.height
                         activeFocusOnTab: true
 
                         KeyNavigation.right: confirmNoScope
@@ -349,8 +349,8 @@ FocusScope {
 
                     FocusScope {
                         id: confirmNoScope
-                        width: confirmNoBtn.width
-                        height: confirmNoBtn.height
+                        Layout.preferredWidth: confirmNoBtn.width
+                        Layout.preferredHeight: confirmNoBtn.height
                         focus: root.confirmAction !== ""
                         activeFocusOnTab: true
 
