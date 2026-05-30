@@ -10,11 +10,12 @@ A 10-foot couch gaming UI built with [Quickshell](https://quickshell.org/) (QML)
 
 ```
 SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
-                               └── gamepad-input.py (EVIOCGRAB → uinput)
+                               └── game-shell-input (Rust daemon: EVIOCGRAB → uinput
+                                   + backend IPC; falls back to gamepad-input.py)
 ```
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
-- **gamepad-input.py** — async daemon that grabs the gamepad exclusively via evdev, emits keyboard events via uinput, and listens on a Unix socket for `grab`/`release`/`subscribe` commands
+- **game-shell-input** (Rust daemon, `rust/`) — the primary backend: grabs the gamepad exclusively via evdev, emits keyboard/mouse via uinput, and serves the full Unix-socket IPC (input `grab`/`release`/`subscribe`, settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). `input/gamepad-input.py` is the input-only rollback the session script falls back to (build/install the binary to switch; remove/rename it to roll back)
 - **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
 - **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
@@ -45,8 +46,11 @@ config/
   palette.md                  # Color palette documentation
   game-shell.desktop          # SDDM session file
   targets.yaml.example        # Example streaming targets (docs only)
+rust/                        # Rust backend daemon (game-shell-input) — primary
+  src/                       # input/uinput, ipc, config, apps, bluetooth, network, power, hyprland, health
+  README.md                  # daemon architecture + phase notes
 input/
-  gamepad-input.py            # Gamepad daemon
+  gamepad-input.py            # Input-only Python daemon — rollback fallback
   requirements.txt            # Python deps (evdev)
 scripts/
   game-shell-session.sh       # Session wrapper launched by SDDM
