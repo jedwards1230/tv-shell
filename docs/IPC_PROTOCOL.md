@@ -1,6 +1,6 @@
 # IPC Protocol Specification
 
-The gamepad input daemon (`input/gamepad-input.py`) communicates with QML components over a Unix domain socket using a newline-delimited text protocol.
+The input/backend daemon (`game-shell-input`, Rust source in `rust/`) communicates with QML components over a Unix domain socket using a newline-delimited text protocol.
 
 ## Socket Connection
 

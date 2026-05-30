@@ -11,11 +11,11 @@ A 10-foot couch gaming UI built with [Quickshell](https://quickshell.org/) (QML)
 ```
 SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
                                └── game-shell-input (Rust daemon: EVIOCGRAB → uinput
-                                   + backend IPC; falls back to gamepad-input.py)
+                                   + backend IPC)
 ```
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
-- **game-shell-input** (Rust daemon, `rust/`) — the primary backend: grabs the gamepad exclusively via evdev, emits keyboard/mouse via uinput, and serves the full Unix-socket IPC (input `grab`/`release`/`subscribe`, settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). `input/gamepad-input.py` is the input-only rollback the session script falls back to (build/install the binary to switch; remove/rename it to roll back)
+- **game-shell-input** (Rust daemon, `rust/`) — the sole backend: grabs the gamepad exclusively via evdev, emits keyboard/mouse via uinput, and serves the full Unix-socket IPC (input `grab`/`release`/`subscribe`, settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). Build with `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
 - **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
 - **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
@@ -46,12 +46,9 @@ config/
   palette.md                  # Color palette documentation
   game-shell.desktop          # SDDM session file
   targets.yaml.example        # Example streaming targets (docs only)
-rust/                        # Rust backend daemon (game-shell-input) — primary
+rust/                        # Rust backend daemon (game-shell-input) — sole backend
   src/                       # input/uinput, ipc, config, apps, bluetooth, network, power, hyprland, health
   README.md                  # daemon architecture + phase notes
-input/
-  gamepad-input.py            # Input-only Python daemon — rollback fallback
-  requirements.txt            # Python deps (evdev)
 scripts/
   game-shell-session.sh       # Session wrapper launched by SDDM
 ```
@@ -117,13 +114,14 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
 WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.png
 ```
 
-### Python Input Daemon
+### Rust Input Daemon
 
 ```bash
-pip install evdev  # or: pip install -r input/requirements.txt
+cd rust && cargo build --release
+install -m755 target/release/game-shell-input /opt/game-shell/bin/game-shell-input
 ```
 
-Requires Linux with evdev and uinput access. Auto-discovers gamepad by vendor/product ID (defaults: Xbox controller `045e:028e`, configurable via `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` env vars).
+Requires Linux with evdev and uinput access. Auto-discovers gamepad by vendor/product ID (defaults: Xbox controller `045e:028e`, configurable via `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` env vars). The Linux-only evdev/uinput/D-Bus modules build only on the target (or CI); the cross-platform subset (`protocol`, `config`, `state`, `device` GUID math, `apps`, `health`, `recents`) builds and tests on any host.
 
 ## Design Constraints
 
