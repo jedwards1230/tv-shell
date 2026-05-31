@@ -34,8 +34,8 @@ use crate::config::{self, Binding};
 use crate::device::{self, ControllerDb, SlotAllocator, VirtualRegistry};
 use crate::protocol::{
     is_known_intent, pad_connected_json, resp_cancelled, resp_captured, resp_invalid_button,
-    resp_ok, resp_pads, resp_status, resp_timeout, resp_unknown_action, resp_unknown_intent, Event,
-    InputMode,
+    resp_ok, resp_pads, resp_status, resp_timeout, resp_unknown_action, resp_unknown_intent,
+    resp_unknown_key, Event, InputMode,
 };
 use crate::state::{self, Control, Reply};
 use evdev::uinput::VirtualDevice;
@@ -1602,7 +1602,11 @@ async fn next_fleet_event(fleet: &mut Fleet) -> Option<(RawFd, std::io::Result<I
 
 fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevice, VirtualDevice)> {
     // Keyboard: all mapped keys (deduped) + the arrows, modifiers, and Q used
-    // for d-pad/left-stick and the Moonlight force-quit chord.
+    // for d-pad/left-stick and the Moonlight force-quit chord. Enter/Esc are
+    // fixed members too (not just transitively via `button_map`) so the
+    // `key select`/`key back` IPC always has an advertised keycode to emit,
+    // independent of how `select`/`back` are bound — a uinput device silently
+    // drops events for keycodes it never declared.
     let mut mapped: Vec<u16> = button_map.values().copied().collect();
     mapped.sort_unstable();
     mapped.dedup();
@@ -1611,6 +1615,8 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
         cfg::KEY_DOWN,
         cfg::KEY_LEFT,
         cfg::KEY_RIGHT,
+        cfg::KEY_ENTER,
+        cfg::KEY_ESC,
         cfg::KEY_LEFTCTRL,
         cfg::KEY_LEFTALT,
         cfg::KEY_LEFTSHIFT,
@@ -1717,6 +1723,23 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
                 }
             }
             let _ = reply.send(resp_ok());
+        }
+        Control::Key { name, reply } => {
+            // Synthesize a keystroke (press+release) on the shared virtual
+            // keyboard — the headless counterpart to a gamepad d-pad/A/B tap or
+            // a `wtype -k`, reaching whatever surface holds Wayland focus. Unlike
+            // `intent`, this deliberately touches the device. Unknown names are
+            // rejected without emitting.
+            match config::key_for_action(&name) {
+                Some(code) => {
+                    sh.emit_key(code, 1);
+                    sh.emit_key(code, 0);
+                    let _ = reply.send(resp_ok());
+                }
+                None => {
+                    let _ = reply.send(resp_unknown_key(&name));
+                }
+            }
         }
         Control::Shutdown => return false,
     }
