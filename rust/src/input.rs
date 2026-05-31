@@ -1602,7 +1602,11 @@ async fn next_fleet_event(fleet: &mut Fleet) -> Option<(RawFd, std::io::Result<I
 
 fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevice, VirtualDevice)> {
     // Keyboard: all mapped keys (deduped) + the arrows, modifiers, and Q used
-    // for d-pad/left-stick and the Moonlight force-quit chord.
+    // for d-pad/left-stick and the Moonlight force-quit chord. Enter/Esc are
+    // fixed members too (not just transitively via `button_map`) so the
+    // `key select`/`key back` IPC always has an advertised keycode to emit,
+    // independent of how `select`/`back` are bound — a uinput device silently
+    // drops events for keycodes it never declared.
     let mut mapped: Vec<u16> = button_map.values().copied().collect();
     mapped.sort_unstable();
     mapped.dedup();
@@ -1611,6 +1615,8 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
         cfg::KEY_DOWN,
         cfg::KEY_LEFT,
         cfg::KEY_RIGHT,
+        cfg::KEY_ENTER,
+        cfg::KEY_ESC,
         cfg::KEY_LEFTCTRL,
         cfg::KEY_LEFTALT,
         cfg::KEY_LEFTSHIFT,
