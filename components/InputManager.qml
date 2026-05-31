@@ -57,9 +57,26 @@ Item {
     // Fire a short rumble pulse on every connected pad. The daemon gates this on
     // the `rumbleEnabled` setting (and pad FF support), so QML fires it
     // unconditionally. See docs/IPC_PROTOCOL.md `rumble <id> <ms>`.
+    //
+    // rumbleCmd is a single one-shot request socket, so the per-pad commands are
+    // QUEUED and sent strictly serially (the next only after the prior round-trip
+    // completes) — issuing them back-to-back would have the reconnect for command
+    // N+1 clobber command N's in-flight socket, so on a multi-pad fleet only the
+    // last pad would rumble.
+    property var _rumbleQueue: []
+    property bool _rumbleBusy: false
+
     function rumblePulse(ms) {
         for (var i = 0; i < root.connectedPadIds.length; i++)
-            rumbleCmd.request("rumble " + root.connectedPadIds[i] + " " + ms);
+            root._rumbleQueue.push("rumble " + root.connectedPadIds[i] + " " + ms);
+        root._pumpRumble();
+    }
+
+    function _pumpRumble() {
+        if (root._rumbleBusy || root._rumbleQueue.length === 0)
+            return;
+        root._rumbleBusy = true;
+        rumbleCmd.request(root._rumbleQueue.shift());
     }
 
     // --- pads model maintenance ---------------------------------------------
@@ -203,6 +220,16 @@ Item {
     // Fire-and-forget rumble command (one request per connected pad).
     SocketClient {
         id: rumbleCmd
+        // Advance the queue once each command's round-trip settles (either way),
+        // so multi-pad pulses are delivered to every controller, not just the last.
+        onResponseReceived: () => {
+            root._rumbleBusy = false;
+            root._pumpRumble();
+        }
+        onRequestFailed: () => {
+            root._rumbleBusy = false;
+            root._pumpRumble();
+        }
     }
 
     Process {
