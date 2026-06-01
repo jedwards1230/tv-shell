@@ -14,7 +14,9 @@ are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 ## Home screen index map (QuickActions, top-right)
 
 `0=Notifications, 1=Settings, 2=Theme toggle, 3=Network, 4=Volume, 5=Power`.
-Left/Right move; Return activates; Down drops focus into the app rows.
+Left/Right move; Return activates; Down drops focus into the app rows. **Focus does
+not always start on this row** — with running/recent apps present it starts on an
+app card, so press **Up** first to reach the QuickActions row before Left/Right.
 `streamingViewMode` ∈ `"servers"` | `"apps"` toggles two different home layouts.
 
 ---
@@ -54,7 +56,7 @@ Left/Right move; Return activates; Down drops focus into the app rows.
 | # | View | How to reach / notes |
 |---|------|----------------------|
 | D20 | Settings sidebar (panel open) | QuickActions idx 1 → Return |
-| D21–30 | Pages: Audio, Bluetooth, Network, Display, Controllers, Key Bindings, AV Control, Moonlight, Appearance, Power | Down/Up sidebar, Right enters content |
+| D21–30 | Pages: Audio, Bluetooth, Network, Display, Controllers, Key Bindings, AV Control, Moonlight, Appearance, Power | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. |
 | — | Bluetooth — scanning + device list | substate |
 | — | Network — Wi-Fi list / connect | substate |
 | — | Controllers — pad connected vs none | substate |
