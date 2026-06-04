@@ -51,4 +51,5 @@ ErrorLogViewer 1.0 ErrorLogViewer.qml
 NotificationCenter 1.0 NotificationCenter.qml
 PopoverMenu 1.0 PopoverMenu.qml
 PowerOverlay 1.0 PowerOverlay.qml
+VolumeOverlay 1.0 VolumeOverlay.qml
 SessionDialog 1.0 SessionDialog.qml
