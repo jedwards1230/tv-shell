@@ -406,8 +406,10 @@ FocusScope {
         ListView {
             id: serverList
             Layout.fillWidth: true
-            Layout.fillHeight: !root.showAddForm
-            Layout.preferredHeight: root.showAddForm ? Math.min(contentHeight, 400) : -1
+            // Row-count sizing (delegate 180 + spacing 16). A trailing fillHeight
+            // spacer (below) absorbs slack so content top-packs; contentHeight is
+            // unreliable when the list is sized by it in a ColumnLayout (#123).
+            Layout.preferredHeight: Math.min(root.servers.length * 196, 600)
             spacing: 16
             clip: true
             model: root.servers
@@ -611,7 +613,7 @@ FocusScope {
         // Add server form
         Rectangle {
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.preferredHeight: visible ? addFormColumn.implicitHeight + 80 : 0
             radius: Theme.cardRadius
             color: Theme.surface
             border.width: 2
@@ -619,7 +621,10 @@ FocusScope {
             visible: root.showAddForm
 
             ColumnLayout {
-                anchors.fill: parent
+                id: addFormColumn
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
                 anchors.margins: 40
                 spacing: 24
 
@@ -818,6 +823,12 @@ FocusScope {
                     }
                 }
             }
+        }
+
+        // Absorb remaining vertical space so content top-packs and the hint
+        // pins to the bottom (mirrors ControllerSettings.qml).
+        Item {
+            Layout.fillHeight: true
         }
 
         // Hint
