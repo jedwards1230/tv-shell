@@ -434,7 +434,7 @@ FocusScope {
             Layout.preferredHeight: Math.min(contentHeight, 300)
             spacing: 8
             clip: true
-            visible: root.powered
+            visible: root.powered && root.pairedDevices.length > 0
             model: root.pairedDevices
 
             KeyNavigation.up: powerToggleScope
@@ -515,11 +515,13 @@ FocusScope {
             }
         }
 
-        Text {
-            text: root.pairedDevices.length === 0 && root.powered ? "No paired devices" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Units.gridUnit * 4
+            visible: root.powered && root.pairedDevices.length === 0
+            icon: "\u{1F4F6}"
+            line: "No paired devices"
+            hint: "Scan to find nearby devices"
         }
 
         // Available (unpaired) devices

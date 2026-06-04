@@ -175,11 +175,11 @@ FocusScope {
             }
         }
 
-        Text {
-            text: root.activeConnections.length === 0 ? "No active connections" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Units.gridUnit * 3
+            visible: root.activeConnections.length === 0
+            line: "No active connections"
         }
 
         // IP Address
@@ -320,11 +320,11 @@ FocusScope {
             }
         }
 
-        Text {
-            text: !root.hasWifi ? "No WiFi adapter detected" : root.wifiNetworks.length === 0 ? "No WiFi networks found" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Units.gridUnit * 3
+            visible: !root.hasWifi || root.wifiNetworks.length === 0
+            line: !root.hasWifi ? "No WiFi adapter detected" : "No WiFi networks found"
         }
 
         // Info hint
