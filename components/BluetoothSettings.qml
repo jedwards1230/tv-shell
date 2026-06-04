@@ -307,13 +307,6 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 24
 
-            Text {
-                text: "Bluetooth"
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
-            }
-
             Rectangle {
                 Layout.preferredWidth: 160
                 Layout.preferredHeight: 56
