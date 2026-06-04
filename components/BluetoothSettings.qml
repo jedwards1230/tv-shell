@@ -425,7 +425,7 @@ FocusScope {
             font.pixelSize: Theme.fontBody
             font.bold: true
             color: Theme.textPrimary
-            visible: root.powered
+            visible: root.powered && root.pairedDevices.length > 0
         }
 
         ListView {
