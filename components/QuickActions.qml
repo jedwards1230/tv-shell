@@ -69,10 +69,15 @@ FocusScope {
         Theme.exitMouseMode();
         root.focusUpRequested();
     }
-    Keys.onEscapePressed: {
+    Keys.onEscapePressed: event => {
         Theme.exitMouseMode();
-        if (root.escapeRequestsSettings)
+        if (root.escapeRequestsSettings) {
             root.settingsRequested();
+        } else {
+            // Drawer context: don't consume — let Escape bubble up to
+            // Drawer.qml's handler so B/Escape closes the drawer (#142).
+            event.accepted = false;
+        }
     }
     Keys.onReturnPressed: {
         Theme.exitMouseMode();
