@@ -12,8 +12,8 @@ Drawer {
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
-    signal networkRequested
-    signal volumeRequested
+    signal networkRequested(var anchorRect)
+    signal volumeRequested(var anchorRect)
     signal homeSelected
 
     onOpenedChanged: {
@@ -212,13 +212,13 @@ Drawer {
                     root.closed();
                     root.powerRequested();
                 }
-                onNetworkRequested: {
+                onNetworkRequested: anchorRect => {
                     root.closed();
-                    root.networkRequested();
+                    root.networkRequested(anchorRect);
                 }
-                onVolumeRequested: {
+                onVolumeRequested: anchorRect => {
                     root.closed();
-                    root.volumeRequested();
+                    root.volumeRequested(anchorRect);
                 }
             }
         }

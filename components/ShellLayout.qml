@@ -163,14 +163,8 @@ FocusScope {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();
         }
-        onNetworkRequested: {
-            networkOverlay.opened = true;
-            networkOverlay.forceActiveFocus();
-        }
-        onVolumeRequested: {
-            volumeOverlay.opened = true;
-            volumeOverlay.forceActiveFocus();
-        }
+        onNetworkRequested: anchorRect => networkOverlay.openAt(anchorRect)
+        onVolumeRequested: anchorRect => volumeOverlay.openAt(anchorRect)
         onNotificationCenterRequested: {
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
@@ -229,15 +223,13 @@ FocusScope {
             powerOverlay.opened = true;
             powerOverlay.forceActiveFocus();
         }
-        onNetworkRequested: {
+        onNetworkRequested: anchorRect => {
             navDrawer.opened = false;
-            networkOverlay.opened = true;
-            networkOverlay.forceActiveFocus();
+            networkOverlay.openAt(anchorRect);
         }
-        onVolumeRequested: {
+        onVolumeRequested: anchorRect => {
             navDrawer.opened = false;
-            volumeOverlay.opened = true;
-            volumeOverlay.forceActiveFocus();
+            volumeOverlay.openAt(anchorRect);
         }
         onHomeSelected: {
             navDrawer.opened = false;
@@ -340,17 +332,15 @@ FocusScope {
                 powerOverlay.opened = true;
                 powerOverlay.forceActiveFocus();
             }
-            onNetworkRequested: {
+            onNetworkRequested: anchorRect => {
                 root.overlayDrawerClosed();
                 root.returnToShellRequested();
-                networkOverlay.opened = true;
-                networkOverlay.forceActiveFocus();
+                networkOverlay.openAt(anchorRect);
             }
-            onVolumeRequested: {
+            onVolumeRequested: anchorRect => {
                 root.overlayDrawerClosed();
                 root.returnToShellRequested();
-                volumeOverlay.opened = true;
-                volumeOverlay.forceActiveFocus();
+                volumeOverlay.openAt(anchorRect);
             }
             onClosed: {
                 root.overlayDrawerClosed();
