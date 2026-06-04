@@ -9,6 +9,7 @@ Rectangle {
     signal closed
 
     property int currentSection: 0
+    property int _pendingSection: 0
 
     Component {
         id: audioComp
@@ -128,8 +129,9 @@ Rectangle {
 
     onVisibleChanged: {
         if (visible) {
-            currentSection = 0;
-            sidebarList.currentIndex = 0;
+            currentSection = _pendingSection;
+            sidebarList.currentIndex = _pendingSection;
+            _pendingSection = 0;
             // Delay focus slightly to ensure Loader has settled
             focusTimer.restart();
         }
@@ -406,6 +408,17 @@ Rectangle {
 
     // Global key handling
     Keys.onEscapePressed: root.closed()
+
+    function openSection(idx) {
+        if (visible) {
+            currentSection = idx;
+            sidebarList.currentIndex = idx;
+        } else {
+            _pendingSection = idx;
+            visible = true;
+        }
+        forceActiveFocus();
+    }
 
     function returnToSidebar() {
         sidebarList.forceActiveFocus();

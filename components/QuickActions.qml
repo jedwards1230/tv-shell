@@ -11,6 +11,10 @@ FocusScope {
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
+    // Network/Volume carry the originating glyph's scene-root rect so the
+    // overlay can anchor itself as a popover next to the glyph (#118).
+    signal networkRequested(var anchorRect)
+    signal volumeRequested(var anchorRect)
     signal focusDownRequested
     signal focusUpRequested
 
@@ -28,9 +32,11 @@ FocusScope {
     // Must match the number of icon containers below
     // (Notifications=0, Settings=1, Theme=2, Network=3, Volume=4, Power=5)
     readonly property int _iconCount: 6
+    readonly property var _labels: ["Notifications", "Settings", "Theme", "Network", "Volume", "Power"]
+    property int _labelHeight: Theme.fontHint + Units.spacingSM
 
     implicitWidth: Math.min(iconRow.implicitWidth, maxContentWidth)
-    implicitHeight: iconSize
+    implicitHeight: iconSize + _labelHeight
 
     function _ensureVisible() {
         var left = currentIndex * (iconSize + _spacing);
@@ -43,6 +49,26 @@ FocusScope {
 
     onCurrentIndexChanged: _ensureVisible()
     onWidthChanged: _ensureVisible()
+
+    // Map a glyph item's rect to scene-root coords (mapToItem(null, ...)),
+    // returned as {x, y, w, h}. Overlays use this to anchor a popover beside
+    // the originating glyph wherever the QuickActions row lives (#118).
+    function _glyphRect(item) {
+        if (!item)
+            return {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0
+            };
+        var p = item.mapToItem(null, 0, 0);
+        return {
+            x: p.x,
+            y: p.y,
+            w: item.width,
+            h: item.height
+        };
+    }
 
     // Keyboard navigation (LTR: Left lowers index, Right raises it). Any nav
     // key means controller/keyboard is driving — flip out of mouse-mode (#45),
@@ -65,10 +91,15 @@ FocusScope {
         Theme.exitMouseMode();
         root.focusUpRequested();
     }
-    Keys.onEscapePressed: {
+    Keys.onEscapePressed: event => {
         Theme.exitMouseMode();
-        if (root.escapeRequestsSettings)
+        if (root.escapeRequestsSettings) {
             root.settingsRequested();
+        } else {
+            // Drawer context: don't consume — let Escape bubble up to
+            // Drawer.qml's handler so B/Escape closes the drawer (#142).
+            event.accepted = false;
+        }
     }
     Keys.onReturnPressed: {
         Theme.exitMouseMode();
@@ -90,6 +121,12 @@ FocusScope {
                 Theme.setThemeMode("dark");
             else
                 Theme.setThemeMode("auto");
+            break;
+        case 3:
+            root.networkRequested(root._glyphRect(netGlyph));
+            break;
+        case 4:
+            root.volumeRequested(root._glyphRect(volGlyph));
             break;
         case 5:
             root.powerRequested();
@@ -126,7 +163,10 @@ FocusScope {
 
     Flickable {
         id: flick
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: root.iconSize
         contentWidth: iconRow.width
         contentHeight: height
         clip: true
@@ -311,6 +351,7 @@ FocusScope {
 
             // Network (index 3)
             Rectangle {
+                id: netGlyph
                 width: root.iconSize
                 height: root.iconSize
                 radius: root.iconSize / 2
@@ -355,15 +396,18 @@ FocusScope {
                     // Genuine-move-only mouse-mode via Theme.pointerMoved; no
                     // onEntered (content-scroll false trigger, #45). Scene-root
                     // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
+                    cursorShape: Qt.PointingHandCursor
                     onPositionChanged: mouse => {
                         let p = mapToItem(null, mouse.x, mouse.y);
                         Theme.pointerMoved(p.x, p.y);
                     }
+                    onClicked: root.networkRequested(root._glyphRect(netGlyph))
                 }
             }
 
             // Volume (index 4)
             Rectangle {
+                id: volGlyph
                 width: root.iconSize
                 height: root.iconSize
                 radius: root.iconSize / 2
@@ -400,10 +444,12 @@ FocusScope {
                     // Genuine-move-only mouse-mode via Theme.pointerMoved; no
                     // onEntered (content-scroll false trigger, #45). Scene-root
                     // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
+                    cursorShape: Qt.PointingHandCursor
                     onPositionChanged: mouse => {
                         let p = mapToItem(null, mouse.x, mouse.y);
                         Theme.pointerMoved(p.x, p.y);
                     }
+                    onClicked: root.volumeRequested(root._glyphRect(volGlyph))
                 }
             }
 
@@ -454,5 +500,33 @@ FocusScope {
                 }
             }
         }
+    }
+
+    Text {
+        id: actionLabel
+        anchors.top: flick.bottom
+        anchors.topMargin: Units.spacingSM
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: {
+            if (Theme.mouseMode) {
+                if (notifMA.containsMouse)
+                    return root._labels[0];
+                if (settingsMA.containsMouse)
+                    return root._labels[1];
+                if (themeMA.containsMouse)
+                    return root._labels[2];
+                if (networkMA.containsMouse)
+                    return root._labels[3];
+                if (volumeMA.containsMouse)
+                    return root._labels[4];
+                if (powerMA.containsMouse)
+                    return root._labels[5];
+                return "";
+            }
+            return (root.activeFocus && root.currentIndex >= 0 && root.currentIndex < root._labels.length) ? root._labels[root.currentIndex] : "";
+        }
+        visible: text.length > 0
+        font.pixelSize: Theme.fontHint
+        color: Theme.textMuted
     }
 }
