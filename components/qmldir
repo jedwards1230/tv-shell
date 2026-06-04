@@ -52,4 +52,5 @@ NotificationCenter 1.0 NotificationCenter.qml
 PopoverMenu 1.0 PopoverMenu.qml
 PowerOverlay 1.0 PowerOverlay.qml
 VolumeOverlay 1.0 VolumeOverlay.qml
+NetworkOverlay 1.0 NetworkOverlay.qml
 SessionDialog 1.0 SessionDialog.qml
