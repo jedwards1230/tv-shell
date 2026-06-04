@@ -345,11 +345,11 @@ FocusScope {
             }
 
             // Empty state for the fleet.
-            Text {
-                text: "No controllers connected"
-                font.pixelSize: Theme.fontSmall
-                color: Theme.textMuted
+            SettingsEmptyState {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Units.gridUnit * 3
                 visible: root.pads.length === 0
+                line: "No controllers connected"
             }
         }
 

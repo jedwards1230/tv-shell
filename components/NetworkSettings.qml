@@ -122,7 +122,9 @@ FocusScope {
 
         ListView {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(contentHeight, 300)
+            // Row-count sizing (delegate 96 + spacing 8) — contentHeight is
+            // unreliable when the list is sized by it in a ColumnLayout (#123).
+            Layout.preferredHeight: Math.min(root.activeConnections.length * 104, 300)
             spacing: 8
             clip: true
             model: root.activeConnections
@@ -175,11 +177,11 @@ FocusScope {
             }
         }
 
-        Text {
-            text: root.activeConnections.length === 0 ? "No active connections" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Units.gridUnit * 3
+            visible: root.activeConnections.length === 0
+            line: "No active connections"
         }
 
         // IP Address
@@ -220,10 +222,12 @@ FocusScope {
         ListView {
             id: wifiList
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            // Content-sized; a trailing fillHeight spacer (below) absorbs slack so
+            // content top-packs instead of a mid-column fillHeight floating it (#123).
+            Layout.preferredHeight: Math.min(root.wifiNetworks.length * 104, 400)
             spacing: 8
             clip: true
-            visible: root.hasWifi
+            visible: root.hasWifi && root.wifiNetworks.length > 0
             model: root.wifiNetworks
             focus: root.hasWifi
 
@@ -320,11 +324,17 @@ FocusScope {
             }
         }
 
-        Text {
-            text: !root.hasWifi ? "No WiFi adapter detected" : root.wifiNetworks.length === 0 ? "No WiFi networks found" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Units.gridUnit * 3
+            visible: !root.hasWifi || root.wifiNetworks.length === 0
+            line: !root.hasWifi ? "No WiFi adapter detected" : "No WiFi networks found"
+        }
+
+        // Absorb remaining vertical space so content top-packs and the hint
+        // pins to the bottom (mirrors ControllerSettings.qml).
+        Item {
+            Layout.fillHeight: true
         }
 
         // Info hint
