@@ -11,8 +11,10 @@ FocusScope {
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
-    signal networkRequested
-    signal volumeRequested
+    // Network/Volume carry the originating glyph's scene-root rect so the
+    // overlay can anchor itself as a popover next to the glyph (#118).
+    signal networkRequested(var anchorRect)
+    signal volumeRequested(var anchorRect)
     signal focusDownRequested
     signal focusUpRequested
 
@@ -47,6 +49,26 @@ FocusScope {
 
     onCurrentIndexChanged: _ensureVisible()
     onWidthChanged: _ensureVisible()
+
+    // Map a glyph item's rect to scene-root coords (mapToItem(null, ...)),
+    // returned as {x, y, w, h}. Overlays use this to anchor a popover beside
+    // the originating glyph wherever the QuickActions row lives (#118).
+    function _glyphRect(item) {
+        if (!item)
+            return {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0
+            };
+        var p = item.mapToItem(null, 0, 0);
+        return {
+            x: p.x,
+            y: p.y,
+            w: item.width,
+            h: item.height
+        };
+    }
 
     // Keyboard navigation (LTR: Left lowers index, Right raises it). Any nav
     // key means controller/keyboard is driving — flip out of mouse-mode (#45),
@@ -101,10 +123,10 @@ FocusScope {
                 Theme.setThemeMode("auto");
             break;
         case 3:
-            root.networkRequested();
+            root.networkRequested(root._glyphRect(netGlyph));
             break;
         case 4:
-            root.volumeRequested();
+            root.volumeRequested(root._glyphRect(volGlyph));
             break;
         case 5:
             root.powerRequested();
@@ -329,6 +351,7 @@ FocusScope {
 
             // Network (index 3)
             Rectangle {
+                id: netGlyph
                 width: root.iconSize
                 height: root.iconSize
                 radius: root.iconSize / 2
@@ -378,12 +401,13 @@ FocusScope {
                         let p = mapToItem(null, mouse.x, mouse.y);
                         Theme.pointerMoved(p.x, p.y);
                     }
-                    onClicked: root.networkRequested()
+                    onClicked: root.networkRequested(root._glyphRect(netGlyph))
                 }
             }
 
             // Volume (index 4)
             Rectangle {
+                id: volGlyph
                 width: root.iconSize
                 height: root.iconSize
                 radius: root.iconSize / 2
@@ -425,7 +449,7 @@ FocusScope {
                         let p = mapToItem(null, mouse.x, mouse.y);
                         Theme.pointerMoved(p.x, p.y);
                     }
-                    onClicked: root.volumeRequested()
+                    onClicked: root.volumeRequested(root._glyphRect(volGlyph))
                 }
             }
 
