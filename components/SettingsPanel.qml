@@ -62,37 +62,44 @@ Rectangle {
         let s = [
             {
                 name: "Audio",
-                icon: "\u{1F50A}",
+                iconName: "audio-volume-high",
+                fallback: "♫",
                 component: audioComp
             },
             {
                 name: "Bluetooth",
-                icon: "⚡",
+                iconName: "bluetooth",
+                fallback: "ᛒ",
                 component: bluetoothComp
             },
             {
                 name: "Network",
-                icon: "\u{1F310}",
+                iconName: "network-wired",
+                fallback: "⇅",
                 component: networkComp
             },
             {
                 name: "Display",
-                icon: "\u{1F5A5}",
+                iconName: "video-display",
+                fallback: "\u{1F5A5}",
                 component: displayComp
             },
             {
                 name: "Controllers",
-                icon: "\u{1F3AE}",
+                iconName: "input-gaming",
+                fallback: "\u{1F3AE}",
                 component: controllerComp
             },
             {
                 name: "Key Bindings",
-                icon: "⌨",
+                iconName: "input-keyboard",
+                fallback: "⌨",
                 component: keyBindingsComp
             },
             {
                 name: "AV Control",
-                icon: "\u{1F4FA}",
+                iconName: "video-television",
+                fallback: "\u{1F4FA}",
                 component: avControlComp
             }
         ];
@@ -100,17 +107,20 @@ Rectangle {
         if (provider.settingsComponent)
             s.push({
                 name: provider.displayName,
-                icon: "\u{1F319}",
+                iconName: "applications-games",
+                fallback: "\u{1F319}",
                 component: provider.settingsComponent
             });
         s.push({
             name: "Appearance",
-            icon: "\u{1F3A8}",
+            iconName: "preferences-desktop-theme",
+            fallback: "\u{1F3A8}",
             component: appearanceComp
         });
         s.push({
             name: "Power",
-            icon: "⏻",
+            iconName: "system-shutdown",
+            fallback: "⏻",
             component: powerComp
         });
         return s;
@@ -211,11 +221,29 @@ Rectangle {
                             anchors.rightMargin: 40
                             spacing: 20
 
-                            Text {
-                                text: modelData.icon
-                                font.pixelSize: Theme.fontBody
+                            Item {
                                 Layout.preferredWidth: 64
-                                horizontalAlignment: Text.AlignHCenter
+                                Layout.fillHeight: true
+
+                                Image {
+                                    id: secIcon
+                                    anchors.centerIn: parent
+                                    source: "image://icon/" + modelData.iconName
+                                    sourceSize: Qt.size(Units.iconSizeMD, Units.iconSizeMD)
+                                    width: Units.iconSizeMD
+                                    height: Units.iconSizeMD
+                                    fillMode: Image.PreserveAspectFit
+                                    visible: status === Image.Ready
+                                }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.fallback
+                                    font.pixelSize: Theme.fontBody
+                                    color: root.currentSection === index ? Theme.textPrimary : Theme.textSecondary
+                                    horizontalAlignment: Text.AlignHCenter
+                                    visible: secIcon.status !== Image.Ready
+                                }
                             }
 
                             Text {
@@ -327,14 +355,35 @@ Rectangle {
                 height: Theme.statusBarHeight
                 color: Theme.surfaceHover
 
-                Text {
+                RowLayout {
                     anchors.left: parent.left
                     anchors.leftMargin: 48
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.sections[root.currentSection].icon + "  " + root.sections[root.currentSection].name
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
+                    spacing: 16
+
+                    Image {
+                        id: headerIcon
+                        source: "image://icon/" + root.sections[root.currentSection].iconName
+                        sourceSize: Qt.size(Theme.fontTitle, Theme.fontTitle)
+                        width: Theme.fontTitle
+                        height: Theme.fontTitle
+                        fillMode: Image.PreserveAspectFit
+                        visible: status === Image.Ready
+                    }
+
+                    Text {
+                        text: root.sections[root.currentSection].fallback
+                        font.pixelSize: Theme.fontTitle
+                        color: Theme.textPrimary
+                        visible: headerIcon.status !== Image.Ready
+                    }
+
+                    Text {
+                        text: root.sections[root.currentSection].name
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                    }
                 }
             }
 
