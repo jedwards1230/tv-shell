@@ -2,18 +2,22 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
-// Compact network quick-overlay. Controller-navigable, 10-foot sized.
-// Mirrors VolumeOverlay/PowerOverlay pattern:
-//   FocusScope + visible:opened + DimmedBackdrop + onOpenedChanged forces focus.
-// Stats sourced from the daemon's net-status IPC (read-only).
-// Live ↓/↑ speeds sampled from /sys/class/net/<device>/statistics/*_bytes.
-// Interface toggle via nmcli — gated by an inline confirmation step so an
-// accidental A-press on a couch never disconnects the network (and Moonlight).
-// A/Return activates focused toggle; B/Escape closes. (#118)
+// Compact network quick-popover, anchored beside the originating QuickAction
+// glyph (#118). Controller-navigable, 10-foot sized. Mirrors VolumeOverlay's
+// anchored-popover pattern: FocusScope + visible:opened + light scrim +
+// onOpenedChanged forces focus; the panel positions itself relative to
+// anchorRect (scene-root coords) and clamps fully on-screen.
+// Stats sourced from the daemon's net-status IPC (read-only); surfaces the
+// IPv4 address, live ↓/↑ speeds (sampled from /sys/class/net statistics), and
+// a two-step disconnect-with-warning toggle via nmcli so an accidental A on a
+// couch never drops the network (and Moonlight). B/Escape closes.
 FocusScope {
     id: root
 
     property bool opened: false
+
+    // Scene-root rect {x, y, w, h} of the glyph that opened this popover.
+    property var anchorRect: null
 
     // --- Network state (from net-status daemon IPC) ---
     property string connName: ""
@@ -38,6 +42,12 @@ FocusScope {
     visible: opened
     anchors.fill: parent
     focus: opened
+
+    function openAt(rect) {
+        root.anchorRect = rect;
+        root.opened = true;
+        root.forceActiveFocus();
+    }
 
     onOpenedChanged: {
         if (opened) {
@@ -227,21 +237,52 @@ FocusScope {
         event.accepted = true;
     }
 
-    // Backdrop
-    DimmedBackdrop {
-        dimLevel: 0.8
-        onClicked: root.opened = false
+    // Light scrim — popover, not a full modal. Click-outside dismisses.
+    Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.35)
+        MouseArea {
+            anchors.fill: parent
+            onClicked: root.opened = false
+        }
     }
 
-    // === Centered panel ===
+    // === Anchored popover panel ===
     Rectangle {
-        anchors.centerIn: parent
-        width: Math.min(Units.gridUnit * 28, parent.width * 0.65)
-        height: overlayColumn.implicitHeight + Units.gridUnit * 2
+        id: panel
+        width: Math.min(Units.gridUnit * 24, root.width - Units.gridUnit * 2)
+        height: overlayColumn.implicitHeight + Units.gridUnit * 1.5
         radius: Units.radiusLG
         color: Theme.surface
         border.width: Units.borderMedium
         border.color: Theme.surfaceBorder
+
+        // Anchor below the glyph when it's in the top half of the screen
+        // (home, top-right) and above it when in the bottom half (drawer,
+        // bottom-left). Then clamp fully on-screen.
+        readonly property real _gap: Units.spacingMD
+        readonly property real _ax: root.anchorRect ? root.anchorRect.x : 0
+        readonly property real _ay: root.anchorRect ? root.anchorRect.y : 0
+        readonly property real _aw: root.anchorRect ? root.anchorRect.w : 0
+        readonly property real _ah: root.anchorRect ? root.anchorRect.h : 0
+        readonly property bool _below: (_ay + _ah / 2) < root.height / 2
+
+        x: {
+            if (!root.anchorRect)
+                return (root.width - width) / 2;
+            // Top-right glyph → open left (align right edges); bottom-left
+            // glyph → open right (align left edges).
+            var desired = _below ? (_ax + _aw - width) : _ax;
+            var maxX = root.width - width - Units.spacingLG;
+            return Math.max(Units.spacingLG, Math.min(desired, maxX));
+        }
+        y: {
+            if (!root.anchorRect)
+                return (root.height - height) / 2;
+            var desired = _below ? (_ay + _ah + _gap) : (_ay - height - _gap);
+            var maxY = root.height - height - Units.spacingLG;
+            return Math.max(Units.spacingLG, Math.min(desired, maxY));
+        }
 
         ColumnLayout {
             id: overlayColumn
@@ -249,15 +290,15 @@ FocusScope {
                 left: parent.left
                 right: parent.right
                 top: parent.top
-                margins: Units.gridUnit
+                margins: Units.gridUnit * 0.75
             }
-            spacing: Units.spacingLG
+            spacing: Units.spacingMD
 
             // --- Title ---
             Text {
                 Layout.alignment: Qt.AlignHCenter
                 text: "Network"
-                font.pixelSize: Theme.fontTitle
+                font.pixelSize: Theme.fontBody
                 font.bold: true
                 color: Theme.textPrimary
             }
@@ -279,16 +320,37 @@ FocusScope {
                         top: parent.top
                         margins: Units.spacingLG
                     }
-                    spacing: Units.spacingSM
+                    spacing: Units.spacingXS
 
                     Text {
                         visible: root.statusLoaded && root.connName !== ""
                         text: root.connName + " · " + root._typeLabel(root.connType)
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontHint
                         font.bold: true
                         color: Theme.textPrimary
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                    }
+
+                    // IPv4 address — explicitly labelled so it's easy to read.
+                    RowLayout {
+                        visible: root.statusLoaded && root.ipAddress !== ""
+                        Layout.fillWidth: true
+                        spacing: Units.spacingSM
+
+                        Text {
+                            text: "IP"
+                            font.pixelSize: Theme.fontHint
+                            color: Theme.textMuted
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.ipAddress
+                            font.pixelSize: Theme.fontHint
+                            font.family: "monospace"
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                        }
                     }
 
                     Text {
@@ -296,28 +358,20 @@ FocusScope {
                         text: root.device
                         font.pixelSize: Theme.fontHint
                         font.family: "monospace"
-                        color: Theme.textSecondary
-                    }
-
-                    Text {
-                        visible: root.statusLoaded && root.ipAddress !== ""
-                        text: root.ipAddress
-                        font.pixelSize: Theme.fontHint
-                        font.family: "monospace"
-                        color: Theme.textSecondary
+                        color: Theme.textMuted
                     }
 
                     Text {
                         visible: root.statusLoaded && root.connName === ""
                         text: "No active connection"
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontHint
                         color: Theme.textMuted
                     }
 
                     Text {
                         visible: !root.statusLoaded
                         text: "Loading…"
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontHint
                         color: Theme.textMuted
                     }
                 }
@@ -346,7 +400,7 @@ FocusScope {
                     Text {
                         Layout.fillWidth: true
                         text: "↓ " + root.downSpeed
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontHint
                         font.bold: true
                         color: Theme.online
                         horizontalAlignment: Text.AlignLeft
@@ -355,7 +409,7 @@ FocusScope {
                     Text {
                         Layout.fillWidth: true
                         text: "↑ " + root.upSpeed
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontHint
                         font.bold: true
                         color: Theme.ember
                         horizontalAlignment: Text.AlignRight
@@ -375,7 +429,7 @@ FocusScope {
             Rectangle {
                 id: toggleRow
                 Layout.fillWidth: true
-                height: Units.gridUnit * 1.8
+                height: Units.gridUnit * 1.6
                 radius: Units.radiusMD
                 visible: root.device !== ""
 
@@ -415,7 +469,7 @@ FocusScope {
                     Text {
                         Layout.fillWidth: true
                         text: "Network: " + (root.ifaceUp ? "On" : "Off")
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontHint
                         font.bold: true
                         color: Theme.textPrimary
                     }
@@ -481,7 +535,7 @@ FocusScope {
                     Text {
                         Layout.fillWidth: true
                         text: "⚠  This will disconnect the network"
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: Theme.fontHint
                         font.bold: true
                         color: Theme.textOnDark
                         wrapMode: Text.Wrap

@@ -2,33 +2,56 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
-// Compact volume quick-overlay. Controller-navigable, 10-foot sized.
-// Mirrors PowerOverlay/NotificationCenter pattern:
-//   FocusScope + visible:opened + DimmedBackdrop + onOpenedChanged forces focus.
-// Left/Right adjusts volume ±5%; A/Return toggles mute; Up/Down cycles output
-// device; B/Escape closes.
+// Compact volume quick-popover, anchored beside the originating QuickAction
+// glyph (#118). Controller-navigable, 10-foot sized. Mirrors NetworkOverlay's
+// anchored-popover pattern: FocusScope + visible:opened + light scrim +
+// onOpenedChanged forces focus; the panel positions itself relative to
+// anchorRect (scene-root coords) and clamps fully on-screen.
+//   Left/Right adjusts volume ±5%; A/Return toggles mute (or selects a sink
+//   when the output list is expanded); Down expands the output list, Up/Down
+//   move within it; B/Escape closes (collapses the list first if expanded).
 FocusScope {
     id: root
 
     property bool opened: false
+
+    // Scene-root rect {x, y, w, h} of the glyph that opened this popover.
+    property var anchorRect: null
 
     // --- Audio state ---
     property int volume: 50
     property bool muted: false
     property var sinks: []
     property int defaultSinkIndex: -1
+
+    // Output list collapsed by default (keeps the popover compact); expands to
+    // the full sink switcher on demand.
+    property bool _outputExpanded: false
     property int _sinkCursor: 0    // which sink row has controller focus
 
     visible: opened
     anchors.fill: parent
     focus: opened
 
+    function openAt(rect) {
+        root.anchorRect = rect;
+        root.opened = true;
+        root.forceActiveFocus();
+    }
+
     onOpenedChanged: {
         if (opened) {
             root.forceActiveFocus();
+            root._outputExpanded = false;
             getVolume.running = true;
             listSinks.running = true;
         }
+    }
+
+    function _currentSinkName() {
+        if (root.defaultSinkIndex >= 0 && root.defaultSinkIndex < root.sinks.length)
+            return root.sinks[root.defaultSinkIndex].name;
+        return "No output device";
     }
 
     // --- wpctl processes (mirrored from AudioSettings.qml) ---
@@ -107,50 +130,95 @@ FocusScope {
 
     // --- Key handling ---
     Keys.onPressed: event => {
-        if (event.key === Qt.Key_Left) {
-            root.volume = Math.max(0, root.volume - 5);
-            setVolume.level = root.volume + "%";
-            setVolume.running = true;
-        } else if (event.key === Qt.Key_Right) {
-            root.volume = Math.min(100, root.volume + 5);
-            setVolume.level = root.volume + "%";
-            setVolume.running = true;
-        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            // A on a non-default sink row sets it as default; on volume bar toggles mute.
-            if (root.sinks.length > 0 && root._sinkCursor >= 0 && !root.sinks[root._sinkCursor].isDefault) {
-                setDefaultSink.sinkId = root.sinks[root._sinkCursor].id;
-                setDefaultSink.running = true;
-            } else {
-                toggleMute.running = true;
+        if (root._outputExpanded) {
+            // Output list mode: Up/Down move cursor, A selects, B/Left collapses.
+            if (event.key === Qt.Key_Up) {
+                if (root._sinkCursor > 0)
+                    root._sinkCursor--;
+            } else if (event.key === Qt.Key_Down) {
+                if (root._sinkCursor < root.sinks.length - 1)
+                    root._sinkCursor++;
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                if (root._sinkCursor >= 0 && root._sinkCursor < root.sinks.length) {
+                    setDefaultSink.sinkId = root.sinks[root._sinkCursor].id;
+                    setDefaultSink.running = true;
+                }
+                root._outputExpanded = false;
+            } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
+                root._outputExpanded = false;
             }
-        } else if (event.key === Qt.Key_Up) {
-            if (root.sinks.length > 0 && root._sinkCursor > 0)
-                root._sinkCursor--;
-        } else if (event.key === Qt.Key_Down) {
-            if (root.sinks.length > 0 && root._sinkCursor < root.sinks.length - 1)
-                root._sinkCursor++;
-        } else if (event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
-            root.opened = false;
+        } else {
+            // Compact mode.
+            if (event.key === Qt.Key_Left) {
+                root.volume = Math.max(0, root.volume - 5);
+                setVolume.level = root.volume + "%";
+                setVolume.running = true;
+            } else if (event.key === Qt.Key_Right) {
+                root.volume = Math.min(100, root.volume + 5);
+                setVolume.level = root.volume + "%";
+                setVolume.running = true;
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                toggleMute.running = true;
+            } else if (event.key === Qt.Key_Down) {
+                // Expand the output switcher.
+                if (root.sinks.length > 0) {
+                    root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
+                    root._outputExpanded = true;
+                }
+            } else if (event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
+                root.opened = false;
+            }
         }
         // Modal: block all keys from reaching items below.
         event.accepted = true;
     }
 
-    // Backdrop
-    DimmedBackdrop {
-        dimLevel: 0.8
-        onClicked: root.opened = false
+    // Light scrim — popover, not a full modal. Click-outside dismisses.
+    Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.35)
+        MouseArea {
+            anchors.fill: parent
+            onClicked: root.opened = false
+        }
     }
 
-    // === Centered panel ===
+    // === Anchored popover panel ===
     Rectangle {
-        anchors.centerIn: parent
-        width: Math.min(Units.gridUnit * 24, parent.width * 0.6)
-        height: overlayColumn.implicitHeight + Units.gridUnit * 2
+        id: panel
+        width: Math.min(Units.gridUnit * 22, root.width - Units.gridUnit * 2)
+        height: overlayColumn.implicitHeight + Units.gridUnit * 1.5
         radius: Units.radiusLG
         color: Theme.surface
         border.width: Units.borderMedium
         border.color: Theme.surfaceBorder
+
+        // Anchor below the glyph when it's in the top half of the screen
+        // (home, top-right) and above it when in the bottom half (drawer,
+        // bottom-left). Then clamp fully on-screen.
+        readonly property real _gap: Units.spacingMD
+        readonly property real _ax: root.anchorRect ? root.anchorRect.x : 0
+        readonly property real _ay: root.anchorRect ? root.anchorRect.y : 0
+        readonly property real _aw: root.anchorRect ? root.anchorRect.w : 0
+        readonly property real _ah: root.anchorRect ? root.anchorRect.h : 0
+        readonly property bool _below: (_ay + _ah / 2) < root.height / 2
+
+        x: {
+            if (!root.anchorRect)
+                return (root.width - width) / 2;
+            // Top-right glyph → open left (align right edges); bottom-left
+            // glyph → open right (align left edges).
+            var desired = _below ? (_ax + _aw - width) : _ax;
+            var maxX = root.width - width - Units.spacingLG;
+            return Math.max(Units.spacingLG, Math.min(desired, maxX));
+        }
+        y: {
+            if (!root.anchorRect)
+                return (root.height - height) / 2;
+            var desired = _below ? (_ay + _ah + _gap) : (_ay - height - _gap);
+            var maxY = root.height - height - Units.spacingLG;
+            return Math.max(Units.spacingLG, Math.min(desired, maxY));
+        }
 
         ColumnLayout {
             id: overlayColumn
@@ -158,15 +226,15 @@ FocusScope {
                 left: parent.left
                 right: parent.right
                 top: parent.top
-                margins: Units.gridUnit
+                margins: Units.gridUnit * 0.75
             }
-            spacing: Units.spacingLG
+            spacing: Units.spacingMD
 
             // --- Title ---
             Text {
                 Layout.alignment: Qt.AlignHCenter
                 text: "Volume"
-                font.pixelSize: Theme.fontTitle
+                font.pixelSize: Theme.fontBody
                 font.bold: true
                 color: Theme.textPrimary
             }
@@ -194,7 +262,7 @@ FocusScope {
                 Text {
                     anchors.centerIn: parent
                     text: root.muted ? "MUTED" : root.volume + "%"
-                    font.pixelSize: Theme.fontBody
+                    font.pixelSize: Theme.fontHint
                     font.bold: true
                     color: root.volume > 40 && !root.muted ? Theme.textOnDark : Theme.textPrimary
                 }
@@ -203,35 +271,80 @@ FocusScope {
             // --- Mute toggle hint ---
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: root.muted ? "▶  Press A to unmute" : "⏸  Press A to mute"
+                visible: !root._outputExpanded
+                text: root.muted ? "A: unmute" : "A: mute"
                 font.pixelSize: Theme.fontHint
                 color: root.muted ? Theme.warning : Theme.textMuted
             }
 
-            // --- Output device list ---
+            // --- Output: collapsed current row (default) ---
             Rectangle {
                 Layout.fillWidth: true
-                height: 2
-                color: Theme.surfaceBorder
-                visible: root.sinks.length > 0
+                height: Units.gridUnit * 1.6
+                radius: Units.radiusMD
+                visible: !root._outputExpanded && root.sinks.length > 0
+                color: root.activeFocus ? Theme.surfaceHover : Theme.cardBackground
+                border.width: root.activeFocus ? Units.borderMedium : Units.borderThin
+                border.color: root.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 100
+                    }
+                }
+
+                RowLayout {
+                    anchors {
+                        fill: parent
+                        leftMargin: Units.spacingLG
+                        rightMargin: Units.spacingLG
+                    }
+                    spacing: Units.spacingSM
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Output: " + root._currentSinkName()
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textPrimary
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        text: "▾"
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textSecondary
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (root.sinks.length > 0) {
+                            root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
+                            root._outputExpanded = true;
+                        }
+                    }
+                }
             }
 
+            // --- Output: expanded sink list ---
             Text {
-                visible: root.sinks.length > 0
+                visible: root._outputExpanded
                 text: "Output Device"
-                font.pixelSize: Theme.fontSmall
+                font.pixelSize: Theme.fontHint
                 font.bold: true
                 color: Theme.textSecondary
             }
 
             Repeater {
-                model: root.sinks
+                model: root._outputExpanded ? root.sinks : []
 
                 Rectangle {
                     required property int index
                     required property var modelData
                     Layout.fillWidth: true
-                    height: Units.gridUnit * 1.6
+                    height: Units.gridUnit * 1.5
                     radius: Units.radiusMD
                     color: {
                         if (modelData.isDefault)
@@ -269,12 +382,6 @@ FocusScope {
                             color: modelData.isDefault ? Theme.textOnDark : Theme.textPrimary
                             elide: Text.ElideRight
                         }
-                        Text {
-                            visible: root._sinkCursor === index && !modelData.isDefault
-                            text: "A: select"
-                            font.pixelSize: Theme.fontHint
-                            color: Theme.textMuted
-                        }
                     }
 
                     MouseArea {
@@ -283,9 +390,9 @@ FocusScope {
                         cursorShape: Qt.PointingHandCursor
                         onEntered: root._sinkCursor = index
                         onClicked: {
-                            root._sinkCursor = index;
                             setDefaultSink.sinkId = modelData.id;
                             setDefaultSink.running = true;
+                            root._outputExpanded = false;
                         }
                     }
                 }
@@ -294,7 +401,7 @@ FocusScope {
             // --- Hint bar ---
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: "◀▶ Volume    A: Mute    ▲▼ Output    B: Close"
+                text: root._outputExpanded ? "▲▼ Select    A: Switch    B: Back" : "◀▶ Volume    A: Mute    ▼ Output    B: Close"
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
             }
