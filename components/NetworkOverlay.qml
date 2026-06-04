@@ -134,9 +134,7 @@ FocusScope {
                 speedTimer.stop();
                 return;
             }
-            readBytes.command = ["bash", "-c",
-                "paste -d' ' /sys/class/net/" + root.device + "/statistics/rx_bytes "
-                + "/sys/class/net/" + root.device + "/statistics/tx_bytes"];
+            readBytes.command = ["bash", "-c", "paste -d' ' /sys/class/net/" + root.device + "/statistics/rx_bytes " + "/sys/class/net/" + root.device + "/statistics/tx_bytes"];
             readBytes.running = true;
         }
     }
