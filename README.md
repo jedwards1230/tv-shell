@@ -61,7 +61,7 @@ targets:
 | D-pad | Navigate |
 | A | Select / Launch |
 | B | Back / Settings |
-| Y | Tab (future) |
+| Y | Actions (context menu) |
 | Home + B (3s) | End session (AV shutdown) |
 
 ## Requirements
