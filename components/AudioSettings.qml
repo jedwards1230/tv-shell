@@ -179,7 +179,7 @@ FocusScope {
                     width: parent.width * (root.volume / 100)
                     height: parent.height
                     radius: 28
-                    color: root.muted ? Theme.textSecondary : Theme.navy
+                    color: root.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
 
                     Behavior on width {
                         NumberAnimation {
