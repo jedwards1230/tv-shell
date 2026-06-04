@@ -20,6 +20,7 @@ FocusScope {
     property alias notificationCenter: notificationCenter
     property alias powerOverlay: powerOverlay
     property alias volumeOverlay: volumeOverlay
+    property alias networkOverlay: networkOverlay
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -48,6 +49,9 @@ FocusScope {
             homeFocusTimer.restart();
         } else if (volumeOverlay.opened) {
             volumeOverlay.opened = false;
+            homeFocusTimer.restart();
+        } else if (networkOverlay.opened) {
+            networkOverlay.opened = false;
             homeFocusTimer.restart();
         } else if (notificationCenter.opened) {
             notificationCenter.opened = false;
@@ -146,7 +150,7 @@ FocusScope {
         visible: root.shellState === "idle"
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened
+        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened
 
         runningWindows: root.runningWindows
 
@@ -159,7 +163,10 @@ FocusScope {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();
         }
-        onNetworkRequested: settingsPanel.openSection(2)
+        onNetworkRequested: {
+            networkOverlay.opened = true;
+            networkOverlay.forceActiveFocus();
+        }
         onVolumeRequested: {
             volumeOverlay.opened = true;
             volumeOverlay.forceActiveFocus();
@@ -187,7 +194,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -224,7 +231,8 @@ FocusScope {
         }
         onNetworkRequested: {
             navDrawer.opened = false;
-            settingsPanel.openSection(2);
+            networkOverlay.opened = true;
+            networkOverlay.forceActiveFocus();
         }
         onVolumeRequested: {
             navDrawer.opened = false;
@@ -288,6 +296,16 @@ FocusScope {
         }
     }
 
+    // === Network Overlay ===
+    NetworkOverlay {
+        id: networkOverlay
+        z: 60
+        onOpenedChanged: {
+            if (!networkOverlay.opened)
+                homeFocusTimer.restart();
+        }
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
@@ -325,7 +343,8 @@ FocusScope {
             onNetworkRequested: {
                 root.overlayDrawerClosed();
                 root.returnToShellRequested();
-                settingsPanel.openSection(2);
+                networkOverlay.opened = true;
+                networkOverlay.forceActiveFocus();
             }
             onVolumeRequested: {
                 root.overlayDrawerClosed();
