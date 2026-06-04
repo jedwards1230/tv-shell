@@ -223,7 +223,7 @@ FocusScope {
             Layout.fillHeight: true
             spacing: 8
             clip: true
-            visible: root.hasWifi
+            visible: root.hasWifi && root.wifiNetworks.length > 0
             model: root.wifiNetworks
             focus: root.hasWifi
 

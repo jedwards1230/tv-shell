@@ -12,6 +12,7 @@ Item {
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: icon
+            textFormat: Text.PlainText
             font.pixelSize: Theme.fontTitle
             color: Theme.textMuted
             horizontalAlignment: Text.AlignHCenter
@@ -21,6 +22,7 @@ Item {
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: line
+            textFormat: Text.PlainText
             font.pixelSize: Theme.fontBody
             color: Theme.textMuted
             horizontalAlignment: Text.AlignHCenter
@@ -29,6 +31,7 @@ Item {
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: hint
+            textFormat: Text.PlainText
             font.pixelSize: Theme.fontHint
             color: Theme.textMuted
             horizontalAlignment: Text.AlignHCenter
