@@ -425,16 +425,19 @@ FocusScope {
             font.pixelSize: Theme.fontBody
             font.bold: true
             color: Theme.textPrimary
-            visible: root.powered
+            visible: root.powered && root.pairedDevices.length > 0
         }
 
         ListView {
             id: pairedList
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(contentHeight, 300)
+            // Size from row count (delegate 96 + spacing 8), not contentHeight —
+            // ListView.contentHeight is unreliable inside a Layout and balloons
+            // the list, pushing the first card far below the header (#123).
+            Layout.preferredHeight: Math.min(root.pairedDevices.length * 104, 300)
             spacing: 8
             clip: true
-            visible: root.powered
+            visible: root.powered && root.pairedDevices.length > 0
             model: root.pairedDevices
 
             KeyNavigation.up: powerToggleScope
@@ -515,11 +518,12 @@ FocusScope {
             }
         }
 
-        Text {
-            text: root.pairedDevices.length === 0 && root.powered ? "No paired devices" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? Units.gridUnit * 4 : 0
+            visible: root.powered && root.pairedDevices.length === 0
+            line: "No paired devices"
+            hint: "Scan to find nearby devices"
         }
 
         // Available (unpaired) devices
@@ -534,7 +538,11 @@ FocusScope {
         ListView {
             id: availList
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            // Content-sized like pairedList; a trailing fillHeight spacer (below)
+            // absorbs slack so this list packs directly under its header. A
+            // fillHeight ListView wedged mid-column floated the paired block to
+            // the page middle when this list was hidden (#123).
+            Layout.preferredHeight: Math.min(root.availableDevices.length * 104, 300)
             spacing: 8
             clip: true
             visible: root.powered && root.availableDevices.length > 0
@@ -599,6 +607,12 @@ FocusScope {
                     btPair.pair(root.availableDevices[currentIndex].mac);
                 }
             }
+        }
+
+        // Absorb remaining vertical space so the lists pack at the top and the
+        // hint sits at the bottom (mirrors ControllerSettings.qml).
+        Item {
+            Layout.fillHeight: true
         }
 
         // Hint
