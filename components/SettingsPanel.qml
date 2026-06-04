@@ -410,8 +410,13 @@ Rectangle {
     Keys.onEscapePressed: root.closed()
 
     function openSection(idx) {
-        _pendingSection = idx;
-        visible = true;
+        if (visible) {
+            currentSection = idx;
+            sidebarList.currentIndex = idx;
+        } else {
+            _pendingSection = idx;
+            visible = true;
+        }
         forceActiveFocus();
     }
 
