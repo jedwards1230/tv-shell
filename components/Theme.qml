@@ -111,10 +111,10 @@ Item {
             surfaceBorder: "#4d525c",
             textPrimary: "#e6e4e0",
             textSecondary: "#c2bfba",
-            textMuted: "#928e88",
+            textMuted: "#928e88", // WCAG: #928e88 on #111215 = 5.75:1 (AA normal >=4.5:1 PASS)
             cardBackground: "#2e3139",
             focusBorder: String(crimson),
-            focusGlow: String(crimson) + "33",
+            focusGlow: String(crimson) + "55",
             barBackground: "#111215",
             sidebarActive: "#424650"
         })
@@ -125,10 +125,10 @@ Item {
             surfaceBorder: "#dcdee3",
             textPrimary: "#1a2540",
             textSecondary: "#4a5568",
-            textMuted: "#8892a4",
+            textMuted: "#8892a4", // WCAG: #8892a4 on #f4f5f7 = 2.88:1 (AA normal >=4.5:1 FAIL — follow-up: darken muted text in light theme)
             cardBackground: "#ffffff",
             focusBorder: String(crimson),
-            focusGlow: String(crimson) + "33",
+            focusGlow: String(crimson) + "55",
             barBackground: String(navy),
             sidebarActive: String(navy)
         })

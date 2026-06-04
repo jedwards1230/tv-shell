@@ -407,11 +407,31 @@ FocusScope {
                             color: Theme.textPrimary
                         }
 
-                        Rectangle {
-                            width: 14
-                            height: 14
-                            radius: 7
-                            color: hostAppList.length > 0 ? Theme.online : Theme.offline
+                        // a11y: shape (filled dot vs hollow ring) + text label — state
+                        // is not color-only (colorblind-safe dual cue).
+                        Row {
+                            spacing: Units.spacingSM
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            property bool online: hostAppList.length > 0
+
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                radius: 7
+                                // ONLINE: filled dot; OFFLINE: hollow ring — distinct shapes
+                                color: parent.online ? Theme.online : "transparent"
+                                border.width: parent.online ? 0 : 2
+                                border.color: Theme.offline
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            Text {
+                                text: parent.online ? "Online" : "Offline"
+                                font.pixelSize: Theme.fontSmall
+                                color: Theme.textMuted
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
                         }
                     }
 

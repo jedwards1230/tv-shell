@@ -128,19 +128,35 @@ BaseCard {
         height: 24
         radius: 12
         color: Theme.online
-        width: badgeText.implicitWidth + 16
+        // a11y: width grows leftward to fit icon glyph + label; anchor stays top-right
+        width: badgeRow.implicitWidth + 16
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 8
         anchors.rightMargin: 8
 
-        Text {
-            id: badgeText
+        // a11y: icon glyph + text label — state conveyed via shape AND label,
+        // not green fill alone (colorblind-safe dual cue).
+        Row {
+            id: badgeRow
             anchors.centerIn: parent
-            text: "LIVE"
-            font.pixelSize: 12
-            font.bold: true
-            color: "#ffffff"
+            spacing: 4
+
+            Text {
+                text: "●"
+                font.pixelSize: 10
+                color: "#ffffff"
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+                id: badgeText
+                text: "LIVE"
+                font.pixelSize: 12
+                font.bold: true
+                color: "#ffffff"
+                anchors.verticalCenter: parent.verticalCenter
+            }
         }
     }
 }
