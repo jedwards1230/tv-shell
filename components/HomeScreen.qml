@@ -411,7 +411,7 @@ FocusScope {
                         // is not color-only (colorblind-safe dual cue).
                         Row {
                             spacing: Units.spacingSM
-                            anchors.verticalCenter: parent.verticalCenter
+                            Layout.alignment: Qt.AlignVCenter
 
                             property bool online: hostAppList.length > 0
 
