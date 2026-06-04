@@ -538,7 +538,11 @@ FocusScope {
         ListView {
             id: availList
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            // Content-sized like pairedList; a trailing fillHeight spacer (below)
+            // absorbs slack so this list packs directly under its header. A
+            // fillHeight ListView wedged mid-column floated the paired block to
+            // the page middle when this list was hidden (#123).
+            Layout.preferredHeight: Math.min(root.availableDevices.length * 104, 300)
             spacing: 8
             clip: true
             visible: root.powered && root.availableDevices.length > 0
@@ -603,6 +607,12 @@ FocusScope {
                     btPair.pair(root.availableDevices[currentIndex].mac);
                 }
             }
+        }
+
+        // Absorb remaining vertical space so the lists pack at the top and the
+        // hint sits at the bottom (mirrors ControllerSettings.qml).
+        Item {
+            Layout.fillHeight: true
         }
 
         // Hint
