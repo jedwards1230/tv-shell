@@ -11,6 +11,8 @@ FocusScope {
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
+    signal networkRequested
+    signal volumeRequested
     signal focusDownRequested
     signal focusUpRequested
 
@@ -90,6 +92,12 @@ FocusScope {
                 Theme.setThemeMode("dark");
             else
                 Theme.setThemeMode("auto");
+            break;
+        case 3:
+            root.networkRequested();
+            break;
+        case 4:
+            root.volumeRequested();
             break;
         case 5:
             root.powerRequested();
@@ -355,10 +363,12 @@ FocusScope {
                     // Genuine-move-only mouse-mode via Theme.pointerMoved; no
                     // onEntered (content-scroll false trigger, #45). Scene-root
                     // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
+                    cursorShape: Qt.PointingHandCursor
                     onPositionChanged: mouse => {
                         let p = mapToItem(null, mouse.x, mouse.y);
                         Theme.pointerMoved(p.x, p.y);
                     }
+                    onClicked: root.networkRequested()
                 }
             }
 
@@ -400,10 +410,12 @@ FocusScope {
                     // Genuine-move-only mouse-mode via Theme.pointerMoved; no
                     // onEntered (content-scroll false trigger, #45). Scene-root
                     // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
+                    cursorShape: Qt.PointingHandCursor
                     onPositionChanged: mouse => {
                         let p = mapToItem(null, mouse.x, mouse.y);
                         Theme.pointerMoved(p.x, p.y);
                     }
+                    onClicked: root.volumeRequested()
                 }
             }
 
