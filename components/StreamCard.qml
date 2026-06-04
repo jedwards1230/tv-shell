@@ -12,6 +12,7 @@ BaseCard {
     property string activeAppName: ""
 
     label: root.appName !== "" ? root.appName : (root.target.name || "Unknown")
+    Accessible.description: (root.isOnline ? "Online" : "Offline") + (root.hasActiveSession ? ", session active: " + root.activeAppName : "")
 
     Process {
         id: pingCheck

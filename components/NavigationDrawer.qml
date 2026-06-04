@@ -116,6 +116,10 @@ Drawer {
                 width: navList.width
                 height: Math.round(Units.gridUnit * 2.2)
                 color: navList.currentIndex === index && navList.activeFocus ? Theme.surfaceHover : "transparent"
+                Accessible.role: Accessible.Button
+                Accessible.name: modelData.label
+                Accessible.focusable: true
+                Accessible.onPressAction: root._activateNav(index)
                 Behavior on color {
                     ColorAnimation {
                         duration: 150
