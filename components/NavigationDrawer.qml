@@ -29,6 +29,13 @@ Drawer {
         onTriggered: navList.forceActiveFocus()
     }
 
+    // Return controller focus to the QuickActions row — called when an anchored
+    // popover (Volume/Network) closes while the drawer is still open, so focus
+    // lands back on the glyph the user activated rather than jumping to home.
+    function focusQuickActions() {
+        drawerActions.forceActiveFocus();
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -213,11 +220,11 @@ Drawer {
                     root.powerRequested();
                 }
                 onNetworkRequested: anchorRect => {
-                    root.closed();
+                    // Keep the drawer open underneath; the popover paints on
+                    // top (higher z) anchored to this glyph (#118).
                     root.networkRequested(anchorRect);
                 }
                 onVolumeRequested: anchorRect => {
-                    root.closed();
                     root.volumeRequested(anchorRect);
                 }
             }
