@@ -25,9 +25,14 @@ FocusScope {
     property int defaultSinkIndex: -1
 
     // Output list collapsed by default (keeps the popover compact); expands to
-    // the full sink switcher on demand.
+    // the full sink switcher on demand — and only ever opens on A (never on a
+    // directional key), matching the frontend dropdown rule.
     property bool _outputExpanded: false
     property int _sinkCursor: 0    // which sink row has controller focus
+    // Which control row has focus in compact mode: 0 = volume bar (Left/Right
+    // adjusts, A mutes), 1 = output selector (A expands). Directional keys only
+    // MOVE focus between rows; they never open the dropdown.
+    property int _focusRow: 0
 
     visible: opened
     anchors.fill: parent
@@ -43,6 +48,7 @@ FocusScope {
         if (opened) {
             root.forceActiveFocus();
             root._outputExpanded = false;
+            root._focusRow = 0;
             getVolume.running = true;
             listSinks.running = true;
         }
@@ -148,22 +154,38 @@ FocusScope {
                 root._outputExpanded = false;
             }
         } else {
-            // Compact mode.
-            if (event.key === Qt.Key_Left) {
-                root.volume = Math.max(0, root.volume - 5);
-                setVolume.level = root.volume + "%";
-                setVolume.running = true;
+            // Compact mode. Directional keys only MOVE focus between rows; the
+            // output dropdown opens on A only (never on a directional key).
+            if (event.key === Qt.Key_Down) {
+                // Move focus to the output selector row (if there is one).
+                if (root._focusRow === 0 && root.sinks.length > 0)
+                    root._focusRow = 1;
+            } else if (event.key === Qt.Key_Up) {
+                // Move focus back to the volume bar.
+                if (root._focusRow === 1)
+                    root._focusRow = 0;
+            } else if (event.key === Qt.Key_Left) {
+                if (root._focusRow === 0) {
+                    root.volume = Math.max(0, root.volume - 5);
+                    setVolume.level = root.volume + "%";
+                    setVolume.running = true;
+                }
             } else if (event.key === Qt.Key_Right) {
-                root.volume = Math.min(100, root.volume + 5);
-                setVolume.level = root.volume + "%";
-                setVolume.running = true;
+                if (root._focusRow === 0) {
+                    root.volume = Math.min(100, root.volume + 5);
+                    setVolume.level = root.volume + "%";
+                    setVolume.running = true;
+                }
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                toggleMute.running = true;
-            } else if (event.key === Qt.Key_Down) {
-                // Expand the output switcher.
-                if (root.sinks.length > 0) {
-                    root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
-                    root._outputExpanded = true;
+                if (root._focusRow === 1) {
+                    // A on the focused output selector → open the dropdown.
+                    if (root.sinks.length > 0) {
+                        root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
+                        root._outputExpanded = true;
+                    }
+                } else {
+                    // A on the volume bar → toggle mute.
+                    toggleMute.running = true;
                 }
             } else if (event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
                 root.opened = false;
@@ -245,6 +267,9 @@ FocusScope {
                 height: Units.gridUnit * 1.5
                 radius: height / 2
                 color: Theme.surfaceHover
+                // Focus ring when the volume bar row has controller focus.
+                border.width: root.activeFocus && root._focusRow === 0 && !root._outputExpanded ? Units.borderMedium : 0
+                border.color: Theme.focusBorder
 
                 Rectangle {
                     width: parent.width * (root.volume / 100)
@@ -271,7 +296,7 @@ FocusScope {
             // --- Mute toggle hint ---
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                visible: !root._outputExpanded
+                visible: !root._outputExpanded && root._focusRow === 0
                 text: root.muted ? "A: unmute" : "A: mute"
                 font.pixelSize: Theme.fontHint
                 color: root.muted ? Theme.warning : Theme.textMuted
@@ -279,13 +304,18 @@ FocusScope {
 
             // --- Output: collapsed current row (default) ---
             Rectangle {
+                id: outputRow
                 Layout.fillWidth: true
                 height: Units.gridUnit * 1.6
                 radius: Units.radiusMD
                 visible: !root._outputExpanded && root.sinks.length > 0
-                color: root.activeFocus ? Theme.surfaceHover : Theme.cardBackground
-                border.width: root.activeFocus ? Units.borderMedium : Units.borderThin
-                border.color: root.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+
+                // Highlighted only when the output selector row has focus.
+                readonly property bool rowFocused: root.activeFocus && root._focusRow === 1 && !root._outputExpanded
+
+                color: rowFocused ? Theme.surfaceHover : Theme.cardBackground
+                border.width: rowFocused ? Units.borderMedium : Units.borderThin
+                border.color: rowFocused ? Theme.focusBorder : Theme.surfaceBorder
 
                 Behavior on color {
                     ColorAnimation {
@@ -309,6 +339,12 @@ FocusScope {
                         elide: Text.ElideRight
                     }
                     Text {
+                        visible: outputRow.rowFocused
+                        text: "A: switch"
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textMuted
+                    }
+                    Text {
                         text: "▾"
                         font.pixelSize: Theme.fontHint
                         color: Theme.textSecondary
@@ -320,7 +356,9 @@ FocusScope {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        // A click opens the dropdown (open-on-click rule).
                         if (root.sinks.length > 0) {
+                            root._focusRow = 1;
                             root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
                             root._outputExpanded = true;
                         }
@@ -401,7 +439,13 @@ FocusScope {
             // --- Hint bar ---
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: root._outputExpanded ? "▲▼ Select    A: Switch    B: Back" : "◀▶ Volume    A: Mute    ▼ Output    B: Close"
+                text: {
+                    if (root._outputExpanded)
+                        return "▲▼ Select    A: Switch    B: Back";
+                    if (root._focusRow === 1)
+                        return "A: Open output    ▲ Back    B: Close";
+                    return "◀▶ Volume    A: Mute    ▼ Output    B: Close";
+                }
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
             }
