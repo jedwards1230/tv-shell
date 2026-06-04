@@ -204,6 +204,11 @@ FocusScope {
 
     function persistServers() {
         saveServers.json = JSON.stringify(root.servers);
+        // Re-arm stdin before every save: onStarted disables it to signal EOF to
+        // tee, and that imperative assignment sticks (the declarative `stdinEnabled:
+        // true` is only the initial value). Without this, the 2nd save in a session
+        // writes an empty file and wipes the server list.
+        saveServers.stdinEnabled = true;
         saveServers.running = true;
     }
 
