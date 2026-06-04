@@ -60,13 +60,6 @@ FocusScope {
         anchors.margins: Theme.padding
         spacing: 48
 
-        Text {
-            text: "Power"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
-        }
-
         Item {
             Layout.fillHeight: true
             Layout.maximumHeight: 100
