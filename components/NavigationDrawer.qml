@@ -181,7 +181,7 @@ Drawer {
 
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.round(Units.gridUnit * 2.5)
+            Layout.preferredHeight: drawerActions.implicitHeight
 
             QuickActions {
                 id: drawerActions
@@ -189,8 +189,7 @@ Drawer {
                 anchors.right: parent.right
                 anchors.leftMargin: Units.gridUnit
                 anchors.rightMargin: Units.gridUnit
-                anchors.verticalCenter: parent.verticalCenter
-                height: iconSize
+                anchors.top: parent.top
                 // Bubble Escape/B up to the Drawer so it closes instead of
                 // opening Settings.
                 escapeRequestsSettings: false
