@@ -12,6 +12,8 @@ Drawer {
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
+    signal networkRequested(var anchorRect)
+    signal volumeRequested(var anchorRect)
     signal homeSelected
 
     onOpenedChanged: {
@@ -25,6 +27,13 @@ Drawer {
         id: navFocusTimer
         interval: 50
         onTriggered: navList.forceActiveFocus()
+    }
+
+    // Return controller focus to the QuickActions row — called when an anchored
+    // popover (Volume/Network) closes while the drawer is still open, so focus
+    // lands back on the glyph the user activated rather than jumping to home.
+    function focusQuickActions() {
+        drawerActions.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -179,7 +188,10 @@ Drawer {
 
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.round(Units.gridUnit * 2.5)
+            // Reserve full label height plus bottom safe-margin so the label
+            // row never bleeds past the viewport bottom (#142).
+            Layout.preferredHeight: drawerActions.implicitHeight + Units.spacingLG
+            Layout.bottomMargin: Units.spacingLG
 
             QuickActions {
                 id: drawerActions
@@ -187,8 +199,7 @@ Drawer {
                 anchors.right: parent.right
                 anchors.leftMargin: Units.gridUnit
                 anchors.rightMargin: Units.gridUnit
-                anchors.verticalCenter: parent.verticalCenter
-                height: iconSize
+                anchors.top: parent.top
                 // Bubble Escape/B up to the Drawer so it closes instead of
                 // opening Settings.
                 escapeRequestsSettings: false
@@ -207,6 +218,14 @@ Drawer {
                 onPowerRequested: {
                     root.closed();
                     root.powerRequested();
+                }
+                onNetworkRequested: anchorRect => {
+                    // Keep the drawer open underneath; the popover paints on
+                    // top (higher z) anchored to this glyph (#118).
+                    root.networkRequested(anchorRect);
+                }
+                onVolumeRequested: anchorRect => {
+                    root.volumeRequested(anchorRect);
                 }
             }
         }

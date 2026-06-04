@@ -21,6 +21,8 @@ FocusScope {
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
+    signal networkRequested(var anchorRect)
+    signal volumeRequested(var anchorRect)
 
     onActiveFocusChanged: {
         if (activeFocus)
@@ -203,6 +205,8 @@ FocusScope {
                     onSettingsRequested: root.settingsRequested()
                     onNotificationCenterRequested: root.notificationCenterRequested()
                     onPowerRequested: root.powerRequested()
+                    onNetworkRequested: anchorRect => root.networkRequested(anchorRect)
+                    onVolumeRequested: anchorRect => root.volumeRequested(anchorRect)
                     onFocusDownRequested: root._focusFirstVisibleRow()
                     onActiveFocusChanged: if (activeFocus)
                         scrollView.contentY = 0

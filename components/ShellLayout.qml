@@ -19,6 +19,8 @@ FocusScope {
     property alias overlay: overlay
     property alias notificationCenter: notificationCenter
     property alias powerOverlay: powerOverlay
+    property alias volumeOverlay: volumeOverlay
+    property alias networkOverlay: networkOverlay
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -44,6 +46,12 @@ FocusScope {
     function toggleMenu() {
         if (powerOverlay.opened) {
             powerOverlay.opened = false;
+            homeFocusTimer.restart();
+        } else if (volumeOverlay.opened) {
+            volumeOverlay.opened = false;
+            homeFocusTimer.restart();
+        } else if (networkOverlay.opened) {
+            networkOverlay.opened = false;
             homeFocusTimer.restart();
         } else if (notificationCenter.opened) {
             notificationCenter.opened = false;
@@ -142,7 +150,7 @@ FocusScope {
         visible: root.shellState === "idle"
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened
+        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened
 
         runningWindows: root.runningWindows
 
@@ -155,6 +163,8 @@ FocusScope {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();
         }
+        onNetworkRequested: anchorRect => networkOverlay.openAt(anchorRect)
+        onVolumeRequested: anchorRect => volumeOverlay.openAt(anchorRect)
         onNotificationCenterRequested: {
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
@@ -174,11 +184,22 @@ FocusScope {
         }
     }
 
+    // When an anchored Volume/Network popover closes, return focus to the nav
+    // drawer's QuickActions row if the drawer is still open (the popover was
+    // launched from the drawer and the drawer stayed visible underneath);
+    // otherwise fall back to the home screen (home-launched case).
+    function _returnFocusAfterOverlay() {
+        if (navDrawer.opened)
+            navDrawer.focusQuickActions();
+        else
+            homeFocusTimer.restart();
+    }
+
     Timer {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -212,6 +233,13 @@ FocusScope {
             navDrawer.opened = false;
             powerOverlay.opened = true;
             powerOverlay.forceActiveFocus();
+        }
+        onNetworkRequested: anchorRect => {
+            // Leave the drawer open; the overlay (higher z) paints on top.
+            networkOverlay.openAt(anchorRect);
+        }
+        onVolumeRequested: anchorRect => {
+            volumeOverlay.openAt(anchorRect);
         }
         onHomeSelected: {
             navDrawer.opened = false;
@@ -260,6 +288,28 @@ FocusScope {
         }
     }
 
+    // === Volume Overlay ===
+    // z above the nav drawer (z:50) so the anchored popover paints in front of
+    // it while the drawer stays open underneath (#118).
+    VolumeOverlay {
+        id: volumeOverlay
+        z: 70
+        onOpenedChanged: {
+            if (!volumeOverlay.opened)
+                root._returnFocusAfterOverlay();
+        }
+    }
+
+    // === Network Overlay ===
+    NetworkOverlay {
+        id: networkOverlay
+        z: 70
+        onOpenedChanged: {
+            if (!networkOverlay.opened)
+                root._returnFocusAfterOverlay();
+        }
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
@@ -293,6 +343,16 @@ FocusScope {
                 root.returnToShellRequested();
                 powerOverlay.opened = true;
                 powerOverlay.forceActiveFocus();
+            }
+            onNetworkRequested: anchorRect => {
+                root.overlayDrawerClosed();
+                root.returnToShellRequested();
+                networkOverlay.openAt(anchorRect);
+            }
+            onVolumeRequested: anchorRect => {
+                root.overlayDrawerClosed();
+                root.returnToShellRequested();
+                volumeOverlay.openAt(anchorRect);
             }
             onClosed: {
                 root.overlayDrawerClosed();
