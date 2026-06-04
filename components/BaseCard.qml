@@ -12,6 +12,11 @@ Item {
 
     signal activated
 
+    Accessible.role: Accessible.Button
+    Accessible.name: root.label
+    Accessible.focusable: true
+    Accessible.onPressAction: root.activated()
+
     Connections {
         target: Theme
         function onMouseModeChanged() {

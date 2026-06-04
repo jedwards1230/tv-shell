@@ -13,6 +13,11 @@ Rectangle {
 
     property alias text: label.text
 
+    Accessible.role: Accessible.Button
+    Accessible.name: label.text
+    Accessible.focusable: true
+    Accessible.onPressAction: root.Keys.returnPressed(null)
+
     Connections {
         target: Theme
         function onMouseModeChanged() {
