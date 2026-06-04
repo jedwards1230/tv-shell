@@ -62,43 +62,43 @@ Rectangle {
         let s = [
             {
                 name: "Audio",
-                iconName: "audio-volume-high",
+                iconSource: "icons/audio.svg",
                 fallback: "♫",
                 component: audioComp
             },
             {
                 name: "Bluetooth",
-                iconName: "preferences-system-bluetooth",
+                iconSource: "icons/bluetooth.svg",
                 fallback: "ᛒ",
                 component: bluetoothComp
             },
             {
                 name: "Network",
-                iconName: "network-wired",
+                iconSource: "icons/network.svg",
                 fallback: "⇅",
                 component: networkComp
             },
             {
                 name: "Display",
-                iconName: "video-display",
+                iconSource: "icons/display.svg",
                 fallback: "\u{1F5A5}",
                 component: displayComp
             },
             {
                 name: "Controllers",
-                iconName: "input-gaming",
+                iconSource: "icons/controllers.svg",
                 fallback: "\u{1F3AE}",
                 component: controllerComp
             },
             {
                 name: "Key Bindings",
-                iconName: "input-keyboard",
+                iconSource: "icons/keybindings.svg",
                 fallback: "⌨",
                 component: keyBindingsComp
             },
             {
                 name: "AV Control",
-                iconName: "video-television",
+                iconSource: "icons/avcontrol.svg",
                 fallback: "\u{1F4FA}",
                 component: avControlComp
             }
@@ -107,19 +107,19 @@ Rectangle {
         if (provider.settingsComponent)
             s.push({
                 name: provider.displayName,
-                iconName: "applications-games",
+                iconSource: "icons/moonlight.svg",
                 fallback: "\u{1F319}",
                 component: provider.settingsComponent
             });
         s.push({
             name: "Appearance",
-            iconName: "preferences-desktop-theme",
+            iconSource: "icons/appearance.svg",
             fallback: "\u{1F3A8}",
             component: appearanceComp
         });
         s.push({
             name: "Power",
-            iconName: "system-shutdown",
+            iconSource: "icons/power.svg",
             fallback: "⏻",
             component: powerComp
         });
@@ -228,7 +228,7 @@ Rectangle {
                                 Image {
                                     id: secIcon
                                     anchors.centerIn: parent
-                                    source: "image://icon/" + modelData.iconName
+                                    source: Qt.resolvedUrl(modelData.iconSource)
                                     sourceSize: Qt.size(Units.iconSizeMD, Units.iconSizeMD)
                                     width: Units.iconSizeMD
                                     height: Units.iconSizeMD
@@ -363,7 +363,7 @@ Rectangle {
 
                     Image {
                         id: headerIcon
-                        source: "image://icon/" + root.sections[root.currentSection].iconName
+                        source: Qt.resolvedUrl(root.sections[root.currentSection].iconSource)
                         sourceSize: Qt.size(Theme.fontTitle, Theme.fontTitle)
                         width: Theme.fontTitle
                         height: Theme.fontTitle
