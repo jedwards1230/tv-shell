@@ -480,12 +480,18 @@ FocusScope {
         anchors.horizontalCenter: parent.horizontalCenter
         text: {
             if (Theme.mouseMode) {
-                if (notifMA.containsMouse) return root._labels[0];
-                if (settingsMA.containsMouse) return root._labels[1];
-                if (themeMA.containsMouse) return root._labels[2];
-                if (networkMA.containsMouse) return root._labels[3];
-                if (volumeMA.containsMouse) return root._labels[4];
-                if (powerMA.containsMouse) return root._labels[5];
+                if (notifMA.containsMouse)
+                    return root._labels[0];
+                if (settingsMA.containsMouse)
+                    return root._labels[1];
+                if (themeMA.containsMouse)
+                    return root._labels[2];
+                if (networkMA.containsMouse)
+                    return root._labels[3];
+                if (volumeMA.containsMouse)
+                    return root._labels[4];
+                if (powerMA.containsMouse)
+                    return root._labels[5];
                 return "";
             }
             return (root.activeFocus && root.currentIndex >= 0 && root.currentIndex < root._labels.length) ? root._labels[root.currentIndex] : "";
