@@ -181,7 +181,10 @@ Drawer {
 
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: drawerActions.implicitHeight
+            // Reserve full label height plus bottom safe-margin so the label
+            // row never bleeds past the viewport bottom (#142).
+            Layout.preferredHeight: drawerActions.implicitHeight + Units.spacingLG
+            Layout.bottomMargin: Units.spacingLG
 
             QuickActions {
                 id: drawerActions
