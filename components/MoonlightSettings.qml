@@ -483,6 +483,7 @@ FocusScope {
                                 text: modelData.app || "Desktop"
                                 font.pixelSize: Theme.fontSmall
                                 color: Theme.textSecondary
+                                visible: text !== modelData.name
                             }
 
                             Text {
