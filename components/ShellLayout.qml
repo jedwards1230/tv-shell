@@ -184,6 +184,17 @@ FocusScope {
         }
     }
 
+    // When an anchored Volume/Network popover closes, return focus to the nav
+    // drawer's QuickActions row if the drawer is still open (the popover was
+    // launched from the drawer and the drawer stayed visible underneath);
+    // otherwise fall back to the home screen (home-launched case).
+    function _returnFocusAfterOverlay() {
+        if (navDrawer.opened)
+            navDrawer.focusQuickActions();
+        else
+            homeFocusTimer.restart();
+    }
+
     Timer {
         id: homeFocusTimer
         interval: 50
@@ -224,11 +235,10 @@ FocusScope {
             powerOverlay.forceActiveFocus();
         }
         onNetworkRequested: anchorRect => {
-            navDrawer.opened = false;
+            // Leave the drawer open; the overlay (higher z) paints on top.
             networkOverlay.openAt(anchorRect);
         }
         onVolumeRequested: anchorRect => {
-            navDrawer.opened = false;
             volumeOverlay.openAt(anchorRect);
         }
         onHomeSelected: {
@@ -279,22 +289,24 @@ FocusScope {
     }
 
     // === Volume Overlay ===
+    // z above the nav drawer (z:50) so the anchored popover paints in front of
+    // it while the drawer stays open underneath (#118).
     VolumeOverlay {
         id: volumeOverlay
-        z: 60
+        z: 70
         onOpenedChanged: {
             if (!volumeOverlay.opened)
-                homeFocusTimer.restart();
+                root._returnFocusAfterOverlay();
         }
     }
 
     // === Network Overlay ===
     NetworkOverlay {
         id: networkOverlay
-        z: 60
+        z: 70
         onOpenedChanged: {
             if (!networkOverlay.opened)
-                homeFocusTimer.restart();
+                root._returnFocusAfterOverlay();
         }
     }
 
