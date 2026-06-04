@@ -375,13 +375,6 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 24
 
-            Text {
-                text: "AV Control"
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
-            }
-
             Item {
                 Layout.fillWidth: true
             }
