@@ -431,7 +431,10 @@ FocusScope {
         ListView {
             id: pairedList
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(contentHeight, 300)
+            // Size from row count (delegate 96 + spacing 8), not contentHeight —
+            // ListView.contentHeight is unreliable inside a Layout and balloons
+            // the list, pushing the first card far below the header (#123).
+            Layout.preferredHeight: Math.min(root.pairedDevices.length * 104, 300)
             spacing: 8
             clip: true
             visible: root.powered && root.pairedDevices.length > 0
