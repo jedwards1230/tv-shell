@@ -46,7 +46,17 @@ FocusScope {
     Process {
         id: saveServers
         property string json: "[]"
-        command: ["bash", "-c", "echo '" + json + "' > /opt/game-shell/targets.json"]
+        // Write targets.json via tee + stdin (not `bash -c` string interpolation),
+        // so a server name/host containing ', \", ;, $(...), or newlines is treated
+        // as literal JSON and can never break out into a shell command. The JSON is
+        // a single line (JSON.stringify, no pretty-printing) so the cat+SplitParser
+        // read path in loadServers / MoonlightProvider still parses it.
+        stdinEnabled: true
+        command: ["tee", "/opt/game-shell/targets.json"]
+        onStarted: {
+            write(json);
+            stdinEnabled = false; // close stdin -> tee writes the file and exits
+        }
         // Refresh the provider's targets so the home screen reflects edits.
         onExited: StreamProviders.active.loadTargets()
     }
@@ -194,6 +204,11 @@ FocusScope {
 
     function persistServers() {
         saveServers.json = JSON.stringify(root.servers);
+        // Re-arm stdin before every save: onStarted disables it to signal EOF to
+        // tee, and that imperative assignment sticks (the declarative `stdinEnabled:
+        // true` is only the initial value). Without this, the 2nd save in a session
+        // writes an empty file and wipes the server list.
+        saveServers.stdinEnabled = true;
         saveServers.running = true;
     }
 
