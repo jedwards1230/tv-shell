@@ -227,7 +227,7 @@ FocusScope {
         FocusScope {
             id: scaleRow
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 96
             visible: root.monitors.length > 0
 
             KeyNavigation.up: monitorList
