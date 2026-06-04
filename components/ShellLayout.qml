@@ -155,6 +155,8 @@ FocusScope {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();
         }
+        onNetworkRequested: settingsPanel.openSection(2)
+        onVolumeRequested: settingsPanel.openSection(0)
         onNotificationCenterRequested: {
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
@@ -212,6 +214,14 @@ FocusScope {
             navDrawer.opened = false;
             powerOverlay.opened = true;
             powerOverlay.forceActiveFocus();
+        }
+        onNetworkRequested: {
+            navDrawer.opened = false;
+            settingsPanel.openSection(2);
+        }
+        onVolumeRequested: {
+            navDrawer.opened = false;
+            settingsPanel.openSection(0);
         }
         onHomeSelected: {
             navDrawer.opened = false;
@@ -293,6 +303,16 @@ FocusScope {
                 root.returnToShellRequested();
                 powerOverlay.opened = true;
                 powerOverlay.forceActiveFocus();
+            }
+            onNetworkRequested: {
+                root.overlayDrawerClosed();
+                root.returnToShellRequested();
+                settingsPanel.openSection(2);
+            }
+            onVolumeRequested: {
+                root.overlayDrawerClosed();
+                root.returnToShellRequested();
+                settingsPanel.openSection(0);
             }
             onClosed: {
                 root.overlayDrawerClosed();
