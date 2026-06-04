@@ -30,9 +30,11 @@ FocusScope {
     // Must match the number of icon containers below
     // (Notifications=0, Settings=1, Theme=2, Network=3, Volume=4, Power=5)
     readonly property int _iconCount: 6
+    readonly property var _labels: ["Notifications", "Settings", "Theme", "Network", "Volume", "Power"]
+    property int _labelHeight: Theme.fontHint + Units.spacingSM
 
     implicitWidth: Math.min(iconRow.implicitWidth, maxContentWidth)
-    implicitHeight: iconSize
+    implicitHeight: iconSize + _labelHeight
 
     function _ensureVisible() {
         var left = currentIndex * (iconSize + _spacing);
@@ -134,7 +136,10 @@ FocusScope {
 
     Flickable {
         id: flick
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: root.iconSize
         contentWidth: iconRow.width
         contentHeight: height
         clip: true
@@ -466,5 +471,27 @@ FocusScope {
                 }
             }
         }
+    }
+
+    Text {
+        id: actionLabel
+        anchors.top: flick.bottom
+        anchors.topMargin: Units.spacingSM
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: {
+            if (Theme.mouseMode) {
+                if (notifMA.containsMouse) return root._labels[0];
+                if (settingsMA.containsMouse) return root._labels[1];
+                if (themeMA.containsMouse) return root._labels[2];
+                if (networkMA.containsMouse) return root._labels[3];
+                if (volumeMA.containsMouse) return root._labels[4];
+                if (powerMA.containsMouse) return root._labels[5];
+                return "";
+            }
+            return (root.activeFocus && root.currentIndex >= 0 && root.currentIndex < root._labels.length) ? root._labels[root.currentIndex] : "";
+        }
+        visible: text.length > 0
+        font.pixelSize: Theme.fontHint
+        color: Theme.textMuted
     }
 }
