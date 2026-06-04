@@ -19,6 +19,7 @@ FocusScope {
     property alias overlay: overlay
     property alias notificationCenter: notificationCenter
     property alias powerOverlay: powerOverlay
+    property alias volumeOverlay: volumeOverlay
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -44,6 +45,9 @@ FocusScope {
     function toggleMenu() {
         if (powerOverlay.opened) {
             powerOverlay.opened = false;
+            homeFocusTimer.restart();
+        } else if (volumeOverlay.opened) {
+            volumeOverlay.opened = false;
             homeFocusTimer.restart();
         } else if (notificationCenter.opened) {
             notificationCenter.opened = false;
@@ -156,7 +160,10 @@ FocusScope {
             settingsPanel.forceActiveFocus();
         }
         onNetworkRequested: settingsPanel.openSection(2)
-        onVolumeRequested: settingsPanel.openSection(0)
+        onVolumeRequested: {
+            volumeOverlay.opened = true;
+            volumeOverlay.forceActiveFocus();
+        }
         onNotificationCenterRequested: {
             notificationCenter.opened = true;
             notificationCenter.forceActiveFocus();
@@ -180,7 +187,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -221,7 +228,8 @@ FocusScope {
         }
         onVolumeRequested: {
             navDrawer.opened = false;
-            settingsPanel.openSection(0);
+            volumeOverlay.opened = true;
+            volumeOverlay.forceActiveFocus();
         }
         onHomeSelected: {
             navDrawer.opened = false;
@@ -270,6 +278,16 @@ FocusScope {
         }
     }
 
+    // === Volume Overlay ===
+    VolumeOverlay {
+        id: volumeOverlay
+        z: 60
+        onOpenedChanged: {
+            if (!volumeOverlay.opened)
+                homeFocusTimer.restart();
+        }
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
@@ -312,7 +330,8 @@ FocusScope {
             onVolumeRequested: {
                 root.overlayDrawerClosed();
                 root.returnToShellRequested();
-                settingsPanel.openSection(0);
+                volumeOverlay.opened = true;
+                volumeOverlay.forceActiveFocus();
             }
             onClosed: {
                 root.overlayDrawerClosed();
