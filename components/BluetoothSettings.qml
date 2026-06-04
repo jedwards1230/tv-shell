@@ -517,9 +517,8 @@ FocusScope {
 
         SettingsEmptyState {
             Layout.fillWidth: true
-            Layout.preferredHeight: Units.gridUnit * 4
+            Layout.preferredHeight: visible ? Units.gridUnit * 4 : 0
             visible: root.powered && root.pairedDevices.length === 0
-            icon: "\u{1F4F6}"
             line: "No paired devices"
             hint: "Scan to find nearby devices"
         }
