@@ -143,6 +143,10 @@ pub enum Command {
     /// at least `class,title,address,workspace`). Replaces the QML
     /// `hyprctl clients -j` shell-out.
     HyprClients,
+    /// All monitors as a compact JSON array, including HDR-relevant fields
+    /// (currentFormat + derived hdr bool). Replaces the QML hyprctl monitors -j
+    /// READ.
+    HyprMonitors,
 
     // --- Phase 4: Sunshine session detection (reqwest) ---
     /// `sunshine-status <host> <port>` -> compact JSON object
@@ -310,6 +314,7 @@ impl Command {
             // Phase 4 bare commands (no body).
             "hypr-active" => Command::HyprActive,
             "hypr-clients" => Command::HyprClients,
+            "hypr-monitors" => Command::HyprMonitors,
             // Phase 4 HDMI-CEC bare commands (no body).
             "cec-scan" => Command::CecScan,
             "cec-active-source" => Command::CecActiveSource,
@@ -1208,6 +1213,14 @@ mod tests {
         // Word boundary: a longer word is NOT a hypr command.
         assert_eq!(Command::parse("hypr-activeX"), Command::Unknown);
         assert_eq!(Command::parse("hypr-clientsX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_phase4_hypr_monitors_command() {
+        assert_eq!(Command::parse("hypr-monitors"), Command::HyprMonitors);
+        assert_eq!(Command::parse("  hypr-monitors  "), Command::HyprMonitors);
+        // Word boundary: a longer word is NOT hypr-monitors.
+        assert_eq!(Command::parse("hypr-monitorsX"), Command::Unknown);
     }
 
     #[test]

@@ -24,6 +24,7 @@ import QtQuick
 // Events subscribed: config:changed (live-reload — daemon broadcasts when an
 //                    external writer modifies settings.json; QML re-fetches via
 //                    get-config so all keys re-apply live without a restart)
+// QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan
 Item {
     id: store
 
@@ -34,6 +35,10 @@ Item {
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
     property bool reduceMotion: false             // suppress animations (#109)
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
+    property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
+    property bool nightLightEnabled: false       // drives hyprsunset
+    property int nightLightTemp: 4500            // color temperature in Kelvin
+    property int overscan: 0                     // safe-area overscan percent (0-10)
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
@@ -69,6 +74,14 @@ Item {
                     store.reduceMotion = obj.reduceMotion;
                 if (typeof obj.textScale === "number")
                     store.textScale = obj.textScale;
+                if (typeof obj.hdrEnabled === "boolean")
+                    store.hdrEnabled = obj.hdrEnabled;
+                if (typeof obj.nightLightEnabled === "boolean")
+                    store.nightLightEnabled = obj.nightLightEnabled;
+                if (typeof obj.nightLightTemp === "number")
+                    store.nightLightTemp = obj.nightLightTemp;
+                if (typeof obj.overscan === "number")
+                    store.overscan = obj.overscan;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
             } catch (e) {
@@ -98,6 +111,10 @@ Item {
             "rumbleEnabled": store.rumbleEnabled,
             "reduceMotion": store.reduceMotion,
             "textScale": store.textScale,
+            "hdrEnabled": store.hdrEnabled,
+            "nightLightEnabled": store.nightLightEnabled,
+            "nightLightTemp": store.nightLightTemp,
+            "overscan": store.overscan,
             "moonlightViewMode": null
         });
         saveProc.request("set-config", body);
@@ -141,6 +158,30 @@ Item {
         textScale = scale;
         save();
         settingsChanged("textScale", scale);
+    }
+
+    function setHdrEnabled(enabled) {
+        hdrEnabled = enabled;
+        save();
+        settingsChanged("hdrEnabled", enabled);
+    }
+
+    function setNightLightEnabled(enabled) {
+        nightLightEnabled = enabled;
+        save();
+        settingsChanged("nightLightEnabled", enabled);
+    }
+
+    function setNightLightTemp(temp) {
+        nightLightTemp = temp;
+        save();
+        settingsChanged("nightLightTemp", temp);
+    }
+
+    function setOverscan(pct) {
+        overscan = pct;
+        save();
+        settingsChanged("overscan", pct);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===
