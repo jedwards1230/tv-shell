@@ -747,17 +747,18 @@ The response *parser* is a pure, unit-tested function (parses Sunshine's
 
 ## LAN HTTP Control Bridge (#151)
 
-An optional, LAN-bound HTTP/1.1 listener that maps `POST /intent/<target>` and
-`POST /key/<name>` onto the daemon's existing intent and key broadcast paths, so
-Home Assistant `rest_command` / curl / scripts can drive the shell without
-needing a Unix socket client.
+An optional, LAN-bound HTTP/1.1 listener that maps `POST /intent/<target>`,
+`POST /key/<name>`, and `GET /screenshot` onto the daemon's existing intent/key
+broadcast paths and the `grim` screenshotter, so Home Assistant `rest_command` /
+curl / scripts can drive the shell without needing a Unix socket client.
 
 ### Opt-in via environment variables
 
 | Variable | Purpose |
 |----------|---------|
 | `GAME_SHELL_HTTP_BIND` | `host:port` address to bind (e.g. `192.168.8.50:8731` or `0.0.0.0:8731`). When **unset** (the default), no TCP socket is opened and no control surface is exposed. |
-| `GAME_SHELL_HTTP_TOKEN` | Optional bearer token for auth. When set, every request must carry `Authorization: Bearer <token>` (exact match); requests without a valid token receive 401. When unset, any request from the bound interface is accepted. |
+| `GAME_SHELL_HTTP_TOKEN` | Bearer token for auth. When auth is enabled (the default), every request must carry `Authorization: Bearer <token>` (constant-time match); requests without a valid token receive 401. |
+| `GAME_SHELL_HTTP_AUTH_ENABLED` | Auth toggle. Default: **enabled** (unset or any value other than `0`/`false`). Set to `0` to skip auth entirely for local-only dev. When auth is enabled but `GAME_SHELL_HTTP_TOKEN` is not set, **all requests are rejected with 401** (secure by default — you cannot authenticate without a token). |
 
 > **Security note**: bind to a trusted LAN interface (e.g. `192.168.8.x:8731`),
 > not a public one. The bridge is a control surface — a mis-bound listener would
@@ -766,14 +767,37 @@ needing a Unix socket client.
 
 Default port suggestion: **8731**. The bind address must include the port.
 
+### Per-box opt-in via `daemon.env`
+
+The session script (`scripts/game-shell-session.sh`) sources an optional
+machine-local env file before starting the daemon, so per-box overrides survive
+git deploys without touching tracked files:
+
+```
+~/.config/game-shell/daemon.env
+```
+
+Example file to opt a box into the LAN HTTP bridge:
+
+```sh
+# ~/.config/game-shell/daemon.env
+# Bind the HTTP bridge to the LAN interface on this box.
+GAME_SHELL_HTTP_BIND=192.168.8.50:8731
+# Set a bearer token (required when auth is enabled, the default).
+GAME_SHELL_HTTP_TOKEN=mysecret
+# Uncomment to disable auth entirely for local-only dev:
+# GAME_SHELL_HTTP_AUTH_ENABLED=0
+```
+
 ### Routes
 
 | Method | Path | Action |
 |--------|------|--------|
 | `POST` | `/intent/<target>` | Forward `<target>` to the [`intent <name>`](#intent-name) surface. `<target>` is the full remainder after `/intent/`, percent-decoded (`settings%3Abluetooth` → `settings:bluetooth`). The daemon's existing vocabulary gate applies — unknown intents return 400. |
 | `POST` | `/key/<name>` | Forward `<name>` to the [`key <name>`](#key-name) surface (synthesize a keystroke). |
-| Any other | Any other path | 404 |
-| Non-POST | Any | 405 |
+| `GET` | `/screenshot` or `/screenshot.png` | Capture the current screen via `grim -` and return the PNG bytes with `Content-Type: image/png`. Auth applies (the screenshot exposes screen content). Returns 500 if `grim` fails or is not installed. |
+| Any other method | Any path | 405 |
+| POST | Any other path | 404 |
 
 `<target>` is the **same string** the Unix-socket `intent` command accepts,
 including deep-link namespaces (`settings:<page>`, `overlay:volume`,
@@ -785,11 +809,12 @@ re-validate).
 
 | Status | Meaning |
 |--------|---------|
-| 200 | Request accepted (`ok`) |
+| 200 | Request accepted (`ok`, or PNG body for `/screenshot`) |
 | 400 | Unknown intent or key (daemon returned `error:*`) |
-| 401 | Missing or invalid `Authorization: Bearer <token>` |
-| 404 | Unknown route (path did not match `/intent/*` or `/key/*`) |
-| 405 | Wrong method (not POST) |
+| 401 | Missing or invalid `Authorization: Bearer <token>`, or auth enabled with no token configured |
+| 404 | Unknown POST route |
+| 405 | Wrong method for the requested path |
+| 500 | `grim` failed or is not installed (`/screenshot` only) |
 | 503 | Daemon unavailable (control channel closed) |
 
 ### Home Assistant `rest_command` example
@@ -805,6 +830,11 @@ rest_command:
   game_shell_key:
     url: "http://192.168.8.50:8731/key/{{ key }}"
     method: POST
+    headers:
+      Authorization: "Bearer mysecret"
+  game_shell_screenshot:
+    url: "http://192.168.8.50:8731/screenshot"
+    method: GET
     headers:
       Authorization: "Bearer mysecret"
 ```
@@ -833,6 +863,13 @@ curl -X POST http://192.168.8.50:8731/intent/settings%3Abluetooth
 
 # Synthesize a key press
 curl -X POST http://192.168.8.50:8731/key/select
+
+# Capture a screenshot (returns image/png)
+curl -H "Authorization: Bearer mysecret" \
+     http://192.168.8.50:8731/screenshot > screenshot.png
+
+# Screenshot without auth (GAME_SHELL_HTTP_AUTH_ENABLED=0)
+curl http://192.168.8.50:8731/screenshot > screenshot.png
 ```
 
 ### Relation to the Unix socket intent surface
