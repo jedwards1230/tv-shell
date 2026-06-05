@@ -16,7 +16,7 @@
 // only wires them together. (lib+bin split — see lib.rs — so the cross-platform
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
-use game_shell_input::{bluetooth, cec, hyprland, input, ipc, network, power, protocol, state, watch};
+use game_shell_input::{bluetooth, cec, http, hyprland, input, ipc, network, power, protocol, state, watch};
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -71,6 +71,23 @@ fn main() -> anyhow::Result<()> {
             events_tx.clone(),
             dbus,
         ));
+
+        // LAN HTTP control bridge (#151): opt-in via GAME_SHELL_HTTP_BIND.
+        // When the env var is unset (the default), no socket is opened and no
+        // control surface is exposed. When set, it must be a `host:port`
+        // address the operator has bound to a trusted LAN interface.
+        if let Ok(bind_str) = std::env::var("GAME_SHELL_HTTP_BIND") {
+            match bind_str.parse::<std::net::SocketAddr>() {
+                Ok(addr) => {
+                    let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
+                    tokio::spawn(http::serve(addr, token, control_tx.clone()));
+                }
+                Err(e) => {
+                    tracing::warn!("GAME_SHELL_HTTP_BIND={bind_str:?} is not a valid host:port address: {e}");
+                }
+            }
+        }
+
         wait_for_signal().await;
         tracing::info!("signal received, shutting down");
         let _ = control_tx.send(state::Control::Shutdown).await;
