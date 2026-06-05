@@ -460,15 +460,12 @@ Rectangle {
                     }
                 }
 
-                Connections {
-                    target: Window.window
-                    ignoreUnknownSignals: true
-                    function onActiveFocusItemChanged() {
-                        var fi = Window.window ? Window.window.activeFocusItem : null;
-                        if (fi && contentFlick)
-                            contentFlick.ensureVisible(fi);
-                    }
-                }
+                // Follow keyboard/controller focus — scroll the pane to keep the
+                // focused control visible. Window.activeFocusItem is the attached
+                // property that works here (Window.window can't be a Connections target).
+                property Item _afItem: Window.activeFocusItem
+                on_AfItemChanged: if (contentArea._afItem)
+                    contentFlick.ensureVisible(contentArea._afItem)
             }
         }
     }
