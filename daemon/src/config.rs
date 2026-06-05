@@ -608,10 +608,7 @@ pub fn parse_per_game_bindings(
 ) -> std::collections::HashMap<String, std::collections::HashMap<&'static str, u16>> {
     let mut out: std::collections::HashMap<String, std::collections::HashMap<&'static str, u16>> =
         std::collections::HashMap::new();
-    let Some(obj) = settings
-        .get("perGameBindings")
-        .and_then(|v| v.as_object())
-    else {
+    let Some(obj) = settings.get("perGameBindings").and_then(|v| v.as_object()) else {
         return out;
     };
     for (game_id, game_val) in obj {
@@ -995,9 +992,15 @@ mod tests {
         });
         let result = parse_per_player_bindings(&settings);
         // Slot 0: select -> BTN_NORTH
-        assert_eq!(result.get(&0).and_then(|m| m.get("select")).copied(), Some(BTN_NORTH));
+        assert_eq!(
+            result.get(&0).and_then(|m| m.get("select")).copied(),
+            Some(BTN_NORTH)
+        );
         // Slot 1: back -> BTN_WEST
-        assert_eq!(result.get(&1).and_then(|m| m.get("back")).copied(), Some(BTN_WEST));
+        assert_eq!(
+            result.get(&1).and_then(|m| m.get("back")).copied(),
+            Some(BTN_WEST)
+        );
         // Slot 2: both entries invalid -> not present (or empty, not inserted)
         assert!(result.get(&2).is_none());
         // Bogus/out-of-range slots not present
@@ -1020,11 +1023,17 @@ mod tests {
         });
         let result = parse_per_game_bindings(&settings);
         assert_eq!(
-            result.get("steam_12345").and_then(|m| m.get("select")).copied(),
+            result
+                .get("steam_12345")
+                .and_then(|m| m.get("select"))
+                .copied(),
             Some(BTN_NORTH)
         );
         assert_eq!(
-            result.get("steam_99999").and_then(|m| m.get("back")).copied(),
+            result
+                .get("steam_99999")
+                .and_then(|m| m.get("back"))
+                .copied(),
             Some(BTN_TR)
         );
         assert!(result.get("").is_none());
@@ -1104,7 +1113,6 @@ mod tests {
         assert_eq!(resolve_button_key(&global, None, None, BTN_THUMBL), None);
     }
 
-
     #[test]
     fn note_self_write_advances_generation() {
         // note_self_write() must strictly advance the counter each call.
@@ -1112,7 +1120,10 @@ mod tests {
         let before = self_write_gen();
         note_self_write();
         let after = self_write_gen();
-        assert!(after > before, "generation must advance after note_self_write");
+        assert!(
+            after > before,
+            "generation must advance after note_self_write"
+        );
         // A second call advances again.
         note_self_write();
         assert!(self_write_gen() > after, "each note_self_write increments");

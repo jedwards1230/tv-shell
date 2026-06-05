@@ -16,7 +16,9 @@
 // only wires them together. (lib+bin split — see lib.rs — so the cross-platform
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
-use game_shell_input::{bluetooth, cec, http, hyprland, input, ipc, network, power, protocol, state, watch};
+use game_shell_input::{
+    bluetooth, cec, http, hyprland, input, ipc, network, power, protocol, state, watch,
+};
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -83,7 +85,9 @@ fn main() -> anyhow::Result<()> {
                     tokio::spawn(http::serve(addr, token, control_tx.clone()));
                 }
                 Err(e) => {
-                    tracing::warn!("GAME_SHELL_HTTP_BIND={bind_str:?} is not a valid host:port address: {e}");
+                    tracing::warn!(
+                        "GAME_SHELL_HTTP_BIND={bind_str:?} is not a valid host:port address: {e}"
+                    );
                 }
             }
         }

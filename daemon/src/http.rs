@@ -409,10 +409,7 @@ mod tests {
 
     #[test]
     fn unknown_path_not_found() {
-        assert_eq!(
-            parse_request_line("POST", "/foo"),
-            Err(HttpError::NotFound)
-        );
+        assert_eq!(parse_request_line("POST", "/foo"), Err(HttpError::NotFound));
     }
 
     #[test]
@@ -509,10 +506,7 @@ mod tests {
     #[test]
     fn extract_auth_present() {
         let raw = b"POST /intent/menu HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret\r\n\r\n";
-        assert_eq!(
-            extract_authorization(raw),
-            Some("Bearer secret".to_owned())
-        );
+        assert_eq!(extract_authorization(raw), Some("Bearer secret".to_owned()));
     }
 
     #[test]

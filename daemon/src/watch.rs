@@ -104,11 +104,9 @@ pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Even
     while let Some(batch) = fwd_rx.recv().await {
         // Filter: only act on events whose path is settings.json.
         let touched = match &batch {
-            Ok(events) => events.iter().any(|ev| {
-                ev.path
-                    .file_name()
-                    .map_or(false, |n| n == "settings.json")
-            }),
+            Ok(events) => events
+                .iter()
+                .any(|ev| ev.path.file_name().map_or(false, |n| n == "settings.json")),
             Err(errs) => {
                 for e in errs {
                     tracing::debug!("watch: inotify error: {e}");

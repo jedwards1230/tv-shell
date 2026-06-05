@@ -451,7 +451,7 @@ impl Command {
                         Command::SetActiveGame(body.to_string())
                     };
                 }
-                                // Python keys `set-binding` off the `"set-binding "` prefix
+                // Python keys `set-binding` off the `"set-binding "` prefix
                 // (with trailing space), so a bare `set-binding` is `unknown`.
                 if let Some(rest) = cmd.strip_prefix("set-binding ") {
                     // Mirror Python `cmd.split(None, 2)`: at most two splits, so
@@ -1597,7 +1597,7 @@ mod tests {
         assert_eq!(Command::parse("set-active-gameX"), Command::Unknown);
     }
 
-        #[test]
+    #[test]
     fn config_changed_event_wire_string() {
         // config:changed is payload-less — the subscriber re-fetches via get-config.
         assert_eq!(Event::ConfigChanged.to_string(), "config:changed");

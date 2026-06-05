@@ -1425,10 +1425,7 @@ fn set_player_led_sysfs(devnode: &std::path::Path, slot: u8) -> std::io::Result<
             }
             let mut primary_node: Option<PathBuf> = None;
             for sibling in &siblings {
-                let sib_name = sibling
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let sib_name = sibling.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 // Extract the player number from the suffix `player-N`.
                 let player_num: Option<u8> = sib_name
                     .rfind(":white:player-")
@@ -1516,14 +1513,10 @@ mod led_tests {
     #[test]
     fn pick_single_candidate_is_returned() {
         let pad = PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/input/input5");
-        let candidates = vec![PathBuf::from(
-            "/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",
-        )];
+        let candidates = vec![PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/leds/xpad0")];
         assert_eq!(
             pick_leds_node(&pad, &candidates),
-            Some(PathBuf::from(
-                "/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",
-            ))
+            Some(PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",))
         );
     }
 
@@ -1540,9 +1533,7 @@ mod led_tests {
         ];
         assert_eq!(
             pick_leds_node(&pad, &candidates),
-            Some(PathBuf::from(
-                "/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",
-            ))
+            Some(PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",))
         );
     }
 
@@ -1558,9 +1549,7 @@ mod led_tests {
         ];
         assert_eq!(
             pick_leds_node(&pad, &candidates),
-            Some(PathBuf::from(
-                "/sys/devices/pci0000:00/usb1/leds/xpad0",
-            ))
+            Some(PathBuf::from("/sys/devices/pci0000:00/usb1/leds/xpad0",))
         );
     }
 
@@ -1569,9 +1558,7 @@ mod led_tests {
     #[test]
     fn pick_single_xpad_regression() {
         let pad = PathBuf::from("/sys/devices/pci0000:00/usb1/1-3/input/input2");
-        let candidates = vec![PathBuf::from(
-            "/sys/devices/pci0000:00/usb1/1-3/leds/xpad0",
-        )];
+        let candidates = vec![PathBuf::from("/sys/devices/pci0000:00/usb1/1-3/leds/xpad0")];
         let result = pick_leds_node(&pad, &candidates);
         assert!(
             result.is_some(),
@@ -2097,10 +2084,9 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
             // Re-parse per-player and per-game binding overrides so an external
             // edit to perPlayerBindings/perGameBindings takes effect live.
-            let doc: Option<serde_json::Value> =
-                std::fs::read_to_string(config::settings_path())
-                    .ok()
-                    .and_then(|t| serde_json::from_str(&t).ok());
+            let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok());
             let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             sh.per_player_bindings = config::parse_per_player_bindings(&doc);
             sh.per_game_bindings = config::parse_per_game_bindings(&doc);
