@@ -34,8 +34,11 @@ jobs:
       # bluer (BlueZ binding) pulls in libdbus-sys, which needs the system
       # libdbus headers + pkg-config at build time. zbus is pure-Rust and needs
       # nothing. game-client-1 has libdbus at runtime (dbus is core on Arch).
+      # cec-rs (HDMI-CEC actor, #94) requires libcec-dev at build time (it wraps
+      # the system libcec C library via bindgen). libclang-dev is needed by
+      # bindgen. game-client-1 has libcec at runtime (cec-utils on Arch).
       - name: Install D-Bus build deps
-        run: apt-get update && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+        run: apt-get update && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config libcec-dev libclang-dev
 
       - name: Add rustfmt + clippy
         run: rustup component add rustfmt clippy

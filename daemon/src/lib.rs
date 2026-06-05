@@ -32,3 +32,7 @@ pub mod power;
 // Hyprland IPC over its Unix sockets directly (no crate; Linux-only).
 #[cfg(target_os = "linux")]
 pub mod hyprland;
+
+// HDMI-CEC actor via cec-rs/libcec (Linux-only; requires system libcec).
+#[cfg(target_os = "linux")]
+pub mod cec;
