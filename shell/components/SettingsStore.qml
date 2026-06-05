@@ -299,14 +299,14 @@ Item {
         id: startupSinkApply
         environment: ({"GAME_SHELL_SINK": store.defaultSink})
         command: ["bash", "-c",
-            "[ -z "$GAME_SHELL_SINK" ] && exit 0; " +
+            "[ -z \"$GAME_SHELL_SINK\" ] && exit 0; " +
             "if command -v jq >/dev/null 2>&1; then " +
-            "  id=$(pw-dump 2>/dev/null | jq -r --arg n "$GAME_SHELL_SINK" " +
-            "    '.[] | select(.info.props["node.name"]==$n) | .id' | head -1); " +
+            "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$GAME_SHELL_SINK\" " +
+            "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " +
             "else " +
-            "  id=$(wpctl status 2>/dev/null | grep -F "$GAME_SHELL_SINK" | grep -oE '[0-9]+' | head -1); " +
+            "  id=$(wpctl status 2>/dev/null | grep -F \"$GAME_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " +
             "fi; " +
-            "[ -n "$id" ] && wpctl set-default "$id" || true"]
+            "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
     }
 
     onDefaultSinkChanged: {
