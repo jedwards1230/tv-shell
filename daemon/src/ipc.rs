@@ -613,6 +613,16 @@ mod tests {
             send_line(&mut s, "intent").await,
             "error:usage: intent <name>"
         );
+        // Deep-link intents: valid namespaced targets are accepted.
+        assert_eq!(send_line(&mut s, "intent settings:bluetooth").await, "ok");
+        assert_eq!(send_line(&mut s, "intent overlay:volume").await, "ok");
+        assert_eq!(send_line(&mut s, "intent overlay:network").await, "ok");
+        assert_eq!(send_line(&mut s, "intent app:firefox").await, "ok");
+        // Unknown overlay target -> rejected.
+        assert_eq!(
+            send_line(&mut s, "intent overlay:bogus").await,
+            "error:unknown intent 'overlay:bogus'"
+        );
 
         // Rumble control surface: a well-formed command round-trips the runtime
         // (the fake replies ok); a malformed body is a stateless usage error.

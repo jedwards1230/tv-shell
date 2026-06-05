@@ -180,11 +180,66 @@ pub enum Command {
 /// broadcast bus. Earlier revisions listed `nav-up/down/left/right`/`select`/
 /// `back` here, but nothing produced or consumed them — they were a dead
 /// parallel path, removed in favor of `key <name>`.
+///
+/// ## Deep-link namespaces
+///
+/// In addition to the coarse vocabulary above, `is_known_intent` also accepts
+/// deep-link targets in namespaced form `<ns>:<leaf>`:
+///
+/// - `settings:<page>` — open a named settings page. The daemon accepts any
+///   non-empty `<leaf>`; the page registry lives in QML (`SettingsPanel`), so
+///   unknown page slugs are accepted by the daemon (`ok` + broadcast) but are
+///   a graceful no-op in QML (logged, no crash).
+/// - `overlay:<target>` — open a QAM overlay popover. The daemon validates
+///   `<target>` against the closed [`INTENT_OVERLAY_TARGETS`] set; unknown
+///   overlay targets are rejected with `error:unknown intent '<name>'`.
+/// - `app:<id>` — launch the local app whose `wmClass` (StartupWMClass) is
+///   `<id>`. The daemon accepts any non-empty `<leaf>`; the live app list lives
+///   in QML, so an absent app is a graceful no-op in QML (logged, no crash).
+///
+/// A name with an empty leaf (`settings:`, `overlay:`, `app:`) or an unknown
+/// namespace (`foo:bar`) returns `false` → the daemon replies
+/// `error:unknown intent '<name>'`.
+///
+/// The wire format is unchanged: `Event::Intent` already renders
+/// `intent:<name>` verbatim, so `intent:settings:bluetooth` arrives in QML as
+/// the string `"settings:bluetooth"` inside the `intent:` prefix — no new
+/// Command/Event/Control variants are needed.
 pub const INTENT_VOCAB: &[&str] = &["home", "home-tap", "home-hold", "menu", "settings", "power"];
 
-/// True if `name` is in the closed intent vocabulary.
+/// The closed set of overlay targets accepted by the `overlay:<target>`
+/// deep-link namespace. Validated here in the daemon (unlike `settings` and
+/// `app` whose registries live in QML).
+pub const INTENT_OVERLAY_TARGETS: &[&str] = &["volume", "network"];
+
+/// True if `name` is a known intent — either a coarse vocabulary entry or a
+/// valid deep-link target. The function is pure/side-effect-free and is shared
+/// by the input runtime, the IPC fake, and the protocol tests.
+///
+/// Acceptance rules:
+/// - `INTENT_VOCAB.contains(&name)` — unchanged coarse path.
+/// - `name.split_once(':') ` into `(ns, leaf)` with non-empty `leaf` AND one
+///   of the recognised namespaces:
+///   - `ns == "settings"` — any non-empty leaf (page registry is in QML).
+///   - `ns == "app"` — any non-empty leaf (app list lives in QML).
+///   - `ns == "overlay"` with `INTENT_OVERLAY_TARGETS.contains(&leaf)`.
+/// - Everything else returns `false`.
 pub fn is_known_intent(name: &str) -> bool {
-    INTENT_VOCAB.contains(&name)
+    if INTENT_VOCAB.contains(&name) {
+        return true;
+    }
+    if let Some((ns, leaf)) = name.split_once(':') {
+        if leaf.is_empty() {
+            return false;
+        }
+        return match ns {
+            "settings" => true,
+            "app" => true,
+            "overlay" => INTENT_OVERLAY_TARGETS.contains(&leaf),
+            _ => false,
+        };
+    }
+    false
 }
 
 /// If `cmd` is `word` (exact) or `word` followed by whitespace, return the
@@ -1237,6 +1292,30 @@ mod tests {
         assert_eq!(
             pad_index_json("uniq:aa:bb", 2),
             r#"{"id":"uniq:aa:bb","index":2}"#
+        );
+    }
+
+    #[test]
+    fn is_known_intent_deep_links() {
+        // Deep-link namespaces accepted by the daemon.
+        assert!(is_known_intent("settings:bluetooth"));
+        assert!(is_known_intent("overlay:volume"));
+        assert!(is_known_intent("overlay:network"));
+        assert!(is_known_intent("app:firefox"));
+        // Unknown overlay leaf -> rejected.
+        assert!(!is_known_intent("overlay:bogus"));
+        // Empty leaf -> rejected for all namespaces.
+        assert!(!is_known_intent("settings:"));
+        assert!(!is_known_intent("app:"));
+        assert!(!is_known_intent("overlay:"));
+        // Unknown namespace -> rejected.
+        assert!(!is_known_intent("foo:bar"));
+        // Bare coarse intent still works (settings without a colon).
+        assert!(is_known_intent("settings"));
+        // Event wire form: intent:settings:bluetooth -> name is "settings:bluetooth".
+        assert_eq!(
+            Event::Intent("settings:bluetooth".into()).to_string(),
+            "intent:settings:bluetooth"
         );
     }
 

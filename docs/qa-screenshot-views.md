@@ -8,7 +8,7 @@ screenshot batch. Keep this updated as views are added or changed.
 See the `game-shell-dev` skill ("Driving the UI for Screenshots"). In short there
 are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 - **Directional nav / select / back = real key events.** Either `wtype -k <Left|Right|Up|Down|Return|Escape>` (Wayland virtual keyboard) **or** the daemon's `key <name>` IPC (`key up|down|left|right|select|back` over the socket). Both reach the focused surface's `KeyNavigation`. There is **no `Tab` drawer key** — `wtype -k Tab` does nothing useful.
-- **Drawer / settings / power / home = the `intent` control surface** (socket): `echo "intent menu" | nc -U /run/user/1000/game-shell-input.sock` toggles the **left nav drawer**; `intent settings` / `intent power` / `intent home` open those. (At the TV the drawer also opens via gamepad **Home** tap or a bare **Super** press — Hyprland bind → `super-intent.sh` → `intent menu`. Super+Escape = escape; Super+Backspace = reset.)
+- **Drawer / settings / power / home = the `intent` control surface** (socket): `echo "intent menu" | nc -U /run/user/1000/game-shell-input.sock` toggles the **left nav drawer**; `intent settings` / `intent power` / `intent home` open those. (At the TV the drawer also opens via gamepad **Home** tap or a bare **Super** press — Hyprland bind → `super-intent.sh` → `intent menu`. Super+Escape = escape; Super+Backspace = reset.) Deep-link targets also use this surface: `intent settings:<page>` opens a specific settings page in one command (e.g. `intent settings:bluetooth`); `intent overlay:volume` / `intent overlay:network` open the respective QAM popover; `intent app:<wmClass>` launches a local app by its StartupWMClass.
 - Screenshots are 4K (~2000 tokens each) — shoot in **tiers** (below), not all at once.
 
 ## Home screen index map (QuickActions, top-right)
@@ -51,14 +51,14 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | C17 | Session conflict dialog (`SessionDialog`) | real stream conflict | needs live conflict / mock |
 | C18 | Stream overlay (`StreamOverlay`) | launching / reconnecting / error | needs active/failing stream |
 | C19 | Error log viewer (`ErrorLogViewer`) | notification center → error log | wtype |
-| C20 | Volume QAM popover (`VolumeOverlay`) | home QuickActions idx 4 → Return; also reachable from the nav drawer | wtype |
-| C21 | Network QAM popover (`NetworkOverlay`) | home QuickActions idx 3 → Return; also reachable from the nav drawer | wtype |
+| C20 | Volume QAM popover (`VolumeOverlay`) | home QuickActions idx 4 → Return; also reachable from the nav drawer; also `intent overlay:volume` (socket) | wtype |
+| C21 | Network QAM popover (`NetworkOverlay`) | home QuickActions idx 3 → Return; also reachable from the nav drawer; also `intent overlay:network` (socket) | wtype |
 
 ## D. Settings panel + pages + substates
 | # | View | How to reach / notes |
 |---|------|----------------------|
 | D20 | Settings sidebar (panel open) | QuickActions idx 1 → Return |
-| D21–31 | Pages: Audio, Bluetooth, Network, Display, Controllers, Key Bindings, AV Control, Moonlight, Appearance, Accessibility, Power | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. |
+| D21–31 | Pages: Audio, Bluetooth, Network, Display, Controllers, Key Bindings, AV Control, Moonlight, Appearance, Accessibility, Power | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. Each page is also directly reachable via `intent settings:<id>` (socket) — id slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`, `keybindings`, `avcontrol`, `appearance`, `accessibility`, `power` (plus `streaming` or provider id when active). |
 | — | Bluetooth — scanning + device list | substate |
 | — | Network — Wi-Fi list / connect | substate |
 | — | Controllers — pad connected vs none | substate |
