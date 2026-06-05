@@ -9,9 +9,21 @@ FocusScope {
     id: root
 
     readonly property var textSizeOptions: [
-        {id: 1.0, label: "Default", desc: "Standard couch-readable size"},
-        {id: 1.15, label: "Large", desc: "~15% larger text"},
-        {id: 1.3, label: "Larger", desc: "~30% larger text"}
+        {
+            id: 1.0,
+            label: "Default",
+            desc: "Standard couch-readable size"
+        },
+        {
+            id: 1.15,
+            label: "Large",
+            desc: "~15% larger text"
+        },
+        {
+            id: 1.3,
+            label: "Larger",
+            desc: "~30% larger text"
+        }
     ]
 
     function focusFirst() {
@@ -106,9 +118,7 @@ FocusScope {
         FocusScope {
             id: textSizeScope
             Layout.fillWidth: true
-            Layout.preferredHeight: _dropOpen
-                ? Math.min(root.textSizeOptions.length * 80 + 88, 400)
-                : 88
+            Layout.preferredHeight: _dropOpen ? Math.min(root.textSizeOptions.length * 80 + 88, 400) : 88
 
             property bool _dropOpen: false
             property string currentLabel: {
@@ -134,8 +144,7 @@ FocusScope {
                 width: parent.width
                 height: 88
                 radius: 16
-                color: textSizeScope.activeFocus && !textSizeScope._dropOpen
-                    ? Theme.surfaceHover : Theme.surface
+                color: textSizeScope.activeFocus && !textSizeScope._dropOpen ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: textSizeScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
 
