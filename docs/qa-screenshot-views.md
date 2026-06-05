@@ -63,7 +63,7 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | — | Network — Wi-Fi list / connect | substate |
 | — | Controllers — pad connected vs none | substate |
 | — | Key Bindings — capture mode ("press a button") | substate |
-| — | AV Control — CEC device info populated | substate |
+| — | AV Control — CEC device info populated | substate — reads `cec-scan` JSON from daemon + subscribes to `cec:device:*`/`cec:power:*` events (#16) |
 | — | Moonlight — add/edit server form + servers/apps toggle | substate |
 | — | Appearance — each theme mode selected (auto/light/dark) | substate |
 | — | Accessibility — Reduce Motion on/off; Text Size Default/Large/Larger | substate |
