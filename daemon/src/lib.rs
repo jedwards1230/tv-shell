@@ -36,3 +36,8 @@ pub mod hyprland;
 // HDMI-CEC actor via cec-rs/libcec (Linux-only; requires system libcec).
 #[cfg(target_os = "linux")]
 pub mod cec;
+
+// File-watch actor: inotify-watches settings.json for external edits and
+// broadcasts config:changed. Uses notify-debouncer-full (Linux-only crate).
+#[cfg(target_os = "linux")]
+pub mod watch;

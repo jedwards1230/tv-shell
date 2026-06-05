@@ -21,6 +21,9 @@ import QtQuick
 // IPC protocol: see docs/IPC_PROTOCOL.md
 // Commands used: get-config, set-config, get-bindings, set-binding,
 //                capture-next, capture-cancel
+// Events subscribed: config:changed (live-reload — daemon broadcasts when an
+//                    external writer modifies settings.json; QML re-fetches via
+//                    get-config so all keys re-apply live without a restart)
 Item {
     id: store
 
@@ -35,7 +38,7 @@ Item {
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
 
-    // === Change notification (foundation for #53 file-watching) ===
+    // === Change notification ===
     signal settingsChanged(string key, var value)
 
     // === Binding IPC signals ===
@@ -197,5 +200,24 @@ Item {
         id: cancelCaptureProc
     }
 
-    Component.onCompleted: load()
+    // --- Live-reload: subscribe to config:changed events from the daemon. ---
+    // The daemon inotify-watches settings.json and broadcasts config:changed
+    // when an external writer (SSH/Ansible/web UI) modifies it. The daemon
+    // suppresses its own set-config/set-binding writes via a self-write
+    // generation guard, so this fires only for foreign edits. We re-fetch the
+    // full document via get-config (the same path as startup load()), so every
+    // QML-owned key re-applies live and keyBindings propagates to consumers.
+    SocketClient {
+        id: configWatch
+        subscribe: true
+        onLineReceived: line => {
+            if (line === "config:changed")
+                store.load();
+        }
+    }
+
+    Component.onCompleted: {
+        load();
+        configWatch.start();
+    }
 }
