@@ -47,6 +47,11 @@ Rectangle {
     }
 
     Component {
+        id: accessibilityComp
+        AccessibilitySettings {}
+    }
+
+    Component {
         id: appearanceComp
         AppearanceSettings {}
     }
@@ -117,6 +122,12 @@ Rectangle {
             iconSource: "icons/appearance.svg",
             fallback: "\u{1F3A8}",
             component: appearanceComp
+        });
+        s.push({
+            name: "Accessibility",
+            iconSource: "icons/accessibility.svg",
+            fallback: "\u{267F}",
+            component: accessibilityComp
         });
         s.push({
             name: "Power",
