@@ -1002,9 +1002,9 @@ mod tests {
             Some(BTN_WEST)
         );
         // Slot 2: both entries invalid -> not present (or empty, not inserted)
-        assert!(result.get(&2).is_none());
+        assert!(!result.contains_key(&2));
         // Bogus/out-of-range slots not present
-        assert!(result.get(&9).is_none());
+        assert!(!result.contains_key(&9));
 
         // Absent key -> empty map
         let empty = parse_per_player_bindings(&serde_json::json!({}));
@@ -1036,8 +1036,8 @@ mod tests {
                 .copied(),
             Some(BTN_TR)
         );
-        assert!(result.get("").is_none());
-        assert!(result.get("bad_game").is_none());
+        assert!(!result.contains_key(""));
+        assert!(!result.contains_key("bad_game"));
 
         // Absent key -> empty map
         let empty = parse_per_game_bindings(&serde_json::json!({}));

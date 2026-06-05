@@ -115,7 +115,7 @@ pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Even
                 ev.event
                     .paths
                     .iter()
-                    .any(|p| p.file_name().map_or(false, |n| n == "settings.json"))
+                    .any(|p| p.file_name().is_some_and(|n| n == "settings.json"))
             }),
             Err(errs) => {
                 for e in errs {
