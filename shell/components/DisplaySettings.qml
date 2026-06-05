@@ -97,8 +97,8 @@ FocusScope {
         // Monitor list
         SettingsList {
             id: monitorList
-            // rowStride = delegate 180 + spacing 16 (→ stride 196 rounds to 200
-            // matching Math.min(count*200,400) — #123/#139 row-count sizing).
+            // rowStride:200 preserves the original Math.min(count*200,400) formula
+            // exactly; true geometric stride is delegate 180 + spacing 16 = 196.
             rowStride: 200
             maxHeight: 400
             spacing: 16

@@ -7,6 +7,7 @@ import QtQuick.Layouts
 ListView {
     id: root
     // rowStride = delegate height + spacing (caller sets both to match its delegate).
+    // callers MUST override rowStride and maxHeight to match their delegate geometry
     property int rowStride: 104
     property int maxHeight: 300
     property int minRows: 0
