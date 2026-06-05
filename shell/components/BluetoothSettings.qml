@@ -417,15 +417,12 @@ FocusScope {
             visible: root.powered && root.pairedDevices.length > 0
         }
 
-        ListView {
+        SettingsList {
             id: pairedList
-            Layout.fillWidth: true
-            // Size from row count (delegate 96 + spacing 8), not contentHeight —
-            // ListView.contentHeight is unreliable inside a Layout and balloons
-            // the list, pushing the first card far below the header (#123).
-            Layout.preferredHeight: Math.min(root.pairedDevices.length * 104, 300)
+            // rowStride = delegate 96 + spacing 8 (#123/#139 row-count sizing).
+            rowStride: 104
+            maxHeight: 300
             spacing: 8
-            clip: true
             visible: root.powered && root.pairedDevices.length > 0
             model: root.pairedDevices
 
@@ -524,16 +521,12 @@ FocusScope {
             visible: root.powered && root.availableDevices.length > 0
         }
 
-        ListView {
+        SettingsList {
             id: availList
-            Layout.fillWidth: true
-            // Content-sized like pairedList; a trailing fillHeight spacer (below)
-            // absorbs slack so this list packs directly under its header. A
-            // fillHeight ListView wedged mid-column floated the paired block to
-            // the page middle when this list was hidden (#123).
-            Layout.preferredHeight: Math.min(root.availableDevices.length * 104, 300)
+            // rowStride = delegate 96 + spacing 8 (#123/#139 row-count sizing).
+            rowStride: 104
+            maxHeight: 300
             spacing: 8
-            clip: true
             visible: root.powered && root.availableDevices.length > 0
             model: root.availableDevices
 
