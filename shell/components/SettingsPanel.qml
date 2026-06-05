@@ -442,14 +442,13 @@ Rectangle {
                     }
 
                     function ensureVisible(it) {
-                        if (!it) return;
+                        if (!it)
+                            return;
                         var p = it.mapToItem(contentFlick.contentItem, 0, 0);
                         if (p.y < contentFlick.contentY)
                             contentFlick.contentY = Math.max(0, p.y - 24);
                         else if (p.y + it.height > contentFlick.contentY + contentFlick.height)
-                            contentFlick.contentY = Math.min(
-                                p.y + it.height - contentFlick.height + 24,
-                                Math.max(0, contentFlick.contentHeight - contentFlick.height));
+                            contentFlick.contentY = Math.min(p.y + it.height - contentFlick.height + 24, Math.max(0, contentFlick.contentHeight - contentFlick.height));
                     }
 
                     Loader {

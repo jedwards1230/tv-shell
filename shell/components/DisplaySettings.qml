@@ -190,7 +190,6 @@ FocusScope {
             model: root.monitors
             focus: true
 
-
             KeyNavigation.down: hdrToggleScope
 
             delegate: Rectangle {
@@ -320,7 +319,6 @@ FocusScope {
             KeyNavigation.up: monitorList
             KeyNavigation.down: scaleRow
 
-
             Keys.onReturnPressed: {
                 SettingsStore.setHdrEnabled(!SettingsStore.hdrEnabled);
                 root.applyHdr(SettingsStore.hdrEnabled);
@@ -369,7 +367,6 @@ FocusScope {
 
             KeyNavigation.up: hdrToggleScope
             KeyNavigation.down: modeDropdownScope
-
 
             property var scales: [0.5, 1.0, 1.25, 1.5, 1.75, 2.0]
             property int selectedScale: {
@@ -501,7 +498,6 @@ FocusScope {
 
             KeyNavigation.up: scaleRow
             KeyNavigation.down: refreshDropdownScope
-
 
             Behavior on Layout.preferredHeight {
                 NumberAnimation {
@@ -714,7 +710,6 @@ FocusScope {
             KeyNavigation.up: modeDropdownScope
             KeyNavigation.down: nightLightToggleScope
 
-
             Behavior on Layout.preferredHeight {
                 NumberAnimation {
                     duration: 200
@@ -881,7 +876,6 @@ FocusScope {
             KeyNavigation.up: refreshDropdownScope
             KeyNavigation.down: nightLightTempScope
 
-
             Keys.onReturnPressed: {
                 SettingsStore.setNightLightEnabled(!SettingsStore.nightLightEnabled);
                 root.applyNightLightSetting(SettingsStore.nightLightEnabled, SettingsStore.nightLightTemp);
@@ -949,7 +943,6 @@ FocusScope {
 
             KeyNavigation.up: nightLightToggleScope
             KeyNavigation.down: overscanScope
-
 
             Behavior on Layout.preferredHeight {
                 NumberAnimation {
@@ -1139,7 +1132,6 @@ FocusScope {
             KeyNavigation.up: nightLightTempScope
             KeyNavigation.down: modeList
 
-
             property var overscanOptions: [0, 2, 4, 6, 8, 10]
             property int selectedIndex: {
                 let v = SettingsStore.overscan;
@@ -1228,7 +1220,6 @@ FocusScope {
             Layout.alignment: Qt.AlignHCenter
             spacing: 40
             focus: false
-
 
             property var modes: [
                 {
