@@ -1232,22 +1232,115 @@ fn read_sysfs_trimmed(path: &std::path::Path) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// LED driver convention inferred from a sysfs leds node name.
+///
+/// Classified by the NAME of the directory under `leds/` (the node itself, not
+/// its parent), using substring matching so both the simple `xpad0` form and the
+/// BDADDR-prefixed `0005:054C:0CE6.000D:white:player-1` form are handled
+/// correctly across kernel versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LedConvention {
+    /// Xbox / xpad ring-LED brightness: write `6 + slot` to `brightness`.
+    Xpad,
+    /// Sony DualSense/DualShock4 `*:white:player-N` per-slot player indicators.
+    /// Write `1` to the matching `player-<slot+1>` sibling, `0` to the others.
+    SonyPlayer,
+    /// Sony DualSense RGB lightbar (`*:rgb:indicator`).
+    /// Write a per-slot solid colour via `multi_intensity` (R G B).
+    SonyRgb,
+}
+
+/// Classify a leds node by its directory name.
+///
+/// This is a pure function with no I/O so it can be unit-tested without real
+/// sysfs. Matching is by substring so it is robust across kernel naming variants
+/// (short `xpad0`, BDADDR-prefixed `0005:054C:...:white:player-1`, etc.).
+fn classify_led_node(node_name: &str) -> LedConvention {
+    if node_name.contains(":white:player-") {
+        LedConvention::SonyPlayer
+    } else if node_name.contains(":rgb:indicator") {
+        LedConvention::SonyRgb
+    } else {
+        // Covers bare `xpad0`, `xpad1`, and any plain-brightness ring node.
+        LedConvention::Xpad
+    }
+}
+
+/// Per-slot RGB colour table for the Sony RGB lightbar.
+///
+/// P1 blue, P2 red, P3 green, P4 magenta — matches the DualSense player
+/// colour conventions used by hid-playstation when the OS does not override
+/// them. Written as `R G B` (space-separated, decimal) to `multi_intensity`.
+const SONY_RGB_COLORS: [(u8, u8, u8); 4] = [
+    (0, 0, 255),   // P1 blue
+    (255, 0, 0),   // P2 red
+    (0, 255, 0),   // P3 green
+    (255, 0, 255), // P4 magenta
+];
+
+/// Choose the best-correlated leds node for a specific pad from a set of
+/// candidates found under a shared `leds/` dir.
+///
+/// Selection criterion: the candidate whose canonicalized path shares the
+/// **longest common prefix** with `pad_device_path` is the physically nearest
+/// node for that pad. Ties are broken by sorted node name (lexicographic
+/// ascending), so `xpad0` beats `xpad1` when prefixes are equal, and the
+/// choice is always deterministic regardless of `read_dir` order.
+///
+/// Returns `None` when `candidates` is empty.
+///
+/// This is a pure function with no I/O so it can be unit-tested without real
+/// sysfs. All path resolution must be done by the caller before passing in.
+fn pick_leds_node(pad_device_path: &std::path::Path, candidates: &[PathBuf]) -> Option<PathBuf> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Count the number of path components shared between `a` and `b`.
+    fn shared_prefix_len(a: &std::path::Path, b: &std::path::Path) -> usize {
+        a.components()
+            .zip(b.components())
+            .take_while(|(x, y)| x == y)
+            .count()
+    }
+
+    candidates
+        .iter()
+        .max_by(|a, b| {
+            let la = shared_prefix_len(pad_device_path, a);
+            let lb = shared_prefix_len(pad_device_path, b);
+            la.cmp(&lb)
+                // Tie-break: sorted name — choose the *smaller* name (xpad0 < xpad1)
+                // by reversing the secondary comparison (max_by picks the larger).
+                .then_with(|| {
+                    let na = a.file_name().unwrap_or_default();
+                    let nb = b.file_name().unwrap_or_default();
+                    nb.cmp(na) // reversed so max_by picks the lexicographically smallest
+                })
+        })
+        .cloned()
+}
+
 /// sysfs player-LED fallback for pads that expose their player ring via
-/// `/sys/class/leds` instead of `EV_LED` (the xpad / Xbox 360 driver does this).
+/// `/sys/class/leds` instead of `EV_LED`.
 ///
-/// `devnode` is the pad's `/dev/input/eventN` path. We map it to
-/// `/sys/class/input/eventN/device` (a symlink into the device tree), then walk
-/// **up** the parent dirs until we find one containing a `leds/` subdir
-/// (e.g. `.../usb3/3-1/leds/`), and take the first entry under it (e.g. `xpad0`).
+/// Two driver families are handled:
 ///
-/// xpad LED brightness convention (kernel `xpad.c`): 0=off, 1=blink-all,
-/// 2-5=blink-then-solid P1-4, 6-9=SOLID P1-4. So we write `6 + slot.min(3)` for
-/// a steady player indicator (the leds node's `max_brightness` is 255, so these
-/// small values are in range).
+/// - **xpad (Xbox 360/One)** — a single `xpad<N>` node under `leds/` with a
+///   plain `brightness` attribute. Write `6 + slot.min(3)` for SOLID P1..P4.
+/// - **Sony DualSense/DualShock4** — either `*:white:player-N` per-slot nodes
+///   (write `1` to the matching player node, `0` to siblings) or an
+///   `*:rgb:indicator` lightbar node (write a per-slot colour to
+///   `multi_intensity`).
 ///
-/// Returns `Ok(Some(node))` (the leds node written) on success, `Ok(None)` when
-/// no `leds/` dir is found anywhere up the tree (the normal case for non-xpad
-/// pads), or `Err` if a node was found but the brightness write failed.
+/// Multi-pad correlation: when multiple candidates exist under `leds/`, the
+/// one with the longest shared canonical-path prefix with the pad's own sysfs
+/// device path is chosen (ties broken by sorted name), so two identical xpads
+/// each light their own ring instead of racing on the first entry.
+///
+/// Returns `Ok(Some(node))` on a successful primary write, `Ok(None)` when no
+/// usable leds node/convention is found, or `Err` on an unexpected FS error
+/// (the caller logs and swallows it).
 fn set_player_led_sysfs(devnode: &std::path::Path, slot: u8) -> std::io::Result<Option<PathBuf>> {
     // /dev/input/eventN -> "eventN"
     let Some(event_name) = devnode.file_name().and_then(|n| n.to_str()) else {
@@ -1261,22 +1354,32 @@ fn set_player_led_sysfs(devnode: &std::path::Path, slot: u8) -> std::io::Result<
     let device_link = PathBuf::from("/sys/class/input")
         .join(event_name)
         .join("device");
-    let Ok(mut dir) = std::fs::canonicalize(&device_link) else {
+    let Ok(pad_device_path) = std::fs::canonicalize(&device_link) else {
         return Ok(None);
     };
+    let mut dir = pad_device_path.clone();
     // Walk up to a parent containing a `leds/` subdir. Bound the climb so a
     // surprising tree can't loop forever.
-    let leds_node = loop {
+    let (leds_dir, chosen_node) = loop {
         let leds = dir.join("leds");
         if leds.is_dir() {
-            // First entry under leds/ (e.g. xpad0).
-            match std::fs::read_dir(&leds)
+            // Collect ALL entries, sort by name for determinism, then delegate
+            // correlation to the pure helper.
+            let mut candidates: Vec<PathBuf> = std::fs::read_dir(&leds)
                 .ok()
-                .and_then(|mut rd| rd.next())
-                .and_then(|e| e.ok())
-            {
-                Some(entry) => break Some(entry.path()),
-                None => break None, // empty leds dir
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .collect();
+            candidates.sort_by(|a, b| {
+                a.file_name()
+                    .unwrap_or_default()
+                    .cmp(b.file_name().unwrap_or_default())
+            });
+            match pick_leds_node(&pad_device_path, &candidates) {
+                Some(node) => break (leds, node),
+                None => return Ok(None), // empty leds dir
             }
         }
         match dir.parent() {
@@ -1284,16 +1387,201 @@ fn set_player_led_sysfs(devnode: &std::path::Path, slot: u8) -> std::io::Result<
             Some(p) if p != std::path::Path::new("/sys") && p != std::path::Path::new("/") => {
                 dir = p.to_path_buf();
             }
-            _ => break None,
+            _ => return Ok(None),
         }
     };
-    let Some(node) = leds_node else {
-        return Ok(None); // no leds node up the tree -> clean no-op
-    };
-    // 6..=9 = SOLID P1..P4; cap the slot at P4.
-    let brightness = 6u8 + slot.min(3);
-    std::fs::write(node.join("brightness"), brightness.to_string())?;
-    Ok(Some(node))
+
+    let node_name = chosen_node
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    match classify_led_node(node_name) {
+        LedConvention::Xpad => {
+            // 6..=9 = SOLID P1..P4; cap the slot at P4.
+            let brightness = 6u8 + slot.min(3);
+            std::fs::write(chosen_node.join("brightness"), brightness.to_string())?;
+            Ok(Some(chosen_node))
+        }
+        LedConvention::SonyPlayer => {
+            // Write `1` to the player-<slot+1> sibling and `0` to the others.
+            // Build the target player index (1-based, capped at 4).
+            let target_player = slot.min(3) + 1;
+            // Scan all `*:white:player-N` siblings in the same leds/ dir.
+            let siblings: Vec<PathBuf> = std::fs::read_dir(&leds_dir)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.contains(":white:player-"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            if siblings.is_empty() {
+                return Ok(None);
+            }
+            let mut primary_node: Option<PathBuf> = None;
+            for sibling in &siblings {
+                let sib_name = sibling
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                // Extract the player number from the suffix `player-N`.
+                let player_num: Option<u8> = sib_name
+                    .rfind(":white:player-")
+                    .and_then(|pos| sib_name[pos + ":white:player-".len()..].parse().ok());
+                let value = if player_num == Some(target_player) {
+                    primary_node = Some(sibling.clone());
+                    "1"
+                } else {
+                    "0"
+                };
+                // Best-effort: ignore individual write errors.
+                let _ = std::fs::write(sibling.join("brightness"), value);
+            }
+            Ok(primary_node)
+        }
+        LedConvention::SonyRgb => {
+            let (r, g, b) = SONY_RGB_COLORS[slot.min(3) as usize];
+            // Try `multi_intensity` first (the standard RGB LED class
+            // attribute); fall back gracefully for older kernels.
+            let mi_path = chosen_node.join("multi_intensity");
+            if mi_path.exists() {
+                let _ = std::fs::write(&mi_path, format!("{r} {g} {b}"));
+                Ok(Some(chosen_node))
+            } else {
+                // Unrecognized interface: leave the lightbar unset.
+                Ok(None)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod led_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // ---- classify_led_node -------------------------------------------------
+
+    #[test]
+    fn classify_xpad_bare() {
+        assert_eq!(classify_led_node("xpad0"), LedConvention::Xpad);
+        assert_eq!(classify_led_node("xpad1"), LedConvention::Xpad);
+        // Plain brightness node with no recognized suffix -> Xpad default.
+        assert_eq!(classify_led_node("input5::green:led0"), LedConvention::Xpad);
+    }
+
+    #[test]
+    fn classify_sony_player() {
+        // Short form (some kernel versions).
+        assert_eq!(
+            classify_led_node("input5::white:player-1"),
+            LedConvention::SonyPlayer
+        );
+        // BDADDR-prefixed form (hid-playstation / kernel >= 6.3).
+        assert_eq!(
+            classify_led_node("0005:054C:0CE6.000D:white:player-1"),
+            LedConvention::SonyPlayer
+        );
+        assert_eq!(
+            classify_led_node("0005:054C:0CE6.000D:white:player-4"),
+            LedConvention::SonyPlayer
+        );
+    }
+
+    #[test]
+    fn classify_sony_rgb() {
+        assert_eq!(
+            classify_led_node("input5::rgb:indicator"),
+            LedConvention::SonyRgb
+        );
+        assert_eq!(
+            classify_led_node("0005:054C:0CE6.000D:rgb:indicator"),
+            LedConvention::SonyRgb
+        );
+    }
+
+    // ---- pick_leds_node ----------------------------------------------------
+
+    #[test]
+    fn pick_empty_candidates_returns_none() {
+        let pad = PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/input/input5");
+        assert_eq!(pick_leds_node(&pad, &[]), None);
+    }
+
+    #[test]
+    fn pick_single_candidate_is_returned() {
+        let pad = PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/input/input5");
+        let candidates = vec![PathBuf::from(
+            "/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",
+        )];
+        assert_eq!(
+            pick_leds_node(&pad, &candidates),
+            Some(PathBuf::from(
+                "/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",
+            ))
+        );
+    }
+
+    /// Two identical xpads on different USB ports: pad1 at usb1/1-1, pad2 at
+    /// usb1/1-2. The leds nodes live under each pad's own USB subtree.
+    #[test]
+    fn pick_correlates_to_correct_pad() {
+        let pad = PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/input/input5");
+        let candidates = vec![
+            // This node is under a DIFFERENT USB port (1-2).
+            PathBuf::from("/sys/devices/pci0000:00/usb1/1-2/leds/xpad1"),
+            // This node is under the SAME USB port (1-1).
+            PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/leds/xpad0"),
+        ];
+        assert_eq!(
+            pick_leds_node(&pad, &candidates),
+            Some(PathBuf::from(
+                "/sys/devices/pci0000:00/usb1/1-1/leds/xpad0",
+            ))
+        );
+    }
+
+    /// When both candidates share an equal-length prefix with the pad path
+    /// (e.g. they live under a shared ancestor), the lexicographically first
+    /// name wins (xpad0 before xpad1).
+    #[test]
+    fn pick_tiebreak_by_sorted_name() {
+        let pad = PathBuf::from("/sys/devices/pci0000:00/usb1/1-1/input/input5");
+        let candidates = vec![
+            PathBuf::from("/sys/devices/pci0000:00/usb1/leds/xpad1"),
+            PathBuf::from("/sys/devices/pci0000:00/usb1/leds/xpad0"),
+        ];
+        assert_eq!(
+            pick_leds_node(&pad, &candidates),
+            Some(PathBuf::from(
+                "/sys/devices/pci0000:00/usb1/leds/xpad0",
+            ))
+        );
+    }
+
+    /// The single-xpad common case (PR #103 regression guard): one candidate,
+    /// one pad -- must still be selected.
+    #[test]
+    fn pick_single_xpad_regression() {
+        let pad = PathBuf::from("/sys/devices/pci0000:00/usb1/1-3/input/input2");
+        let candidates = vec![PathBuf::from(
+            "/sys/devices/pci0000:00/usb1/1-3/leds/xpad0",
+        )];
+        let result = pick_leds_node(&pad, &candidates);
+        assert!(
+            result.is_some(),
+            "single-xpad path must be selected, got None"
+        );
+        assert_eq!(
+            result.unwrap().file_name().and_then(|n| n.to_str()),
+            Some("xpad0")
+        );
+    }
 }
 
 /// Build a clean per-player virtual gamepad mirroring the physical pad's
