@@ -4,6 +4,7 @@ import Quickshell.Io
 
 FocusScope {
     id: root
+    implicitHeight: pwrMainCol.implicitHeight + 2 * Theme.padding
 
     property string confirmAction: ""
     // Whether logind reports suspend is available (queried via the daemon).
@@ -76,6 +77,7 @@ FocusScope {
     }
 
     ColumnLayout {
+        id: pwrMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 48

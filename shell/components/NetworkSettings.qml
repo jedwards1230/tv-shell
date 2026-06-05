@@ -13,6 +13,7 @@ import Quickshell.Io
 //   net-wifi-rescan -> ok|error (NetworkManager RequestScan)
 FocusScope {
     id: root
+    implicitHeight: netMainCol.implicitHeight + 2 * Theme.padding
 
     property var activeConnections: []
     property string ipAddress: ""
@@ -139,6 +140,7 @@ FocusScope {
     }
 
     ColumnLayout {
+        id: netMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32

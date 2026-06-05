@@ -4,6 +4,7 @@ import Quickshell.Io
 
 FocusScope {
     id: root
+    implicitHeight: mlMainCol.implicitHeight + 2 * Theme.padding
 
     property var servers: []
     property bool showAddForm: false
@@ -267,6 +268,7 @@ FocusScope {
     }
 
     ColumnLayout {
+        id: mlMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 24
