@@ -29,6 +29,10 @@ FocusScope {
     SocketClient {
         id: suspendCmd
     }
+    // End session: send intent home → shell.qml onIntentHome: returnToShell()
+    SocketClient {
+        id: endSessionCmd
+    }
     // Query logind CanSuspend so the Sleep button reflects availability.
     SocketClient {
         id: canSuspendProc
@@ -42,23 +46,199 @@ FocusScope {
         }
     }
 
+    // Idle-suspend timer: fires power-suspend after sleepTimerMinutes of idle
+    // time. Restarted on page visibility and key activity; disabled when
+    // sleepTimerMinutes === 0 or canSuspend is false.
+    Timer {
+        id: idleTimer
+        interval: SettingsStore.sleepTimerMinutes * 60000
+        running: SettingsStore.sleepTimerMinutes > 0 && root.canSuspend
+        repeat: false
+        onTriggered: {
+            if (root.canSuspend)
+                suspendCmd.request("power-suspend");
+        }
+    }
+
     Component.onCompleted: canSuspendProc.request("power-can-suspend")
 
     onVisibleChanged: {
         if (visible) {
             root.confirmAction = "";
             canSuspendProc.request("power-can-suspend");
+            if (SettingsStore.sleepTimerMinutes > 0)
+                idleTimer.restart();
         }
     }
 
     function focusFirst() {
-        suspendScope.forceActiveFocus();
+        sleepTimerScope.forceActiveFocus();
     }
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 48
+
+        // Power settings controls — sleep timer, wake-on-controller, end session
+        ColumnLayout {
+            Layout.alignment: Qt.AlignLeft
+            spacing: 16
+
+            // Sleep Timer row
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                Text {
+                    text: "Sleep Timer"
+                    font.pixelSize: Theme.fontSmall
+                    color: Theme.textSecondary
+                    Layout.fillWidth: true
+                }
+
+                FocusScope {
+                    id: sleepTimerScope
+                    width: sleepTimerBtn.width
+                    height: sleepTimerBtn.height
+                    activeFocusOnTab: true
+
+                    KeyNavigation.down: wakeOnControllerScope
+
+                    Keys.onReturnPressed: {
+                        if (SettingsStore.sleepTimerMinutes > 0)
+                            idleTimer.restart();
+                    }
+
+                    SettingsButton {
+                        id: sleepTimerBtn
+                        text: SettingsStore.sleepTimerMinutes === 0 ? "Off" : SettingsStore.sleepTimerMinutes + " min"
+                        focus: parent.activeFocus
+                        anchors.fill: parent
+
+                        onActivated: {
+                            var steps = [0, 5, 10, 15, 30, 60];
+                            var idx = steps.indexOf(SettingsStore.sleepTimerMinutes);
+                            var next = steps[(idx + 1) % steps.length];
+                            SettingsStore.setSleepTimerMinutes(next);
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                sleepTimerScope.forceActiveFocus();
+                                sleepTimerBtn.activated();
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: "Suspends after this idle time"
+                font.pixelSize: Theme.fontHint
+                color: Theme.textSecondary
+                leftPadding: 0
+            }
+
+            // Wake on controller row
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                Text {
+                    text: "Wake on controller"
+                    font.pixelSize: Theme.fontSmall
+                    color: Theme.textSecondary
+                    Layout.fillWidth: true
+                }
+
+                FocusScope {
+                    id: wakeOnControllerScope
+                    width: wakeOnControllerBtn.width
+                    height: wakeOnControllerBtn.height
+                    activeFocusOnTab: true
+
+                    KeyNavigation.up: sleepTimerScope
+                    KeyNavigation.down: endSessionScope
+
+                    SettingsButton {
+                        id: wakeOnControllerBtn
+                        text: SettingsStore.wakeOnController ? "On" : "Off"
+                        focus: parent.activeFocus
+                        anchors.fill: parent
+
+                        color: SettingsStore.wakeOnController ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
+
+                        onActivated: SettingsStore.setWakeOnController(!SettingsStore.wakeOnController)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                wakeOnControllerScope.forceActiveFocus();
+                                wakeOnControllerBtn.activated();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // End session row
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                ColumnLayout {
+                    spacing: 2
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "End session"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+
+                    Text {
+                        text: "Return to shell (Home + B)"
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textSecondary
+                    }
+                }
+
+                FocusScope {
+                    id: endSessionScope
+                    width: endSessionBtn.width
+                    height: endSessionBtn.height
+                    activeFocusOnTab: true
+
+                    KeyNavigation.up: wakeOnControllerScope
+                    KeyNavigation.down: suspendScope
+
+                    SettingsButton {
+                        id: endSessionBtn
+                        text: "End session"
+                        focus: parent.activeFocus
+                        anchors.fill: parent
+
+                        onActivated: endSessionCmd.request("intent home")
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                endSessionScope.forceActiveFocus();
+                                endSessionBtn.activated();
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Item {
             Layout.fillHeight: true
@@ -77,6 +257,7 @@ FocusScope {
                 focus: true
                 activeFocusOnTab: true
 
+                KeyNavigation.up: endSessionScope
                 KeyNavigation.down: restartScope
 
                 Rectangle {
@@ -125,6 +306,8 @@ FocusScope {
                 }
 
                 Keys.onReturnPressed: {
+                    if (SettingsStore.sleepTimerMinutes > 0)
+                        idleTimer.restart();
                     if (root.canSuspend)
                         root.confirmAction = "suspend";
                 }
@@ -184,6 +367,8 @@ FocusScope {
                 }
 
                 Keys.onReturnPressed: {
+                    if (SettingsStore.sleepTimerMinutes > 0)
+                        idleTimer.restart();
                     root.confirmAction = "restart";
                 }
             }
@@ -241,6 +426,8 @@ FocusScope {
                 }
 
                 Keys.onReturnPressed: {
+                    if (SettingsStore.sleepTimerMinutes > 0)
+                        idleTimer.restart();
                     root.confirmAction = "shutdown";
                 }
             }

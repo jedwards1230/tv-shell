@@ -24,7 +24,8 @@ import QtQuick
 // Events subscribed: config:changed (live-reload — daemon broadcasts when an
 //                    external writer modifies settings.json; QML re-fetches via
 //                    get-config so all keys re-apply live without a restart)
-// QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan
+// QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan,
+//                         sleepTimerMinutes, wakeOnController
 Item {
     id: store
 
@@ -39,6 +40,8 @@ Item {
     property bool nightLightEnabled: false       // drives hyprsunset
     property int nightLightTemp: 4500            // color temperature in Kelvin
     property int overscan: 0                     // safe-area overscan percent (0-10)
+    property int sleepTimerMinutes: 0            // 0 = disabled; cycle: 0/5/10/15/30/60
+    property bool wakeOnController: true         // declarative preference (no suspend wiring)
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
@@ -82,6 +85,10 @@ Item {
                     store.nightLightTemp = obj.nightLightTemp;
                 if (typeof obj.overscan === "number")
                     store.overscan = obj.overscan;
+                if (typeof obj.sleepTimerMinutes === "number")
+                    store.sleepTimerMinutes = obj.sleepTimerMinutes;
+                if (typeof obj.wakeOnController === "boolean")
+                    store.wakeOnController = obj.wakeOnController;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
             } catch (e) {
@@ -115,6 +122,8 @@ Item {
             "nightLightEnabled": store.nightLightEnabled,
             "nightLightTemp": store.nightLightTemp,
             "overscan": store.overscan,
+            "sleepTimerMinutes": store.sleepTimerMinutes,
+            "wakeOnController": store.wakeOnController,
             "moonlightViewMode": null
         });
         saveProc.request("set-config", body);
@@ -182,6 +191,18 @@ Item {
         overscan = pct;
         save();
         settingsChanged("overscan", pct);
+    }
+
+    function setSleepTimerMinutes(m) {
+        sleepTimerMinutes = m;
+        save();
+        settingsChanged("sleepTimerMinutes", m);
+    }
+
+    function setWakeOnController(enabled) {
+        wakeOnController = enabled;
+        save();
+        settingsChanged("wakeOnController", enabled);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===
