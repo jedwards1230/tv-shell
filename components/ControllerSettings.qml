@@ -380,23 +380,21 @@ FocusScope {
                     focus: parent.activeFocus
                     anchors.fill: parent
 
+                    onActivated: {
+                        root.scanDevices();
+                        root.refreshPads();
+                        daemonStatus.request("status");
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             refreshScope.forceActiveFocus();
-                            root.scanDevices();
-                            root.refreshPads();
-                            daemonStatus.request("status");
+                            refreshBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    root.scanDevices();
-                    root.refreshPads();
-                    daemonStatus.request("status");
                 }
             }
         }
@@ -559,26 +557,22 @@ FocusScope {
                     focus: parent.activeFocus
                     anchors.fill: parent
 
+                    onActivated: {
+                        if (root.daemonGrabbed) {
+                            releaseCmd.request("release");
+                        } else {
+                            grabCmd.request("grab");
+                        }
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             grabScope.forceActiveFocus();
-                            if (root.daemonGrabbed) {
-                                releaseCmd.request("release");
-                            } else {
-                                grabCmd.request("grab");
-                            }
+                            grabBtn.activated();
                         }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    if (root.daemonGrabbed) {
-                        releaseCmd.request("release");
-                    } else {
-                        grabCmd.request("grab");
                     }
                 }
             }
@@ -621,19 +615,17 @@ FocusScope {
 
                     color: Theme.controllerDebug ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
 
+                    onActivated: Theme.setControllerDebug(!Theme.controllerDebug)
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             debugScope.forceActiveFocus();
-                            Theme.setControllerDebug(!Theme.controllerDebug);
+                            debugBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    Theme.setControllerDebug(!Theme.controllerDebug);
                 }
             }
         }
@@ -674,19 +666,17 @@ FocusScope {
 
                     color: SettingsStore.rumbleEnabled ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
 
+                    onActivated: SettingsStore.setRumbleEnabled(!SettingsStore.rumbleEnabled)
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             rumbleScope.forceActiveFocus();
-                            SettingsStore.setRumbleEnabled(!SettingsStore.rumbleEnabled);
+                            rumbleBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    SettingsStore.setRumbleEnabled(!SettingsStore.rumbleEnabled);
                 }
             }
         }
