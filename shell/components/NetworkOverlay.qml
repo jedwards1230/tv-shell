@@ -46,12 +46,16 @@ FocusScope {
     function openAt(rect) {
         root.anchorRect = rect;
         root.opened = true;
-        Qt.callLater(function() { root.forceActiveFocus(); });
+        Qt.callLater(function () {
+            root.forceActiveFocus();
+        });
     }
 
     onOpenedChanged: {
         if (opened) {
-            Qt.callLater(function() { root.forceActiveFocus(); });
+            Qt.callLater(function () {
+                root.forceActiveFocus();
+            });
             root._prevRxBytes = -1;
             root._prevTxBytes = -1;
             root.downSpeed = "—";
