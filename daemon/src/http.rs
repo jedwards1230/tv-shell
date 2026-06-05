@@ -517,6 +517,13 @@ pub async fn serve(
 // ─── Unit tests (pure parser — runs on any host) ────────────────────────────
 
 #[cfg(test)]
+/// Helper used in unit tests to exercise the auth-enabled parsing logic
+/// without touching the real environment.
+fn parse_auth_enabled_val(val: &str) -> bool {
+    val != "0" && val != "false"
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -782,11 +789,4 @@ mod tests {
         assert!(parse_auth_enabled_val("yes"));
         assert!(parse_auth_enabled_val(""));
     }
-}
-
-#[cfg(test)]
-/// Helper used in unit tests to exercise the auth-enabled parsing logic
-/// without touching the real environment.
-fn parse_auth_enabled_val(val: &str) -> bool {
-    val != "0" && val != "false"
 }
