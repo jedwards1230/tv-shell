@@ -1,10 +1,10 @@
-# Rust CI for the game-shell input daemon (rust/).
+# Rust CI for the game-shell input daemon (daemon/).
 #
 # Builds, formats, lints, and tests the Rust crate on a Linux runner — the only
 # place the evdev/uinput code compiles (it is excluded on non-Linux dev hosts).
 # Runs inside a slim official `rust` container (toolchain preinstalled, ~1.5 GB
 # vs the ~30 GB ubuntu-latest image; no system libs needed — evdev is pure Rust).
-# Scoped to rust/** so QML-only PRs don't trigger it.
+# Scoped to daemon/** so QML-only PRs don't trigger it.
 
 name: Rust
 
@@ -13,16 +13,16 @@ run-name: "Rust CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${
 on:
   push:
     branches: [main]
-    paths: ['rust/**', '.github/workflows/rust.yml']
+    paths: ['daemon/**', '.github/workflows/rust.yml']
   pull_request:
-    paths: ['rust/**', '.github/workflows/rust.yml']
+    paths: ['daemon/**', '.github/workflows/rust.yml']
 
 permissions:
   contents: read
 
 defaults:
   run:
-    working-directory: rust
+    working-directory: daemon
 
 jobs:
   build:
@@ -43,7 +43,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: daemon
 
       - name: Format check
         id: fmt
@@ -65,7 +65,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Rust CI — \`rust/\`"
+            echo "## Rust CI — \`daemon/\`"
             echo ""
             echo "| Step | Result |"
             echo "|------|--------|"
