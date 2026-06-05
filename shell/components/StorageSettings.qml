@@ -17,9 +17,7 @@ FocusScope {
 
     Process {
         id: dfProc
-        command: ["bash", "-c",
-            "df -h --output=target,size,used,avail,pcent 2>/dev/null | tail -n +2 | " +
-            "awk 'NF>=5{printf \"{\\\"mount\\\":\\\"%s\\\",\\\"size\\\":\\\"%s\\\",\\\"used\\\":\\\"%s\\\",\\\"avail\\\":\\\"%s\\\",\\\"pct\\\":\\\"%s\\\"}\\n\",$1,$2,$3,$4,$5}'"]
+        command: ["bash", "-c", "df -h --output=target,size,used,avail,pcent 2>/dev/null | tail -n +2 | " + "awk 'NF>=5{printf \"{\\\"mount\\\":\\\"%s\\\",\\\"size\\\":\\\"%s\\\",\\\"used\\\":\\\"%s\\\",\\\"avail\\\":\\\"%s\\\",\\\"pct\\\":\\\"%s\\\"}\\n\",$1,$2,$3,$4,$5}'"]
         stdout: SplitParser {
             onRead: line => {
                 try {
@@ -62,7 +60,23 @@ FocusScope {
             rowCount: root.loading ? 1 : Math.max(root.mounts.length, 1)
 
             Repeater {
-                model: root.loading ? [{ mount: "Loading…", size: "", used: "", avail: "", pct: "" }] : (root.mounts.length > 0 ? root.mounts : [{ mount: "No filesystems found", size: "", used: "", avail: "", pct: "" }])
+                model: root.loading ? [
+                    {
+                        mount: "Loading…",
+                        size: "",
+                        used: "",
+                        avail: "",
+                        pct: ""
+                    }
+                ] : (root.mounts.length > 0 ? root.mounts : [
+                        {
+                            mount: "No filesystems found",
+                            size: "",
+                            used: "",
+                            avail: "",
+                            pct: ""
+                        }
+                    ])
 
                 delegate: RowLayout {
                     required property var modelData
@@ -115,6 +129,8 @@ FocusScope {
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+        }
     }
 }
