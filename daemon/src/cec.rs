@@ -19,6 +19,14 @@
 //! with an inner loop. We use the spawn_blocking pattern: the `run` entry
 //! point spawns a blocking worker thread that owns the connection; the async
 //! wrapper drains `rx` and sends work to the worker via a std::sync channel.
+//!
+//! **cec-rs 8.0.1 API notes**: the 8.0.1 crate does not expose per-device
+//! metadata queries (OSD name, physical address, vendor, device type). The
+//! scan result therefore carries only `logicalAddress` and `powerStatus`.
+//! `CecConnectionCfg::open(self)` consumes the config (not
+//! `CecConnection::open(&cfg)`). Power commands are `send_power_on_devices` /
+//! `send_standby_devices`. Active-bus enumeration is performed by probing
+//! logical addresses 0–15 via `get_device_power_status` (Unknown ≡ absent).
 
 use crate::protocol::{self, Event};
 use crate::state::Reply;
@@ -71,7 +79,7 @@ enum WorkerReq {
 }
 
 // ---------------------------------------------------------------------------
-// CEC libcec helpers.
+// CEC libcec helpers (cec-rs 8.0.1 API).
 // ---------------------------------------------------------------------------
 
 /// Map a cec-rs `CecPowerStatus` to its wire word.
@@ -85,68 +93,37 @@ fn power_status_word(ps: cec_rs::CecPowerStatus) -> &'static str {
     }
 }
 
-/// Map a cec-rs `CecDeviceType` to its wire word.
-fn device_type_word(dt: cec_rs::CecDeviceType) -> &'static str {
-    match dt {
-        cec_rs::CecDeviceType::Tv => "tv",
-        cec_rs::CecDeviceType::RecordingDevice => "recording",
-        cec_rs::CecDeviceType::Reserved => "reserved",
-        cec_rs::CecDeviceType::Tuner => "tuner",
-        cec_rs::CecDeviceType::PlaybackDevice => "playback",
-        cec_rs::CecDeviceType::AudioSystem => "audio",
-        cec_rs::CecDeviceType::Switch => "switch",
-        cec_rs::CecDeviceType::VideoProcessor => "videoprocessor",
-    }
-}
-
 /// Build a compact-JSON device object for a single logical address.
-/// Returns `None` if the device is not present on the bus.
+/// Returns `None` if the device is not present on the bus (power status
+/// Unknown means the device did not respond). In cec-rs 8.0.1 only
+/// `get_device_power_status` is available for per-device queries.
 fn device_json(conn: &cec_rs::CecConnection, addr: cec_rs::CecLogicalAddress) -> Option<String> {
-    if !conn.is_active_device(addr) {
+    let ps = conn.get_device_power_status(addr);
+    if matches!(ps, cec_rs::CecPowerStatus::Unknown) {
         return None;
     }
-    let physical = conn
-        .get_device_physical_address(addr)
-        .map(|pa| format!("{:x}", pa))
-        .unwrap_or_default();
-    let vendor = conn
-        .get_device_vendor_id(addr)
-        .map(|v| format!("{:06x}", v))
-        .unwrap_or_default();
-    let osd_name = conn
-        .get_device_osd_name(addr)
-        .unwrap_or_default()
-        .to_string();
-    let power_status = conn
-        .get_device_power_status(addr)
-        .map(power_status_word)
-        .unwrap_or("unknown");
-    let dev_type = conn
-        .get_device_type(addr)
-        .map(device_type_word)
-        .unwrap_or("unknown");
-
     let logical_addr = addr as i32;
     Some(
         json!({
             "logicalAddress": logical_addr,
-            "physicalAddress": physical,
-            "vendor": vendor,
-            "osdName": osd_name,
-            "powerStatus": power_status,
-            "type": dev_type,
+            "powerStatus": power_status_word(ps),
         })
         .to_string(),
     )
 }
 
-/// Build a compact-JSON array of all active CEC devices.
+/// Build a compact-JSON array of all active CEC devices by probing each of
+/// the 16 CEC logical addresses. cec-rs 8.0.1 does not expose a bus-active
+/// enumeration call; probing via `get_device_power_status` (Unknown ≡ absent)
+/// is the supported substitute.
 fn scan_json(conn: &cec_rs::CecConnection) -> String {
-    let active = conn.get_active_devices();
     let mut entries = Vec::new();
-    for addr in active {
-        if let Some(obj) = device_json(conn, addr) {
-            entries.push(obj);
+    // CEC logical addresses 0..=15 (TV=0, PlaybackDevice1=4, AudioSystem=5, …)
+    for raw in 0i32..=15 {
+        if let Ok(addr) = cec_rs::CecLogicalAddress::try_from(raw) {
+            if let Some(obj) = device_json(conn, addr) {
+                entries.push(obj);
+            }
         }
     }
     format!("[{}]", entries.join(","))
@@ -159,18 +136,24 @@ fn scan_json(conn: &cec_rs::CecConnection) -> String {
 /// Run the blocking libcec worker loop.  Owns the `CecConnection`; called
 /// from `tokio::task::spawn_blocking`.  Returns once a `Shutdown` message is
 /// received or `rx` is closed.
-fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>) {
-    // Build a CecConnectionCfg and open the connection.
+///
+/// The `events_tx` sender is used to broadcast `cec:device` and `cec:power`
+/// push events after each scan or power-status query.
+fn blocking_worker(
+    rx: std_mpsc::Receiver<WorkerReq>,
+    events_tx: broadcast::Sender<Event>,
+) {
+    // cec-rs 8.0.1: open() is on CecConnectionCfg (consuming self).
     let cfg = cec_rs::CecConnectionCfg {
         device_name: "game-shell".to_string(),
         device_types: cec_rs::CecDeviceTypeVec::new(vec![cec_rs::CecDeviceType::PlaybackDevice]),
         ..Default::default()
     };
-    let conn = match cec_rs::CecConnection::open(&cfg) {
+    let conn = match cfg.open() {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(
-                "cec: failed to open libcec connection ({e}); replying error to all requests"
+                "cec: failed to open libcec connection ({e:?}); replying error to all requests"
             );
             // Drain the channel, replying error to every pending request.
             while let Ok(req) = rx.recv() {
@@ -202,7 +185,16 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>) {
     while let Ok(req) = rx.recv() {
         match req {
             WorkerReq::Scan(tx) => {
-                let _ = tx.send(scan_json(&conn));
+                let result = scan_json(&conn);
+                // Broadcast cec:device push events for each discovered device.
+                for raw in 0i32..=15 {
+                    if let Ok(addr) = cec_rs::CecLogicalAddress::try_from(raw) {
+                        if let Some(obj) = device_json(&conn, addr) {
+                            let _ = events_tx.send(Event::CecDevice(obj));
+                        }
+                    }
+                }
+                let _ = tx.send(result);
             }
             WorkerReq::Device { addr, tx } => {
                 let logical = match addr.parse::<i32>() {
@@ -211,7 +203,11 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>) {
                     Err(_) => cec_rs::CecLogicalAddress::Unknown,
                 };
                 let resp = match device_json(&conn, logical) {
-                    Some(obj) => obj,
+                    Some(obj) => {
+                        // Emit cec:device push event for this address.
+                        let _ = events_tx.send(Event::CecDevice(obj.clone()));
+                        obj
+                    }
                     None => protocol::resp_error(&format!("no device at address {addr}")),
                 };
                 let _ = tx.send(resp);
@@ -222,9 +218,20 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>) {
                         .unwrap_or(cec_rs::CecLogicalAddress::Unknown),
                     Err(_) => cec_rs::CecLogicalAddress::Unknown,
                 };
-                let resp = match conn.power_on_devices(logical) {
-                    Ok(()) => protocol::resp_ok(),
-                    Err(e) => protocol::resp_error(&format!("power-on failed: {e}")),
+                // cec-rs 8.0.1: send_power_on_devices (not power_on_devices).
+                let resp = match conn.send_power_on_devices(logical) {
+                    Ok(()) => {
+                        // Emit a cec:power push event for the targeted device.
+                        let ps = conn.get_device_power_status(logical);
+                        let payload = json!({
+                            "addr": addr,
+                            "power": power_status_word(ps),
+                        })
+                        .to_string();
+                        let _ = events_tx.send(Event::CecPower(payload));
+                        protocol::resp_ok()
+                    }
+                    Err(e) => protocol::resp_error(&format!("power-on failed: {e:?}")),
                 };
                 let _ = tx.send(resp);
             }
@@ -234,16 +241,27 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>) {
                         .unwrap_or(cec_rs::CecLogicalAddress::Unknown),
                     Err(_) => cec_rs::CecLogicalAddress::Unknown,
                 };
-                let resp = match conn.standby_devices(logical) {
-                    Ok(()) => protocol::resp_ok(),
-                    Err(e) => protocol::resp_error(&format!("power-off failed: {e}")),
+                // cec-rs 8.0.1: send_standby_devices (not standby_devices).
+                let resp = match conn.send_standby_devices(logical) {
+                    Ok(()) => {
+                        // Emit a cec:power push event for the targeted device.
+                        let ps = conn.get_device_power_status(logical);
+                        let payload = json!({
+                            "addr": addr,
+                            "power": power_status_word(ps),
+                        })
+                        .to_string();
+                        let _ = events_tx.send(Event::CecPower(payload));
+                        protocol::resp_ok()
+                    }
+                    Err(e) => protocol::resp_error(&format!("power-off failed: {e:?}")),
                 };
                 let _ = tx.send(resp);
             }
             WorkerReq::ActiveSource(tx) => {
                 let resp = match conn.set_active_source(cec_rs::CecDeviceType::PlaybackDevice) {
                     Ok(()) => protocol::resp_ok(),
-                    Err(e) => protocol::resp_error(&format!("active-source failed: {e}")),
+                    Err(e) => protocol::resp_error(&format!("active-source failed: {e:?}")),
                 };
                 let _ = tx.send(resp);
             }
@@ -263,18 +281,16 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>) {
 /// Owns a blocking libcec worker (via `tokio::task::spawn_blocking`) and
 /// forwards [`CecReq`]s to it over a `std::sync::mpsc` channel, bridging the
 /// async/blocking boundary. Never panics: if libcec is absent the worker
-/// drains its channel replying `error:*` to each request. The `events_tx`
-/// broadcast sender is wired for future push-event support (currently unused
-/// — the actor's events will be wired when the libcec callback API is added).
-pub async fn run(
-    mut rx: mpsc::Receiver<CecReq>,
-    _events_tx: broadcast::Sender<Event>,
-) -> Result<()> {
+/// drains its channel replying `error:*` to each request. Push events
+/// (`cec:device:<json>` and `cec:power:<json>`) are broadcast on `events_tx`
+/// for each scan and power-status query.
+pub async fn run(mut rx: mpsc::Receiver<CecReq>, events_tx: broadcast::Sender<Event>) -> Result<()> {
     // Bounded sync channel from the async loop to the blocking worker.
     let (work_tx, work_rx) = std_mpsc::sync_channel::<WorkerReq>(64);
 
     // Spawn the blocking worker on tokio's blocking pool.
-    let worker_handle = tokio::task::spawn_blocking(move || blocking_worker(work_rx));
+    let worker_handle =
+        tokio::task::spawn_blocking(move || blocking_worker(work_rx, events_tx));
 
     tracing::info!("cec actor started");
 
@@ -408,19 +424,5 @@ mod tests {
             power_status_word(cec_rs::CecPowerStatus::Unknown),
             "unknown"
         );
-    }
-
-    #[test]
-    fn device_type_word_mapping() {
-        assert_eq!(device_type_word(cec_rs::CecDeviceType::Tv), "tv");
-        assert_eq!(
-            device_type_word(cec_rs::CecDeviceType::AudioSystem),
-            "audio"
-        );
-        assert_eq!(
-            device_type_word(cec_rs::CecDeviceType::PlaybackDevice),
-            "playback"
-        );
-        assert_eq!(device_type_word(cec_rs::CecDeviceType::Tuner), "tuner");
     }
 }
