@@ -31,6 +31,10 @@ Item {
     signal intentMenu           // toggle nav drawer
     signal intentSettings
     signal intentPower
+    // Deep-link intent signals — fan-out from namespaced `intent:<ns>:<leaf>` events.
+    signal intentSettingsPage(string page)
+    signal intentOverlay(string target)
+    signal intentApp(string appId)
 
     // --- Gamepad fleet model (#98/#100/#101) ---
     //
@@ -286,14 +290,31 @@ Item {
         }
     }
 
-    // Map a closed-vocabulary intent name to its QML signal. `home` is the
-    // global return-to-shell escape (keyboard Super+Escape / automation); the
-    // rest fan out 1:1. `menu` (bare Super) is the nav drawer; `home-hold`
-    // (Super+Backspace / gamepad Home-hold) is the reset. Directional focus
-    // moves + confirm/cancel are NOT here — they arrive as real key events
-    // (gamepad d-pad/A/B synthesized by the daemon, `wtype`, or the daemon's
-    // `key <name>` IPC) and are handled by each surface's KeyNavigation/Keys.
+    // Map an intent name to its QML signal. Handles both the coarse
+    // closed-vocabulary intents and namespaced deep-link targets. Deep-links
+    // are processed first (before the switch) via a namespace fan-out:
+    //   settings:<page>  -> intentSettingsPage(page)
+    //   overlay:<target> -> intentOverlay(target)
+    //   app:<id>         -> intentApp(appId)
+    // Coarse intents fan out 1:1. Directional focus moves + confirm/cancel are
+    // NOT here — they arrive as real key events (gamepad d-pad/A/B synthesized
+    // by the daemon, `wtype`, or the daemon's `key <name>` IPC) and are handled
+    // by each surface's KeyNavigation/Keys.
     function _handleIntent(name) {
+        let colonIdx = name.indexOf(":");
+        if (colonIdx !== -1) {
+            let ns = name.substring(0, colonIdx);
+            let leaf = name.substring(colonIdx + 1);
+            if (ns === "settings")
+                root.intentSettingsPage(leaf);
+            else if (ns === "overlay")
+                root.intentOverlay(leaf);
+            else if (ns === "app")
+                root.intentApp(leaf);
+            else
+                console.log("InputManager: unknown intent namespace:", name);
+            return;
+        }
         switch (name) {
         case "home":
             root.intentHome();
