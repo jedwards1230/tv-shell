@@ -119,6 +119,40 @@ ShellRoot {
                 root._layout.powerOverlay.forceActiveFocus();
             }
         }
+
+        // Deep-link intent handlers — open a specific view in one command.
+        // All guarded by root.state === "idle" to match coarse intents.
+        onIntentSettingsPage: page => {
+            if (root.state === "idle" && root._layout) {
+                let ok = root._layout.settingsPanel.openSectionById(page);
+                if (!ok)
+                    console.log("shell: unknown settings page deep-link:", page);
+            }
+        }
+        onIntentOverlay: target => {
+            if (root.state === "idle" && root._layout) {
+                if (target === "volume")
+                    root._layout.volumeOverlay.openAt(null);
+                else if (target === "network")
+                    root._layout.networkOverlay.openAt(null);
+            }
+        }
+        onIntentApp: appId => {
+            if (root.state === "idle") {
+                let apps = root._applications || [];
+                let match = null;
+                for (let i = 0; i < apps.length; i++) {
+                    if (apps[i].wmClass && apps[i].wmClass === appId) {
+                        match = apps[i];
+                        break;
+                    }
+                }
+                if (match)
+                    appLifecycle.checkAndLaunchApp(match);
+                else
+                    console.log("shell: no app for deep-link:", appId);
+            }
+        }
     }
 
     Components.AVController {

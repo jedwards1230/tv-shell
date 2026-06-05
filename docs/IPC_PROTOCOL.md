@@ -466,10 +466,39 @@ the daemon free of any focus/state knowledge.
 > they were removed in favor of `key <name>`. The intent surface is only the
 > high-level, focus-*independent* actions above.
 
+#### Deep-link targets
+
+In addition to the coarse vocabulary, `<name>` may be a namespaced deep-link
+target in the form `<ns>:<leaf>`. Deep-links ride the existing `Intent(String)`
+wire path — no new variants.
+
+| Target | Effect |
+|--------|--------|
+| `settings:<page>` | Open the Settings panel on the named page. `<page>` is one of the section id slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`, `keybindings`, `avcontrol`, `appearance`, `accessibility`, `power`, plus the provider id (e.g. `streaming` or the active provider's own id) when a streaming provider is configured. |
+| `overlay:volume` | Open the volume QAM popover from idle. |
+| `overlay:network` | Open the network QAM popover from idle. |
+| `app:<id>` | Launch the local app whose `wmClass` (StartupWMClass) is `<id>`. |
+
+**Validation boundary:** the daemon validates the namespace and structural shape.
+The `overlay:` namespace is **closed** — only `volume` and `network` are valid
+leaves; anything else is rejected. The `settings:` and `app:` namespaces accept
+any non-empty leaf (the page/app registries live in QML, not the daemon). An
+empty leaf (`settings:`, `overlay:`, `app:`) or unknown namespace (`foo:bar`)
+returns `error:unknown intent '<name>'` and no event is broadcast. A typo'd
+settings page or absent app is accepted by the daemon (`ok` + broadcast) but is
+a **graceful no-op in QML** (logged, no crash). Deep-link targets are extensible
+by namespace.
+
+**Example (open Bluetooth settings directly):**
+
+```
+echo "intent settings:bluetooth" | nc -U "$GAME_SHELL_SOCK"
+```
+
 | Condition | Response |
 |-----------|----------|
-| `<name>` in the closed vocabulary | `ok\n` (and an `intent:<name>` event is broadcast) |
-| `<name>` outside the vocabulary | `error:unknown intent '<name>'\n` (no event) |
+| `<name>` in the closed coarse vocabulary OR a valid deep-link target | `ok\n` (and an `intent:<name>` event is broadcast) |
+| `<name>` outside the vocabulary / invalid deep-link | `error:unknown intent '<name>'\n` (no event) |
 | Missing/empty `<name>` body | `error:usage: intent <name>\n` |
 
 **Example (automation):**
@@ -722,18 +751,23 @@ now consumes only the `intent:*` vocabulary.
 
 Every accepted [`intent <name>`](#intent-name) command re-broadcasts here as an
 `intent:<name>` event. This is the global control-surface stream: keyboard
-global-escape, automation, and (in later phases) the daemon's own gamepad logic
-all surface through it, so QML consumes **one** vocabulary regardless of source.
+global-escape, automation, and the daemon's own gamepad logic all surface through
+it, so QML consumes **one** vocabulary regardless of source.
 
 | Event | Payload (`<name>`) |
 |-------|--------------------|
-| `intent:<name>` | One of `home`, `home-tap`, `home-hold`, `menu`, `settings`, `power` |
+| `intent:<name>` | A coarse intent (`home`, `home-tap`, `home-hold`, `menu`, `settings`, `power`) OR a deep-link target (`settings:<page>`, `overlay:volume`, `overlay:network`, `app:<id>`) |
 
 `intent:home` is the global return-to-shell escape; `intent:home-tap` /
 `intent:home-hold` are the neutral gamepad Home signals (QML maps them by the
 focus it owns). `intent:menu` toggles the navigation drawer. The daemon's own
 gamepad Home handling publishes `intent:home-tap` / `intent:home-hold` directly,
 so QML has exactly one shell-intent vocabulary regardless of source.
+
+Deep-link targets are wire-compatible with the existing event: a
+`intent settings:bluetooth` command broadcasts `intent:settings:bluetooth` —
+the payload after the first `intent:` prefix is the full name including
+any namespace colon.
 
 ### Combo Events
 
