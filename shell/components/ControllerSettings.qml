@@ -399,13 +399,14 @@ FocusScope {
             }
         }
 
-        // Controller list
-        ListView {
+        // Controller list — gold reference for SettingsList: minRows:1 ensures
+        // at least one row height even when empty (Math.max(count,1)*200 → #141).
+        SettingsList {
             id: controllerList
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(Math.max(root.controllers.length, 1) * 200, 600)
+            rowStride: 200
+            maxHeight: 600
+            minRows: 1
             spacing: 16
-            clip: true
             model: root.controllers
             focus: true
 

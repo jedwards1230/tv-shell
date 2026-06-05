@@ -68,6 +68,8 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | — | Appearance — each theme mode selected (auto/light/dark) | substate |
 | — | Accessibility — Reduce Motion on/off; Text Size Default/Large/Larger | substate |
 
+> **#141**: All list-bearing settings pages (Network ×2, Bluetooth ×2, Moonlight, Display, Controllers) now share `SettingsList` for row-count sizing — the floating-gap regression class (#123/#139) is centralized. QA: verify lists pack directly under their headers with no gap in both dark and light mode.
+
 ## E. Theme variants (multiplier)
 Capture at least **home, a settings page, notification center, power overlay** in
 both **light** and **dark** mode (toggle via QuickActions idx 2). Full rigor = every

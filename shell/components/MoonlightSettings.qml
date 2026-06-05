@@ -403,15 +403,12 @@ FocusScope {
         }
 
         // Server list
-        ListView {
+        SettingsList {
             id: serverList
-            Layout.fillWidth: true
-            // Row-count sizing (delegate 180 + spacing 16). A trailing fillHeight
-            // spacer (below) absorbs slack so content top-packs; contentHeight is
-            // unreliable when the list is sized by it in a ColumnLayout (#123).
-            Layout.preferredHeight: Math.min(root.servers.length * 196, 600)
+            // rowStride = delegate 180 + spacing 16 (#123/#139 row-count sizing).
+            rowStride: 196
+            maxHeight: 600
             spacing: 16
-            clip: true
             model: root.servers
             focus: false
 
