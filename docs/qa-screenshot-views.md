@@ -33,6 +33,7 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | A7 | Empty states | no running / recents / targets | verify layout holds when rows hide |
 | A8 | App-view substates | apps view, host discovering/offline | "Discovering apps…" / "Offline or no apps found" |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
+| A10 | Controller battery glyph | wireless pad connected reporting charge | 🔋+% beside QuickActions; ⚡ when charging; crimson ≤15%; hidden when only wired pads or none (#100) |
 
 ## B. Context menus / popovers
 | # | View | How to reach |
