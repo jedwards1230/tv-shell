@@ -197,6 +197,10 @@ Stateless. Written single-line compact JSON.
 
 Example request: `set-config {"themeMode":"dark","controllerDebug":false,"moonlightViewMode":null}\n`
 
+After a successful merge, the daemon refreshes its cached input-runtime settings
+(currently `rumbleEnabled`) so a rumble toggle takes effect immediately without a
+daemon restart.
+
 ### `record-launch <json-object>`
 
 Record an app launch into the recents file
@@ -537,8 +541,9 @@ echo "rumble uniq:e4:17:d8:01:02:03 200" | nc -U "$GAME_SHELL_SOCK"
 
 > **`rumbleEnabled` setting.** A QML-owned boolean in `settings.json`
 > (default `true`) gating all daemon-fired rumble — both the `rumble` command and
-> the connect pulse. Read by the daemon via `get-config`; toggled like any other
-> QML-owned key via `set-config`.
+> the connect pulse. The daemon caches this flag at startup and refreshes it on a
+> successful `set-config`, so a toggle takes effect immediately with no per-rumble
+> disk read.
 
 ### `key <name>`
 

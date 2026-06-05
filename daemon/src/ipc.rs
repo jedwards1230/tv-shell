@@ -218,6 +218,13 @@ where
 /// Resolve a non-subscribe command to its response line.
 async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: Command) -> String {
     if let Some(resp) = dispatch_stateless(&cmd).await {
+        // A successful set-config mutated settings.json; the input runtime caches
+        // some of those keys (rumbleEnabled, #108), so nudge it to refresh. Fire
+        // and forget — set-config's reply is already resolved and must not block
+        // on the input runtime. Only on success (the reply isn't an error line).
+        if matches!(cmd, Command::SetConfig(_)) && !resp.starts_with("error:") {
+            let _ = control_tx.send(Control::ConfigChanged).await;
+        }
         return resp;
     }
     if let Some(resp) = dispatch_dbus(dbus, &cmd).await {
@@ -482,6 +489,7 @@ mod tests {
                     };
                     let _ = reply.send(resp);
                 }
+                Control::ConfigChanged => {}
                 Control::Shutdown => break,
             }
         }
