@@ -1,17 +1,25 @@
 //! LAN HTTP control bridge (#151): a small, opt-in HTTP/1.1 listener that maps
-//! `POST /intent/<target>` and `POST /key/<name>` onto the daemon's existing
-//! intent and key broadcast paths.
+//! `POST /intent/<target>`, `POST /key/<name>`, and `GET /screenshot` onto the
+//! daemon's existing intent/key broadcast paths and the `grim` screenshotter.
 //!
 //! **Opt-in**: the bridge only starts when the `GAME_SHELL_HTTP_BIND`
 //! environment variable is set to a `host:port` address. When it is unset, no
 //! socket is opened and no control surface is exposed.
 //!
-//! **Auth**: when `GAME_SHELL_HTTP_TOKEN` is set, every request must carry
-//! `Authorization: Bearer <token>` (constant-time comparison, #151); requests
-//! without a valid token receive 401. When the token variable is unset, any
-//! request from the bound interface is accepted — the operator is expected to
-//! bind to a trusted LAN interface, not a public one. A `tracing::warn!` is
-//! emitted when binding to an unspecified address without a token.
+//! **Auth**: controlled by `GAME_SHELL_HTTP_AUTH_ENABLED` (default: enabled).
+//! Set to `0` or `false` to skip auth entirely (local-only dev). When enabled
+//! (the default), `GAME_SHELL_HTTP_TOKEN` must be set; every request must carry
+//! `Authorization: Bearer <token>` (constant-time comparison, #151). If auth is
+//! enabled but no token is configured, all requests are rejected with 401 and a
+//! loud warning is logged. When the token variable is unset AND auth is disabled,
+//! any request from the bound interface is accepted — the operator is responsible
+//! for binding to a trusted interface. A `tracing::warn!` is emitted when
+//! binding to an unspecified address without a token.
+//!
+//! **Screenshot**: `GET /screenshot` (also `GET /screenshot.png`) shells out to
+//! `grim -` which writes a PNG to stdout. The PNG bytes are returned with
+//! `Content-Type: image/png`. Auth applies to this route (it exposes screen
+//! content). On grim failure a 500 text response is returned.
 //!
 //! **DoS hardening (#151)**:
 //! - Each accepted connection is wrapped in a 5-second `tokio::time::timeout`
@@ -22,9 +30,9 @@
 //!   503 and are dropped, preventing fd / task-pool exhaustion.
 //!
 //! **No new heavy dependencies**: this module uses only `tokio::net::TcpListener`,
-//! `tokio::time`, and the `subtle` crate (already a transitive dep, now direct).
-//! `reqwest` is client-only (`health.rs`) and `hyper` is only a transitive dep;
-//! neither is used here.
+//! `tokio::time`, `tokio::process`, and the `subtle` crate (already a transitive
+//! dep, now direct). `reqwest` is client-only (`health.rs`) and `hyper` is only
+//! a transitive dep; neither is used here.
 //!
 //! **Cross-platform**: this module has no Linux-only imports. The `serve`
 //! function can be called on any platform. The binary (`main.rs`) is
@@ -44,14 +52,13 @@ use tokio::sync::{mpsc, oneshot};
 pub enum HttpError {
     /// The path did not match any known route → 404.
     NotFound,
-    /// The method was not POST → 405.
+    /// The method was not POST (or GET for screenshot routes) → 405.
     MethodNotAllowed,
 }
 
 // ─── Parsed action ──────────────────────────────────────────────────────────
 
-/// The action decoded from a successful `POST /intent/<target>` or
-/// `POST /key/<name>` request.
+/// The action decoded from a successful request.
 #[derive(Debug, PartialEq, Eq)]
 pub enum HttpAction {
     /// Forward to `Control::Intent { name }`.
@@ -60,6 +67,8 @@ pub enum HttpAction {
     /// Forward to `Control::Key { name }`.
     /// The `name` is the single token after `/key/`, percent-decoded.
     Key(String),
+    /// Capture the current screen via `grim -` and return the PNG.
+    Screenshot,
 }
 
 // ─── Pure parser (unit-testable on any host) ────────────────────────────────
@@ -109,20 +118,34 @@ pub fn url_decode(s: &str) -> String {
 /// Parse an HTTP request line (`METHOD SP PATH SP HTTP/...`) and map it to an
 /// [`HttpAction`].
 ///
-/// - Accepts `POST` only; any other method → [`HttpError::MethodNotAllowed`].
-/// - Strips the query string (everything after `?`) before routing.
-/// - `/intent/<target>` → [`HttpAction::Intent`] (`<target>` is the full
-///   remainder, percent-decoded; an empty target → [`HttpError::NotFound`]).
-/// - `/key/<name>`     → [`HttpAction::Key`]    (percent-decoded; empty →
+/// - `GET /screenshot`       → [`HttpAction::Screenshot`]
+/// - `GET /screenshot.png`   → [`HttpAction::Screenshot`]
+/// - Non-GET for `/screenshot[.png]` → [`HttpError::MethodNotAllowed`]
+/// - `POST /intent/<target>` → [`HttpAction::Intent`] (`<target>` percent-decoded;
+///   empty target → [`HttpError::NotFound`]).
+/// - `POST /key/<name>`      → [`HttpAction::Key`] (percent-decoded; empty →
 ///   [`HttpError::NotFound`]).
-/// - Any other path   → [`HttpError::NotFound`].
+/// - Non-POST for any other path → [`HttpError::MethodNotAllowed`].
+/// - Unknown POST path       → [`HttpError::NotFound`].
+///
+/// Query strings (everything after `?`) are stripped before routing.
 pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpError> {
+    // Strip query string.
+    let path = path.split('?').next().unwrap_or(path);
+
+    // Screenshot routes: GET only.
+    if path == "/screenshot" || path == "/screenshot.png" {
+        if method == "GET" {
+            return Ok(HttpAction::Screenshot);
+        } else {
+            return Err(HttpError::MethodNotAllowed);
+        }
+    }
+
+    // All remaining routes require POST.
     if method != "POST" {
         return Err(HttpError::MethodNotAllowed);
     }
-
-    // Strip query string.
-    let path = path.split('?').next().unwrap_or(path);
 
     if let Some(rest) = path.strip_prefix("/intent/") {
         let name = url_decode(rest);
@@ -145,7 +168,7 @@ pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpEr
 
 // ─── HTTP response helpers ───────────────────────────────────────────────────
 
-/// Render a minimal HTTP/1.1 response with the given status code and body.
+/// Render a minimal HTTP/1.1 response with the given status code and text body.
 /// The connection is always closed after the response.
 pub fn http_response(status: u16, body: &str) -> String {
     let reason = match status {
@@ -154,13 +177,25 @@ pub fn http_response(status: u16, body: &str) -> String {
         401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        500 => "Internal Server Error",
         503 => "Service Unavailable",
         _ => "Unknown",
     };
     format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
+}
+
+/// Build the header block for a binary PNG response.
+/// Returns the raw header bytes (including the final CRLFCRLF). The caller must
+/// write these bytes then immediately write the raw PNG bytes — do NOT use
+/// `http_response` for binary bodies since it assumes a UTF-8 `&str` body.
+fn png_response_header(png_len: usize) -> Vec<u8> {
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {png_len}\r\nConnection: close\r\n\r\n"
+    );
+    header.into_bytes()
 }
 
 // ─── Per-connection handler ──────────────────────────────────────────────────
@@ -234,10 +269,11 @@ where
 }
 
 /// Handle a single TCP connection: parse the HTTP/1.1 request, check auth,
-/// dispatch to the control channel, and write a minimal response.
+/// dispatch to the control channel or screenshotter, and write a response.
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     token: Option<&str>,
+    auth_enabled: bool,
     control_tx: &mpsc::Sender<Control>,
 ) {
     let raw = match read_headers(&mut stream).await {
@@ -269,14 +305,26 @@ async fn handle_connection(
     let path = parts[1];
 
     // Auth check — constant-time comparison to prevent timing oracles (#151).
-    if let Some(expected) = token {
-        let bearer = format!("Bearer {expected}");
-        let auth = extract_authorization(&raw);
-        let provided = auth.as_deref().unwrap_or("");
-        if !ct_eq_str(provided, &bearer) {
-            let resp = http_response(401, "unauthorized");
-            let _ = stream.write_all(resp.as_bytes()).await;
-            return;
+    // When auth is enabled but no token is configured, reject all requests
+    // (secure by default — you cannot authenticate without a token).
+    if auth_enabled {
+        match token {
+            None => {
+                // Auth enabled but no token set — reject all requests.
+                let resp = http_response(401, "unauthorized");
+                let _ = stream.write_all(resp.as_bytes()).await;
+                return;
+            }
+            Some(expected) => {
+                let bearer = format!("Bearer {expected}");
+                let auth = extract_authorization(&raw);
+                let provided = auth.as_deref().unwrap_or("");
+                if !ct_eq_str(provided, &bearer) {
+                    let resp = http_response(401, "unauthorized");
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    return;
+                }
+            }
         }
     }
 
@@ -295,26 +343,67 @@ async fn handle_connection(
         }
     };
 
-    // Dispatch to the daemon control channel.
-    let reply = match action {
+    // Dispatch to the daemon control channel or screenshotter.
+    match action {
         HttpAction::Intent(name) => {
-            request(control_tx, move |reply| Control::Intent { name, reply }).await
+            let reply =
+                request(control_tx, move |reply| Control::Intent { name, reply }).await;
+            let resp = match reply {
+                None => http_response(503, "daemon unavailable"),
+                Some(r) if r.starts_with("error:") => {
+                    let body = r.trim_start_matches("error:").to_owned();
+                    http_response(400, &body)
+                }
+                Some(_) => http_response(200, "ok"),
+            };
+            let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::Key(name) => {
-            request(control_tx, move |reply| Control::Key { name, reply }).await
+            let reply =
+                request(control_tx, move |reply| Control::Key { name, reply }).await;
+            let resp = match reply {
+                None => http_response(503, "daemon unavailable"),
+                Some(r) if r.starts_with("error:") => {
+                    let body = r.trim_start_matches("error:").to_owned();
+                    http_response(400, &body)
+                }
+                Some(_) => http_response(200, "ok"),
+            };
+            let _ = stream.write_all(resp.as_bytes()).await;
         }
-    };
-
-    let resp = match reply {
-        None => http_response(503, "daemon unavailable"),
-        Some(r) if r.starts_with("error:") => {
-            let body = r.trim_start_matches("error:").to_owned();
-            http_response(400, &body)
+        HttpAction::Screenshot => {
+            // Shell out to grim(1) — captures the Wayland display to stdout as PNG.
+            // `grim -` writes the PNG to stdout; we capture it and stream it back.
+            // The daemon runs inside the graphical session so WAYLAND_DISPLAY is set.
+            let result = tokio::process::Command::new("grim")
+                .arg("-")
+                .output()
+                .await;
+            match result {
+                Ok(out) if out.status.success() => {
+                    let png = out.stdout;
+                    // Binary-safe response: write the header then the raw PNG bytes.
+                    // We do NOT use http_response() here — that function takes a &str
+                    // body and would corrupt arbitrary binary data.
+                    let header = png_response_header(png.len());
+                    let _ = stream.write_all(&header).await;
+                    let _ = stream.write_all(&png).await;
+                }
+                Ok(out) => {
+                    // grim exited non-zero — include stderr in the 500 body.
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let body = format!("grim failed: {}", stderr.trim());
+                    let resp = http_response(500, &body);
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                }
+                Err(e) => {
+                    let body = format!("grim error: {e}");
+                    let resp = http_response(500, &body);
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                }
+            }
         }
-        Some(_) => http_response(200, "ok"),
-    };
-
-    let _ = stream.write_all(resp.as_bytes()).await;
+    }
 }
 
 // ─── Public serve entry point ────────────────────────────────────────────────
@@ -325,6 +414,16 @@ const MAX_ACTIVE_CONNS: usize = 128;
 /// Read timeout for each accepted connection in seconds (#151 DoS hardening).
 const READ_TIMEOUT_SECS: u64 = 5;
 
+/// Parse `GAME_SHELL_HTTP_AUTH_ENABLED` from the environment.
+/// Returns `true` (auth enabled) unless the value is exactly `"0"` or `"false"`.
+/// When unset, auth is enabled (secure by default).
+pub fn read_auth_enabled() -> bool {
+    match std::env::var("GAME_SHELL_HTTP_AUTH_ENABLED") {
+        Ok(val) => val != "0" && val != "false",
+        Err(_) => true, // unset → enabled
+    }
+}
+
 /// Bind a TCP listener to `addr` and serve the LAN HTTP control bridge until
 /// the process exits.
 ///
@@ -334,20 +433,36 @@ const READ_TIMEOUT_SECS: u64 = 5;
 /// connections beyond the cap receive an immediate 503 and are dropped.
 ///
 /// The `token` parameter is the optional bearer token from
-/// `GAME_SHELL_HTTP_TOKEN`; `None` means no auth (the operator is responsible
-/// for binding to a trusted interface). A warning is emitted when binding to
-/// an unspecified address (0.0.0.0 or ::) without a token, since any host on
-/// the network can reach the control surface without authentication.
+/// `GAME_SHELL_HTTP_TOKEN`. The `auth_enabled` parameter is read from
+/// `GAME_SHELL_HTTP_AUTH_ENABLED` (default `true`). When auth is enabled but no
+/// token is configured, all requests are rejected with 401 and a loud warning is
+/// logged. When auth is disabled, a warning is logged and auth is skipped
+/// entirely (for local-only dev). A warning is also emitted when binding to an
+/// unspecified address (0.0.0.0 or ::) without a token.
 pub async fn serve(
     addr: std::net::SocketAddr,
     token: Option<String>,
+    auth_enabled: bool,
     control_tx: mpsc::Sender<Control>,
 ) {
-    // Warn if the address is unspecified and no token is configured (#151).
-    if token.is_none() && addr.ip().is_unspecified() {
+    if !auth_enabled {
         tracing::warn!(
-            "http bridge: binding to {} with no auth token — \
-             any host on the network can send control commands",
+            "http bridge: AUTH DISABLED (GAME_SHELL_HTTP_AUTH_ENABLED=0) — \
+             any host on the network can send control commands without authentication"
+        );
+    } else if token.is_none() {
+        // Auth is enabled but no token is configured — all requests will be
+        // rejected with 401. Log a loud warning so the operator knows to set it.
+        tracing::warn!(
+            "http bridge: auth is ENABLED but GAME_SHELL_HTTP_TOKEN is not set — \
+             all requests will be rejected with 401 (set the token or disable auth \
+             with GAME_SHELL_HTTP_AUTH_ENABLED=0)"
+        );
+    } else if addr.ip().is_unspecified() {
+        // Token is set but we're binding to 0.0.0.0/:: — still worth a note.
+        tracing::warn!(
+            "http bridge: binding to {} with bearer auth — \
+             any host on the network can attempt authentication",
             addr
         );
     }
@@ -391,7 +506,7 @@ pub async fn serve(
                     // task slot indefinitely (#151).
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(READ_TIMEOUT_SECS),
-                        handle_connection(stream, token.as_deref(), &control_tx),
+                        handle_connection(stream, token.as_deref(), auth_enabled, &control_tx),
                     )
                     .await;
                     conns.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -467,9 +582,51 @@ mod tests {
     }
 
     #[test]
-    fn get_method_not_allowed() {
+    fn get_screenshot() {
+        assert_eq!(
+            parse_request_line("GET", "/screenshot"),
+            Ok(HttpAction::Screenshot)
+        );
+    }
+
+    #[test]
+    fn get_screenshot_png() {
+        assert_eq!(
+            parse_request_line("GET", "/screenshot.png"),
+            Ok(HttpAction::Screenshot)
+        );
+    }
+
+    #[test]
+    fn get_screenshot_with_query_stripped() {
+        assert_eq!(
+            parse_request_line("GET", "/screenshot?foo=bar"),
+            Ok(HttpAction::Screenshot)
+        );
+    }
+
+    #[test]
+    fn post_screenshot_method_not_allowed() {
+        assert_eq!(
+            parse_request_line("POST", "/screenshot"),
+            Err(HttpError::MethodNotAllowed)
+        );
+    }
+
+    #[test]
+    fn get_method_not_allowed_for_intent() {
         assert_eq!(
             parse_request_line("GET", "/intent/menu"),
+            Err(HttpError::MethodNotAllowed)
+        );
+    }
+
+    #[test]
+    fn get_unknown_path_method_not_allowed() {
+        // A GET to an unknown path still gets 405 (not 404) — method check
+        // happens before path check for non-screenshot routes.
+        assert_eq!(
+            parse_request_line("GET", "/foo"),
             Err(HttpError::MethodNotAllowed)
         );
     }
@@ -563,9 +720,28 @@ mod tests {
     }
 
     #[test]
+    fn http_response_500_well_formed() {
+        let resp = http_response(500, "grim failed: exit 1");
+        assert!(resp.starts_with("HTTP/1.1 500 Internal Server Error\r\n"));
+    }
+
+    #[test]
     fn http_response_503_well_formed() {
         let resp = http_response(503, "daemon unavailable");
         assert!(resp.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
+    }
+
+    // ── png_response_header ──────────────────────────────────────────────────
+
+    #[test]
+    fn png_response_header_well_formed() {
+        let header = png_response_header(1234);
+        let s = std::str::from_utf8(&header).unwrap();
+        assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(s.contains("Content-Type: image/png\r\n"));
+        assert!(s.contains("Content-Length: 1234\r\n"));
+        assert!(s.contains("Connection: close\r\n"));
+        assert!(s.ends_with("\r\n\r\n"));
     }
 
     // ── extract_authorization ────────────────────────────────────────────────
@@ -595,4 +771,27 @@ mod tests {
         assert!(!ct_eq_str("Bearer a", "Bearer bb"));
         assert!(!ct_eq_str("", "Bearer x"));
     }
+
+    // ── read_auth_enabled / parse_auth_enabled_val ───────────────────────────
+
+    #[test]
+    fn auth_enabled_val_disabled_for_zero_and_false() {
+        assert!(!parse_auth_enabled_val("0"));
+        assert!(!parse_auth_enabled_val("false"));
+    }
+
+    #[test]
+    fn auth_enabled_val_enabled_for_other_values() {
+        assert!(parse_auth_enabled_val("1"));
+        assert!(parse_auth_enabled_val("true"));
+        assert!(parse_auth_enabled_val("yes"));
+        assert!(parse_auth_enabled_val(""));
+    }
+}
+
+#[cfg(test)]
+/// Helper used in unit tests to exercise the auth-enabled parsing logic
+/// without touching the real environment.
+fn parse_auth_enabled_val(val: &str) -> bool {
+    val != "0" && val != "false"
 }

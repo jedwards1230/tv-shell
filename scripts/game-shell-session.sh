@@ -8,6 +8,11 @@ export XDG_CURRENT_DESKTOP=Hyprland
 export GAME_SHELL_TARGETS="${GAME_SHELL_TARGETS:-$SHELL_DIR/targets.yaml}"
 export GAME_SHELL_SOCK="/run/user/$(id -u)/game-shell-input.sock"
 
+# Optional per-machine daemon overrides (HTTP bridge bind, auth toggle, etc.) —
+# not tracked in the repo so a box can opt into the LAN HTTP bridge locally.
+DAEMON_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/daemon.env"
+[ -f "$DAEMON_ENV" ] && set -a && . "$DAEMON_ENV" && set +a
+
 # Start the Rust input/backend daemon. It is the sole backend: gamepad
 # grab/release, settings I/O, app discovery, Bluetooth/network/power, Hyprland
 # reads, and Sunshine pre-flight all flow through it. Build with

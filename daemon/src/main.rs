@@ -82,7 +82,10 @@ fn main() -> anyhow::Result<()> {
             match bind_str.parse::<std::net::SocketAddr>() {
                 Ok(addr) => {
                     let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
-                    tokio::spawn(http::serve(addr, token, control_tx.clone()));
+                    // Read auth-enabled flag here so it is logged once at startup
+                    // alongside the bind address, before the task is spawned.
+                    let auth_enabled = http::read_auth_enabled();
+                    tokio::spawn(http::serve(addr, token, auth_enabled, control_tx.clone()));
                 }
                 Err(e) => {
                     tracing::warn!(
