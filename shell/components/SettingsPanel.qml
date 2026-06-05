@@ -435,11 +435,14 @@ Rectangle {
         if (visible) {
             currentSection = idx;
             sidebarList.currentIndex = idx;
+            // Move focus straight to the sidebar and return — the root is a plain
+            // Rectangle (not a FocusScope), so a trailing root.forceActiveFocus()
+            // would steal focus back from the sidebar in the already-visible case.
             sidebarList.forceActiveFocus();
-        } else {
-            _pendingSection = idx;
-            visible = true;
+            return;
         }
+        _pendingSection = idx;
+        visible = true;
         forceActiveFocus();
     }
 
