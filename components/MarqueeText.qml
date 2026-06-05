@@ -16,8 +16,8 @@ Item {
         id: label
         y: 0
 
-        // Only scroll if text is wider than container
-        property bool needsScroll: implicitWidth > root.width && root.animate
+        // Only scroll if text is wider than container; honor reduce-motion (#109)
+        property bool needsScroll: implicitWidth > root.width && root.animate && !Theme.reduceMotion
 
         SequentialAnimation on x {
             running: label.needsScroll

@@ -193,6 +193,10 @@ FocusScope {
                 color: notifMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
                 border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 0 ? 3 : 0
                 border.color: Theme.focusBorder
+                Accessible.role: Accessible.Button
+                Accessible.name: root._labels[0]
+                Accessible.focusable: true
+                Accessible.onPressAction: root._activate(0)
                 Behavior on color {
                     ColorAnimation {
                         duration: 150
@@ -264,6 +268,10 @@ FocusScope {
                 color: settingsMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
                 border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 1 ? 3 : 0
                 border.color: Theme.focusBorder
+                Accessible.role: Accessible.Button
+                Accessible.name: root._labels[1]
+                Accessible.focusable: true
+                Accessible.onPressAction: root._activate(1)
                 Behavior on color {
                     ColorAnimation {
                         duration: 150
@@ -311,6 +319,10 @@ FocusScope {
                 color: themeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
                 border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 2 ? 3 : 0
                 border.color: Theme.focusBorder
+                Accessible.role: Accessible.Button
+                Accessible.name: root._labels[2]
+                Accessible.focusable: true
+                Accessible.onPressAction: root._activate(2)
                 Behavior on color {
                     ColorAnimation {
                         duration: 150
@@ -358,6 +370,10 @@ FocusScope {
                 color: networkMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
                 border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 3 ? 3 : 0
                 border.color: Theme.focusBorder
+                Accessible.role: Accessible.Button
+                Accessible.name: root._labels[3]
+                Accessible.focusable: true
+                Accessible.onPressAction: root._activate(3)
                 Behavior on color {
                     ColorAnimation {
                         duration: 150
@@ -414,6 +430,10 @@ FocusScope {
                 color: volumeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
                 border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 4 ? 3 : 0
                 border.color: Theme.focusBorder
+                Accessible.role: Accessible.Button
+                Accessible.name: root._labels[4]
+                Accessible.focusable: true
+                Accessible.onPressAction: root._activate(4)
                 Behavior on color {
                     ColorAnimation {
                         duration: 150
@@ -461,6 +481,10 @@ FocusScope {
                 color: powerMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
                 border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 5 ? 3 : 0
                 border.color: Theme.focusBorder
+                Accessible.role: Accessible.Button
+                Accessible.name: root._labels[5]
+                Accessible.focusable: true
+                Accessible.onPressAction: root._activate(5)
                 Behavior on color {
                     ColorAnimation {
                         duration: 150

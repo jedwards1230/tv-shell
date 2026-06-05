@@ -148,23 +148,21 @@ FocusScope {
                     focus: parent.activeFocus
                     anchors.fill: parent
 
+                    onActivated: {
+                        root.volume = Math.max(0, root.volume - 5);
+                        setVolume.level = root.volume + "%";
+                        setVolume.running = true;
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             volDownScope.forceActiveFocus();
-                            root.volume = Math.max(0, root.volume - 5);
-                            setVolume.level = root.volume + "%";
-                            setVolume.running = true;
+                            volDownBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    root.volume = Math.max(0, root.volume - 5);
-                    setVolume.level = root.volume + "%";
-                    setVolume.running = true;
                 }
             }
 
@@ -212,23 +210,21 @@ FocusScope {
                     focus: parent.activeFocus
                     anchors.fill: parent
 
+                    onActivated: {
+                        root.volume = Math.min(100, root.volume + 5);
+                        setVolume.level = root.volume + "%";
+                        setVolume.running = true;
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             volUpScope.forceActiveFocus();
-                            root.volume = Math.min(100, root.volume + 5);
-                            setVolume.level = root.volume + "%";
-                            setVolume.running = true;
+                            volUpBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    root.volume = Math.min(100, root.volume + 5);
-                    setVolume.level = root.volume + "%";
-                    setVolume.running = true;
                 }
             }
         }
@@ -248,19 +244,17 @@ FocusScope {
                 focus: parent.activeFocus
                 anchors.fill: parent
 
+                onActivated: toggleMute.running = true
+
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         muteScope.forceActiveFocus();
-                        toggleMute.running = true;
+                        muteBtn.activated();
                     }
                 }
-            }
-
-            Keys.onReturnPressed: {
-                toggleMute.running = true;
             }
         }
 

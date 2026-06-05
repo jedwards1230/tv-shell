@@ -51,12 +51,14 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | C17 | Session conflict dialog (`SessionDialog`) | real stream conflict | needs live conflict / mock |
 | C18 | Stream overlay (`StreamOverlay`) | launching / reconnecting / error | needs active/failing stream |
 | C19 | Error log viewer (`ErrorLogViewer`) | notification center → error log | wtype |
+| C20 | Volume QAM popover (`VolumeOverlay`) | home QuickActions idx 4 → Return; also reachable from the nav drawer | wtype |
+| C21 | Network QAM popover (`NetworkOverlay`) | home QuickActions idx 3 → Return; also reachable from the nav drawer | wtype |
 
 ## D. Settings panel + pages + substates
 | # | View | How to reach / notes |
 |---|------|----------------------|
 | D20 | Settings sidebar (panel open) | QuickActions idx 1 → Return |
-| D21–30 | Pages: Audio, Bluetooth, Network, Display, Controllers, Key Bindings, AV Control, Moonlight, Appearance, Power | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. |
+| D21–31 | Pages: Audio, Bluetooth, Network, Display, Controllers, Key Bindings, AV Control, Moonlight, Appearance, Accessibility, Power | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. |
 | — | Bluetooth — scanning + device list | substate |
 | — | Network — Wi-Fi list / connect | substate |
 | — | Controllers — pad connected vs none | substate |
@@ -64,6 +66,7 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | — | AV Control — CEC device info populated | substate |
 | — | Moonlight — add/edit server form + servers/apps toggle | substate |
 | — | Appearance — each theme mode selected (auto/light/dark) | substate |
+| — | Accessibility — Reduce Motion on/off; Text Size Default/Large/Larger | substate |
 
 ## E. Theme variants (multiplier)
 Capture at least **home, a settings page, notification center, power overlay** in
