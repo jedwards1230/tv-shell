@@ -336,7 +336,7 @@ Current connectivity and primary/active connection state.
 **Response:** A compact single-line JSON **object**:
 
 ```json
-{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.168.8.50","activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0"}]}
+{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.168.8.50","gateway":"192.168.8.1","dns":["192.168.8.1","8.8.8.8"],"activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0","speed":1000}]}
 ```
 
 | Field | Type | Notes |
@@ -345,12 +345,14 @@ Current connectivity and primary/active connection state.
 | `primaryType` | string | Connection type of NM's primary connection (`""` if none) |
 | `hasWifi` | bool | True if any NM device is a Wi-Fi device (`DeviceType == 2`) |
 | `ipv4` | string | Best-effort non-loopback IPv4 addresses as `"<iface>: <ip>"` lines (newline-joined, up to 3; `""` if none). Read via an `ip -4 -o addr` shell-out — explicitly allowed, since only `nmcli` *reads* must move to D-Bus |
-| `activeConnections` | array | `{name, type, device}` objects; `device` is the first interface name |
+| `gateway` | string | IPv4 gateway address from the primary connection's IP4Config (`""` when none/unknown); best-effort |
+| `dns` | string array | DNS server addresses from the primary connection's IP4Config (`[]` when none/unknown); best-effort. Prefer `NameserverData` (NM ≥ 1.6); fall back to legacy packed-u32 `Nameservers` property |
+| `activeConnections` | array | `{name, type, device, speed}` objects; `device` is the first interface name; `speed` is link speed in Mb/s from `Device.Wired` (0 for non-wired devices, virtual devices, or when the link speed is not yet known — render only when > 0) |
 
 If NetworkManager is unreachable, a best-effort object is returned with
-`connectivity:"unknown"`, empty strings, `hasWifi:false`, and
-`activeConnections:[]` (the command does not error). On a non-Linux build:
-`error:unsupported on this platform\n`.
+`connectivity:"unknown"`, empty strings, `hasWifi:false`, `gateway:""`,
+`dns:[]`, and `activeConnections:[]` (the command does not error). On a
+non-Linux build: `error:unsupported on this platform\n`.
 
 #### `net-wifi-list`
 
