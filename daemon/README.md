@@ -5,9 +5,10 @@ inline `python3`/shell-out parsers. Same Unix socket + newline-delimited wire
 protocol (`docs/IPC_PROTOCOL.md`). Phases 1–4 of
 [#28](https://github.com/jedwards1230/game-shell/issues/28) (CEC deferred).
 
-Note: the QML now depends on this daemon for the Settings / app-discovery /
-system pages — the Python daemon only answers the original input commands. See
-`scripts/game-shell-session.sh` (prefer-Rust-else-Python launcher).
+The QML shell depends on this daemon for the Settings / app-discovery / system
+pages as well as input; it is the sole backend (the Python
+`gamepad-input.py` and its rollback were retired in #96). See
+`scripts/game-shell-session.sh`, which spawns the binary directly.
 
 ## What it does
 

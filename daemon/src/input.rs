@@ -153,6 +153,11 @@ struct Shared {
     /// boots focused). `release`/`grab` flip it; per-pad event routing
     /// (`handle_event`) branches on it.
     presenter: Presenter,
+
+    /// Cached `rumbleEnabled` setting (#108) — refreshed on `set-config` via
+    /// `Control::ConfigChanged` instead of re-reading settings.json on every
+    /// rumble.
+    rumble_enabled: bool,
 }
 
 impl Shared {
@@ -1309,19 +1314,32 @@ fn build_virtual_pad(src: &Device, slot: u8) -> std::io::Result<VirtualDevice> {
 /// pad's `input_id`, so without this it would pass the DB gate and be grabbed
 /// as a bogus pad on the next discovery poll.
 fn register_vpad_devnodes(reg: &mut VirtualRegistry, vpad: &mut VirtualDevice) {
-    match vpad.enumerate_dev_nodes_blocking() {
-        Ok(nodes) => {
-            let mut any = false;
-            for node in nodes.flatten() {
-                reg.register(node);
-                any = true;
+    // The kernel may not have created /dev/input/eventN the instant build()
+    // returns; without the node we can't claim ownership and the 2s discovery
+    // poll could briefly see the new pad as a candidate (#108). Retry briefly
+    // (~100ms total) until the node appears.
+    for attempt in 0..10 {
+        match vpad.enumerate_dev_nodes_blocking() {
+            Ok(nodes) => {
+                let mut any = false;
+                for node in nodes.flatten() {
+                    reg.register(node);
+                    any = true;
+                }
+                if any {
+                    return;
+                }
             }
-            if !any {
-                warn!("virtual pad devnode not present yet; discovery may briefly see it as a candidate");
+            Err(e) => {
+                warn!("could not enumerate virtual pad devnodes for ownership: {e}");
+                return;
             }
         }
-        Err(e) => warn!("could not enumerate virtual pad devnodes for ownership: {e}"),
+        if attempt < 9 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
+    warn!("virtual pad devnode not present after retries; discovery may briefly see it as a candidate");
 }
 
 /// Forget a virtual pad's devnode(s) on teardown (re-enumerates the same paths
@@ -1427,15 +1445,12 @@ fn parse_proc_input_handlers() -> HashMap<String, Vec<String>> {
 /// grabbed fleet only). `grabbed` is `true` only for devices whose devnode path
 /// the fleet currently owns. Devices are returned in ascending devnode-path
 /// order for a stable wire.
-fn list_input_devices(fleet: &Fleet) -> String {
+///
+/// Called via `spawn_blocking` from the `Control::ListInputDevices` arm (#108)
+/// so `evdev::enumerate()` does not stall the input runtime. The caller collects
+/// the fleet's grabbed paths before the blocking boundary and passes them in.
+fn list_input_devices_with(grabbed_paths: HashSet<PathBuf>) -> String {
     let proc_handlers = parse_proc_input_handlers();
-    // Paths the fleet currently grabs (so we can flag `grabbed`).
-    let grabbed_paths: HashSet<PathBuf> = fleet
-        .pads
-        .values()
-        .filter(|p| p.grabbed)
-        .map(|p| p.path.clone())
-        .collect();
 
     let mut devices: Vec<(PathBuf, Device)> = evdev::enumerate().collect();
     devices.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1527,6 +1542,7 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
         capture_gen: 0,
         home_hold_active: false,
         presenter: Presenter::Shell,
+        rumble_enabled: config::rumble_enabled(&config::settings_path()),
     };
     let mut fleet = Fleet::new();
 
@@ -1673,10 +1689,18 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             let _ = r.send(fleet.pads_json());
         }
         Control::ListInputDevices(r) => {
-            // #97 diagnostics enumerator: list EVERY controller-like input device
-            // (BTN_SOUTH or a js* handler), grabbed or not, including virtual
-            // ones, marking which paths the fleet currently owns.
-            let _ = r.send(list_input_devices(fleet));
+            // #97 diagnostics enumerator. evdev::enumerate() is synchronous and can be
+            // slow on a host with many input devices, so run it off the input runtime
+            // (#108) — the fleet's grabbed paths are the only runtime state it needs.
+            let grabbed_paths: HashSet<PathBuf> = fleet
+                .pads
+                .values()
+                .filter(|p| p.grabbed)
+                .map(|p| p.path.clone())
+                .collect();
+            tokio::task::spawn_blocking(move || {
+                let _ = r.send(list_input_devices_with(grabbed_paths));
+            });
         }
         Control::GetBindings(r) => {
             let ordered: Vec<(String, String)> = sh
@@ -1717,7 +1741,7 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             // a missing pad / disabled setting / no-FF pad is a clean no-op that
             // still replies `ok` (the shell shouldn't treat "no rumble hardware"
             // as an error). `ms` is clamped to u16 (kernel FF replay length).
-            if config::rumble_enabled(&config::settings_path()) {
+            if sh.rumble_enabled {
                 if let Some(pad) = fleet.find_by_wire_id_mut(&id) {
                     pad.rumble(ms.min(u16::MAX as u32) as u16);
                 }
@@ -1740,6 +1764,10 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
                     let _ = reply.send(resp_unknown_key(&name));
                 }
             }
+        }
+        Control::ConfigChanged => {
+            // set-config succeeded — refresh cached settings (#108).
+            sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
         }
         Control::Shutdown => return false,
     }
@@ -1899,7 +1927,7 @@ fn try_join(sh: &mut Shared, fleet: &mut Fleet) {
         // the pad's FF support.
         pad.set_player_led(sh);
         pad.poll_battery(sh);
-        if config::rumble_enabled(&config::settings_path()) {
+        if sh.rumble_enabled {
             pad.rumble(CONNECT_RUMBLE_MS);
         }
         fleet.pads.insert(fd, pad);
