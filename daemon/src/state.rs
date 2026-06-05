@@ -72,7 +72,7 @@ pub enum Control {
         id: Option<String>,
         reply: Reply,
     },
-        /// `set-config` succeeded — refresh any cached settings (currently the
+    /// `set-config` succeeded — refresh any cached settings (currently the
     /// `rumbleEnabled` flag, #108). Sent fire-and-forget by the IPC dispatch after
     /// a successful `set-config`; the input runtime re-reads the affected keys
     /// from disk.

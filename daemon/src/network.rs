@@ -700,7 +700,10 @@ async fn active_connection_entry(
 
 /// Read gateway and DNS from the primary active connection's IP4Config.
 /// Returns `("", [])` on any failure (best-effort, never errors).
-async fn read_gateway_dns(conn: &Connection, primary_path: &OwnedObjectPath) -> (String, Vec<String>) {
+async fn read_gateway_dns(
+    conn: &Connection,
+    primary_path: &OwnedObjectPath,
+) -> (String, Vec<String>) {
     let ac = match active_connection_proxy(conn, primary_path).await {
         Ok(p) => p,
         Err(_) => return (String::new(), Vec::new()),
