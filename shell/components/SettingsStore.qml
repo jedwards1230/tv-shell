@@ -25,7 +25,7 @@ import QtQuick
 //                    external writer modifies settings.json; QML re-fetches via
 //                    get-config so all keys re-apply live without a restart)
 // QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan,
-//                         sleepTimerMinutes, wakeOnController
+//                         sleepTimerMinutes, wakeOnController, defaultSink
 Item {
     id: store
 
@@ -42,6 +42,7 @@ Item {
     property int overscan: 0                     // safe-area overscan percent (0-10)
     property int sleepTimerMinutes: 0            // 0 = disabled; cycle: 0/5/10/15/30/60
     property bool wakeOnController: true         // declarative preference (no suspend wiring)
+    property string defaultSink: ""              // WirePlumber sink node.name (stable across reboots)
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
@@ -89,6 +90,8 @@ Item {
                     store.sleepTimerMinutes = obj.sleepTimerMinutes;
                 if (typeof obj.wakeOnController === "boolean")
                     store.wakeOnController = obj.wakeOnController;
+                if (typeof obj.defaultSink === "string")
+                    store.defaultSink = obj.defaultSink;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
             } catch (e) {
@@ -124,6 +127,7 @@ Item {
             "overscan": store.overscan,
             "sleepTimerMinutes": store.sleepTimerMinutes,
             "wakeOnController": store.wakeOnController,
+            "defaultSink": store.defaultSink,
             "moonlightViewMode": null
         });
         saveProc.request("set-config", body);
@@ -203,6 +207,12 @@ Item {
         wakeOnController = enabled;
         save();
         settingsChanged("wakeOnController", enabled);
+    }
+
+    function setDefaultSink(name) {
+        defaultSink = name;
+        save();
+        settingsChanged("defaultSink", name);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===

@@ -68,6 +68,7 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | — | Appearance — each theme mode selected (auto/light/dark) | substate |
 | — | Appearance — live external reload | QA: edit `~/.config/game-shell/settings.json` over SSH (e.g. flip `themeMode` `dark`→`light`) while the shell is open; confirm the theme switches without a Quickshell restart. The daemon broadcasts `config:changed` and `SettingsStore` re-fetches via `get-config`. No new screenshot view — the existing Appearance substates cover the visual. |
 | — | Accessibility — Reduce Motion on/off; Text Size Default/Large/Larger | substate |
+| — | Audio — default-sink persistence (by node.name, re-applied on boot), 5.1 speaker-test buttons (FL/FR/Center/LFE/RL/RR + All channels), sample-rate/format read-out | substate |
 | — | Power — sleep-timer cycle (Off/5/10/15/30/60 min), wake-on-controller toggle (On/Off), End session button reachable via `intent settings:power` | substate |
 
 > **#141**: All list-bearing settings pages (Network ×2, Bluetooth ×2, Moonlight, Display, Controllers) now share `SettingsList` for row-count sizing — the floating-gap regression class (#123/#139) is centralized. QA: verify lists pack directly under their headers with no gap in both dark and light mode. The Display page still uses `SettingsList` for the monitor list (#127 did not change that).
