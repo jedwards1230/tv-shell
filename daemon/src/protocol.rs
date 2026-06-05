@@ -180,6 +180,13 @@ pub enum Command {
     /// `BtMacUsage`).
     CecAddrUsage(&'static str),
 
+    /// `set-active-game <id>` — signal the current foreground game to the
+    /// daemon. The daemon activates per-game binding overrides for `<id>` from
+    /// `settings.json`'s `perGameBindings`. In-memory only.
+    SetActiveGame(String),
+    /// `set-active-game` with no body — clears the active game, reverting to
+    /// player/global binding layers only.
+    SetActiveGameClear,
     /// Anything unrecognized -> the daemon replies `unknown`.
     Unknown,
 }
@@ -434,7 +441,17 @@ impl Command {
                         };
                     }
                 }
-                // Python keys `set-binding` off the `"set-binding "` prefix
+                // `set-active-game <id>`: a single game-id token (or bare for
+                // clear). `command_body` enforces the word boundary so
+                // `set-active-gameX` is not mistaken for this command.
+                if let Some(body) = command_body(cmd, "set-active-game") {
+                    return if body.is_empty() {
+                        Command::SetActiveGameClear
+                    } else {
+                        Command::SetActiveGame(body.to_string())
+                    };
+                }
+                                // Python keys `set-binding` off the `"set-binding "` prefix
                 // (with trailing space), so a bare `set-binding` is `unknown`.
                 if let Some(rest) = cmd.strip_prefix("set-binding ") {
                     // Mirror Python `cmd.split(None, 2)`: at most two splits, so
@@ -1556,6 +1573,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_set_active_game_body() {
+        // Non-empty body -> SetActiveGame.
+        assert_eq!(
+            Command::parse("set-active-game steam_12345"),
+            Command::SetActiveGame("steam_12345".into())
+        );
+        // Body is trimmed.
+        assert_eq!(
+            Command::parse("  set-active-game   my-game-id  "),
+            Command::SetActiveGame("my-game-id".into())
+        );
+        // Bare command (no body) -> SetActiveGameClear.
+        assert_eq!(
+            Command::parse("set-active-game"),
+            Command::SetActiveGameClear
+        );
+        assert_eq!(
+            Command::parse("  set-active-game  "),
+            Command::SetActiveGameClear
+        );
+        // Word boundary: `set-active-gameX` is NOT set-active-game.
+        assert_eq!(Command::parse("set-active-gameX"), Command::Unknown);
+    }
+
+        #[test]
     fn config_changed_event_wire_string() {
         // config:changed is payload-less — the subscriber re-fetches via get-config.
         assert_eq!(Event::ConfigChanged.to_string(), "config:changed");

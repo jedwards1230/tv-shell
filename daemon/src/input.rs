@@ -158,6 +158,16 @@ struct Shared {
     /// `Control::ConfigChanged` instead of re-reading settings.json on every
     /// rumble.
     rumble_enabled: bool,
+
+    /// Per-player binding overrides (#104). Keyed by player slot (0..=3).
+    /// Refreshed on `Control::ConfigChanged`.
+    per_player_bindings: HashMap<u8, HashMap<&'static str, u16>>,
+    /// Per-game binding overrides (#104). Keyed by game id string.
+    /// Refreshed on `Control::ConfigChanged`.
+    per_game_bindings: HashMap<String, HashMap<&'static str, u16>>,
+    /// The currently active game id for per-game binding lookup (#104).
+    /// Set via `set-active-game <id>` IPC; in-memory only (not persisted).
+    active_game: Option<String>,
 }
 
 impl Shared {
@@ -230,6 +240,21 @@ impl Shared {
         for b in &self.bindings {
             self.button_map.insert(b.button, b.key);
         }
+    }
+
+    /// Resolve the keyboard key for a remappable button press from the layered
+    /// bindings (#104). Resolution order: game override → player override →
+    /// global. Returns `None` when `button` is not an assigned action button.
+    ///
+    /// Only call this for remappable buttons on a keydown event — the hot path
+    /// is allocation-light (≤4 actions via `config::resolve_button_key`).
+    fn resolved_key(&self, slot: u8, button: u16) -> Option<u16> {
+        let player = self.per_player_bindings.get(&slot);
+        let game = self
+            .active_game
+            .as_deref()
+            .and_then(|id| self.per_game_bindings.get(id));
+        config::resolve_button_key(&self.bindings, player, game, button)
     }
 }
 
@@ -582,8 +607,8 @@ impl PadDevice {
                 sh.emit_mouse_button(cfg::BTN_RIGHT, value);
             }
 
-            // Map to keyboard.
-            if let Some(&mapped) = sh.button_map.get(&code) {
+            // Map to keyboard (layered: game > player > global, #104).
+            if let Some(mapped) = sh.resolved_key(self.player_slot, code) {
                 sh.emit_key(mapped, value);
             }
         } else if et == EventType::ABSOLUTE {
@@ -1503,6 +1528,17 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
     for b in &bindings {
         button_map.insert(b.button, b.key);
     }
+    // Parse per-player and per-game binding overrides (#104).
+    let (per_player_bindings, per_game_bindings) = {
+        let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok());
+        let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+        (
+            config::parse_per_player_bindings(&doc),
+            config::parse_per_game_bindings(&doc),
+        )
+    };
 
     let (kb, mouse) = match build_uinput(&button_map) {
         Ok(v) => v,
@@ -1535,6 +1571,9 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
         reg,
         bindings,
         button_map,
+        per_player_bindings,
+        per_game_bindings,
+        active_game: None,
         input_mode: InputMode::Controller,
         gen_seq: 0,
         pending_capture: None,
@@ -1766,8 +1805,23 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             }
         }
         Control::ConfigChanged => {
-            // set-config succeeded — refresh cached settings (#108).
+            // set-config succeeded — refresh cached settings (#108, #104).
             sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
+            // Re-parse per-player and per-game binding overrides so an external
+            // edit to perPlayerBindings/perGameBindings takes effect live.
+            let doc: Option<serde_json::Value> =
+                std::fs::read_to_string(config::settings_path())
+                    .ok()
+                    .and_then(|t| serde_json::from_str(&t).ok());
+            let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            sh.per_player_bindings = config::parse_per_player_bindings(&doc);
+            sh.per_game_bindings = config::parse_per_game_bindings(&doc);
+        }
+        Control::SetActiveGame { id, reply } => {
+            // Set or clear the active game for per-game binding lookup (#104).
+            // In-memory only — not persisted to settings.json.
+            sh.active_game = id;
+            let _ = reply.send(resp_ok());
         }
         Control::Shutdown => return false,
     }
