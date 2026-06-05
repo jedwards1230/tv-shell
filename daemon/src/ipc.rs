@@ -118,7 +118,7 @@ async fn handle_client(
     events_tx: broadcast::Sender<Event>,
     dbus: DbusSenders,
 ) -> Result<()> {
-    let mut framed = Framed::new(stream, LinesCodec::new());
+    let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(4096));
 
     while let Some(line) = framed.next().await {
         let line = line.context("reading command line")?;
@@ -612,6 +612,16 @@ mod tests {
         assert_eq!(
             send_line(&mut s, "intent").await,
             "error:usage: intent <name>"
+        );
+        // Deep-link intents: valid namespaced targets are accepted.
+        assert_eq!(send_line(&mut s, "intent settings:bluetooth").await, "ok");
+        assert_eq!(send_line(&mut s, "intent overlay:volume").await, "ok");
+        assert_eq!(send_line(&mut s, "intent overlay:network").await, "ok");
+        assert_eq!(send_line(&mut s, "intent app:firefox").await, "ok");
+        // Unknown overlay target -> rejected.
+        assert_eq!(
+            send_line(&mut s, "intent overlay:bogus").await,
+            "error:unknown intent 'overlay:bogus'"
         );
 
         // Rumble control surface: a well-formed command round-trips the runtime

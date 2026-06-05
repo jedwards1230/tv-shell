@@ -67,42 +67,49 @@ Rectangle {
     readonly property var sections: {
         let s = [
             {
+                id: "audio",
                 name: "Audio",
                 iconSource: "icons/audio.svg",
                 fallback: "♫",
                 component: audioComp
             },
             {
+                id: "bluetooth",
                 name: "Bluetooth",
                 iconSource: "icons/bluetooth.svg",
                 fallback: "ᛒ",
                 component: bluetoothComp
             },
             {
+                id: "network",
                 name: "Network",
                 iconSource: "icons/network.svg",
                 fallback: "⇅",
                 component: networkComp
             },
             {
+                id: "display",
                 name: "Display",
                 iconSource: "icons/display.svg",
                 fallback: "\u{1F5A5}",
                 component: displayComp
             },
             {
+                id: "controllers",
                 name: "Controllers",
                 iconSource: "icons/controllers.svg",
                 fallback: "\u{1F3AE}",
                 component: controllerComp
             },
             {
+                id: "keybindings",
                 name: "Key Bindings",
                 iconSource: "icons/keybindings.svg",
                 fallback: "⌨",
                 component: keyBindingsComp
             },
             {
+                id: "avcontrol",
                 name: "AV Control",
                 iconSource: "icons/avcontrol.svg",
                 fallback: "\u{1F4FA}",
@@ -112,24 +119,28 @@ Rectangle {
         let provider = StreamProviders.active;
         if (provider.settingsComponent)
             s.push({
+                id: provider.id || "streaming",
                 name: provider.displayName,
                 iconSource: "icons/moonlight.svg",
                 fallback: "\u{1F319}",
                 component: provider.settingsComponent
             });
         s.push({
+            id: "appearance",
             name: "Appearance",
             iconSource: "icons/appearance.svg",
             fallback: "\u{1F3A8}",
             component: appearanceComp
         });
         s.push({
+            id: "accessibility",
             name: "Accessibility",
             iconSource: "icons/accessibility.svg",
             fallback: "\u{267F}",
             component: accessibilityComp
         });
         s.push({
+            id: "power",
             name: "Power",
             iconSource: "icons/power.svg",
             fallback: "⏻",
@@ -424,11 +435,25 @@ Rectangle {
         if (visible) {
             currentSection = idx;
             sidebarList.currentIndex = idx;
-        } else {
-            _pendingSection = idx;
-            visible = true;
+            // Move focus straight to the sidebar and return — the root is a plain
+            // Rectangle (not a FocusScope), so a trailing root.forceActiveFocus()
+            // would steal focus back from the sidebar in the already-visible case.
+            sidebarList.forceActiveFocus();
+            return;
         }
+        _pendingSection = idx;
+        visible = true;
         forceActiveFocus();
+    }
+
+    function openSectionById(id) {
+        for (let i = 0; i < sections.length; i++) {
+            if (sections[i].id === id) {
+                openSection(i);
+                return true;
+            }
+        }
+        return false;
     }
 
     function returnToSidebar() {

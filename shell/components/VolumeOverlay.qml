@@ -41,12 +41,16 @@ FocusScope {
     function openAt(rect) {
         root.anchorRect = rect;
         root.opened = true;
-        root.forceActiveFocus();
+        Qt.callLater(function () {
+            root.forceActiveFocus();
+        });
     }
 
     onOpenedChanged: {
         if (opened) {
-            root.forceActiveFocus();
+            Qt.callLater(function () {
+                root.forceActiveFocus();
+            });
             root._outputExpanded = false;
             root._focusRow = 0;
             getVolume.running = true;
