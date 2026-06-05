@@ -56,33 +56,28 @@ FocusScope {
 
         SettingsList {
             id: mountList
-            Layout.fillWidth: true
-            rowCount: root.loading ? 1 : Math.max(root.mounts.length, 1)
+            // rowStride = delegate 80 + spacing 8 (#123/#139 row-count sizing).
+            rowStride: 88
+            maxHeight: 600
+            minRows: 1
+            spacing: 8
+            interactive: false
+            model: root.loading ? [{ mount: "Loading…", size: "", used: "", avail: "", pct: "" }] : (root.mounts.length > 0 ? root.mounts : [{ mount: "No filesystems found", size: "", used: "", avail: "", pct: "" }])
 
-            Repeater {
-                model: root.loading ? [
-                    {
-                        mount: "Loading…",
-                        size: "",
-                        used: "",
-                        avail: "",
-                        pct: ""
-                    }
-                ] : (root.mounts.length > 0 ? root.mounts : [
-                        {
-                            mount: "No filesystems found",
-                            size: "",
-                            used: "",
-                            avail: "",
-                            pct: ""
-                        }
-                    ])
+            delegate: Rectangle {
+                required property var modelData
+                width: parent ? parent.width : 0
+                height: 80
+                radius: 16
+                color: Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
 
-                delegate: RowLayout {
-                    required property var modelData
-                    Layout.fillWidth: true
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
                     spacing: 24
-                    height: 80
 
                     Text {
                         text: modelData.mount
