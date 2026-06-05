@@ -996,6 +996,34 @@ cec:device:{"logicalAddress":0,"physicalAddress":"0000","vendor":"000000","osdNa
 cec:power:{"addr":5,"power":"on"}
 ```
 
+### Config Live-Reload
+
+Emitted by the file-watch actor (Linux-only, inotify-based) when
+`settings.json` is modified by an **external** writer (SSH, Ansible, a web UI,
+or any tool other than the daemon itself). The daemon suppresses its own
+`set-config` and `set-binding` writes via a self-write generation guard
+(`config::note_self_write()` + `config::self_write_gen()`), so this event fires
+only for foreign edits.
+
+Carries **no payload** — subscribers re-fetch the full settings document via the
+existing `get-config` command (one re-read path, no inline JSON concerns).
+
+| Event | Trigger | Payload |
+|-------|---------|---------|
+| `config:changed` | `settings.json` was modified by an external writer | _(none)_ |
+
+Example wire line:
+
+```
+config:changed
+```
+
+> **QML wiring**: `SettingsStore.qml` subscribes to this event via its
+> `configWatch` `SocketClient` (subscribe mode). On receipt it calls
+> `store.load()` (the same `get-config` path used at startup), re-applying all
+> QML-owned keys (`themeMode`, `streamingViewMode`, `controllerDebug`,
+> `rumbleEnabled`, `reduceMotion`, `textScale`) and `keyBindings` live.
+
 ## Default Button Mappings
 
 | Action | Default Button | Keyboard Output | Remappable |

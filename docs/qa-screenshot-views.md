@@ -66,6 +66,7 @@ app card, so press **Up** first to reach the QuickActions row before Left/Right.
 | — | AV Control — CEC device info populated | substate — reads `cec-scan` JSON from daemon + subscribes to `cec:device:*`/`cec:power:*` events (#16) |
 | — | Moonlight — add/edit server form + servers/apps toggle | substate |
 | — | Appearance — each theme mode selected (auto/light/dark) | substate |
+| — | Appearance — live external reload | QA: edit `~/.config/game-shell/settings.json` over SSH (e.g. flip `themeMode` `dark`→`light`) while the shell is open; confirm the theme switches without a Quickshell restart. The daemon broadcasts `config:changed` and `SettingsStore` re-fetches via `get-config`. No new screenshot view — the existing Appearance substates cover the visual. |
 | — | Accessibility — Reduce Motion on/off; Text Size Default/Large/Larger | substate |
 
 > **#141**: All list-bearing settings pages (Network ×2, Bluetooth ×2, Moonlight, Display, Controllers) now share `SettingsList` for row-count sizing — the floating-gap regression class (#123/#139) is centralized. QA: verify lists pack directly under their headers with no gap in both dark and light mode.

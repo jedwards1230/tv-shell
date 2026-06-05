@@ -61,3 +61,8 @@ bluer = { version = "0.17.4", default-features = false, features = ["bluetoothd"
 # target (libcec uses bindgen; CI installs these on the Linux leg). Will NOT build
 # on macOS. Linux-only (libcec is a Linux/udev-based library).
 cec-rs = "8"
+# notify-debouncer-full wraps inotify (Linux kernel interface) with a built-in
+# debounce window so we don't hand-roll timers. Pulls `notify` transitively.
+# Linux-only: inotify is a Linux syscall; watching is not meaningful on macOS
+# (FSEvents is a different API), and the watch module is cfg-gated to match.
+notify-debouncer-full = "0.3"

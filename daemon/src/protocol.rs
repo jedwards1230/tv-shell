@@ -536,6 +536,14 @@ pub enum Event {
     /// A CEC device's power status changed; payload is a compact JSON object
     /// `{addr,power}`. Wire: `cec:power:<json>`.
     CecPower(String),
+
+    // --- Config live-reload ---
+    /// `settings.json` was modified by an **external** writer (SSH / Ansible /
+    /// web UI). The daemon suppresses its own `set-config`/`set-binding` writes
+    /// via the self-write generation guard in `config.rs`, so this event fires
+    /// only for foreign edits. Carries no payload — subscribers re-fetch the
+    /// full document via `get-config`. Wire: `config:changed`.
+    ConfigChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -582,6 +590,7 @@ impl fmt::Display for Event {
             Event::HyprFullscreen(fs) => write!(f, "hypr:fullscreen:{}", if *fs { 1 } else { 0 }),
             Event::CecDevice(json) => write!(f, "cec:device:{json}"),
             Event::CecPower(json) => write!(f, "cec:power:{json}"),
+            Event::ConfigChanged => f.write_str("config:changed"),
         }
     }
 }
@@ -1531,5 +1540,11 @@ mod tests {
             resp_bindings(&ordered),
             r#"{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}"#
         );
+    }
+
+    #[test]
+    fn config_changed_event_wire_string() {
+        // config:changed is payload-less — the subscriber re-fetches via get-config.
+        assert_eq!(Event::ConfigChanged.to_string(), "config:changed");
     }
 }

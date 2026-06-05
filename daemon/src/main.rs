@@ -16,7 +16,7 @@
 // only wires them together. (lib+bin split — see lib.rs — so the cross-platform
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
-use game_shell_input::{bluetooth, cec, hyprland, input, ipc, network, power, protocol, state};
+use game_shell_input::{bluetooth, cec, hyprland, input, ipc, network, power, protocol, state, watch};
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -54,6 +54,16 @@ fn main() -> anyhow::Result<()> {
         // and never panic the daemon if BlueZ/NetworkManager/logind/UPower are
         // absent, so spawning them unconditionally is safe.
         let dbus = spawn_dbus_actors(&events_tx);
+
+        // Spawn the file-watch actor. It inotify-watches settings.json for
+        // external edits and broadcasts config:changed. Fire-and-forget like the
+        // D-Bus actors — it logs and degrades gracefully if inotify fails.
+        {
+            let events_tx = events_tx.clone();
+            tokio::spawn(async move {
+                watch::run(events_tx).await;
+            });
+        }
 
         let ipc_task = tokio::spawn(ipc::serve(
             sock_path,

@@ -13,6 +13,30 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// ---------------------------------------------------------------------------
+// Self-write generation guard (used by watch.rs to suppress daemon-own writes).
+// ---------------------------------------------------------------------------
+
+/// Monotonically increasing counter bumped before each `std::fs::write` to
+/// `settings.json`. The file-watch task compares the generation before and after
+/// a debounced inotify batch: if the counter advanced, the write was (at least
+/// partly) daemon-originated and the `config:changed` event is suppressed. Pure
+/// atomics — no lock, no async, always safe to call from any context.
+static SELF_WRITE_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Bump the self-write generation counter. Call this immediately BEFORE every
+/// `std::fs::write` to `settings.json` (not for other files such as recents).
+pub fn note_self_write() {
+    SELF_WRITE_GEN.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Read the current self-write generation. The file-watch task calls this to
+/// detect whether the daemon wrote `settings.json` during a debounce window.
+pub fn self_write_gen() -> u64 {
+    SELF_WRITE_GEN.load(Ordering::Relaxed)
+}
 
 // ---------------------------------------------------------------------------
 // Linux input-event-codes (kernel `input-event-codes.h`). Kept as plain u16 so
@@ -440,6 +464,7 @@ pub fn save_bindings(path: &Path, bindings: &[Binding]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    note_self_write();
     std::fs::write(path, json)
 }
 
@@ -535,6 +560,7 @@ pub fn set_config(path: &Path, updates: &serde_json::Value) -> std::io::Result<S
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    note_self_write();
     std::fs::write(path, &merged)?;
     Ok(merged)
 }
@@ -770,5 +796,18 @@ mod tests {
         std::fs::write(&path, "not json").unwrap();
         assert_eq!(rumble_enabled(&path), RUMBLE_ENABLED_DEFAULT);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn note_self_write_advances_generation() {
+        // note_self_write() must strictly advance the counter each call.
+        // Uses a local snapshot so parallel tests don't interfere.
+        let before = self_write_gen();
+        note_self_write();
+        let after = self_write_gen();
+        assert!(after > before, "generation must advance after note_self_write");
+        // A second call advances again.
+        note_self_write();
+        assert!(self_write_gen() > after, "each note_self_write increments");
     }
 }
