@@ -118,7 +118,7 @@ async fn handle_client(
     events_tx: broadcast::Sender<Event>,
     dbus: DbusSenders,
 ) -> Result<()> {
-    let mut framed = Framed::new(stream, LinesCodec::new());
+    let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(4096));
 
     while let Some(line) = framed.next().await {
         let line = line.context("reading command line")?;
