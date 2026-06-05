@@ -95,12 +95,13 @@ FocusScope {
         }
 
         // Monitor list
-        ListView {
+        SettingsList {
             id: monitorList
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(root.monitors.length * 200, 400)
+            // rowStride = delegate 180 + spacing 16 (→ stride 196 rounds to 200
+            // matching Math.min(count*200,400) — #123/#139 row-count sizing).
+            rowStride: 200
+            maxHeight: 400
             spacing: 16
-            clip: true
             model: root.monitors
             focus: true
 
