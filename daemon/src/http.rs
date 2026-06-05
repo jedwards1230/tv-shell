@@ -7,15 +7,24 @@
 //! socket is opened and no control surface is exposed.
 //!
 //! **Auth**: when `GAME_SHELL_HTTP_TOKEN` is set, every request must carry
-//! `Authorization: Bearer <token>` (exact match); requests without a valid
-//! token receive 401. When the token variable is unset, any request from the
-//! bound interface is accepted — the operator is expected to bind to a trusted
-//! LAN interface, not a public one.
+//! `Authorization: Bearer <token>` (constant-time comparison, #151); requests
+//! without a valid token receive 401. When the token variable is unset, any
+//! request from the bound interface is accepted — the operator is expected to
+//! bind to a trusted LAN interface, not a public one. A `tracing::warn!` is
+//! emitted when binding to an unspecified address without a token.
 //!
-//! **No new heavy dependencies**: this module uses only `tokio::net::TcpListener`
-//! (tokio is already a direct dependency with `features = ["full"]`). `reqwest`
-//! is client-only (`health.rs`) and `hyper` is only a transitive dep; neither
-//! is used here.
+//! **DoS hardening (#151)**:
+//! - Each accepted connection is wrapped in a 5-second `tokio::time::timeout`
+//!   so a slow sender that never sends the blank-line HTTP terminator cannot
+//!   hold a task slot indefinitely.
+//! - An atomic `ACTIVE_CONNS` counter caps concurrent connections at
+//!   `MAX_ACTIVE_CONNS` (128). Connections beyond the cap receive an immediate
+//!   503 and are dropped, preventing fd / task-pool exhaustion.
+//!
+//! **No new heavy dependencies**: this module uses only `tokio::net::TcpListener`,
+//! `tokio::time`, and the `subtle` crate (already a transitive dep, now direct).
+//! `reqwest` is client-only (`health.rs`) and `hyper` is only a transitive dep;
+//! neither is used here.
 //!
 //! **Cross-platform**: this module has no Linux-only imports. The `serve`
 //! function can be called on any platform. The binary (`main.rs`) is
@@ -23,6 +32,7 @@
 //! parser and unit tests compile and run on macOS / CI.
 
 use crate::state::Control;
+use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -204,6 +214,15 @@ fn extract_authorization(raw: &[u8]) -> Option<String> {
     None
 }
 
+/// Constant-time comparison of two strings to prevent timing oracles.
+/// Uses `subtle::ConstantTimeEq` on the byte representations (#151).
+fn ct_eq_str(a: &str, b: &str) -> bool {
+    // ConstantTimeEq on slices requires equal lengths; a length mismatch
+    // leaks only the length (not which character differs), which is
+    // acceptable for a fixed-format "Bearer <token>" prefix.
+    a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
 /// Send a control request and await the runtime's response line.
 async fn request<F>(control_tx: &mpsc::Sender<Control>, make: F) -> Option<String>
 where
@@ -249,11 +268,12 @@ async fn handle_connection(
     let method = parts[0];
     let path = parts[1];
 
-    // Auth check.
+    // Auth check — constant-time comparison to prevent timing oracles (#151).
     if let Some(expected) = token {
         let bearer = format!("Bearer {expected}");
         let auth = extract_authorization(&raw);
-        if auth.as_deref() != Some(bearer.as_str()) {
+        let provided = auth.as_deref().unwrap_or("");
+        if !ct_eq_str(provided, &bearer) {
             let resp = http_response(401, "unauthorized");
             let _ = stream.write_all(resp.as_bytes()).await;
             return;
@@ -299,18 +319,39 @@ async fn handle_connection(
 
 // ─── Public serve entry point ────────────────────────────────────────────────
 
+/// Maximum number of concurrently active HTTP connections (#151 DoS hardening).
+const MAX_ACTIVE_CONNS: usize = 128;
+
+/// Read timeout for each accepted connection in seconds (#151 DoS hardening).
+const READ_TIMEOUT_SECS: u64 = 5;
+
 /// Bind a TCP listener to `addr` and serve the LAN HTTP control bridge until
 /// the process exits.
 ///
-/// Each accepted connection is handled in its own spawned task. Errors are
-/// logged at `debug` level and never panic the daemon. The `token` parameter
-/// is the optional bearer token from `GAME_SHELL_HTTP_TOKEN`; `None` means no
-/// auth (the operator is responsible for binding to a trusted interface).
+/// Each accepted connection is handled in its own spawned task, wrapped in a
+/// `READ_TIMEOUT_SECS`-second timeout so a slow sender cannot hold a task slot
+/// indefinitely. Concurrent connections are capped at `MAX_ACTIVE_CONNS`;
+/// connections beyond the cap receive an immediate 503 and are dropped.
+///
+/// The `token` parameter is the optional bearer token from
+/// `GAME_SHELL_HTTP_TOKEN`; `None` means no auth (the operator is responsible
+/// for binding to a trusted interface). A warning is emitted when binding to
+/// an unspecified address (0.0.0.0 or ::) without a token, since any host on
+/// the network can reach the control surface without authentication.
 pub async fn serve(
     addr: std::net::SocketAddr,
     token: Option<String>,
     control_tx: mpsc::Sender<Control>,
 ) {
+    // Warn if the address is unspecified and no token is configured (#151).
+    if token.is_none() && addr.ip().is_unspecified() {
+        tracing::warn!(
+            "http bridge: binding to {} with no auth token — \
+             any host on the network can send control commands",
+            addr
+        );
+    }
+
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -320,14 +361,40 @@ pub async fn serve(
     };
     tracing::info!("Listening on http://{addr}");
 
+    // Atomic connection counter for the cap (#151 DoS hardening).
+    let active_conns = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
+                let current = active_conns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if current >= MAX_ACTIVE_CONNS {
+                    active_conns.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    tracing::debug!(
+                        "http: connection from {peer} rejected — at cap ({MAX_ACTIVE_CONNS})"
+                    );
+                    // Spawn a minimal task to send 503 and drop the stream.
+                    tokio::spawn(async move {
+                        let mut s = stream;
+                        let resp = http_response(503, "too many connections");
+                        let _ = s.write_all(resp.as_bytes()).await;
+                    });
+                    continue;
+                }
                 tracing::debug!("http: connection from {peer}");
                 let token = token.clone();
                 let control_tx = control_tx.clone();
+                let conns = active_conns.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, token.as_deref(), &control_tx).await;
+                    // Wrap the handler in a timeout so a slow sender that
+                    // never sends the blank-line terminator cannot hold a
+                    // task slot indefinitely (#151).
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(READ_TIMEOUT_SECS),
+                        handle_connection(stream, token.as_deref(), &control_tx),
+                    )
+                    .await;
+                    conns.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 });
             }
             Err(e) => {
@@ -513,5 +580,19 @@ mod tests {
     fn extract_auth_absent() {
         let raw = b"POST /intent/menu HTTP/1.1\r\nHost: localhost\r\n\r\n";
         assert_eq!(extract_authorization(raw), None);
+    }
+
+    // ── ct_eq_str ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn ct_eq_str_equal() {
+        assert!(ct_eq_str("Bearer secret123", "Bearer secret123"));
+    }
+
+    #[test]
+    fn ct_eq_str_different() {
+        assert!(!ct_eq_str("Bearer secret123", "Bearer secret124"));
+        assert!(!ct_eq_str("Bearer a", "Bearer bb"));
+        assert!(!ct_eq_str("", "Bearer x"));
     }
 }
