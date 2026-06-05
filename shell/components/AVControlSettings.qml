@@ -8,6 +8,7 @@ import Quickshell.Io
 // page becomes unnavigable when entered via the Right d-pad.
 FocusScope {
     id: root
+    implicitHeight: avMainCol.implicitHeight + 2 * Theme.padding
 
     property bool cecAvailable: false
     property bool hasAvScript: false
@@ -366,6 +367,7 @@ FocusScope {
 
     // --- UI ---
     ColumnLayout {
+        id: avMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32

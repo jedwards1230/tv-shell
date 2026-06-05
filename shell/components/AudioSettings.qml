@@ -4,6 +4,7 @@ import Quickshell.Io
 
 FocusScope {
     id: root
+    implicitHeight: audioMainCol.implicitHeight + 2 * Theme.padding
 
     property int volume: 50
     property bool muted: false
@@ -225,6 +226,7 @@ FocusScope {
     }
 
     ColumnLayout {
+        id: audioMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32
