@@ -857,7 +857,7 @@ Subscribers (registered via `subscribe`) receive these events as newline-termina
 | `controller-disconnected` | A gamepad stream errored during event read (USB disconnect; fires per leaving pad) |
 | `pad:connected:<json>` | A pad joined the fleet and was assigned a player slot. Payload: compact `{id,index,name}` object (#101) |
 | `pad:disconnected:<id>` | A pad left the fleet; its slot is freed for reuse. Payload: the pad's stable wire `id` |
-| `pad:index:<json>` | A pad's player-indicator LED was lit to match its slot at assignment (#101 LED). Payload: compact `{id,index}` object. Emitted for pads with a controllable LED — via `EV_LED`, or via the `/sys/class/leds` xpad fallback (Xbox 360 pads expose their ring through sysfs, not `EV_LED`); a no-op for pads with neither |
+| `pad:index:<json>` | A pad's player-indicator LED was lit to match its slot at assignment (#101 LED). Payload: compact `{id,index}` object. Emitted for pads with a controllable LED — via `EV_LED`, or via the sysfs `/sys/class/leds` fallback (xpad/Sony driver families); a no-op for pads with neither |
 | `pad:battery:<json>` | A pad's battery level/charging state changed (#100). Payload: compact `{id,level,charging}` object (`level` 0–100, `charging` bool). Only emitted for pads that report a battery (wireless); wired pads emit none |
 
 `controller-wake` / `controller-disconnected` are the legacy single-pad signals
@@ -871,9 +871,19 @@ when the pad lacks the hardware:
 
 - **LED (#101):** at slot assignment the daemon lights the pad's player LED and
   emits `pad:index:{id,index}`. It tries `EV_LED` (LED code == player slot)
-  first, then falls back to the `/sys/class/leds` xpad node (Xbox 360 pads expose
-  their player ring through sysfs, not `EV_LED`). No controllable LED → no
-  event.
+  first, then falls back to the `/sys/class/leds` sysfs tree. The sysfs fallback
+  correlates the correct node per physical pad (longest shared canonical-path
+  prefix with the pad's own sysfs device path; ties broken by sorted name) so
+  two identical pads each light their own ring with no cross-talk. Two driver
+  conventions are supported: xpad (Xbox 360/One) pads write `6 + slot` to the
+  node's `brightness` attribute; Sony DualSense/DualShock4 pads drive either
+  `*:white:player-N` per-slot LED-class entries (write `1` to the matching
+  `player-<slot+1>` sibling, `0` to the others) or an `*:rgb:indicator`
+  lightbar node (per-slot solid colour via `multi_intensity`). No LED command
+  is exposed over IPC — the indicator is driven internally on pad join and the
+  result is published as `pad:index:*`. Pads with neither EV_LED nor a usable
+  sysfs leds node are a clean no-op: no event is emitted. The Sony lightbar
+  path requires on-device verification on game-client-1 with a DualSense.
 - **Battery (#100):** the daemon polls the pad's `power_supply` sysfs and emits
   `pad:battery:{id,level,charging}` on change (and once at connect). Wired pads
   report no battery → no event.
