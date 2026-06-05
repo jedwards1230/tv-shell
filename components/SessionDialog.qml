@@ -72,15 +72,14 @@ FocusScope {
                         id: resumeBtnInner
                         text: "Resume"
                         focus: parent.activeFocus
+                        onActivated: root.resumeRequested()
                         MouseArea {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.resumeRequested()
+                            onClicked: resumeBtnInner.activated()
                         }
                     }
-                    Keys.onReturnPressed: root.resumeRequested()
-                    Keys.onEnterPressed: root.resumeRequested()
                 }
 
                 FocusScope {
@@ -94,15 +93,14 @@ FocusScope {
                         id: quitBtnInner
                         text: "Quit & Relaunch"
                         focus: parent.activeFocus
+                        onActivated: root.quitRequested()
                         MouseArea {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.quitRequested()
+                            onClicked: quitBtnInner.activated()
                         }
                     }
-                    Keys.onReturnPressed: root.quitRequested()
-                    Keys.onEnterPressed: root.quitRequested()
                 }
 
                 FocusScope {
@@ -115,15 +113,14 @@ FocusScope {
                         id: cancelBtnInner
                         text: "Cancel"
                         focus: parent.activeFocus
+                        onActivated: root.cancelled()
                         MouseArea {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.cancelled()
+                            onClicked: cancelBtnInner.activated()
                         }
                     }
-                    Keys.onReturnPressed: root.cancelled()
-                    Keys.onEnterPressed: root.cancelled()
                     Keys.onEscapePressed: root.cancelled()
                 }
             }

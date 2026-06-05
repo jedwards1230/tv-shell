@@ -83,19 +83,17 @@ FocusScope {
                     anchors.fill: parent
                     color: Theme.reduceMotion ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
 
+                    onActivated: Theme.setReduceMotion(!Theme.reduceMotion)
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             reduceMotionScope.forceActiveFocus();
-                            Theme.setReduceMotion(!Theme.reduceMotion);
+                            reduceMotionBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    Theme.setReduceMotion(!Theme.reduceMotion);
                 }
             }
         }

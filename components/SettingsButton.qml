@@ -13,10 +13,15 @@ Rectangle {
 
     property alias text: label.text
 
+    // Single activation signal — emitted by mouse click, Return/Enter, and
+    // the AT-SPI press action so all three routes converge (mirrors
+    // BaseCard.qml). Call sites handle onActivated.
+    signal activated
+
     Accessible.role: Accessible.Button
     Accessible.name: label.text
     Accessible.focusable: true
-    Accessible.onPressAction: root.Keys.returnPressed(null)
+    Accessible.onPressAction: root.activated()
 
     Connections {
         target: Theme
@@ -54,7 +59,7 @@ Rectangle {
         onClicked: {
             Theme.enterMouseMode();
             root.forceActiveFocus();
-            root.Keys.returnPressed(null);
+            root.activated();
         }
     }
 
@@ -64,4 +69,7 @@ Rectangle {
         font.pixelSize: Theme.fontBody
         color: Theme.textPrimary
     }
+
+    Keys.onReturnPressed: root.activated()
+    Keys.onEnterPressed: root.activated()
 }

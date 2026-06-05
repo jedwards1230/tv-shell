@@ -402,11 +402,12 @@ FocusScope {
                 anchors.horizontalCenter: parent.horizontalCenter
                 focus: parent.activeFocus
 
+                onActivated: root.resetDefaults()
+
                 Keys.onUpPressed: {
                     bindingsList.currentIndex = bindingsList.count - 1;
                     bindingsList.forceActiveFocus();
                 }
-                Keys.onReturnPressed: root.resetDefaults()
             }
         }
 

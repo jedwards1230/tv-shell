@@ -319,18 +319,18 @@ FocusScope {
                             focus: parent.activeFocus
                             anchors.fill: parent
 
+                            onActivated: executeAction()
+
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     confirmYesScope.forceActiveFocus();
-                                    executeAction();
+                                    confirmYesBtn.activated();
                                 }
                             }
                         }
-
-                        Keys.onReturnPressed: executeAction()
                     }
 
                     FocusScope {
@@ -348,20 +348,19 @@ FocusScope {
                             focus: parent.activeFocus
                             anchors.fill: parent
 
+                            onActivated: root.confirmAction = ""
+
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     confirmNoScope.forceActiveFocus();
-                                    root.confirmAction = "";
+                                    confirmNoBtn.activated();
                                 }
                             }
                         }
 
-                        Keys.onReturnPressed: {
-                            root.confirmAction = "";
-                        }
                         Keys.onEscapePressed: {
                             root.confirmAction = "";
                         }

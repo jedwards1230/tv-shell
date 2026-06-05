@@ -512,16 +512,15 @@ FocusScope {
                             id: pairBtn
                             text: "Pair"
                             focus: parent.activeFocus
+                            onActivated: root.startPairing(index)
 
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.startPairing(index)
+                                onClicked: pairBtn.activated()
                             }
                         }
-
-                        Keys.onReturnPressed: root.startPairing(index)
                     }
 
                     // Remove button
@@ -533,19 +532,14 @@ FocusScope {
                             id: removeBtn
                             text: "Remove"
                             focus: parent.activeFocus
+                            onActivated: root.confirmRemoveIndex = index
 
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.confirmRemoveIndex = index;
-                                }
+                                onClicked: removeBtn.activated()
                             }
-                        }
-
-                        Keys.onReturnPressed: {
-                            root.confirmRemoveIndex = index;
                         }
                     }
                 }
@@ -592,21 +586,20 @@ FocusScope {
                 text: "Add Server"
                 focus: parent.activeFocus
 
+                onActivated: {
+                    root.showAddForm = true;
+                    nameInput.forceActiveFocus();
+                }
+
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         addBtnScope.forceActiveFocus();
-                        root.showAddForm = true;
-                        nameInput.forceActiveFocus();
+                        addBtn.activated();
                     }
                 }
-            }
-
-            Keys.onReturnPressed: {
-                root.showAddForm = true;
-                nameInput.forceActiveFocus();
             }
         }
 
@@ -776,20 +769,17 @@ FocusScope {
                             text: "Cancel"
                             focus: parent.activeFocus
 
+                            onActivated: {
+                                root.resetForm();
+                                serverList.forceActiveFocus();
+                            }
+
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.resetForm();
-                                    serverList.forceActiveFocus();
-                                }
+                                onClicked: cancelBtn.activated()
                             }
-                        }
-
-                        Keys.onReturnPressed: {
-                            root.resetForm();
-                            serverList.forceActiveFocus();
                         }
                     }
 
@@ -805,20 +795,17 @@ FocusScope {
                             text: "Save"
                             focus: parent.activeFocus
 
+                            onActivated: {
+                                root.addServer();
+                                serverList.forceActiveFocus();
+                            }
+
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.addServer();
-                                    serverList.forceActiveFocus();
-                                }
+                                onClicked: saveBtn.activated()
                             }
-                        }
-
-                        Keys.onReturnPressed: {
-                            root.addServer();
-                            serverList.forceActiveFocus();
                         }
                     }
                 }
@@ -888,19 +875,14 @@ FocusScope {
                             id: confirmRemoveYesBtn
                             text: "Remove"
                             focus: parent.activeFocus
+                            onActivated: root.removeServer(root.confirmRemoveIndex)
 
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.removeServer(root.confirmRemoveIndex);
-                                }
+                                onClicked: confirmRemoveYesBtn.activated()
                             }
-                        }
-
-                        Keys.onReturnPressed: {
-                            root.removeServer(root.confirmRemoveIndex);
                         }
                     }
 
@@ -916,20 +898,16 @@ FocusScope {
                             id: confirmRemoveNoBtn
                             text: "Cancel"
                             focus: parent.activeFocus
+                            onActivated: root.confirmRemoveIndex = -1
 
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.confirmRemoveIndex = -1;
-                                }
+                                onClicked: confirmRemoveNoBtn.activated()
                             }
                         }
 
-                        Keys.onReturnPressed: {
-                            root.confirmRemoveIndex = -1;
-                        }
                         Keys.onEscapePressed: {
                             root.confirmRemoveIndex = -1;
                         }
@@ -1009,16 +987,16 @@ FocusScope {
                         id: pairCancelBtn
                         text: "Cancel"
                         focus: parent.activeFocus
+                        onActivated: root.cancelPairing()
 
                         MouseArea {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.cancelPairing()
+                            onClicked: pairCancelBtn.activated()
                         }
                     }
 
-                    Keys.onReturnPressed: root.cancelPairing()
                     Keys.onEscapePressed: root.cancelPairing()
                 }
             }
