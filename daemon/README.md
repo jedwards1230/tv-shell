@@ -3,7 +3,8 @@
 A Rust backend daemon replacing `input/gamepad-input.py` and the QML shell's
 inline `python3`/shell-out parsers. Same Unix socket + newline-delimited wire
 protocol (`docs/IPC_PROTOCOL.md`). Phases 1–4 of
-[#28](https://github.com/jedwards1230/game-shell/issues/28) (CEC deferred).
+[#28](https://github.com/jedwards1230/game-shell/issues/28) (HDMI-CEC now in
+daemon via `cec.rs`/cec-rs — compile-verified, needs on-device verification).
 
 The QML shell depends on this daemon for the Settings / app-discovery / system
 pages as well as input; it is the sole backend (the Python
@@ -46,6 +47,7 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `network.rs` | **Linux-only.** NetworkManager **read** actor via `zbus` — connectivity / AP list / `net:*` events |
 | `power.rs` | **Linux-only.** logind suspend + UPower battery via `zbus` — `power:*` events |
 | `hyprland.rs` | **Linux-only.** Hyprland actor over direct IPC sockets (no crate) — active-window/clients queries + `hypr:*` events |
+| `cec.rs` | **Linux-only.** HDMI-CEC actor via `cec-rs`/libcec — `cec-scan`/`cec-device`/`cec-power-on`/`cec-power-off`/`cec-active-source` + `cec:*` events |
 | `health.rs` | Sunshine session detection via `reqwest`/rustls (cross-platform) — `sunshine-status` |
 | `ipc.rs` | Unix-socket server, `broadcast` event fan-out, D-Bus command routing |
 | `main.rs` | Runtime wiring + signals + D-Bus actor spawn |
@@ -136,9 +138,11 @@ Two more subsystems replace the remaining QML *reads*:
 macOS build and verifiable only on-device. `health.rs` runs everywhere, but its
 live fetch needs a reachable Sunshine host.
 
-**HDMI-CEC was deferred** — `AVController.qml` / `AVControlSettings.qml` still
-shell out to `cec-client` and were intentionally left untouched. That subsystem
-is a follow-up.
+**HDMI-CEC now lives in the daemon** (`cec.rs`, cec-rs/libcec, #94) —
+compile-verified only, needs on-device verification on game-client-1.
+`AVController.qml` was migrated to use the daemon's `cec-*` IPC over
+`SocketClient` (no more `living-room-cec` shell-out). `AVControlSettings.qml`
+is a separate follow-up (#16).
 
 ## Build & test
 
@@ -156,7 +160,9 @@ cargo build --release # Linux only -> target/release/game-shell-input
 `apt-get install libdbus-1-dev pkg-config` (Debian/CI) — on Arch / game-client-1
 these come with the core `dbus`/`base-devel`. `zbus` (network/power) and
 `reqwest`/`rustls-tls` (health) are pure Rust and need nothing; Hyprland IPC uses
-raw Unix sockets (no crate, no system deps).
+raw Unix sockets (no crate, no system deps). The Phase 4 CEC module (`cec-rs`)
+requires the system libcec C library: `apt-get install libcec-dev libclang-dev`
+(Debian/CI) — on Arch / game-client-1, install `libcec` + `clang`.
 
 ## Deploy
 
@@ -204,5 +210,6 @@ printf 'intent home\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"   # -> ok
 Phase 3 (zbus/Bluetooth/Wi-Fi-read/power) and Phase 4 (Hyprland + Sunshine
 `health`) **require on-device verification** — the Linux-only modules (D-Bus,
 `hyprland`) don't compile or run on macOS/CI, and `health`'s live fetch needs a
-reachable Sunshine host. **HDMI-CEC remains deferred** (still a `cec-client`
-shell-out in `AVController.qml`) as a follow-up.
+reachable Sunshine host. **HDMI-CEC now lives in the daemon** (`cec.rs`,
+cec-rs/libcec, #94): compile-verified only — scan/power/active-source behavior
+needs on-device verification on game-client-1 (no CEC hardware on CI).

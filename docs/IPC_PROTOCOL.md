@@ -14,7 +14,7 @@ The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communic
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, and the Phase 4 query replies `hypr-active`, `hypr-clients`, and `sunshine-status`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, and `sunshine-status`, and the Phase 4 CEC query replies `cec-scan` and `cec-device`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -688,6 +688,101 @@ body degrades to the offline object (the command does not error):
 The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
 
+### HDMI-CEC (cec-rs / libcec)
+
+Phase 4 also adds persistent HDMI-CEC control via `cec-rs` / libcec. These
+commands replace the `living-room-cec` shell-outs in `AVController.qml` and
+are **Linux-only** (libcec is a Linux/udev-based C library). On a non-Linux
+build or any host where libcec is absent, every CEC command except
+`CecAddrUsage` replies `error:unsupported on this platform
+`. The
+`CecAddrUsage` variant (missing-address error) is cross-platform.
+
+#### `cec-scan`
+
+Scan the CEC bus and return all visible devices.
+
+**Response:** A compact single-line JSON **array** of device objects:
+
+```json
+[{"logicalAddress":0,"physicalAddress":"0000","vendor":"000000","osdName":"TV","powerStatus":"on","type":"tv"}]
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `logicalAddress` | number | CEC logical address (0–15) |
+| `physicalAddress` | string | Hex-formatted physical address (e.g. `"0000"`) |
+| `vendor` | string | 6-hex-digit vendor id (e.g. `"001a11"`) |
+| `osdName` | string | Device's OSD name (display name) |
+| `powerStatus` | string | `on` / `standby` / `waking` / `sleeping` / `unknown` |
+| `type` | string | `tv` / `recording` / `tuner` / `playback` / `audio` / `switch` / `videoprocessor` / `reserved` |
+
+An empty result is `[]`. On a non-Linux build: `error:unsupported on this platform
+`.
+
+#### `cec-device <addr>`
+
+Return the device object for a single logical address. `<addr>` is a decimal
+logical address (0–15).
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Device present | Compact JSON device object (same shape as a `cec-scan` element) |
+| Device absent / `<addr>` not on bus | `error:no device at address <addr>
+` |
+| Missing `<addr>` argument | `error:usage: cec-device <addr>
+` |
+| Non-Linux build | `error:unsupported on this platform
+` |
+
+#### `cec-power-on <addr>`
+
+Send a CEC power-on (Image View On / Active Source) command to the device at
+logical address `<addr>`.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok
+` |
+| Failure | `error:<detail>
+` |
+| Missing `<addr>` argument | `error:usage: cec-power-on <addr>
+` |
+| Non-Linux build | `error:unsupported on this platform
+` |
+
+#### `cec-power-off <addr>`
+
+Send a CEC standby command to the device at logical address `<addr>`.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok
+` |
+| Failure | `error:<detail>
+` |
+| Missing `<addr>` argument | `error:usage: cec-power-off <addr>
+` |
+| Non-Linux build | `error:unsupported on this platform
+` |
+
+#### `cec-active-source`
+
+Announce this adapter as the CEC active source (switches all displays to this
+input).
+
+**Response:** `ok
+` on success, `error:<detail>
+` on failure. Non-Linux:
+`error:unsupported on this platform
+`.
+
 ### Unrecognized Commands
 
 Any command not listed above receives:
@@ -881,6 +976,24 @@ hypr:activewindow:firefox
 hypr:activewindow:
 hypr:fullscreen:1
 hypr:fullscreen:0
+```
+
+### Phase 4 Events (HDMI-CEC)
+
+Streamed to `subscribe` clients by the CEC actor (Linux-only; never emitted
+on a non-Linux build or when libcec is absent). Each follows the bare-text
+`name:payload` convention; the `<json>` payloads are compact single-line JSON.
+
+| Event | Trigger | Payload |
+|-------|---------|---------|
+| `cec:device:<json>` | A CEC device was discovered or updated | Compact JSON device object, same shape as a `cec-scan` element (`{logicalAddress,physicalAddress,vendor,osdName,powerStatus,type}`) |
+| `cec:power:<json>` | A CEC device's power status changed | Compact JSON object `{"addr":<n>,"power":"<word>"}` where `<word>` is one of `on`/`standby`/`waking`/`sleeping`/`unknown` |
+
+Example wire lines:
+
+```
+cec:device:{"logicalAddress":0,"physicalAddress":"0000","vendor":"000000","osdName":"TV","powerStatus":"on","type":"tv"}
+cec:power:{"addr":5,"power":"on"}
 ```
 
 ## Default Button Mappings

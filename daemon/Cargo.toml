@@ -56,3 +56,8 @@ bluer = { version = "0.17.4", default-features = false, features = ["bluetoothd"
 # in `hyprland.rs` — no crate. The `hyprland` 0.3.x crate hardcoded the legacy
 # `/tmp/hypr/<sig>` socket dir and can't reach Hyprland >= 0.40 (sockets moved to
 # `$XDG_RUNTIME_DIR/hypr/<sig>`); the wire protocol is trivial to own here.
+# cec-rs wraps the system libcec (GPL-2.0) C library — GPL-2.0 is OK under our
+# GPL-3.0 license (#88). Requires libcec-dev + libclang-dev at build time on the
+# target (libcec uses bindgen; CI installs these on the Linux leg). Will NOT build
+# on macOS. Linux-only (libcec is a Linux/udev-based library).
+cec-rs = "8"
