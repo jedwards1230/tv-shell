@@ -150,7 +150,7 @@ FocusScope {
         visible: root.shellState === "idle"
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened
+        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened
 
         runningWindows: root.runningWindows
 
@@ -199,7 +199,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || settingsPanel.visible)
                 return;
             homeScreen.forceActiveFocus();
         }
