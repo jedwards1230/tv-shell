@@ -263,6 +263,20 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         Command::Key(name) => {
             request(control_tx, move |reply| Control::Key { name, reply }).await
         }
+        Command::SetActiveGame(id) => {
+            request(control_tx, move |reply| Control::SetActiveGame {
+                id: Some(id),
+                reply,
+            })
+            .await
+        }
+        Command::SetActiveGameClear => {
+            request(control_tx, move |reply| Control::SetActiveGame {
+                id: None,
+                reply,
+            })
+            .await
+        }
         // Handled without a round-trip to the runtime:
         Command::IntentUsage => return protocol::resp_intent_usage(),
         Command::RumbleUsage => return protocol::resp_rumble_usage(),
@@ -525,6 +539,10 @@ mod tests {
                     let _ = reply.send(resp);
                 }
                 Control::ConfigChanged => {}
+                Control::SetActiveGame { reply, .. } => {
+                    // In-memory only; fake just replies ok.
+                    let _ = reply.send(protocol::resp_ok());
+                }
                 Control::Shutdown => break,
             }
         }

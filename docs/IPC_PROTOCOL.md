@@ -125,6 +125,30 @@ Remap a button for the given action. Rebuilds the internal button map and persis
 
 Valid actions: `select`, `back`, `altSelect`, `confirm`
 
+### `set-active-game <id>`
+
+Signal the currently foregrounded app/game to the daemon. The daemon uses this
+to activate the matching per-game binding override layer from
+`settings.json`'s `perGameBindings`. Sending bare `set-active-game` (no body)
+clears the active game, reverting to the player/global binding layers only.
+In-memory only — resets on daemon restart.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Game set | `ok\n` |
+| Game cleared (bare command) | `ok\n` |
+
+**Notes:**
+- Touches no device; pure in-memory state change.
+- The per-game override layer is read from `perGameBindings` in `settings.json`
+  (see [Settings Persistence](#settings-persistence)). An unrecognized game id
+  silently uses only the player/global layers.
+- Resolution order: game override → player override → global → default.
+- The shell sends this command when an app or game is foregrounded (e.g. after
+  `record-launch`), and clears it when returning to the shell.
+
 ### `capture-next`
 
 Wait for the next remappable button press on the gamepad (10-second timeout). If a capture is already pending, the previous one is cancelled. Non-remappable button presses during capture are silently ignored.
@@ -1147,6 +1171,48 @@ Key bindings are persisted to `~/.config/game-shell/settings.json` under the `ke
 ```
 
 Values are evdev code names (e.g., `BTN_SOUTH`). On load, if a value is an array, the last element is used. Unknown actions and non-remappable buttons are silently skipped.
+
+### Per-player and per-game override layers (#104)
+
+Two optional keys in `settings.json` provide additive override layers on top of
+the global `keyBindings`. Absent keys mean today's behavior — no migration needed.
+
+**`perPlayerBindings`** — object keyed by player slot (`"0"`, `"1"`, `"2"`, `"3"`).
+Each value is an `{action: button_name}` object (same shape as `keyBindings`).
+Overrides the global binding for that slot only.
+
+```json
+{
+  "perPlayerBindings": {
+    "0": {"select": "BTN_NORTH"},
+    "1": {"back": "BTN_WEST"}
+  }
+}
+```
+
+**`perGameBindings`** — object keyed by arbitrary game-id strings (non-empty).
+Each value is an `{action: button_name}` object.
+The active game id is set at runtime via `set-active-game <id>`.
+
+```json
+{
+  "perGameBindings": {
+    "steam_12345": {"select": "BTN_SOUTH", "confirm": "BTN_EAST"}
+  }
+}
+```
+
+**Resolution order** (first matching layer wins for each action):
+1. **Game override** — `perGameBindings[active_game]` (if a game is active)
+2. **Player override** — `perPlayerBindings[slot]` (for that pad's slot)
+3. **Global** — `keyBindings`
+4. **Default** — built-in defaults (`select=BTN_SOUTH`, etc.)
+
+These keys are daemon-owned (the daemon is the sole writer for `keyBindings`;
+QML/external tools write `perPlayerBindings`/`perGameBindings`). The daemon
+re-reads both keys live on every `set-config` change (or external file edit
+that triggers `config:changed`). The `active_game` state is in-memory only
+and is never written to `settings.json`.
 
 ## Virtual Input Devices
 

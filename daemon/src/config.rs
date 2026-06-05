@@ -520,6 +520,187 @@ pub fn load_config_json(path: &Path) -> String {
     serde_json::to_string(&doc).expect("settings serialize")
 }
 
+// ---------------------------------------------------------------------------
+// Per-player / per-game binding override parsers (#104)
+// ---------------------------------------------------------------------------
+
+/// Parse the `perPlayerBindings` override layer from a settings document.
+///
+/// Reads `settings["perPlayerBindings"]` as an object whose keys are player-slot
+/// strings (`"0"`..`"3"`). Each value is an `{action: button_name}` object
+/// using the same validation as `apply_binding_overrides`: only the four
+/// canonical default actions are accepted, button names are resolved via
+/// `button_name_to_code`, and buttons must be remappable. Array values use the
+/// last element; unknown/invalid entries are silently skipped.
+///
+/// Returns an empty map when the key is absent or not an object.
+pub fn parse_per_player_bindings(
+    settings: &serde_json::Value,
+) -> std::collections::HashMap<u8, std::collections::HashMap<&'static str, u16>> {
+    let mut out: std::collections::HashMap<u8, std::collections::HashMap<&'static str, u16>> =
+        std::collections::HashMap::new();
+    let Some(obj) = settings
+        .get("perPlayerBindings")
+        .and_then(|v| v.as_object())
+    else {
+        return out;
+    };
+    for (slot_str, slot_val) in obj {
+        let Ok(slot) = slot_str.parse::<u8>() else {
+            continue;
+        };
+        if slot > 3 {
+            continue;
+        }
+        let Some(actions) = slot_val.as_object() else {
+            continue;
+        };
+        let mut slot_map: std::collections::HashMap<&'static str, u16> =
+            std::collections::HashMap::new();
+        for (action, value) in actions {
+            if !is_default_action(action) {
+                continue;
+            }
+            // Resolve the canonical &'static str action key from default_bindings.
+            let static_action: &'static str = default_bindings()
+                .iter()
+                .find(|b| b.action == action.as_str())
+                .map(|b| b.action)
+                .unwrap_or("");
+            if static_action.is_empty() {
+                continue;
+            }
+            let name = match value {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Array(arr) => match arr.last().and_then(|v| v.as_str()) {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let Some(code) = button_name_to_code(&name) else {
+                continue;
+            };
+            if !is_remappable(code) {
+                continue;
+            }
+            slot_map.insert(static_action, code);
+        }
+        if !slot_map.is_empty() {
+            out.insert(slot, slot_map);
+        }
+    }
+    out
+}
+
+/// Parse the `perGameBindings` override layer from a settings document.
+///
+/// Reads `settings["perGameBindings"]` as an object whose keys are arbitrary
+/// non-empty game-id strings. Each value is an `{action: button_name}` object
+/// using the same validation as `apply_binding_overrides`: only the four
+/// canonical default actions are accepted, button names are resolved via
+/// `button_name_to_code`, and buttons must be remappable. Array values use the
+/// last element; unknown/invalid entries are silently skipped.
+///
+/// Returns an empty map when the key is absent or not an object.
+pub fn parse_per_game_bindings(
+    settings: &serde_json::Value,
+) -> std::collections::HashMap<String, std::collections::HashMap<&'static str, u16>> {
+    let mut out: std::collections::HashMap<String, std::collections::HashMap<&'static str, u16>> =
+        std::collections::HashMap::new();
+    let Some(obj) = settings
+        .get("perGameBindings")
+        .and_then(|v| v.as_object())
+    else {
+        return out;
+    };
+    for (game_id, game_val) in obj {
+        if game_id.is_empty() {
+            continue;
+        }
+        let Some(actions) = game_val.as_object() else {
+            continue;
+        };
+        let mut game_map: std::collections::HashMap<&'static str, u16> =
+            std::collections::HashMap::new();
+        for (action, value) in actions {
+            if !is_default_action(action) {
+                continue;
+            }
+            let static_action: &'static str = default_bindings()
+                .iter()
+                .find(|b| b.action == action.as_str())
+                .map(|b| b.action)
+                .unwrap_or("");
+            if static_action.is_empty() {
+                continue;
+            }
+            let name = match value {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Array(arr) => match arr.last().and_then(|v| v.as_str()) {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let Some(code) = button_name_to_code(&name) else {
+                continue;
+            };
+            if !is_remappable(code) {
+                continue;
+            }
+            game_map.insert(static_action, code);
+        }
+        if !game_map.is_empty() {
+            out.insert(game_id.clone(), game_map);
+        }
+    }
+    out
+}
+
+/// Resolve which keyboard key a `button` press should emit, given the layered
+/// binding overrides.
+///
+/// Resolution order: game override → player override → global (the merged
+/// `bindings` vec). The first layer that assigns an *action* to `button` wins.
+/// Returns `None` if `button` is not mapped to any action after overlay.
+///
+/// This is the pure, allocation-light core used by `Shared::resolved_key` in
+/// `input.rs`. Keeping it here makes it unit-testable on any host without a
+/// uinput device.
+pub fn resolve_button_key(
+    global: &[Binding],
+    player: Option<&std::collections::HashMap<&'static str, u16>>,
+    game: Option<&std::collections::HashMap<&'static str, u16>>,
+    button: u16,
+) -> Option<u16> {
+    // Build the effective action->button map by overlaying player then game onto
+    // global. There are at most 4 actions, so this is O(1) in practice.
+    let mut action_button: std::collections::HashMap<&'static str, u16> =
+        std::collections::HashMap::with_capacity(4);
+    for b in global {
+        action_button.insert(b.action, b.button);
+    }
+    if let Some(p) = player {
+        for (&action, &btn) in p {
+            action_button.insert(action, btn);
+        }
+    }
+    if let Some(g) = game {
+        for (&action, &btn) in g {
+            action_button.insert(action, btn);
+        }
+    }
+    // Find which action is triggered by `button` in the overlaid map.
+    let action = action_button
+        .iter()
+        .find(|(_, &btn)| btn == button)
+        .map(|(&action, _)| action)?;
+    // Look up the key for that action from the global bindings (key never
+    // changes per-player/game — only the button assignment changes).
+    global.iter().find(|b| b.action == action).map(|b| b.key)
+}
+
 /// Default for the `rumbleEnabled` setting when the key is absent or malformed.
 /// Rumble is tasteful and on by default (#99); the user can disable it.
 pub const RUMBLE_ENABLED_DEFAULT: bool = true;
@@ -797,6 +978,132 @@ mod tests {
         assert_eq!(rumble_enabled(&path), RUMBLE_ENABLED_DEFAULT);
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn parse_per_player_bindings_valid_and_skips_invalid() {
+        let settings = serde_json::json!({
+            "perPlayerBindings": {
+                "0": {"select": "BTN_NORTH"},        // slot 0: remap select -> Y
+                "1": {"back": "BTN_WEST"},            // slot 1: remap back -> X
+                "bogus": {"select": "BTN_SOUTH"},     // non-numeric key -> skipped
+                "9": {"select": "BTN_SOUTH"},         // out-of-range slot -> skipped
+                "2": {
+                    "select": "BTN_LEFT",             // BTN_LEFT not remappable -> skipped
+                    "bogusAction": "BTN_SOUTH"        // unknown action -> skipped
+                }
+            }
+        });
+        let result = parse_per_player_bindings(&settings);
+        // Slot 0: select -> BTN_NORTH
+        assert_eq!(result.get(&0).and_then(|m| m.get("select")).copied(), Some(BTN_NORTH));
+        // Slot 1: back -> BTN_WEST
+        assert_eq!(result.get(&1).and_then(|m| m.get("back")).copied(), Some(BTN_WEST));
+        // Slot 2: both entries invalid -> not present (or empty, not inserted)
+        assert!(result.get(&2).is_none());
+        // Bogus/out-of-range slots not present
+        assert!(result.get(&9).is_none());
+
+        // Absent key -> empty map
+        let empty = parse_per_player_bindings(&serde_json::json!({}));
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn parse_per_game_bindings_valid_and_skips_invalid() {
+        let settings = serde_json::json!({
+            "perGameBindings": {
+                "steam_12345": {"select": "BTN_NORTH"},
+                "steam_99999": {"back": ["BTN_WEST", "BTN_TR"]},  // array -> last (BTN_TR)
+                "": {"select": "BTN_SOUTH"},                       // empty key -> skipped
+                "bad_game": {"select": "BTN_LEFT"}                 // not remappable -> skipped (slot not inserted)
+            }
+        });
+        let result = parse_per_game_bindings(&settings);
+        assert_eq!(
+            result.get("steam_12345").and_then(|m| m.get("select")).copied(),
+            Some(BTN_NORTH)
+        );
+        assert_eq!(
+            result.get("steam_99999").and_then(|m| m.get("back")).copied(),
+            Some(BTN_TR)
+        );
+        assert!(result.get("").is_none());
+        assert!(result.get("bad_game").is_none());
+
+        // Absent key -> empty map
+        let empty = parse_per_game_bindings(&serde_json::json!({}));
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn resolve_button_key_layering() {
+        use std::collections::HashMap;
+
+        let global = default_bindings();
+        // Default: select=BTN_SOUTH, back=BTN_EAST, altSelect=BTN_NORTH, confirm=BTN_START
+
+        // No overrides: global mapping
+        assert_eq!(
+            resolve_button_key(&global, None, None, BTN_SOUTH),
+            Some(KEY_ENTER) // select -> Enter
+        );
+        assert_eq!(
+            resolve_button_key(&global, None, None, BTN_EAST),
+            Some(KEY_ESC) // back -> Esc
+        );
+        // A button not assigned to any action -> None
+        assert_eq!(resolve_button_key(&global, None, None, BTN_WEST), None);
+
+        // Player override: remap select from BTN_SOUTH to BTN_TL (LB).
+        // BTN_TL is remappable and not used by any default action.
+        let mut player: HashMap<&'static str, u16> = HashMap::new();
+        player.insert("select", BTN_TL);
+        // BTN_TL now triggers select -> KEY_ENTER
+        assert_eq!(
+            resolve_button_key(&global, Some(&player), None, BTN_TL),
+            Some(KEY_ENTER)
+        );
+        // Original BTN_SOUTH no longer triggers select (displaced by player)
+        assert_eq!(
+            resolve_button_key(&global, Some(&player), None, BTN_SOUTH),
+            None
+        );
+
+        // Game override: wins over player. Game remaps select to BTN_TR (RB).
+        let mut game: HashMap<&'static str, u16> = HashMap::new();
+        game.insert("select", BTN_TR);
+        // Game wins: BTN_TR triggers select -> KEY_ENTER
+        assert_eq!(
+            resolve_button_key(&global, Some(&player), Some(&game), BTN_TR),
+            Some(KEY_ENTER)
+        );
+        // Player's BTN_TL is displaced by the game layer
+        assert_eq!(
+            resolve_button_key(&global, Some(&player), Some(&game), BTN_TL),
+            None
+        );
+        // BTN_SOUTH is still displaced (no layer reassigns it to select)
+        assert_eq!(
+            resolve_button_key(&global, Some(&player), Some(&game), BTN_SOUTH),
+            None
+        );
+
+        // Fall through: game layer absent -> player wins
+        assert_eq!(
+            resolve_button_key(&global, Some(&player), None, BTN_TL),
+            Some(KEY_ENTER)
+        );
+
+        // No layers -> global default
+        assert_eq!(
+            resolve_button_key(&global, None, None, BTN_START),
+            Some(KEY_ENTER) // confirm -> Enter
+        );
+
+        // Button not in any action after all layers -> None
+        assert_eq!(resolve_button_key(&global, None, None, BTN_THUMBL), None);
+    }
+
 
     #[test]
     fn note_self_write_advances_generation() {

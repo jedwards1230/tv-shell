@@ -64,7 +64,15 @@ pub enum Control {
         name: String,
         reply: Reply,
     },
-    /// `set-config` succeeded — refresh any cached settings (currently the
+    /// `set-active-game <id>` — signal the current foreground game to the
+    /// daemon so per-game binding overrides activate. `id` is `Some(game_id)`
+    /// to set the active game, or `None` to clear it (bare `set-active-game`).
+    /// In-memory only: resets on daemon restart.
+    SetActiveGame {
+        id: Option<String>,
+        reply: Reply,
+    },
+        /// `set-config` succeeded — refresh any cached settings (currently the
     /// `rumbleEnabled` flag, #108). Sent fire-and-forget by the IPC dispatch after
     /// a successful `set-config`; the input runtime re-reads the affected keys
     /// from disk.
