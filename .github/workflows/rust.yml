@@ -38,7 +38,7 @@ jobs:
       # the system libcec C library via bindgen). libclang-dev is needed by
       # bindgen. game-client-1 has libcec at runtime (cec-utils on Arch).
       - name: Install D-Bus build deps
-        run: apt-get update && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config libcec-dev libclang-dev
+        run: apt-get update && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config libcec-dev libp8-platform-dev libudev-dev libclang-dev
 
       - name: Add rustfmt + clippy
         run: rustup component add rustfmt clippy
