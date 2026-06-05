@@ -34,6 +34,10 @@ Item {
         Scale {
             origin.x: root.width / 2
             origin.y: root.height / 2
+            // Under reduce-motion (animationsEnabled=false) the scale is removed
+            // ENTIRELY — the target stays at restScale, it is NOT just animated at
+            // duration 0. Focus remains clearly marked by the static ring + glow +
+            // brighter fill below, so do not "restore" a zero-duration scale here.
             xScale: root.scaleEnabled && root.focused && root.animationsEnabled ? root.focusScale : root.restScale
             yScale: root.scaleEnabled && root.focused && root.animationsEnabled ? root.focusScale : root.restScale
             Behavior on xScale {
