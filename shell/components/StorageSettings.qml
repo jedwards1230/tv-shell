@@ -62,7 +62,23 @@ FocusScope {
             minRows: 1
             spacing: 8
             interactive: false
-            model: root.loading ? [{ mount: "Loading…", size: "", used: "", avail: "", pct: "" }] : (root.mounts.length > 0 ? root.mounts : [{ mount: "No filesystems found", size: "", used: "", avail: "", pct: "" }])
+            model: root.loading ? [
+                {
+                    mount: "Loading…",
+                    size: "",
+                    used: "",
+                    avail: "",
+                    pct: ""
+                }
+            ] : (root.mounts.length > 0 ? root.mounts : [
+                    {
+                        mount: "No filesystems found",
+                        size: "",
+                        used: "",
+                        avail: "",
+                        pct: ""
+                    }
+                ])
 
             delegate: Rectangle {
                 required property var modelData
