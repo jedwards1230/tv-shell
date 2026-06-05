@@ -288,6 +288,17 @@ FocusScope {
                             border.width: isFocused ? 2 : 1
                             border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
+                            // Applies this card's own scale — covers AT-SPI press and
+                            // mouse click. Directional focus + Return is owned by
+                            // scaleRow (focusedIndex), which drives the keyboard path.
+                            onActivated: {
+                                if (root.monitors.length > root.selectedMonitor) {
+                                    setScale.monName = root.monitors[root.selectedMonitor].name;
+                                    setScale.scaleVal = scaleScope.modelData;
+                                    setScale.running = true;
+                                }
+                            }
+
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
@@ -295,11 +306,7 @@ FocusScope {
                                 onClicked: {
                                     scaleRow.forceActiveFocus();
                                     scaleRow.focusedIndex = scaleScope.index;
-                                    if (root.monitors.length > root.selectedMonitor) {
-                                        setScale.monName = root.monitors[root.selectedMonitor].name;
-                                        setScale.scaleVal = scaleScope.modelData;
-                                        setScale.running = true;
-                                    }
+                                    scaleBtn.activated();
                                 }
                             }
                         }

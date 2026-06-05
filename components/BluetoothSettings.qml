@@ -344,25 +344,22 @@ FocusScope {
                     focus: parent.activeFocus
                     anchors.fill: parent
 
+                    onActivated: {
+                        if (root.powered)
+                            btPowerOff.request("bt-power-off");
+                        else
+                            btPowerOn.request("bt-power-on");
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             powerToggleScope.forceActiveFocus();
-                            if (root.powered)
-                                btPowerOff.request("bt-power-off");
-                            else
-                                btPowerOn.request("bt-power-on");
+                            powerToggleBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    if (root.powered)
-                        btPowerOff.request("bt-power-off");
-                    else
-                        btPowerOn.request("bt-power-on");
                 }
             }
 
@@ -382,21 +379,20 @@ FocusScope {
                     focus: parent.activeFocus
                     anchors.fill: parent
 
+                    onActivated: {
+                        if (!root.scanning)
+                            btScanOn.request("bt-scan-on");
+                    }
+
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             scanScope.forceActiveFocus();
-                            if (!root.scanning)
-                                btScanOn.request("bt-scan-on");
+                            scanBtn.activated();
                         }
                     }
-                }
-
-                Keys.onReturnPressed: {
-                    if (!root.scanning)
-                        btScanOn.request("bt-scan-on");
                 }
             }
 

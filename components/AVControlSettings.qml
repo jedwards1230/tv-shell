@@ -420,11 +420,11 @@ FocusScope {
                     text: "Refresh"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                }
 
-                Keys.onReturnPressed: {
-                    root.statusText = "Scanning...";
-                    root.startScan();
+                    onActivated: {
+                        root.statusText = "Scanning...";
+                        root.startScan();
+                    }
                 }
 
                 MouseArea {
@@ -433,8 +433,7 @@ FocusScope {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         refreshScope.forceActiveFocus();
-                        root.statusText = "Scanning...";
-                        root.startScan();
+                        refreshBtn.activated();
                     }
                 }
             }
