@@ -20,12 +20,7 @@ FocusScope {
 
     Process {
         id: sysInfo
-        command: ["bash", "-c",
-            "printf '{\"os\":\"%s\",\"kernel\":\"%s\",\"hostname\":\"%s\",\"uptime\":\"%s\"}' " +
-            "\"$(grep '^NAME=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"' || echo Unknown)\" " +
-            "\"$(uname -r)\" " +
-            "\"$(hostname)\" " +
-            "\"$(uptime -p 2>/dev/null || uptime | sed 's/.*up //' | cut -d, -f1)\""]
+        command: ["bash", "-c", "printf '{\"os\":\"%s\",\"kernel\":\"%s\",\"hostname\":\"%s\",\"uptime\":\"%s\"}' " + "\"$(grep '^NAME=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"' || echo Unknown)\" " + "\"$(uname -r)\" " + "\"$(hostname)\" " + "\"$(uptime -p 2>/dev/null || uptime | sed 's/.*up //' | cut -d, -f1)\""]
         stdout: SplitParser {
             onRead: line => {
                 try {
@@ -63,10 +58,22 @@ FocusScope {
 
             Repeater {
                 model: [
-                    { label: "Operating System", value: root.loading ? "Loading…" : (root.osName || "Unknown") },
-                    { label: "Kernel", value: root.loading ? "Loading…" : (root.kernelVersion || "Unknown") },
-                    { label: "Hostname", value: root.loading ? "Loading…" : (root.hostname || "Unknown") },
-                    { label: "Uptime", value: root.loading ? "Loading…" : (root.uptime || "Unknown") }
+                    {
+                        label: "Operating System",
+                        value: root.loading ? "Loading…" : (root.osName || "Unknown")
+                    },
+                    {
+                        label: "Kernel",
+                        value: root.loading ? "Loading…" : (root.kernelVersion || "Unknown")
+                    },
+                    {
+                        label: "Hostname",
+                        value: root.loading ? "Loading…" : (root.hostname || "Unknown")
+                    },
+                    {
+                        label: "Uptime",
+                        value: root.loading ? "Loading…" : (root.uptime || "Unknown")
+                    }
                 ]
 
                 delegate: RowLayout {
@@ -117,6 +124,8 @@ FocusScope {
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+        }
     }
 }
