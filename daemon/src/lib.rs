@@ -16,6 +16,9 @@ pub mod protocol;
 pub mod recents;
 pub mod state;
 
+// LAN HTTP control bridge — cross-platform (tokio only; no Linux-only imports).
+pub mod http;
+
 // evdev/uinput input runtime — Linux kernel interfaces.
 #[cfg(target_os = "linux")]
 pub mod input;

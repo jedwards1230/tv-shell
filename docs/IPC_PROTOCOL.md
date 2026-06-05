@@ -839,6 +839,103 @@ input).
 `error:unsupported on this platform
 `.
 
+## LAN HTTP Control Bridge (#151)
+
+An optional, LAN-bound HTTP/1.1 listener that maps `POST /intent/<target>` and
+`POST /key/<name>` onto the daemon's existing intent and key broadcast paths, so
+Home Assistant `rest_command` / curl / scripts can drive the shell without
+needing a Unix socket client.
+
+### Opt-in via environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `GAME_SHELL_HTTP_BIND` | `host:port` address to bind (e.g. `192.168.8.50:8731` or `0.0.0.0:8731`). When **unset** (the default), no TCP socket is opened and no control surface is exposed. |
+| `GAME_SHELL_HTTP_TOKEN` | Optional bearer token for auth. When set, every request must carry `Authorization: Bearer <token>` (exact match); requests without a valid token receive 401. When unset, any request from the bound interface is accepted. |
+
+> **Security note**: bind to a trusted LAN interface (e.g. `192.168.8.x:8731`),
+> not a public one. The bridge is a control surface — a mis-bound listener would
+> expose shell control to the public internet. Pair with `GAME_SHELL_HTTP_TOKEN`
+> for defence-in-depth even on a LAN.
+
+Default port suggestion: **8731**. The bind address must include the port.
+
+### Routes
+
+| Method | Path | Action |
+|--------|------|--------|
+| `POST` | `/intent/<target>` | Forward `<target>` to the [`intent <name>`](#intent-name) surface. `<target>` is the full remainder after `/intent/`, percent-decoded (`settings%3Abluetooth` → `settings:bluetooth`). The daemon's existing vocabulary gate applies — unknown intents return 400. |
+| `POST` | `/key/<name>` | Forward `<name>` to the [`key <name>`](#key-name) surface (synthesize a keystroke). |
+| Any other | Any other path | 404 |
+| Non-POST | Any | 405 |
+
+`<target>` is the **same string** the Unix-socket `intent` command accepts,
+including deep-link namespaces (`settings:<page>`, `overlay:volume`,
+`overlay:network`, `app:<wmClass>`). Unknown vocabulary → 400 (the daemon's
+`is_known_intent` gate is the single source of truth; the HTTP layer does not
+re-validate).
+
+### HTTP status mapping
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Request accepted (`ok`) |
+| 400 | Unknown intent or key (daemon returned `error:*`) |
+| 401 | Missing or invalid `Authorization: Bearer <token>` |
+| 404 | Unknown route (path did not match `/intent/*` or `/key/*`) |
+| 405 | Wrong method (not POST) |
+| 503 | Daemon unavailable (control channel closed) |
+
+### Home Assistant `rest_command` example
+
+```yaml
+# configuration.yaml
+rest_command:
+  game_shell_intent:
+    url: "http://192.168.8.50:8731/intent/{{ intent }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ token }}"
+  game_shell_key:
+    url: "http://192.168.8.50:8731/key/{{ key }}"
+    method: POST
+    headers:
+      Authorization: "Bearer mysecret"
+```
+
+Usage in an automation:
+
+```yaml
+action: rest_command.game_shell_intent
+data:
+  intent: "settings:bluetooth"
+  token: "mysecret"
+```
+
+### curl examples
+
+```bash
+# Open Bluetooth settings (no auth)
+curl -X POST http://192.168.8.50:8731/intent/settings:bluetooth
+
+# Same with bearer token
+curl -X POST http://192.168.8.50:8731/intent/settings:bluetooth \
+     -H "Authorization: Bearer mysecret"
+
+# Colon percent-encoded (HA encodes `:` as `%3A`)
+curl -X POST http://192.168.8.50:8731/intent/settings%3Abluetooth
+
+# Synthesize a key press
+curl -X POST http://192.168.8.50:8731/key/select
+```
+
+### Relation to the Unix socket intent surface
+
+The HTTP bridge builds on the deep-link vocabulary introduced in issue #150.
+`<target>` is the same string the socket `intent` command accepts. See
+[`intent <name>`](#intent-name) for the full vocabulary and deep-link namespace
+documentation.
+
 ### Unrecognized Commands
 
 Any command not listed above receives:
