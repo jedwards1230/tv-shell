@@ -14,7 +14,7 @@
 //! **Directory watch**: atomic write-then-rename external editors (editors,
 //! `echo >`, `ansible.copy`) replace the inode. Watching the FILE directly
 //! goes deaf after the first rename; we watch the **parent directory** and
-//! filter events whose `path` basename == `settings.json`.
+//! filter events whose path basename == `settings.json`.
 //!
 //! **Degradation**: if the watcher cannot be established (e.g. inotify
 //! unavailable), we log a warning and return — live-reload degrades to
@@ -25,7 +25,7 @@
 pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Event>) {
     use crate::config;
     use crate::protocol::Event;
-    use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
+    use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, notify::Watcher};
     use std::sync::mpsc as std_mpsc;
     use std::time::Duration;
 
@@ -60,7 +60,12 @@ pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Even
 
     // Watch the parent directory (not the file) so rename-based atomic writes
     // (write-temp + rename) are detected even after an inode replacement.
-    if let Err(e) = debouncer.watch(&watch_dir, RecursiveMode::NonRecursive) {
+    // notify-debouncer-full 0.3: the watch() method is on the inner Watcher,
+    // accessed via debouncer.watcher().
+    if let Err(e) = debouncer
+        .watcher()
+        .watch(&watch_dir, RecursiveMode::NonRecursive)
+    {
         tracing::warn!(
             "watch: could not watch {}: {e}, live-reload disabled",
             watch_dir.display()
@@ -103,10 +108,15 @@ pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Even
 
     while let Some(batch) = fwd_rx.recv().await {
         // Filter: only act on events whose path is settings.json.
+        // DebouncedEvent in notify-debouncer-full 0.3 has `event` (notify::Event)
+        // and `time` fields; paths are in ev.event.paths (not ev.path).
         let touched = match &batch {
-            Ok(events) => events
-                .iter()
-                .any(|ev| ev.path.file_name().map_or(false, |n| n == "settings.json")),
+            Ok(events) => events.iter().any(|ev| {
+                ev.event
+                    .paths
+                    .iter()
+                    .any(|p| p.file_name().map_or(false, |n| n == "settings.json"))
+            }),
             Err(errs) => {
                 for e in errs {
                     tracing::debug!("watch: inotify error: {e}");
