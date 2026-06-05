@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Io
 
 Drawer {
     id: root
@@ -20,33 +19,6 @@ Drawer {
         if (opened) {
             navList.currentIndex = 0;
             navFocusTimer.restart();
-            monGlance.request("hypr-monitors");
-        }
-    }
-
-    // Display glance state — populated from the first monitor in hypr-monitors
-    property bool glanceHdrActive: false
-    property int glanceWidth: 0
-    property int glanceHeight: 0
-    property real glanceHz: 0
-    property string glanceFormat: ""
-
-    SocketClient {
-        id: monGlance
-        onResponseReceived: line => {
-            try {
-                let data = JSON.parse(line);
-                if (data.length > 0) {
-                    let m = data[0];
-                    root.glanceHdrActive = m.hdr || false;
-                    root.glanceWidth = m.width || 0;
-                    root.glanceHeight = m.height || 0;
-                    root.glanceHz = m.refreshRate || 0;
-                    root.glanceFormat = m.currentFormat || "";
-                }
-            } catch (e) {
-                console.log("NavigationDrawer: monitor glance parse failed:", e);
-            }
         }
     }
 
@@ -204,34 +176,10 @@ Drawer {
             Keys.onReturnPressed: root._activateNav(currentIndex)
         }
 
-        // === Spacer + Display Glance ===
+        // === Spacer ===
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-
-            ColumnLayout {
-                anchors.bottom: parent.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: Units.gridUnit
-                spacing: 4
-
-                Text {
-                    text: "HDR " + (root.glanceHdrActive ? "On" : "Off")
-                    font.pixelSize: Theme.fontHint
-                    color: Theme.textSecondary
-                    Layout.alignment: Qt.AlignLeft
-                    visible: root.glanceWidth > 0
-                }
-
-                Text {
-                    text: root.glanceWidth + "x" + root.glanceHeight + " @ " + root.glanceHz.toFixed(0) + " Hz"
-                    font.pixelSize: Theme.fontHint
-                    color: Theme.textSecondary
-                    Layout.alignment: Qt.AlignLeft
-                    visible: root.glanceWidth > 0
-                }
-            }
         }
 
         // === Bottom Section: Quick Actions ===
