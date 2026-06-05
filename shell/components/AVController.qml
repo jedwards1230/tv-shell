@@ -45,9 +45,9 @@ Item {
                     root.systemOn = (obj.powerStatus === "on");
                     root._initialized = true;
                 }
-            } catch (e) {
-                // parse error or error:* reply — leave systemOn unchanged
-            }
+            } catch (e)
+            // parse error or error:* reply — leave systemOn unchanged
+            {}
         }
     }
 

@@ -694,7 +694,10 @@ FocusScope {
                     let hz = parseFloat(parts[1]).toFixed(2);
                     if (!seen[hz]) {
                         seen[hz] = true;
-                        result.push({hz: hz, mode: m});
+                        result.push({
+                            hz: hz,
+                            mode: m
+                        });
                     }
                 }
                 return result;
@@ -909,12 +912,30 @@ FocusScope {
 
             property bool nightLightTempOpen: false
             property var tempPresets: [
-                {label: "Off (disable)", value: 0},
-                {label: "Very Warm (3500K)", value: 3500},
-                {label: "Warm (4000K)", value: 4000},
-                {label: "Neutral (4500K)", value: 4500},
-                {label: "Cool (5500K)", value: 5500},
-                {label: "Daylight (6500K)", value: 6500}
+                {
+                    label: "Off (disable)",
+                    value: 0
+                },
+                {
+                    label: "Very Warm (3500K)",
+                    value: 3500
+                },
+                {
+                    label: "Warm (4000K)",
+                    value: 4000
+                },
+                {
+                    label: "Neutral (4500K)",
+                    value: 4500
+                },
+                {
+                    label: "Cool (5500K)",
+                    value: 5500
+                },
+                {
+                    label: "Daylight (6500K)",
+                    value: 6500
+                }
             ]
 
             KeyNavigation.up: nightLightToggleScope

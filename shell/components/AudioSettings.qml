@@ -124,13 +124,7 @@ FocusScope {
     Process {
         id: reapplySink
         property string wantName: ""
-        command: ["bash", "-c", "name=\"" + wantName + "\"; [ -z \"$name\" ] && exit 0; " +
-            "if command -v jq >/dev/null 2>&1; then " +
-            "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$name\" '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " +
-            "else " +
-            "  id=$(wpctl status 2>/dev/null | grep -F \"$name\" | grep -oE '[0-9]+' | head -1); " +
-            "fi; " +
-            "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
+        command: ["bash", "-c", "name=\"" + wantName + "\"; [ -z \"$name\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$name\" '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$name\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
         onExited: {
             // Refresh the list so UI reflects the re-applied default
             listSinks.running = true;
