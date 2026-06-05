@@ -1184,6 +1184,7 @@ FocusScope {
                 Layout.preferredHeight: 96
 
                 KeyNavigation.up: nightLightTempScope
+                KeyNavigation.down: modeList
 
                 onActiveFocusChanged: if (activeFocus)
                     contentFlick.ensureVisible(this)
@@ -1323,6 +1324,9 @@ FocusScope {
                 }
                 Keys.onReturnPressed: {
                     Theme.setThemeMode(modeList.modes[focusIndex].id);
+                }
+                Keys.onUpPressed: {
+                    overscanScope.forceActiveFocus();
                 }
 
                 Repeater {
