@@ -87,7 +87,7 @@ pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Even
     // Bridge the blocking std::mpsc receiver to the async runtime:
     // spawn a dedicated OS thread that drains std_rx and forwards batches over
     // a tokio mpsc channel, so the async loop can `await` without blocking the
-    // executor. This is the same bridge pattern used by cec.rs.
+    // executor.
     let (fwd_tx, mut fwd_rx) = tokio::sync::mpsc::channel::<
         Result<
             Vec<notify_debouncer_full::DebouncedEvent>,
