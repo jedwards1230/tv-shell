@@ -9,6 +9,10 @@ FocusScope {
     property bool muted: false
     property var sinks: []
     property int defaultSinkIndex: -1
+    property string formatInfo: "Unavailable"
+
+    // Guard: re-apply persisted default only once per page-load
+    property bool _reapplied: false
 
     // --- Processes ---
 
@@ -72,17 +76,64 @@ FocusScope {
         onExited: {
             root.sinks = listSinks.stdout.collected;
             listSinks.stdout.collected = [];
+            // Re-apply persisted default once on first populate
+            if (!root._reapplied && SettingsStore.defaultSink !== "") {
+                root._reapplied = true;
+                reapplySink.wantName = SettingsStore.defaultSink;
+                reapplySink.running = true;
+            }
+            // Refresh format info after sink list updates
+            getFormat.running = true;
         }
     }
 
+    // Live-switch the default sink by numeric id (volatile — changes across reboots)
     Process {
         id: setDefaultSink
         property int sinkId: 0
         command: ["wpctl", "set-default", String(sinkId)]
         onExited: {
+            // After switching, read the node.name of the new default to persist it
+            readNodeName.pendingSinkId = sinkId;
+            readNodeName.running = true;
             listSinks.running = true;
-            // Small delay then refresh volume for the new default
             refreshTimer.start();
+        }
+    }
+
+    // Read the stable node.name from wpctl inspect for a given numeric id,
+    // then persist it via SettingsStore so it survives reboots.
+    Process {
+        id: readNodeName
+        property int pendingSinkId: 0
+        command: ["bash", "-c", "wpctl inspect " + pendingSinkId + " | sed -n 's/.*node\\.name = \"\\(.*\\)\".*/\\1/p'"]
+        stdout: SplitParser {
+            onRead: line => {
+                let nodeName = line.trim();
+                if (nodeName !== "")
+                    SettingsStore.setDefaultSink(nodeName);
+            }
+        }
+    }
+
+    // Re-apply persisted default on boot: resolve node.name -> numeric id via
+    // pw-dump (prefer jq if available) then call wpctl set-default.
+    //
+    // Resolution strategy: pw-dump | jq is robust; if jq is absent we fall back
+    // to grepping wpctl status for the name (good enough for nearly all setups).
+    Process {
+        id: reapplySink
+        property string wantName: ""
+        command: ["bash", "-c", "name=\"" + wantName + "\"; [ -z \"$name\" ] && exit 0; " +
+            "if command -v jq >/dev/null 2>&1; then " +
+            "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$name\" '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " +
+            "else " +
+            "  id=$(wpctl status 2>/dev/null | grep -F \"$name\" | grep -oE '[0-9]+' | head -1); " +
+            "fi; " +
+            "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
+        onExited: {
+            // Refresh the list so UI reflects the re-applied default
+            listSinks.running = true;
         }
     }
 
@@ -91,12 +142,69 @@ FocusScope {
         interval: 500
         onTriggered: {
             getVolume.running = true;
+            getFormat.running = true;
         }
+    }
+
+    // Sample-rate / format display — read from the current default sink
+    // Parsed into e.g. "48000 Hz · S16LE · 6 ch"; falls back to "Unavailable"
+    Process {
+        id: getFormat
+        command: ["bash", "-c", "wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null | grep -E 'audio\\.rate|audio\\.format|audio\\.channels'"]
+        stdout: SplitParser {
+            property string rate: ""
+            property string fmt: ""
+            property string channels: ""
+            onRead: line => {
+                let m;
+                m = line.match(/audio\.rate\s*=\s*"?(\d+)"?/);
+                if (m)
+                    getFormat.stdout.rate = m[1];
+                m = line.match(/audio\.format\s*=\s*"?([A-Za-z0-9_]+)"?/);
+                if (m)
+                    getFormat.stdout.fmt = m[1];
+                m = line.match(/audio\.channels\s*=\s*"?(\d+)"?/);
+                if (m)
+                    getFormat.stdout.channels = m[1];
+            }
+        }
+        onExited: {
+            let r = getFormat.stdout.rate;
+            let f = getFormat.stdout.fmt;
+            let c = getFormat.stdout.channels;
+            getFormat.stdout.rate = "";
+            getFormat.stdout.fmt = "";
+            getFormat.stdout.channels = "";
+            if (r !== "" || f !== "" || c !== "") {
+                let parts = [];
+                if (r !== "")
+                    parts.push(r + " Hz");
+                if (f !== "")
+                    parts.push(f);
+                if (c !== "")
+                    parts.push(c + " ch");
+                root.formatInfo = parts.join(" · ");
+            } else {
+                root.formatInfo = "Unavailable";
+            }
+        }
+    }
+
+    // Shared process for 5.1 channel test tones — single-shot so it exits
+    // promptly and never hangs audio.
+    //
+    // ALSA 6-channel speaker index map (standard 5.1 order):
+    //   FL=1, FR=2, Rear L=3, Rear R=4, Center=5, LFE=6
+    Process {
+        id: testTone
+        property var pendingCmd: []
+        command: pendingCmd
     }
 
     Component.onCompleted: {
         getVolume.running = true;
         listSinks.running = true;
+        getFormat.running = true;
     }
 
     // Refresh when section becomes visible. Do NOT grab focus here — focus
@@ -104,8 +212,10 @@ FocusScope {
     // so swapping to this page with A leaves focus on the sidebar.
     onVisibleChanged: {
         if (visible) {
+            root._reapplied = false;
             getVolume.running = true;
             listSinks.running = true;
+            getFormat.running = true;
         }
     }
 
@@ -279,6 +389,7 @@ FocusScope {
             }
 
             KeyNavigation.up: muteScope
+            KeyNavigation.down: testToneFlScope
 
             Behavior on Layout.preferredHeight {
                 NumberAnimation {
@@ -427,6 +538,292 @@ FocusScope {
                 } else {
                     event.accepted = false;
                 }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Speaker Test (5.1)
+        //
+        // ALSA 6-channel index map (document for maintenance):
+        //   FL=1 (Front Left), FR=2 (Front Right),
+        //   Rear L=3, Rear R=4, Center=5, LFE=6
+        // single-shot: -l 1 ensures speaker-test exits after one pass.
+        // ---------------------------------------------------------------
+        Text {
+            text: "Speaker Test (5.1)"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        Text {
+            text: "Sink: Digital Surround 5.1 (IEC958/AC3)"
+            font.pixelSize: Theme.fontHint
+            color: Theme.textSecondary
+        }
+
+        // Row 1: FL, FR, Center
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 16
+
+            FocusScope {
+                id: testToneFlScope
+                width: testToneFlBtn.width
+                height: testToneFlBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: sinkDropdownScope
+                KeyNavigation.right: testToneFrScope
+                KeyNavigation.down: testToneRlScope
+
+                SettingsButton {
+                    id: testToneFlBtn
+                    text: "Front L"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    onActivated: {
+                        // FL = channel 1
+                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "1"];
+                        testTone.running = true;
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneFlScope.forceActiveFocus();
+                            testToneFlBtn.activated();
+                        }
+                    }
+                }
+            }
+
+            FocusScope {
+                id: testToneFrScope
+                width: testToneFrBtn.width
+                height: testToneFrBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: sinkDropdownScope
+                KeyNavigation.left: testToneFlScope
+                KeyNavigation.right: testToneCScope
+                KeyNavigation.down: testToneRrScope
+
+                SettingsButton {
+                    id: testToneFrBtn
+                    text: "Front R"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    onActivated: {
+                        // FR = channel 2
+                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "2"];
+                        testTone.running = true;
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneFrScope.forceActiveFocus();
+                            testToneFrBtn.activated();
+                        }
+                    }
+                }
+            }
+
+            FocusScope {
+                id: testToneCScope
+                width: testToneCBtn.width
+                height: testToneCBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: sinkDropdownScope
+                KeyNavigation.left: testToneFrScope
+                KeyNavigation.down: testToneLfeScope
+
+                SettingsButton {
+                    id: testToneCBtn
+                    text: "Center"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    onActivated: {
+                        // Center = channel 5
+                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "5"];
+                        testTone.running = true;
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneCScope.forceActiveFocus();
+                            testToneCBtn.activated();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Row 2: Rear L, Rear R, LFE
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 16
+
+            FocusScope {
+                id: testToneRlScope
+                width: testToneRlBtn.width
+                height: testToneRlBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: testToneFlScope
+                KeyNavigation.right: testToneRrScope
+                KeyNavigation.down: testToneAllScope
+
+                SettingsButton {
+                    id: testToneRlBtn
+                    text: "Rear L"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    onActivated: {
+                        // Rear L = channel 3
+                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "3"];
+                        testTone.running = true;
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneRlScope.forceActiveFocus();
+                            testToneRlBtn.activated();
+                        }
+                    }
+                }
+            }
+
+            FocusScope {
+                id: testToneRrScope
+                width: testToneRrBtn.width
+                height: testToneRrBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: testToneFrScope
+                KeyNavigation.left: testToneRlScope
+                KeyNavigation.right: testToneLfeScope
+                KeyNavigation.down: testToneAllScope
+
+                SettingsButton {
+                    id: testToneRrBtn
+                    text: "Rear R"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    onActivated: {
+                        // Rear R = channel 4
+                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "4"];
+                        testTone.running = true;
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneRrScope.forceActiveFocus();
+                            testToneRrBtn.activated();
+                        }
+                    }
+                }
+            }
+
+            FocusScope {
+                id: testToneLfeScope
+                width: testToneLfeBtn.width
+                height: testToneLfeBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: testToneCScope
+                KeyNavigation.left: testToneRrScope
+                KeyNavigation.down: testToneAllScope
+
+                SettingsButton {
+                    id: testToneLfeBtn
+                    text: "LFE/Sub"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    onActivated: {
+                        // LFE = channel 6
+                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "6"];
+                        testTone.running = true;
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneLfeScope.forceActiveFocus();
+                            testToneLfeBtn.activated();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Row 3: All channels
+        FocusScope {
+            id: testToneAllScope
+            width: testToneAllBtn.width
+            height: testToneAllBtn.height
+            activeFocusOnTab: true
+
+            KeyNavigation.up: testToneRlScope
+
+            SettingsButton {
+                id: testToneAllBtn
+                text: "All channels"
+                focus: parent.activeFocus
+                anchors.fill: parent
+                onActivated: {
+                    // WAV sweep across all 6 channels, single pass
+                    testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "wav", "-l", "1"];
+                    testTone.running = true;
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        testToneAllScope.forceActiveFocus();
+                        testToneAllBtn.activated();
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Format / sample-rate card (read-only — not in focus chain)
+        // ---------------------------------------------------------------
+        Text {
+            text: "Format"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: formatLabel.implicitHeight + 48
+            radius: 16
+            color: Theme.surface
+
+            Text {
+                id: formatLabel
+                anchors.fill: parent
+                anchors.margins: 24
+                text: root.formatInfo
+                font.pixelSize: Theme.fontSmall
+                font.family: "monospace"
+                color: Theme.textPrimary
+                wrapMode: Text.Wrap
             }
         }
 
