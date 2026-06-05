@@ -220,7 +220,7 @@ FocusScope {
 
                     SettingsButton {
                         id: endSessionBtn
-                        text: "End session"
+                        text: "End"
                         focus: parent.activeFocus
                         anchors.fill: parent
 

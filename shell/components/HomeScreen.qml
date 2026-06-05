@@ -219,6 +219,7 @@ FocusScope {
                 RowLayout {
                     id: batteryIndicator
                     Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: visible ? implicitWidth : 0
                     spacing: Units.spacingSM
                     visible: root._batteryPad !== null
 

@@ -556,7 +556,7 @@ FocusScope {
         }
 
         Text {
-            text: "Sink: Digital Surround 5.1 (IEC958/AC3)"
+            text: "Sink: " + (sinkDropdownScope.currentSinkName)
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
         }
