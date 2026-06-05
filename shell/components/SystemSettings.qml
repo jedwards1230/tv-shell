@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
@@ -19,6 +20,7 @@ FocusScope {
     property bool storageLoading: false
 
     function focusFirst() {
+        contentFlick.contentY = 0;
         refreshBtn.forceActiveFocus();
     }
 
@@ -67,10 +69,44 @@ FocusScope {
         dfProc.running = true;
     }
 
-    ColumnLayout {
+    Flickable {
+        id: contentFlick
         anchors.fill: parent
-        anchors.margins: Theme.padding
-        spacing: 48
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight
+        interactive: false
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+        ScrollBar.vertical: ScrollBar {
+            policy: contentFlick.contentHeight > contentFlick.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+        }
+
+        Behavior on contentY {
+            NumberAnimation {
+                duration: 150
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        function ensureVisible(item) {
+            if (!item)
+                return;
+            var p = item.mapToItem(contentFlick.contentItem, 0, 0);
+            if (p.y < contentFlick.contentY)
+                contentFlick.contentY = Math.max(0, p.y - 24);
+            else if (p.y + item.height > contentFlick.contentY + contentFlick.height)
+                contentFlick.contentY = Math.min(contentFlick.contentHeight - contentFlick.height, p.y + item.height - contentFlick.height + 24);
+        }
+
+        ColumnLayout {
+            id: contentColumn
+            width: contentFlick.width
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: Theme.padding
+            spacing: 48
 
         Text {
             text: "About This System"
@@ -131,6 +167,8 @@ FocusScope {
             width: refreshBtnInner.implicitWidth
             height: refreshBtnInner.implicitHeight
             focus: true
+
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
 
             SettingsButton {
                 id: refreshBtnInner
@@ -222,6 +260,8 @@ FocusScope {
             width: storageRefreshBtnInner.implicitWidth
             height: storageRefreshBtnInner.implicitHeight
 
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
+
             SettingsButton {
                 id: storageRefreshBtnInner
                 text: "Refresh"
@@ -243,8 +283,6 @@ FocusScope {
             }
         }
 
-        Item {
-            Layout.fillHeight: true
-        }
+    }
     }
 }

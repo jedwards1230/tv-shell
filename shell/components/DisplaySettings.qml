@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell.Io
 
@@ -148,13 +149,48 @@ FocusScope {
     }
 
     function focusFirst() {
+        contentFlick.contentY = 0;
         monitorList.forceActiveFocus();
     }
 
-    ColumnLayout {
+    Flickable {
+        id: contentFlick
         anchors.fill: parent
-        anchors.margins: Theme.padding
-        spacing: 32
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight
+        interactive: false
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+        ScrollBar.vertical: ScrollBar {
+            policy: contentFlick.contentHeight > contentFlick.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+        }
+
+        Behavior on contentY {
+            NumberAnimation {
+                duration: 150
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        function ensureVisible(item) {
+            if (!item)
+                return;
+            var p = item.mapToItem(contentFlick.contentItem, 0, 0);
+            if (p.y < contentFlick.contentY)
+                contentFlick.contentY = Math.max(0, p.y - 24);
+            else if (p.y + item.height > contentFlick.contentY + contentFlick.height)
+                contentFlick.contentY = Math.min(contentFlick.contentHeight - contentFlick.height, p.y + item.height - contentFlick.height + 24);
+        }
+
+        ColumnLayout {
+            id: contentColumn
+            width: contentFlick.width
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: Theme.padding
+            spacing: 32
 
         Text {
             text: "Displays"
@@ -186,6 +222,8 @@ FocusScope {
             spacing: 16
             model: root.monitors
             focus: true
+
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
 
             KeyNavigation.down: hdrToggleScope
 
@@ -316,6 +354,8 @@ FocusScope {
             KeyNavigation.up: monitorList
             KeyNavigation.down: scaleRow
 
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
+
             Keys.onReturnPressed: {
                 SettingsStore.setHdrEnabled(!SettingsStore.hdrEnabled);
                 root.applyHdr(SettingsStore.hdrEnabled);
@@ -364,6 +404,8 @@ FocusScope {
 
             KeyNavigation.up: hdrToggleScope
             KeyNavigation.down: modeDropdownScope
+
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
 
             property var scales: [0.5, 1.0, 1.25, 1.5, 1.75, 2.0]
             property int selectedScale: {
@@ -495,6 +537,8 @@ FocusScope {
 
             KeyNavigation.up: scaleRow
             KeyNavigation.down: refreshDropdownScope
+
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
 
             Behavior on Layout.preferredHeight {
                 NumberAnimation {
@@ -707,6 +751,8 @@ FocusScope {
             KeyNavigation.up: modeDropdownScope
             KeyNavigation.down: nightLightToggleScope
 
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
+
             Behavior on Layout.preferredHeight {
                 NumberAnimation {
                     duration: 200
@@ -873,6 +919,8 @@ FocusScope {
             KeyNavigation.up: refreshDropdownScope
             KeyNavigation.down: nightLightTempScope
 
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
+
             Keys.onReturnPressed: {
                 SettingsStore.setNightLightEnabled(!SettingsStore.nightLightEnabled);
                 root.applyNightLightSetting(SettingsStore.nightLightEnabled, SettingsStore.nightLightTemp);
@@ -940,6 +988,8 @@ FocusScope {
 
             KeyNavigation.up: nightLightToggleScope
             KeyNavigation.down: overscanScope
+
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
 
             Behavior on Layout.preferredHeight {
                 NumberAnimation {
@@ -1128,6 +1178,8 @@ FocusScope {
 
             KeyNavigation.up: nightLightTempScope
 
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
+
             property var overscanOptions: [0, 2, 4, 6, 8, 10]
             property int selectedIndex: {
                 let v = SettingsStore.overscan;
@@ -1216,6 +1268,8 @@ FocusScope {
             Layout.alignment: Qt.AlignHCenter
             spacing: 40
             focus: false
+
+            onActiveFocusChanged: if (activeFocus) contentFlick.ensureVisible(this)
 
             property var modes: [
                 {
@@ -1370,15 +1424,12 @@ FocusScope {
             Layout.alignment: Qt.AlignHCenter
         }
 
-        Item {
-            Layout.fillHeight: true
-        }
-
         Text {
             text: "A: Open/apply  |  B: Close dropdown  |  HDR note: applies live via hyprctl"
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
         }
+    }
     }
 }
