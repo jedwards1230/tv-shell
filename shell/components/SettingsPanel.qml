@@ -52,11 +52,6 @@ Rectangle {
     }
 
     Component {
-        id: appearanceComp
-        AppearanceSettings {}
-    }
-
-    Component {
         id: powerComp
         PowerSettings {}
     }
@@ -64,11 +59,6 @@ Rectangle {
     Component {
         id: systemComp
         SystemSettings {}
-    }
-
-    Component {
-        id: storageComp
-        StorageSettings {}
     }
 
     // The streaming section is contributed by the active provider's
@@ -136,13 +126,6 @@ Rectangle {
                 component: provider.settingsComponent
             });
         s.push({
-            id: "appearance",
-            name: "Appearance",
-            iconSource: "icons/appearance.svg",
-            fallback: "\u{1F3A8}",
-            component: appearanceComp
-        });
-        s.push({
             id: "accessibility",
             name: "Accessibility",
             iconSource: "icons/accessibility.svg",
@@ -162,13 +145,6 @@ Rectangle {
             iconSource: "icons/display.svg",
             fallback: "\u{1F4BB}",
             component: systemComp
-        });
-        s.push({
-            id: "storage",
-            name: "Storage",
-            iconSource: "icons/display.svg",
-            fallback: "\u{1F4BE}",
-            component: storageComp
         });
         return s;
     }

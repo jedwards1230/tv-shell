@@ -23,7 +23,6 @@ NetworkSettings 1.0 NetworkSettings.qml
 DisplaySettings 1.0 DisplaySettings.qml
 PowerSettings 1.0 PowerSettings.qml
 MoonlightSettings 1.0 MoonlightSettings.qml
-AppearanceSettings 1.0 AppearanceSettings.qml
 AccessibilitySettings 1.0 AccessibilitySettings.qml
 AVControlSettings 1.0 AVControlSettings.qml
 BaseCard 1.0 BaseCard.qml
@@ -56,5 +55,4 @@ PowerOverlay 1.0 PowerOverlay.qml
 VolumeOverlay 1.0 VolumeOverlay.qml
 NetworkOverlay 1.0 NetworkOverlay.qml
 SystemSettings 1.0 SystemSettings.qml
-StorageSettings 1.0 StorageSettings.qml
 SessionDialog 1.0 SessionDialog.qml
