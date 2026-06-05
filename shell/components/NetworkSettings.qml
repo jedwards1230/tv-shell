@@ -120,13 +120,11 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        ListView {
-            Layout.fillWidth: true
-            // Row-count sizing (delegate 96 + spacing 8) — contentHeight is
-            // unreliable when the list is sized by it in a ColumnLayout (#123).
-            Layout.preferredHeight: Math.min(root.activeConnections.length * 104, 300)
+        SettingsList {
+            // rowStride = delegate 96 + spacing 8 (#123/#139 row-count sizing).
+            rowStride: 104
+            maxHeight: 300
             spacing: 8
-            clip: true
             model: root.activeConnections
             interactive: false
 
@@ -219,14 +217,12 @@ FocusScope {
             visible: root.hasWifi
         }
 
-        ListView {
+        SettingsList {
             id: wifiList
-            Layout.fillWidth: true
-            // Content-sized; a trailing fillHeight spacer (below) absorbs slack so
-            // content top-packs instead of a mid-column fillHeight floating it (#123).
-            Layout.preferredHeight: Math.min(root.wifiNetworks.length * 104, 400)
+            // rowStride = delegate 96 + spacing 8 (#123/#139 row-count sizing).
+            rowStride: 104
+            maxHeight: 400
             spacing: 8
-            clip: true
             visible: root.hasWifi && root.wifiNetworks.length > 0
             model: root.wifiNetworks
             focus: root.hasWifi
