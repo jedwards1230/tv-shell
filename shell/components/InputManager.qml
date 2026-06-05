@@ -301,10 +301,10 @@ Item {
     // by the daemon, `wtype`, or the daemon's `key <name>` IPC) and are handled
     // by each surface's KeyNavigation/Keys.
     function _handleIntent(name) {
-        if (name.indexOf(":") !== -1) {
-            let i = name.indexOf(":");
-            let ns = name.substring(0, i);
-            let leaf = name.substring(i + 1);
+        let colonIdx = name.indexOf(":");
+        if (colonIdx !== -1) {
+            let ns = name.substring(0, colonIdx);
+            let leaf = name.substring(colonIdx + 1);
             if (ns === "settings")
                 root.intentSettingsPage(leaf);
             else if (ns === "overlay")

@@ -435,6 +435,7 @@ Rectangle {
         if (visible) {
             currentSection = idx;
             sidebarList.currentIndex = idx;
+            sidebarList.forceActiveFocus();
         } else {
             _pendingSection = idx;
             visible = true;

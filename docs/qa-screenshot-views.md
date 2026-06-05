@@ -84,7 +84,8 @@ capturable with a live stream/app.
 ---
 
 ## Capturability summary
-- **Key-driven (nav/select/back via `wtype -k` or `key <name>`):** A1–A9, B10–B11, C13–C14, C16, C19, all of D, E, F.
+- **Key-driven (nav/select/back via `wtype -k` or `key <name>`):** A1–A9, B10–B11, C13–C14, C16, C19, E, F; D20 and (once open) the D21–D31 page controls.
+- **Socket deep-link (`intent` command):** D21–D31 settings pages (`intent settings:<page>`) and C20/C21 overlays (`intent overlay:volume` / `intent overlay:network`) are directly socket-reachable in one command without navigating through the sidebar or QuickActions.
 - **Drawer (C12):** `intent menu` over the socket (or gamepad Home / bare Super at the TV) — **not** `wtype` (no Tab handler).
 - **Needs a real condition:** C15 (toast timing), C17 (stream conflict), C18 (stream overlay), G (live stream/app).
 
