@@ -61,6 +61,16 @@ Rectangle {
         PowerSettings {}
     }
 
+    Component {
+        id: systemComp
+        SystemSettings {}
+    }
+
+    Component {
+        id: storageComp
+        StorageSettings {}
+    }
+
     // The streaming section is contributed by the active provider's
     // settingsComponent; with the no-streaming provider it's null and the
     // section is omitted entirely.
@@ -145,6 +155,20 @@ Rectangle {
             iconSource: "icons/power.svg",
             fallback: "⏻",
             component: powerComp
+        });
+        s.push({
+            id: "system",
+            name: "System",
+            iconSource: "icons/display.svg",
+            fallback: "\u{1F4BB}",
+            component: systemComp
+        });
+        s.push({
+            id: "storage",
+            name: "Storage",
+            iconSource: "icons/display.svg",
+            fallback: "\u{1F4BE}",
+            component: storageComp
         });
         return s;
     }

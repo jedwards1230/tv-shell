@@ -55,4 +55,6 @@ PopoverMenu 1.0 PopoverMenu.qml
 PowerOverlay 1.0 PowerOverlay.qml
 VolumeOverlay 1.0 VolumeOverlay.qml
 NetworkOverlay 1.0 NetworkOverlay.qml
+SystemSettings 1.0 SystemSettings.qml
+StorageSettings 1.0 StorageSettings.qml
 SessionDialog 1.0 SessionDialog.qml
