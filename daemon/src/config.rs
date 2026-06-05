@@ -29,13 +29,13 @@ static SELF_WRITE_GEN: AtomicU64 = AtomicU64::new(0);
 /// Bump the self-write generation counter. Call this immediately BEFORE every
 /// `std::fs::write` to `settings.json` (not for other files such as recents).
 pub fn note_self_write() {
-    SELF_WRITE_GEN.fetch_add(1, Ordering::Relaxed);
+    SELF_WRITE_GEN.fetch_add(1, Ordering::Release);
 }
 
 /// Read the current self-write generation. The file-watch task calls this to
 /// detect whether the daemon wrote `settings.json` during a debounce window.
 pub fn self_write_gen() -> u64 {
-    SELF_WRITE_GEN.load(Ordering::Relaxed)
+    SELF_WRITE_GEN.load(Ordering::Acquire)
 }
 
 // ---------------------------------------------------------------------------
