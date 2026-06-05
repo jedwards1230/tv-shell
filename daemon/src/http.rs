@@ -346,8 +346,7 @@ async fn handle_connection(
     // Dispatch to the daemon control channel or screenshotter.
     match action {
         HttpAction::Intent(name) => {
-            let reply =
-                request(control_tx, move |reply| Control::Intent { name, reply }).await;
+            let reply = request(control_tx, move |reply| Control::Intent { name, reply }).await;
             let resp = match reply {
                 None => http_response(503, "daemon unavailable"),
                 Some(r) if r.starts_with("error:") => {
@@ -359,8 +358,7 @@ async fn handle_connection(
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::Key(name) => {
-            let reply =
-                request(control_tx, move |reply| Control::Key { name, reply }).await;
+            let reply = request(control_tx, move |reply| Control::Key { name, reply }).await;
             let resp = match reply {
                 None => http_response(503, "daemon unavailable"),
                 Some(r) if r.starts_with("error:") => {
@@ -375,10 +373,7 @@ async fn handle_connection(
             // Shell out to grim(1) — captures the Wayland display to stdout as PNG.
             // `grim -` writes the PNG to stdout; we capture it and stream it back.
             // The daemon runs inside the graphical session so WAYLAND_DISPLAY is set.
-            let result = tokio::process::Command::new("grim")
-                .arg("-")
-                .output()
-                .await;
+            let result = tokio::process::Command::new("grim").arg("-").output().await;
             match result {
                 Ok(out) if out.status.success() => {
                     let png = out.stdout;
