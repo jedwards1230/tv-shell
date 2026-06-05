@@ -13,6 +13,7 @@ FocusScope {
     property bool avWaking: false
 
     property var applications: AppDiscoveryManager.applications
+    property var pads: []
     property alias homeScreen: homeScreen
     property alias settingsPanel: settingsPanel
     property alias navDrawer: navDrawer
@@ -153,6 +154,7 @@ FocusScope {
         focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened
 
         runningWindows: root.runningWindows
+        pads: root.pads
 
         onStreamRequested: target => root.streamRequested(target)
         onStreamQuitRequested: target => root.streamQuitRequested(target)

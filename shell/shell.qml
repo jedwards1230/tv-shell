@@ -326,6 +326,7 @@ ShellRoot {
                 }
                 shellState: root.state
                 runningWindows: appLifecycle.runningWindows
+                pads: inputManager.pads
                 runningAppClass: appLifecycle.runningAppClass
                 overlayDrawerOpen: root.overlayDrawerOpen
                 avSystemOn: avController.systemOn
