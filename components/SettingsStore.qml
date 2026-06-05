@@ -29,6 +29,8 @@ Item {
     property string streamingViewMode: "servers"  // "servers" | "apps"
     property bool controllerDebug: false
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
+    property bool reduceMotion: false             // suppress animations (#109)
+    property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
@@ -60,6 +62,10 @@ Item {
                     store.controllerDebug = obj.controllerDebug;
                 if (typeof obj.rumbleEnabled === "boolean")
                     store.rumbleEnabled = obj.rumbleEnabled;
+                if (typeof obj.reduceMotion === "boolean")
+                    store.reduceMotion = obj.reduceMotion;
+                if (typeof obj.textScale === "number")
+                    store.textScale = obj.textScale;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
             } catch (e) {
@@ -87,6 +93,8 @@ Item {
             "streamingViewMode": store.streamingViewMode,
             "controllerDebug": store.controllerDebug,
             "rumbleEnabled": store.rumbleEnabled,
+            "reduceMotion": store.reduceMotion,
+            "textScale": store.textScale,
             "moonlightViewMode": null
         });
         saveProc.request("set-config", body);
@@ -118,6 +126,18 @@ Item {
         rumbleEnabled = enabled;
         save();
         settingsChanged("rumbleEnabled", enabled);
+    }
+
+    function setReduceMotion(enabled) {
+        reduceMotion = enabled;
+        save();
+        settingsChanged("reduceMotion", enabled);
+    }
+
+    function setTextScale(scale) {
+        textScale = scale;
+        save();
+        settingsChanged("textScale", scale);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===

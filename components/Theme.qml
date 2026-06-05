@@ -58,6 +58,10 @@ Item {
 
     // === Controller Debug Overlay (persisted via SettingsStore) ===
     readonly property bool controllerDebug: SettingsStore.controllerDebug
+
+    // === Accessibility settings (persisted via SettingsStore) ===
+    readonly property bool reduceMotion: SettingsStore.reduceMotion  // #109
+    readonly property real textScale: SettingsStore.textScale          // #110
     property int _currentHour: new Date().getHours()
     property bool darkMode: {
         if (themeMode === "dark")
@@ -81,6 +85,14 @@ Item {
 
     function setControllerDebug(enabled) {
         SettingsStore.setControllerDebug(enabled);
+    }
+
+    function setReduceMotion(enabled) {
+        SettingsStore.setReduceMotion(enabled);
+    }
+
+    function setTextScale(scale) {
+        SettingsStore.setTextScale(scale);
     }
 
     // Re-evaluate auto mode every 60 seconds
@@ -175,12 +187,14 @@ Item {
     readonly property int statusBarHeight: Math.round(Units.gridUnit * 2.22)
 
     // === Font sizes — derived from Units.gridUnit (couch-readable, resolution-adaptive) ===
+    // fontHero (hero clock) is intentionally unscaled — it owns the layout.
+    // All text-content tiers scale by textScale so users can enlarge body text (#110).
     readonly property int fontHero: Math.round(Units.gridUnit * 2.22)
-    readonly property int fontTitle: Math.round(Units.gridUnit * 1.04)
-    readonly property int fontBody: Math.round(Units.gridUnit * 0.74)
-    readonly property int fontSmall: Math.round(Units.gridUnit * 0.59)
-    readonly property int fontStatus: Math.round(Units.gridUnit * 0.74)
-    readonly property int fontHint: Math.round(Units.gridUnit * 0.67)
-    readonly property int fontCaption: Math.round(Units.gridUnit * 0.52)
-    readonly property int fontXSmall: Math.round(Units.gridUnit * 0.44)
+    readonly property int fontTitle: Math.round(Units.gridUnit * 1.04 * textScale)
+    readonly property int fontBody: Math.round(Units.gridUnit * 0.74 * textScale)
+    readonly property int fontSmall: Math.round(Units.gridUnit * 0.59 * textScale)
+    readonly property int fontStatus: Math.round(Units.gridUnit * 0.74 * textScale)
+    readonly property int fontHint: Math.round(Units.gridUnit * 0.67 * textScale)
+    readonly property int fontCaption: Math.round(Units.gridUnit * 0.52 * textScale)
+    readonly property int fontXSmall: Math.round(Units.gridUnit * 0.44 * textScale)
 }

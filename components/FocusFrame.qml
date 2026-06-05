@@ -21,10 +21,10 @@ Item {
     property int focusZ: 10
     property int restZ: 0
 
-    // Reduce-motion guard. Theme.reduceMotion is not yet defined (#109 not landed);
-    // undefined === true evaluates to false, so animations run normally today.
-    // Once #109 lands and sets Theme.reduceMotion = true, this flips automatically.
-    property bool animationsEnabled: !(Theme.reduceMotion === true)
+    // Reduce-motion guard (#109): bind directly to Theme.reduceMotion now that the
+    // setting is live. When true, all animation durations collapse to 0 and scale is
+    // suppressed — the static ring+fill+glow cues remain so focus is still visible.
+    property bool animationsEnabled: !Theme.reduceMotion
 
     default property alias content: contentArea.data
 
