@@ -12,7 +12,12 @@ BaseCard {
     property string activeAppName: ""
 
     label: root.appName !== "" ? root.appName : (root.target.name || "Unknown")
-    Accessible.description: (root.isOnline ? "Online" : "Offline") + (root.hasActiveSession ? ", session active: " + root.activeAppName : "")
+
+    // activeAppName comes from the remote Sunshine server — sanitize before it
+    // reaches the AT-SPI description: strip control chars and cap length so a
+    // hostile/garbled server name can't inject into the accessibility tree (#112).
+    readonly property string _safeActiveAppName: root.activeAppName.replace(/[\x00-\x1f]/g, "").substring(0, 80)
+    Accessible.description: (root.isOnline ? "Online" : "Offline") + (root.hasActiveSession ? ", session active: " + root._safeActiveAppName : "")
 
     Process {
         id: pingCheck

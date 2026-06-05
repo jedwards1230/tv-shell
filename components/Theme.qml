@@ -138,7 +138,7 @@ Item {
             surfaceBorder: "#dcdee3",
             textPrimary: "#1a2540",
             textSecondary: "#4a5568",
-            textMuted: "#8892a4" // WCAG: #8892a4 on #f4f5f7 = 2.88:1 (AA normal >=4.5:1 FAIL — follow-up: darken muted text in light theme)
+            textMuted: "#5a6473" // WCAG: #5a6473 on #f4f5f7 = 5.49:1 (AA normal >=4.5:1 PASS, #111)
             ,
             cardBackground: "#ffffff",
             focusBorder: String(crimson),
