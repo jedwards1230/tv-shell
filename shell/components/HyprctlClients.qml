@@ -3,7 +3,7 @@ import QtQuick
 
 // Queries the Hyprland client list via the input daemon's `hypr-clients` IPC
 // command (see docs/IPC_PROTOCOL.md), replacing the former `hyprctl clients -j`
-// shell-out. The daemon owns the Hyprland IPC connection (rust/src/hyprland.rs)
+// shell-out. The daemon owns the Hyprland IPC connection (daemon/src/hyprland.rs)
 // and returns a compact single-line JSON array of {class,title,address,workspace}
 // — the same fields the QML consumers read. One-shot `hyprctl dispatch` actions
 // (exec/closewindow/focuswindow/fullscreen) stay shell-outs in the callers.

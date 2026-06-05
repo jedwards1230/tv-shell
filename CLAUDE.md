@@ -17,7 +17,7 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 ```
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
-- **game-shell-input** (Rust daemon, `rust/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots (#98), and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED, #99/#100/#101), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset). Build with `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
+- **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots (#98), and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED, #99/#100/#101), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset). Build with `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
 - **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
 - **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
@@ -25,32 +25,34 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 ### File Layout
 
 ```
-shell.qml                    # Entry point, state machine
-components/
-  Theme.qml                  # Singleton — colors, fonts, layout constants
-  SettingsStore.qml          # Singleton — centralized settings I/O + binding IPC
-  HomeScreen.qml              # Hero clock, app rows, status icons
-  AppCard.qml                 # Icon-centric app tile (Freedesktop icons)
-  StreamCard.qml              # Moonlight streaming target card
-  StatusIcons.qml             # Top-right floating icons (volume, network, theme, settings)
-  SettingsPanel.qml           # Left sidebar + right content loader
-  {Audio,Bluetooth,Network,Display,Power}Settings.qml
-  MoonlightSettings.qml       # Server management (add/remove/configure)
-  AppearanceSettings.qml      # Theme mode selector (auto/light/dark)
-  SettingsButton.qml           # Reusable button component
-  MarqueeText.qml              # Scrolling text for long names
-  Drawer.qml                    # Reusable slide-in drawer (any edge)
-  NavigationDrawer.qml           # Left nav drawer (Home, Settings)
-  StreamOverlay.qml            # Reconnecting/error overlay
-  qmldir                       # Component registry
+shell/                       # QML shell — Quickshell config root (-c game-shell)
+  shell.qml                  # Entry point, state machine
+  components/
+    Theme.qml                # Singleton — colors, fonts, layout constants
+    SettingsStore.qml        # Singleton — centralized settings I/O + binding IPC
+    HomeScreen.qml           # Hero clock, app rows, status icons
+    AppCard.qml              # Icon-centric app tile (Freedesktop icons)
+    StreamCard.qml           # Moonlight streaming target card
+    QuickActions.qml         # Top-right quick actions (volume, network, theme, power)
+    SettingsPanel.qml        # Left sidebar + right content loader
+    {Audio,Bluetooth,Network,Display,Power}Settings.qml
+    MoonlightSettings.qml    # Server management (add/remove/configure)
+    AppearanceSettings.qml   # Theme mode selector (auto/light/dark)
+    SettingsButton.qml       # Reusable button component
+    MarqueeText.qml          # Scrolling text for long names
+    Drawer.qml               # Reusable slide-in drawer (any edge)
+    NavigationDrawer.qml     # Left nav drawer (Home, Settings)
+    StreamOverlay.qml        # Reconnecting/error overlay
+    qmldir                   # Component registry
 config/
   hyprland.conf               # Monitor config (resolution, refresh, HDR, VRR)
   palette.md                  # Color palette documentation
   game-shell.desktop          # SDDM session file
   targets.yaml.example        # Example streaming targets (docs only)
-rust/                        # Rust backend daemon (game-shell-input) — sole backend
+daemon/                      # Rust backend daemon (game-shell-input) — sole backend
   src/                       # input/uinput, ipc, config, apps, bluetooth, network, power, hyprland, health
   README.md                  # daemon architecture + phase notes
+packaging/                   # PKGBUILD / install layout (see #147)
 scripts/
   game-shell-session.sh       # Session wrapper launched by SDDM
   super-intent.sh             # Hyprland Super binds -> intents (Super=menu/drawer, +Escape=home, +Backspace=reset)
@@ -120,7 +122,7 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.pn
 ### Rust Input Daemon
 
 ```bash
-cd rust && cargo build --release
+cd daemon && cargo build --release
 install -m755 target/release/game-shell-input /opt/game-shell/bin/game-shell-input
 ```
 
