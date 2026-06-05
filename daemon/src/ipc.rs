@@ -19,8 +19,6 @@ use tokio_util::codec::{Framed, LinesCodec};
 #[cfg(target_os = "linux")]
 use crate::bluetooth::BtReq;
 #[cfg(target_os = "linux")]
-use crate::cec::CecReq;
-#[cfg(target_os = "linux")]
 use crate::hyprland::HyprReq;
 #[cfg(target_os = "linux")]
 use crate::network::NetReq;
@@ -44,8 +42,6 @@ pub struct DbusSenders {
     pub power: Option<mpsc::Sender<PowerReq>>,
     #[cfg(target_os = "linux")]
     pub hypr: Option<mpsc::Sender<HyprReq>>,
-    #[cfg(target_os = "linux")]
-    pub cec: Option<mpsc::Sender<CecReq>>,
 }
 
 /// Bind the socket (removing any stale file), chmod 0o600, and serve until the
@@ -321,7 +317,7 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         | Command::HyprActive
         | Command::HyprClients
         | Command::HyprMonitors
-        // Phase 4 HDMI-CEC commands are consumed by `dispatch_dbus` above.
+        // CEC commands fall through to dispatch_dbus (unsupported response) — not reached.
         | Command::CecScan
         | Command::CecDevice(_)
         | Command::CecPowerOn(_)
@@ -376,20 +372,11 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         Command::HyprActive => request_dbus(&dbus.hypr, HyprReq::Active).await,
         Command::HyprClients => request_dbus(&dbus.hypr, HyprReq::Clients).await,
         Command::HyprMonitors => request_dbus(&dbus.hypr, HyprReq::Monitors).await,
-        Command::CecScan => request_dbus(&dbus.cec, CecReq::Scan).await,
-        Command::CecDevice(addr) => {
-            let addr = addr.clone();
-            request_dbus(&dbus.cec, move |reply| CecReq::Device { addr, reply }).await
-        }
-        Command::CecPowerOn(addr) => {
-            let addr = addr.clone();
-            request_dbus(&dbus.cec, move |reply| CecReq::PowerOn { addr, reply }).await
-        }
-        Command::CecPowerOff(addr) => {
-            let addr = addr.clone();
-            request_dbus(&dbus.cec, move |reply| CecReq::PowerOff { addr, reply }).await
-        }
-        Command::CecActiveSource => request_dbus(&dbus.cec, CecReq::ActiveSource).await,
+        Command::CecScan
+        | Command::CecDevice(_)
+        | Command::CecPowerOn(_)
+        | Command::CecPowerOff(_)
+        | Command::CecActiveSource => protocol::resp_unsupported(),
         Command::CecAddrUsage(which) => protocol::resp_cec_addr_usage(which),
         _ => return None,
     };

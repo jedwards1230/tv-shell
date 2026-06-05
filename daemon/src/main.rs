@@ -17,7 +17,7 @@
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
 use game_shell_input::{
-    bluetooth, cec, http, hyprland, input, ipc, network, power, protocol, state, watch,
+    bluetooth, http, hyprland, input, ipc, network, power, protocol, state, watch,
 };
 
 #[cfg(target_os = "linux")]
@@ -118,8 +118,6 @@ fn spawn_dbus_actors(
     let (net_tx, net_rx) = mpsc::channel(64);
     let (power_tx, power_rx) = mpsc::channel(64);
     let (hypr_tx, hypr_rx) = mpsc::channel(64);
-    let (cec_tx, cec_rx) = mpsc::channel(64);
-
     {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
@@ -152,21 +150,11 @@ fn spawn_dbus_actors(
             }
         });
     }
-    {
-        let events_tx = events_tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = cec::run(cec_rx, events_tx).await {
-                tracing::warn!("cec actor exited: {e}");
-            }
-        });
-    }
-
     ipc::DbusSenders {
         bt: Some(bt_tx),
         net: Some(net_tx),
         power: Some(power_tx),
         hypr: Some(hypr_tx),
-        cec: Some(cec_tx),
     }
 }
 

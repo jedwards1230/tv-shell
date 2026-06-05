@@ -75,7 +75,7 @@ scripts/
 | `nmcli` | WiFi *join* only (`device wifi connect`) — reads go through the daemon's `net-*` IPC |
 | `hyprctl` | Monitor mode/scale changes, app launching, reload, one-shot `dispatch` actions — window/client *reads* go through the daemon's `hypr-*` IPC |
 | `systemctl` | Reboot/poweroff one-shots — suspend goes through the daemon's `power-suspend` IPC |
-| input daemon `cec-*` IPC | HDMI-CEC TV/AVR control (`AVController.qml`) — migrated to daemon `cec-*` commands (#94, compile-verified, needs on-device verification) |
+| `cec-client` | HDMI-CEC TV/AVR control (`AVController.qml`) — **deferred**, still a shell-out (follow-up) |
 | `moonlight` | Game streaming client (`stream`, `list`, `pair`) |
 
 The daemon's `bt-*` (BlueZ/`bluer`), `net-*` (NetworkManager/`zbus`, read-only),
@@ -91,9 +91,8 @@ QML shell-outs/HTTP polls that *read* system state. The Linux-only modules
 game-client-1; `sunshine-status` runs cross-platform but its live fetch needs a
 reachable host (its response parser is pure and unit-tested). What deliberately
 stays a shell-out: Wi-Fi **join** (`nmcli`), audio (`wpctl`), one-shot compositor
-*actions* (`hyprctl dispatch`), and reboot/poweroff (`systemctl`). **HDMI-CEC**
-is now daemon-owned via `cec-*` IPC (`cec.rs`, cec-rs/libcec, #94) —
-`AVController.qml` was migrated; `AVControlSettings.qml` is a follow-up (#16).
+*actions* (`hyprctl dispatch`), reboot/poweroff (`systemctl`), and **HDMI-CEC**
+(`cec-client` in `AVController.qml`, deferred as a follow-up).
 
 ## Development
 
