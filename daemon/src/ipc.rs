@@ -306,6 +306,7 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         // Phase 4 Hyprland commands are consumed by `dispatch_dbus` above.
         | Command::HyprActive
         | Command::HyprClients
+        | Command::HyprMonitors
         // Phase 4 HDMI-CEC commands are consumed by `dispatch_dbus` above.
         | Command::CecScan
         | Command::CecDevice(_)
@@ -360,6 +361,7 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         Command::PowerBattery => request_dbus(&dbus.power, PowerReq::Battery).await,
         Command::HyprActive => request_dbus(&dbus.hypr, HyprReq::Active).await,
         Command::HyprClients => request_dbus(&dbus.hypr, HyprReq::Clients).await,
+        Command::HyprMonitors => request_dbus(&dbus.hypr, HyprReq::Monitors).await,
         Command::CecScan => request_dbus(&dbus.cec, CecReq::Scan).await,
         Command::CecDevice(addr) => {
             let addr = addr.clone();
@@ -406,6 +408,7 @@ async fn dispatch_dbus(_dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         | Command::PowerBattery
         | Command::HyprActive
         | Command::HyprClients
+        | Command::HyprMonitors
         | Command::CecScan
         | Command::CecDevice(_)
         | Command::CecPowerOn(_)

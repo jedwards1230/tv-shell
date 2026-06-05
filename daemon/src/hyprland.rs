@@ -47,6 +47,9 @@ pub enum HyprReq {
     Active(Reply),
     /// `hypr-clients` -> compact JSON array of `{class,title,address,workspace}`.
     Clients(Reply),
+    /// `hypr-monitors` -> compact JSON array of monitor objects including
+    /// currentFormat + derived hdr bool.
+    Monitors(Reply),
 }
 
 /// Resolve the Hyprland IPC socket directory for the current instance.
@@ -120,6 +123,9 @@ pub async fn run(
             }
             HyprReq::Clients(reply) => {
                 let _ = reply.send(clients_json().await);
+            }
+            HyprReq::Monitors(reply) => {
+                let _ = reply.send(monitors_json().await);
             }
         }
     }
@@ -203,6 +209,71 @@ fn client_entry(v: &Value) -> Value {
     })
 }
 
+/// Build the `hypr-monitors` compact-JSON array. Degrades to `[]` on IPC failure.
+async fn monitors_json() -> String {
+    match request("j/monitors").await {
+        Ok(body) => parse_monitors(&body),
+        Err(e) => {
+            tracing::debug!("hyprland: monitors query failed: {e}");
+            "[]".to_string()
+        }
+    }
+}
+
+/// Reshape Hyprland's `j/monitors` array into a compact monitor array with
+/// exactly: name, description, width, height, refreshRate, scale, x, y,
+/// activeWorkspace (from activeWorkspace.name), dpmsStatus, vrr,
+/// availableModes (passthrough array), currentFormat, and a DERIVED `hdr` bool.
+///
+/// `hdr` is derived: true when `currentFormat` (uppercased) contains `"2101010"`
+/// (the 10-bit packed formats XRGB2101010/ARGB2101010 used by Hyprland for the
+/// HDR/wide-gamut path on this box). Hyprland exposes no explicit hdr flag in
+/// `j/monitors`, so 10-bit currentFormat is the proxy. Non-array body -> `[]`.
+fn parse_monitors(body: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(body.trim()) {
+        Ok(serde_json::Value::Array(items)) => {
+            let list: Vec<serde_json::Value> = items.iter().map(monitor_entry).collect();
+            serde_json::Value::Array(list).to_string()
+        }
+        _ => "[]".to_string(),
+    }
+}
+
+/// Serialize one monitor as the full compact monitor object.
+fn monitor_entry(v: &serde_json::Value) -> serde_json::Value {
+    let current_format = v
+        .get("currentFormat")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    // hdr is derived from a 10-bit format (2101010 suffix present in e.g.
+    // XRGB2101010 / ARGB2101010) — Hyprland's indicator that HDR/wide-gamut
+    // tone-mapping is active on this monitor.
+    let hdr = current_format.to_uppercase().contains("2101010");
+    let active_workspace = v
+        .get("activeWorkspace")
+        .and_then(|w| w.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    json!({
+        "name": v.get("name").and_then(serde_json::Value::as_str).unwrap_or(""),
+        "description": v.get("description").and_then(serde_json::Value::as_str).unwrap_or(""),
+        "width": v.get("width").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        "height": v.get("height").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        "refreshRate": v.get("refreshRate").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
+        "scale": v.get("scale").and_then(serde_json::Value::as_f64).unwrap_or(1.0),
+        "x": v.get("x").and_then(serde_json::Value::as_i64).unwrap_or(0),
+        "y": v.get("y").and_then(serde_json::Value::as_i64).unwrap_or(0),
+        "activeWorkspace": active_workspace,
+        "dpmsStatus": v.get("dpmsStatus").and_then(serde_json::Value::as_bool).unwrap_or(true),
+        "vrr": v.get("vrr").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        "availableModes": v.get("availableModes").cloned().unwrap_or(serde_json::Value::Array(vec![])),
+        "currentFormat": current_format,
+        "hdr": hdr,
+    })
+}
+
 /// Watch Hyprland's event socket (`.socket2.sock`) and fan `hypr:*` events onto
 /// the broadcast bus. Reads newline-delimited `EVENT>>DATA` lines. Returns when
 /// the socket closes (the caller retries with backoff); errors propagate so the
@@ -272,5 +343,49 @@ mod tests {
     fn clients_non_array_becomes_empty_array() {
         assert_eq!(parse_clients("{}"), "[]");
         assert_eq!(parse_clients(""), "[]");
+    }
+
+    #[test]
+    fn monitors_hdr_derived_from_10bit_format() {
+        // XRGB2101010 -> hdr = true
+        let body = r#"[{"name":"DP-1","description":"LG OLED","width":3840,"height":2160,"refreshRate":120.0,"scale":1.0,"x":0,"y":0,"activeWorkspace":{"id":1,"name":"1"},"dpmsStatus":true,"vrr":true,"availableModes":["3840x2160@120.00000"],"currentFormat":"XRGB2101010"}]"#;
+        let out = parse_monitors(body);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].get("hdr").unwrap(), true);
+        assert_eq!(arr[0].get("currentFormat").unwrap(), "XRGB2101010");
+        assert_eq!(arr[0].get("name").unwrap(), "DP-1");
+        assert_eq!(arr[0].get("width").unwrap(), 3840);
+        assert_eq!(arr[0].get("activeWorkspace").unwrap(), "1");
+    }
+
+    #[test]
+    fn monitors_hdr_false_for_8bit_format() {
+        // XRGB8888 -> hdr = false
+        let body = r#"[{"name":"HDMI-A-1","description":"Test Monitor","width":1920,"height":1080,"refreshRate":60.0,"scale":1.0,"x":0,"y":0,"activeWorkspace":{"id":1,"name":"1"},"dpmsStatus":true,"vrr":false,"availableModes":["1920x1080@60.00000"],"currentFormat":"XRGB8888"}]"#;
+        let out = parse_monitors(body);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr[0].get("hdr").unwrap(), false);
+        assert_eq!(arr[0].get("currentFormat").unwrap(), "XRGB8888");
+    }
+
+    #[test]
+    fn monitors_non_array_becomes_empty_array() {
+        assert_eq!(parse_monitors("{}"), "[]");
+        assert_eq!(parse_monitors(""), "[]");
+        assert_eq!(parse_monitors("not json"), "[]");
+    }
+
+    #[test]
+    fn monitors_missing_current_format_defaults_to_empty_and_hdr_false() {
+        // Missing currentFormat -> hdr=false, currentFormat=""
+        let body = r#"[{"name":"DP-2","width":2560,"height":1440,"refreshRate":144.0,"scale":1.0,"x":0,"y":0,"activeWorkspace":{"id":1,"name":"1"}}]"#;
+        let out = parse_monitors(body);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr[0].get("hdr").unwrap(), false);
+        assert_eq!(arr[0].get("currentFormat").unwrap(), "");
     }
 }

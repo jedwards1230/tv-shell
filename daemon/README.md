@@ -118,13 +118,14 @@ Two more subsystems replace the remaining QML *reads*:
   single-owner shape as Phase 3) speaking Hyprland's IPC sockets directly (no
   crate — the `hyprland` 0.3.x crate hardcodes the legacy `/tmp/hypr` socket dir
   and can't reach Hyprland >= 0.40; see the module docs). It answers
-  `hypr-active` (active window `{class,title,address}`) and `hypr-clients`
-  (`hyprctl clients -j`-equivalent `{class,title,address,workspace}` array) by
-  sending `j/activewindow` / `j/clients` to the request socket, and streams
-  `hypr:activewindow:<class>` / `hypr:fullscreen:<0|1>` events read from the
-  `.socket2.sock` event stream. This replaces the `hyprctl clients -j` shell-out
-  in `components/HyprctlClients.qml` and feeds `AppLifecycleManager.qml`. One-shot
-  `hyprctl dispatch` *actions* stay in QML.
+  `hypr-active` (active window `{class,title,address}`), `hypr-clients`
+  (`hyprctl clients -j`-equivalent `{class,title,address,workspace}` array), and
+  `hypr-monitors` (monitor array incl. `currentFormat` + derived `hdr` bool) by
+  sending `j/activewindow` / `j/clients` / `j/monitors` to the request socket,
+  and streams `hypr:activewindow:<class>` / `hypr:fullscreen:<0|1>` events read
+  from the `.socket2.sock` event stream. This replaces the `hyprctl clients -j`
+  shell-out in `components/HyprctlClients.qml` and the `hyprctl monitors -j`
+  READ in `DisplaySettings.qml`. One-shot `hyprctl dispatch` *actions* stay in QML.
 - **Sunshine** (`health.rs`): the `sunshine-status <host> <port>` pre-flight check
   the shell runs before a Moonlight stream. It's **stateless and cross-platform**
   (a plain `ipc.rs` handler, not a Linux-only actor) over `reqwest` with

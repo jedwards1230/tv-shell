@@ -14,7 +14,7 @@ The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communic
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, and `sunshine-status`, and the Phase 4 CEC query replies `cec-scan` and `cec-device`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the Phase 4 CEC query replies `cec-scan` and `cec-device`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -642,6 +642,36 @@ Sends `j/clients` to Hyprland's request socket (no `hyprctl` shell-out).
 | `title` | string | Window title |
 | `address` | string | Hyprland window address |
 | `workspace` | string | Workspace name (matches the QML's `workspace.name` read) |
+
+An empty result (or any IPC failure) is `[]`. On a non-Linux build:
+`error:unsupported on this platform\n`.
+
+#### `hypr-monitors`
+
+List all Hyprland monitors. Sends `j/monitors` to Hyprland's request socket.
+
+**Response:** A compact single-line JSON **array** of monitor objects:
+
+```json
+[{"name":"DP-1","description":"LG OLED","width":3840,"height":2160,"refreshRate":120.0,"scale":1.0,"x":0,"y":0,"activeWorkspace":"1","dpmsStatus":true,"vrr":true,"availableModes":["3840x2160@120.00000"],"currentFormat":"XRGB2101010","hdr":true}]
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `name` | string | Monitor name (e.g. `DP-1`) |
+| `description` | string | Human-readable description |
+| `width` | number | Current resolution width in pixels |
+| `height` | number | Current resolution height in pixels |
+| `refreshRate` | number | Current refresh rate in Hz |
+| `scale` | number | DPI scale factor |
+| `x` | number | X position in the global compositor layout |
+| `y` | number | Y position in the global compositor layout |
+| `activeWorkspace` | string | Name of the active workspace on this monitor |
+| `dpmsStatus` | bool | `true` = display powered on |
+| `vrr` | bool | Variable refresh rate enabled |
+| `availableModes` | array | Mode strings in `WxH@Hz` format |
+| `currentFormat` | string | Current pixel format (e.g. `XRGB2101010`, `XRGB8888`) |
+| `hdr` | bool | **Derived**: `true` when `currentFormat` contains `"2101010"` (10-bit packed formats indicate HDR/wide-gamut path). Hyprland exposes no explicit HDR flag; 10-bit `currentFormat` is the proxy. |
 
 An empty result (or any IPC failure) is `[]`. On a non-Linux build:
 `error:unsupported on this platform\n`.
