@@ -140,11 +140,28 @@ fn scan_json(conn: &cec_rs::CecConnection) -> String {
 /// The `events_tx` sender is used to broadcast `cec:device` and `cec:power`
 /// push events after each scan or power-status query.
 fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>, events_tx: broadcast::Sender<Event>) {
-    // cec-rs 8.0.1: open() is on CecConnectionCfg (consuming self).
-    let cfg = cec_rs::CecConnectionCfg {
-        device_name: "game-shell".to_string(),
-        device_types: cec_rs::CecDeviceTypeVec::new(vec![cec_rs::CecDeviceType::PlaybackDevice]),
-        ..Default::default()
+    // cec-rs 8.0.1: CecConnectionCfg has no Default impl; build via
+    // CecConnectionCfgBuilder (derive_builder). open() consumes the config.
+    let cfg = match cec_rs::CecConnectionCfgBuilder::default()
+        .device_name("game-shell".to_string())
+        .device_types(cec_rs::CecDeviceTypeVec::new(cec_rs::CecDeviceType::PlaybackDevice))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("cec: failed to build CecConnectionCfg ({e:?}); replying error to all requests");
+            while let Ok(req) = rx.recv() {
+                match req {
+                    WorkerReq::Scan(tx) => { let _ = tx.send(protocol::resp_error("libcec unavailable")); }
+                    WorkerReq::Device { tx, .. } => { let _ = tx.send(protocol::resp_error("libcec unavailable")); }
+                    WorkerReq::PowerOn { tx, .. } => { let _ = tx.send(protocol::resp_error("libcec unavailable")); }
+                    WorkerReq::PowerOff { tx, .. } => { let _ = tx.send(protocol::resp_error("libcec unavailable")); }
+                    WorkerReq::ActiveSource(tx) => { let _ = tx.send(protocol::resp_error("libcec unavailable")); }
+                    WorkerReq::Shutdown => break,
+                }
+            }
+            return;
+        }
     };
     let conn = match cfg.open() {
         Ok(c) => c,
