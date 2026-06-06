@@ -124,6 +124,7 @@ fn main() -> anyhow::Result<()> {
                         token,
                         auth_enabled,
                         control_tx.clone(),
+                        events_tx.clone(),
                         reexec_notify.clone(),
                         reexec_flag.clone(),
                     ));
