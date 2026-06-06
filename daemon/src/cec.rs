@@ -155,14 +155,18 @@ fn device_json(
 
 /// Build a compact-JSON array of all active CEC devices by probing each of the
 /// 16 CEC logical addresses (`get_device_power_status`; Unknown ≡ absent).
-fn scan_json(conn: &cec_rs::CecConnection) -> String {
+/// Probe every logical address once, returning the JSON object for each device
+/// that responds. Callers reuse this single sweep for both the `cec-scan`
+/// response body and the `cec:device` push events (avoids double-probing the
+/// blocking libcec bus on every scan).
+fn scan_devices(conn: &cec_rs::CecConnection) -> Vec<String> {
     let mut entries = Vec::new();
     for (idx, addr) in LOGICAL_ADDRESSES.iter().enumerate() {
         if let Some(obj) = device_json(conn, idx as i32, *addr) {
             entries.push(obj);
         }
     }
-    format!("[{}]", entries.join(","))
+    entries
 }
 
 // ---------------------------------------------------------------------------
@@ -235,14 +239,12 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>, events_tx: broadcast::Send
     while let Ok(req) = rx.recv() {
         match req {
             WorkerReq::Scan(tx) => {
-                let result = scan_json(&conn);
-                // Broadcast a cec:device push event for each discovered device.
-                for (idx, addr) in LOGICAL_ADDRESSES.iter().enumerate() {
-                    if let Some(obj) = device_json(&conn, idx as i32, *addr) {
-                        let _ = events_tx.send(Event::CecDevice(obj));
-                    }
+                // Single bus sweep, reused for the response and the push events.
+                let devices = scan_devices(&conn);
+                for obj in &devices {
+                    let _ = events_tx.send(Event::CecDevice(obj.clone()));
                 }
-                let _ = tx.send(result);
+                let _ = tx.send(format!("[{}]", devices.join(",")));
             }
             WorkerReq::Device { addr, tx } => {
                 let resp = match addr.parse::<i32>().ok().and_then(logical_from_i32) {

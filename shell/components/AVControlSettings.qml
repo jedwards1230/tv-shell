@@ -30,6 +30,10 @@ import Quickshell.Io
 // unnavigable when entered via the Right d-pad.
 FocusScope {
     id: root
+    // SettingsPanel sizes the scroll pane from item.implicitHeight; without this
+    // the pane height is 0 and lower controls become unreachable (mirror the
+    // other settings pages). Derived from the content column's implicit size.
+    implicitHeight: avMainCol.implicitHeight + 2 * Theme.padding
 
     property bool cecAvailable: false
     property var devices: []
@@ -38,25 +42,39 @@ FocusScope {
 
     // Friendly label for a CEC logical address (no OSD name in cec-rs 12.0.1).
     function nameForAddress(addr) {
+        // CEC logical-address table (HDMI-CEC spec), consistent with the
+        // daemon's cec-rs CecLogicalAddress semantics.
         switch (addr) {
         case 0:
             return "TV";
         case 1:
+            return "Recorder 1";
         case 2:
-            return "Recorder " + addr;
+            return "Recorder 2";
+        case 9:
+            return "Recorder 3";
         case 3:
+            return "Tuner 1";
         case 6:
+            return "Tuner 2";
         case 7:
+            return "Tuner 3";
         case 10:
-            return "Tuner";
+            return "Tuner 4";
         case 4:
+            return "Playback 1";
         case 8:
+            return "Playback 2";
         case 11:
-            return "Playback Device";
+            return "Playback 3";
         case 5:
             return "Audio System";
+        case 14:
+            return "Free Use";
+        case 15:
+            return "Broadcast";
         default:
-            return "Device " + addr;
+            return "Device " + addr;  // 12, 13 reserved
         }
     }
 
@@ -251,6 +269,7 @@ FocusScope {
 
     // --- UI ---
     ColumnLayout {
+        id: avMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32
