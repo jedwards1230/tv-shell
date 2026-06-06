@@ -134,10 +134,8 @@ fn collect_mounts() -> Vec<MountEntry> {
         }
 
         // De-duplicate by device (e.g. the same disk mounted for bind in multiple places).
-        if device.starts_with('/') {
-            if !seen_devices.insert(device.to_string()) {
-                continue;
-            }
+        if device.starts_with('/') && !seen_devices.insert(device.to_string()) {
+            continue;
         }
 
         if let Some(entry) = statvfs_entry(mountpoint) {
@@ -198,7 +196,7 @@ fn statvfs_entry(mountpoint: &str) -> Option<MountEntry> {
     // SAFETY: statvfs succeeded, so stat is fully initialised.
     let stat = unsafe { stat.assume_init() };
 
-    let bsize = stat.f_bsize as u64;
+    let bsize = stat.f_bsize;
     let size = stat.f_blocks * bsize;
     let avail = stat.f_bavail * bsize;
     let used = size.saturating_sub(stat.f_bfree * bsize);
