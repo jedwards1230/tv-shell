@@ -279,27 +279,63 @@ pub async fn run(
         None => tracing::info!("power: no battery present (desktop); no power:battery events"),
     }
 
-    // logind `PrepareForSleep` stream: drives the daemon-owned CEC lifecycle.
-    // Built only when the CEC lifecycle wiring is present (the `cec` feature AND
-    // a CEC sender). A failed subscription degrades to "no signal" (the
-    // `next_prepare_for_sleep` future parks forever) rather than erroring the
-    // actor. On a default (no-`cec`) build the `cec_tx` param and this entire
-    // block are compiled out.
+    // logind `PrepareForSleep` -> CEC lifecycle (suspend = standby, resume =
+    // wake). Runs as its OWN task, not a `select!` arm: `tokio::select!` cannot
+    // take a `#[cfg(...)]` branch (the macro rejects the attribute even on a
+    // no-`cec` build). The task owns a cloned system-bus connection + its own
+    // logind proxy. Inert unless GAME_SHELL_CEC_LIFECYCLE is set (the CEC actor
+    // no-ops the reqs). On a default (no-`cec`) build the `cec_tx` param and
+    // this whole block compile out.
     #[cfg(feature = "cec")]
-    let mut sleep_stream = if cec_tx.is_some() {
-        match &logind {
-            Some(p) => match p.receive_prepare_for_sleep().await {
-                Ok(stream) => Some(stream),
+    if let Some(cec_tx) = cec_tx.clone() {
+        let conn = conn.clone();
+        tokio::spawn(async move {
+            let proxy = match LogindManagerProxy::new(&conn).await {
+                Ok(p) => p,
                 Err(e) => {
-                    tracing::warn!("power: PrepareForSleep subscription failed ({e}); CEC lifecycle on suspend/resume disabled");
-                    None
+                    tracing::warn!("power: PrepareForSleep proxy unavailable ({e}); CEC suspend/resume lifecycle disabled");
+                    return;
                 }
-            },
-            None => None,
-        }
-    } else {
-        None
-    };
+            };
+            let mut sleep_stream = match proxy.receive_prepare_for_sleep().await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    tracing::warn!("power: PrepareForSleep subscription failed ({e}); CEC suspend/resume lifecycle disabled");
+                    return;
+                }
+            };
+            while let Some(signal) = sleep_stream.next().await {
+                let start = match signal.args() {
+                    Ok(args) => args.start,
+                    Err(e) => {
+                        tracing::warn!("power: malformed PrepareForSleep signal: {e}");
+                        continue;
+                    }
+                };
+                let req_label = if start {
+                    "standby (suspend)"
+                } else {
+                    "wake (resume)"
+                };
+                tracing::info!("power: PrepareForSleep start={start} -> CEC {req_label}");
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let req = if start {
+                    CecReq::StandbyAll(tx)
+                } else {
+                    CecReq::WakeSequence(tx)
+                };
+                if cec_tx.send(req).await.is_err() {
+                    tracing::warn!("power: CEC actor gone; stopping PrepareForSleep listener");
+                    break;
+                }
+                if let Ok(resp) = rx.await {
+                    if resp.starts_with("error:") {
+                        tracing::warn!("power: CEC lifecycle {req_label} failed: {resp}");
+                    }
+                }
+            }
+        });
+    }
 
     loop {
         // `next_battery_change` resolves only when a battery is present;
@@ -330,30 +366,6 @@ pub async fn run(
                 }
                 // If the battery vanished mid-session we simply stop emitting;
                 // a fresh `power-battery` query will report `{"present":false}`.
-            }
-            // logind PrepareForSleep — drive the CEC lifecycle. `start == true`
-            // (about to suspend) → standby; `start == false` (resumed) → wake.
-            // The CEC actor no-ops these unless GAME_SHELL_CEC_LIFECYCLE is set,
-            // so this is inert on dev/CI even when the feature is built.
-            #[cfg(feature = "cec")]
-            start = next_prepare_for_sleep(&mut sleep_stream) => {
-                if let Some(cec_tx) = cec_tx.as_ref() {
-                    let req_label = if start { "standby (suspend)" } else { "wake (resume)" };
-                    tracing::info!("power: PrepareForSleep start={start} → CEC {req_label}");
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    let req = if start {
-                        CecReq::StandbyAll(tx)
-                    } else {
-                        CecReq::WakeSequence(tx)
-                    };
-                    if cec_tx.send(req).await.is_err() {
-                        tracing::warn!("power: CEC actor gone; dropped lifecycle {req_label}");
-                    } else if let Ok(resp) = rx.await {
-                        if resp.starts_with("error:") {
-                            tracing::warn!("power: CEC lifecycle {req_label} failed: {resp}");
-                        }
-                    }
-                }
             }
         }
     }
@@ -454,32 +466,6 @@ async fn next_battery_change(streams: &mut Option<BatteryStreams<'_>>) {
     match streams {
         Some(s) => s.next_change().await,
         None => std::future::pending::<()>().await,
-    }
-}
-
-/// Resolve to the `start` flag of the next logind `PrepareForSleep` signal.
-/// When there's no subscription (`None` — no CEC sender, or subscription
-/// failed), this parks forever so the `select!` arm stays pending. A signal
-/// whose body can't be decoded is skipped (we keep waiting) rather than
-/// surfacing a bogus transition.
-#[cfg(feature = "cec")]
-async fn next_prepare_for_sleep(stream: &mut Option<PrepareForSleepStream<'_>>) -> bool {
-    match stream {
-        Some(s) => loop {
-            match s.next().await {
-                Some(signal) => match signal.args() {
-                    Ok(args) => return args.start,
-                    Err(e) => {
-                        tracing::warn!("power: malformed PrepareForSleep signal: {e}");
-                        continue;
-                    }
-                },
-                // Stream ended (bus closed): park so the arm goes quiet rather
-                // than spinning on a closed stream.
-                None => std::future::pending::<bool>().await,
-            }
-        },
-        None => std::future::pending::<bool>().await,
     }
 }
 
