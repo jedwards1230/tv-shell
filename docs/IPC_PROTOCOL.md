@@ -279,12 +279,18 @@ Example:
 {"source":"upstream_cache","entryCount":3712,"lastDownloaded":1749200000,"upstreamUrl":"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt"}
 ```
 
+The **Controllers** settings page (`ControllerSettings.qml`) renders this status
+(entry count, last-download timestamp, source) and exposes a **Refresh DB**
+button that issues `controllerdb-refresh` and updates the status line in place.
+
 ### `controllerdb-refresh`
 
 Fetch the upstream SDL `GameControllerDB`, persist it to
 `~/.local/share/game-shell/gamecontrollerdb.txt`, and hot-swap the live db in
-the input runtime (new controllers are identified without a daemon restart).
-**Linux-only** (`reqwest` HTTPS); on non-Linux the fetch always fails gracefully.
+the input runtime (new controllers are identified without a daemon restart — the
+IPC layer sends `Control::ControllerDbRefreshed` to the runtime after a
+successful fetch). **Linux-only** (`reqwest` HTTPS); on non-Linux the fetch
+always fails gracefully.
 
 **Response:** Same JSON shape as `controllerdb-status`, reflecting the post-refresh state.
 
@@ -300,7 +306,8 @@ the input runtime (new controllers are identified without a daemon restart).
 ### `pad-battery <id>`
 
 Query the current battery state of the pad whose stable wire id is `<id>`. For
-wired pads (no battery sysfs entry) or when no pad matches, `present` is `false`.
+wired pads (no battery sysfs entry), `present` is `false`. An unknown id replies
+`error:pad not found '<id>'` (not a `present:false` object).
 
 **Response:** Compact single-line JSON object.
 
@@ -324,10 +331,8 @@ error:pad not found 'uniq:unknown'
 |-----------|----------|
 | Pad found, has battery | JSON with `present:true`, `level`, `charging` |
 | Pad found, wired/no battery | JSON with `present:false` |
-| Pad not found | `error:pad not found '<id>'
-` |
-| Missing/empty `<id>` | `error:usage: pad-battery <id>
-` |
+| Pad not found | `error:pad not found '<id>'` |
+| Missing/empty `<id>` | `error:usage: pad-battery <id>` |
 
 ### `pad-rumble-status <id>`
 
@@ -351,10 +356,8 @@ pad-rumble-status uniq:e4:17:d8:ab:cd:ef
 | Condition | Response |
 |-----------|----------|
 | Pad found | JSON with `supported` and `enabled` |
-| Pad not found | `error:pad not found '<id>'
-` |
-| Missing/empty `<id>` | `error:usage: pad-rumble-status <id>
-` |
+| Pad not found | `error:pad not found '<id>'` |
+| Missing/empty `<id>` | `error:usage: pad-rumble-status <id>` |
 
 ---
 

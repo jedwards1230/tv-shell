@@ -200,9 +200,13 @@ FocusScope {
                 border.color: Theme.surfaceBorder
 
                 // Format raw bytes to a human-readable string (GiB/MiB/KiB).
+                // Exactly 0 renders "0 B" (a legitimate value, e.g. a full
+                // filesystem with 0 bytes free); negative/unknown renders "".
                 function fmtBytes(n) {
-                    if (n <= 0)
+                    if (n < 0)
                         return "";
+                    if (n === 0)
+                        return "0 B";
                     if (n >= 1073741824)
                         return (n / 1073741824).toFixed(1) + " GiB";
                     if (n >= 1048576)
@@ -226,10 +230,13 @@ FocusScope {
 
                     Text {
                         text: {
+                            // Placeholder rows (Loading… / No filesystems found)
+                            // carry size === 0; suppress the readout for those.
+                            // A real filesystem always has a positive total.
+                            if (modelData.size <= 0)
+                                return "";
                             let avail = fmtBytes(modelData.avail);
                             let size = fmtBytes(modelData.size);
-                            if (!avail || !size)
-                                return "";
                             return avail + " free / " + size + " (" + modelData.pct + "% used)";
                         }
                         font.pixelSize: Theme.fontBody

@@ -194,16 +194,21 @@ pub enum Command {
     ControllerDbStatus,
     /// `controllerdb-refresh` — re-download the upstream SDL_GameControllerDB,
     /// update the on-disk cache, and reload the active DB live (no daemon
-    /// restart). Returns the new status JSON on success or `error:<msg>` on
-    /// failure. The daemon keeps the existing DB on failure (graceful
-    /// degradation). Served directly by the IPC layer (async fetch).
+    /// restart). Returns the same status JSON shape as `controllerdb-status`,
+    /// with the `error` field set when the fetch fails. The daemon keeps the
+    /// existing DB on failure (graceful degradation). Served by the IPC layer
+    /// (async fetch), which sends `Control::ControllerDbRefreshed` to hot-swap
+    /// the runtime DB after a successful refresh.
     ControllerDbRefresh,
 
     // --- #160: per-pad battery + rumble capability/status ---
     /// `pad-battery <id>` — return the current battery state for the pad whose
-    /// stable wire id is `<id>` as a compact JSON object
-    /// `{id, level, charging}` or `{"present":false}` when the pad is wired /
-    /// battery is unknown. `<id>` is a single whitespace-trimmed token.
+    /// stable wire id is `<id>` as a compact JSON object. `id` and `present`
+    /// are always present; `level` and `charging` are added only when
+    /// `present` is `true` (a battery reading is available). Wired pads / pads
+    /// with no battery sysfs entry report `{"id":…,"present":false}`. An
+    /// unknown id replies `error:pad not found '<id>'`. `<id>` is a single
+    /// whitespace-trimmed token.
     PadBatteryQuery(String),
     /// `pad-battery` with a missing/empty `<id>` body.
     PadBatteryUsage,

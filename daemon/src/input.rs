@@ -2131,8 +2131,8 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
         }
         Control::PadBatteryQuery { id, reply } => {
             // #160: reply with battery state for the pad identified by wire id.
-            // Wired pads (no battery sysfs entry) and unknown ids both reply with
-            // `present:false` — callers must not treat this as an error.
+            // A wired pad (no battery sysfs entry) replies `present:false`;
+            // an unknown id replies `error:pad not found '<id>'`.
             match fleet.find_by_wire_id_mut(&id) {
                 None => {
                     let _ = reply.send(resp_pad_not_found(&id));
@@ -2162,8 +2162,12 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             }
         }
         Control::ControllerDbRefreshed { reply } => {
-            // #159: IPC layer fetched a fresh upstream DB; merge it into the
-            // live runtime so new controllers are identified without a restart.
+            // #159: the IPC layer fetched a fresh upstream DB and updated the
+            // on-disk cache; re-read the merged DB (bundled baseline + cache +
+            // env override) and merge it into the live runtime so new
+            // controllers are identified without a daemon restart. The runtime's
+            // initial DB comes from `device::load_db()` (baseline + env); the
+            // cached upstream entries are folded in here, on refresh.
             let (fresh, _source) = crate::controllerdb::load_merged_db();
             sh.db.merge(&fresh);
             let _ = reply.send(resp_ok());

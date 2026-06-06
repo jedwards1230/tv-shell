@@ -11,7 +11,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // sys-status
@@ -46,20 +45,13 @@ fn hostname() -> String {
         .to_string()
 }
 
-/// Read system uptime from `/proc/uptime` and format it as `Xd Xh Xm Xs`.
-fn uptime_string() -> String {
-    let raw = fs::read_to_string("/proc/uptime").unwrap_or_default();
-    let secs = raw
-        .split_whitespace()
-        .next()
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|f| f as u64)
-        .unwrap_or(0);
-    let dur = Duration::from_secs(secs);
-    let days = dur.as_secs() / 86400;
-    let hours = (dur.as_secs() % 86400) / 3600;
-    let minutes = (dur.as_secs() % 3600) / 60;
-    let seconds = dur.as_secs() % 60;
+/// Format an uptime in seconds as `Xd Xh Xm Xs`, eliding leading zero units
+/// (e.g. `90` -> `"1m 30s"`, `2d 3h 5m 10s` for a multi-day uptime).
+fn format_uptime(secs: u64) -> String {
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
     if days > 0 {
         format!("{days}d {hours}h {minutes}m {seconds}s")
     } else if hours > 0 {
@@ -69,6 +61,18 @@ fn uptime_string() -> String {
     } else {
         format!("{seconds}s")
     }
+}
+
+/// Read system uptime from `/proc/uptime` and format it as `Xd Xh Xm Xs`.
+fn uptime_string() -> String {
+    let raw = fs::read_to_string("/proc/uptime").unwrap_or_default();
+    let secs = raw
+        .split_whitespace()
+        .next()
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|f| f as u64)
+        .unwrap_or(0);
+    format_uptime(secs)
 }
 
 /// Build the `sys-status` JSON response.
@@ -236,44 +240,22 @@ mod tests {
 
     #[test]
     fn uptime_formats_seconds_only() {
-        // 90 seconds = 1m 30s
-        let dur = Duration::from_secs(90);
-        let secs = dur.as_secs();
-        let days = secs / 86400;
-        let hours = (secs % 86400) / 3600;
-        let minutes = (secs % 3600) / 60;
-        let seconds = secs % 60;
-        // Replicate the format logic inline
-        let result = if days > 0 {
-            format!("{days}d {hours}h {minutes}m {seconds}s")
-        } else if hours > 0 {
-            format!("{hours}h {minutes}m {seconds}s")
-        } else if minutes > 0 {
-            format!("{minutes}m {seconds}s")
-        } else {
-            format!("{seconds}s")
-        };
-        assert_eq!(result, "1m 30s");
+        // 90 seconds = 1m 30s — exercises the real formatter.
+        assert_eq!(format_uptime(90), "1m 30s");
     }
 
     #[test]
     fn uptime_formats_with_days() {
-        // 2 days + 3 hours + 5 min + 10 sec
+        // 2 days + 3 hours + 5 min + 10 sec — exercises the real formatter.
         let secs = 2 * 86400 + 3 * 3600 + 5 * 60 + 10;
-        let days = secs / 86400;
-        let hours = (secs % 86400) / 3600;
-        let minutes = (secs % 3600) / 60;
-        let seconds = secs % 60;
-        let result = if days > 0 {
-            format!("{days}d {hours}h {minutes}m {seconds}s")
-        } else if hours > 0 {
-            format!("{hours}h {minutes}m {seconds}s")
-        } else if minutes > 0 {
-            format!("{minutes}m {seconds}s")
-        } else {
-            format!("{seconds}s")
-        };
-        assert_eq!(result, "2d 3h 5m 10s");
+        assert_eq!(format_uptime(secs), "2d 3h 5m 10s");
+    }
+
+    #[test]
+    fn uptime_elides_zero_units() {
+        assert_eq!(format_uptime(0), "0s");
+        assert_eq!(format_uptime(45), "45s");
+        assert_eq!(format_uptime(3600), "1h 0m 0s");
     }
 
     #[test]

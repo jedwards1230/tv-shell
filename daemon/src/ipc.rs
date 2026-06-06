@@ -44,7 +44,11 @@ pub struct ControllerDbState {
 
 impl ControllerDbState {
     pub fn initial() -> Self {
-        // Load the merged DB once at startup to populate the initial state.
+        // Populate the initial state from the merged DB at startup. This reads
+        // only the bundled baseline, any already-present on-disk cache, and the
+        // env override — it does NOT perform an upstream network fetch. A fresh
+        // install therefore reports the bundled baseline until an explicit
+        // `controllerdb-refresh` runs.
         let (db, source) = controllerdb::load_merged_db();
         let last_downloaded = controllerdb::read_last_downloaded();
         ControllerDbState {
