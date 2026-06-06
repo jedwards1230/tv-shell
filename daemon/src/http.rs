@@ -77,7 +77,7 @@ pub enum HttpAction {
     // ── Dev-control routes (#167) ────────────────────────────────────────────
     /// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset.
     DevDeploy { git_ref: Option<String> },
-    /// `POST /dev/build` — cargo build --release + install binary.
+    /// `POST /dev/build` — build via scripts/build-daemon.sh + install binary.
     DevBuild,
     /// `POST /dev/restart-shell` — pkill quickshell, relaunch detached.
     DevRestartShell,
@@ -672,15 +672,21 @@ async fn handle_dev_deploy(git_ref: Option<&str>) -> String {
     http_response(200, &body)
 }
 
-/// `POST /dev/build` — cargo build --release + install the binary.
+/// `POST /dev/build` — build via scripts/build-daemon.sh + install the binary.
 async fn handle_dev_build() -> String {
     let root = session_env::install_root();
     let daemon_dir = root.join("daemon");
     tracing::info!("dev/build: cwd={}", daemon_dir.display());
 
-    let out = tokio::process::Command::new("cargo")
-        .args(["build", "--release"])
-        .current_dir(&daemon_dir)
+    // Build flags (Cargo features, profile) are owned by the repo's build
+    // script — not hardcoded here — so the dev bridge and homelab-ansible stay
+    // in sync on the daemon's on-device feature set (e.g. `cec`). See
+    // scripts/build-daemon.sh.
+    let build_script = root.join("scripts/build-daemon.sh");
+    let out = tokio::process::Command::new("bash")
+        .arg(&build_script)
+        .env("GAME_SHELL_ROOT", &root)
+        .current_dir(&root)
         .output()
         .await;
 
