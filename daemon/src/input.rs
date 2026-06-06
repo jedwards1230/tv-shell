@@ -1796,19 +1796,19 @@ fn list_input_devices_with(grabbed_paths: HashSet<PathBuf>) -> String {
 
 /// Entry point: build the daemon and run the event loop until `Shutdown`.
 ///
-/// Subscribes to the broadcast bus so external `config:changed` events
-/// (emitted by the file-watch actor on an external edit to `settings.json`,
-/// #163) refresh the input runtime's caches — `rumble_enabled`,
-/// per-player/per-game bindings — without a daemon restart. Both paths
-/// (IPC `set-config` → `Control::ConfigChanged` and file-watch →
-/// `Event::ConfigChanged`) converge on the same `apply_config_changed`
-/// helper, so cache state is always consistent.
-pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sender<Event>) {
+/// Receives external `config:changed` signals from the file-watch actor via a
+/// dedicated [`tokio::sync::Notify`] (not the global broadcast bus) so that
+/// the input runtime does not hold a permanent broadcast receiver — which
+/// would prevent `receiver_count()==0` fast-paths like `notify_held_buttons()`.
+/// Both paths (IPC `set-config` → `Control::ConfigChanged` and file-watch →
+/// `config_changed` notification) converge on the same `apply_config_changed`
+/// helper, so cache state is always consistent (#163).
+pub async fn run(
+    mut control_rx: mpsc::Receiver<Control>,
+    events: broadcast::Sender<Event>,
+    config_changed: std::sync::Arc<tokio::sync::Notify>,
+) {
     let (internal_tx, mut internal_rx) = mpsc::channel::<Internal>(256);
-    // Subscribe to the broadcast bus to receive ConfigChanged events fired by
-    // the file-watch actor. A lagged error just means we missed events while
-    // the runtime was busy — treat it the same as receiving one and refresh.
-    let mut event_rx = events.subscribe();
 
     let bindings = config::load_bindings(&config::settings_path());
     let mut button_map = HashMap::new();
@@ -1910,31 +1910,17 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
                     pad.poll_battery(&mut sh);
                 }
             }
-            // External config:changed event (#163): the file-watch actor
-            // detected an external edit to settings.json and broadcast
-            // Event::ConfigChanged. Refresh in-memory caches exactly as the
-            // IPC set-config path does via Control::ConfigChanged, so
+            // External config:changed signal (#163): the file-watch actor
+            // detected an external edit to settings.json and notified via the
+            // dedicated Notify channel. Refresh in-memory caches exactly as
+            // the IPC set-config path does via Control::ConfigChanged, so
             // rumbleEnabled and per-player/per-game bindings stay current
-            // without a daemon restart.
-            ev = event_rx.recv() => {
-                match ev {
-                    Ok(Event::ConfigChanged) => {
-                        tracing::debug!("input: received Event::ConfigChanged, refreshing caches");
-                        apply_config_changed(&mut sh);
-                    }
-                    // Other events are emitted by this runtime — ignore them.
-                    Ok(_) => {}
-                    // Lagged: the channel overflowed while we were busy. The
-                    // safest recovery is to refresh anyway — the runtime missed
-                    // at least one ConfigChanged and its caches may be stale.
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("input: event bus lagged ({n} events lost), refreshing config caches");
-                        apply_config_changed(&mut sh);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        // Sender dropped — daemon is shutting down.
-                    }
-                }
+            // without a daemon restart. Using a Notify instead of subscribing
+            // to the global broadcast bus avoids a permanent receiver that
+            // would defeat receiver_count()==0 fast-paths.
+            _ = config_changed.notified() => {
+                tracing::debug!("input: config_changed notified, refreshing caches");
+                apply_config_changed(&mut sh);
             }
         }
     }
@@ -2026,8 +2012,8 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
 /// Refresh the input runtime's in-memory caches from disk (#163, #108).
 ///
 /// Called by both the `Control::ConfigChanged` arm (IPC `set-config` path)
-/// and the `Event::ConfigChanged` select arm (file-watch path), so the two
-/// sources always apply identical logic.
+/// and the `config_changed.notified()` select arm (file-watch path), so the
+/// two sources always apply identical logic.
 fn apply_config_changed(sh: &mut Shared) {
     sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
     let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
