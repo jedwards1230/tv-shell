@@ -1130,7 +1130,7 @@ FocusScope {
             Layout.preferredHeight: 96
 
             KeyNavigation.up: nightLightTempScope
-            KeyNavigation.down: modeList
+            KeyNavigation.down: autoDimToggleScope
 
             property var overscanOptions: [0, 2, 4, 6, 8, 10]
             property int selectedIndex: {
@@ -1166,8 +1166,10 @@ FocusScope {
                         id: overscanOptScope
                         required property var modelData
                         required property int index
-                        width: overscanBtn.width
-                        height: overscanBtn.height
+                        // Intrinsic size avoids a parent.width -> overscanBtn.width
+                        // -> parent.width binding loop (same fix as the dim-delay row).
+                        width: overscanBtn.implicitWidth
+                        height: overscanBtn.implicitHeight
 
                         SettingsButton {
                             id: overscanBtn
@@ -1203,6 +1205,152 @@ FocusScope {
 
         Text {
             text: "Overscan drives the shell safe-area margin (applied at next restart)."
+            font.pixelSize: Theme.fontHint
+            color: Theme.textMuted
+        }
+
+        // Auto-Dim (OLED burn-in protection, #143)
+        Text {
+            text: "Auto-Dim"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        // Enable / disable toggle
+        FocusScope {
+            id: autoDimToggleScope
+            Layout.fillWidth: true
+            Layout.preferredHeight: 80
+
+            KeyNavigation.up: overscanScope
+            // #143: skip the disabled delay row — jump straight to modeList when auto-dim is off
+            KeyNavigation.down: SettingsStore.autoDimEnabled ? autoDimDelayScope : modeList
+
+            Keys.onReturnPressed: {
+                SettingsStore.setAutoDimEnabled(!SettingsStore.autoDimEnabled);
+            }
+
+            SettingsButton {
+                id: autoDimBtn
+                width: 160
+                height: 72
+                text: SettingsStore.autoDimEnabled ? "On" : "Off"
+                color: SettingsStore.autoDimEnabled ? Theme.sidebarActive : (autoDimToggleScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                border.width: autoDimToggleScope.activeFocus ? 2 : 1
+                border.color: autoDimToggleScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+
+                onActivated: SettingsStore.setAutoDimEnabled(!SettingsStore.autoDimEnabled)
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        autoDimToggleScope.forceActiveFocus();
+                        autoDimBtn.activated();
+                    }
+                }
+            }
+        }
+
+        // Delay selector — 1 / 2 / 5 / 10 minutes
+        Text {
+            text: "Dim Delay"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+            opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
+        }
+
+        FocusScope {
+            id: autoDimDelayScope
+            Layout.fillWidth: true
+            Layout.preferredHeight: 96
+            opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
+            // #143: exclude from nav chain when disabled so D-pad focus cannot enter
+            activeFocusOnTab: SettingsStore.autoDimEnabled
+            // When disabled, up from modeList should land on autoDimToggleScope, not here.
+            // We handle this on the modeList side; here just wire up the enabled case.
+            KeyNavigation.up: autoDimToggleScope
+            KeyNavigation.down: modeList
+
+            property var delayOptions: [1, 2, 5, 10]
+            property int selectedIndex: {
+                let v = SettingsStore.autoDimDelayMinutes;
+                for (let i = 0; i < delayOptions.length; i++) {
+                    if (delayOptions[i] === v)
+                        return i;
+                }
+                return 1; // default 2 min
+            }
+            property int focusedIndex: selectedIndex
+
+            Keys.onLeftPressed: {
+                if (focusedIndex > 0)
+                    focusedIndex--;
+            }
+            Keys.onRightPressed: {
+                if (focusedIndex < delayOptions.length - 1)
+                    focusedIndex++;
+            }
+            Keys.onReturnPressed: {
+                if (SettingsStore.autoDimEnabled)
+                    SettingsStore.setAutoDimDelayMinutes(delayOptions[focusedIndex]);
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                spacing: 16
+
+                Repeater {
+                    model: autoDimDelayScope.delayOptions
+
+                    FocusScope {
+                        id: delayOptScope
+                        required property var modelData
+                        required property int index
+                        // Size from the button's intrinsic size (not its actual
+                        // width/height) to avoid a parent.width -> delayBtn.width
+                        // -> parent.width binding loop while it anchors.fill: parent.
+                        width: delayBtn.implicitWidth
+                        height: delayBtn.implicitHeight
+
+                        SettingsButton {
+                            id: delayBtn
+                            text: parent.modelData + " min"
+                            anchors.fill: parent
+
+                            property bool isCurrent: SettingsStore.autoDimDelayMinutes === parent.modelData
+                            property bool isFocused: autoDimDelayScope.activeFocus && autoDimDelayScope.focusedIndex === delayOptScope.index
+
+                            color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
+                            border.width: isFocused ? 2 : 1
+                            border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
+
+                            onActivated: {
+                                if (SettingsStore.autoDimEnabled)
+                                    SettingsStore.setAutoDimDelayMinutes(delayOptScope.modelData);
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    autoDimDelayScope.forceActiveFocus();
+                                    autoDimDelayScope.focusedIndex = delayOptScope.index;
+                                    delayBtn.activated();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: "Dims the display after inactivity. Any input restores full brightness immediately."
             font.pixelSize: Theme.fontHint
             color: Theme.textMuted
         }
@@ -1266,7 +1414,11 @@ FocusScope {
                 Theme.setThemeMode(modeList.modes[focusIndex].id);
             }
             Keys.onUpPressed: {
-                overscanScope.forceActiveFocus();
+                // #143: skip the disabled delay row — land on toggle when auto-dim is off
+                if (SettingsStore.autoDimEnabled)
+                    autoDimDelayScope.forceActiveFocus();
+                else
+                    autoDimToggleScope.forceActiveFocus();
             }
 
             Repeater {
