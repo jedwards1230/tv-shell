@@ -30,6 +30,9 @@ FocusScope {
     signal appCloseRequested(string windowClass)
     signal returnToShellRequested
     signal overlayDrawerClosed
+    // Forwarded from HomeScreen.userActivity — any B-press / Escaped navigation.
+    // Lets shell.qml reset the auto-suspend idle timer on real user interaction.
+    signal userActivity
 
     // Session conflict dialog — driven by StreamManager signals
     property alias sessionDialog: sessionDialog
@@ -41,19 +44,18 @@ FocusScope {
     // Reset the home screen to its default focus position (first card of the
     // first visible row). Called by shell.qml resetToHome() and by the future
     // screensaver hook (issue #156).
+    //
+    // A single Qt.callLater defers both steps until the current event-loop
+    // iteration completes — layout and declarative focus bindings have settled
+    // by then, so moonlightRow's focus: binding cannot steal focus after
+    // recentsRow.forceActiveFocus() is called inside focusDefaultPosition().
     function focusDefaultPosition() {
-        homeFocusTimer.restart();
-        // Post-timer: tell the home screen to reset to its canonical position.
-        defaultPosFocusTimer.restart();
-    }
-
-    Timer {
-        id: defaultPosFocusTimer
-        interval: 60  // slightly after homeFocusTimer (50 ms) has settled focus
-        onTriggered: {
-            if (homeScreen.visible && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened)
-                homeScreen.focusDefaultPosition();
-        }
+        Qt.callLater(function() {
+            if (!homeScreen.visible || settingsPanel.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened)
+                return;
+            homeScreen.forceActiveFocus();
+            homeScreen.focusDefaultPosition();
+        });
     }
 
     // Toggle the nav drawer — the focus-scoped `menu` action. Converges every
@@ -192,6 +194,13 @@ FocusScope {
         onPowerRequested: {
             powerOverlay.opened = true;
             powerOverlay.forceActiveFocus();
+        }
+    }
+
+    Connections {
+        target: homeScreen
+        function onUserActivity() {
+            root.userActivity();
         }
     }
 
