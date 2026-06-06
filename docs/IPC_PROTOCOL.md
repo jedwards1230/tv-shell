@@ -14,7 +14,7 @@ The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communic
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query reply `cec-scan`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -899,6 +899,103 @@ The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
 
 
+## HDMI-CEC Commands (#94, #16)
+
+Persistent HDMI-CEC control via `cec-rs` / libcec. The daemon owns **one
+in-process libcec connection** for its lifetime (a single-owner async actor), so
+every command reuses that connection instead of spawning a subprocess — this is
+the reliability fix behind #16's intermittent device detection.
+
+**Feature-gated and Linux-only.** libcec is a Linux/udev C library that
+`libcec-sys` links at build time, so the actor compiles only under
+`#[cfg(all(target_os = "linux", feature = "cec"))]`. The daemon must be built
+`cargo build --release --features cec` (on a host with libcec available) for
+these commands to do anything. On a **default build** (no `cec` feature), a
+**non-Linux build**, or any host where libcec fails to open at runtime, every
+CEC command except `cec-*-usage` replies `error:unsupported on this platform\n`
+(feature/platform off) or `error:libcec unavailable\n` (adapter absent/asleep).
+The `cec-device`/`cec-power-on`/`cec-power-off` missing-address usage error is
+cross-platform (`error:usage: <cmd> <addr>\n`).
+
+> **Dropped fallback chain.** The daemon is now the *single* CEC owner. The
+> former `living-room-cec` → `cec-ctl` → `cec-client` fallback chain that
+> `AVControlSettings.qml` shelled out to is **removed**: a persistent in-process
+> libcec connection is more reliable than per-call subprocesses (the subprocess
+> lifecycle *was* the flakiness). `living-room-cec` remains available as an
+> operator escape hatch but is no longer invoked by the daemon or the shell.
+
+> **Device-info scope.** cec-rs 12.0.1 wraps no per-device metadata query (OSD
+> name, physical address, vendor id, device type are commented-out TODOs in the
+> crate). Device objects therefore carry only `logicalAddress` + `powerStatus`;
+> the bus is enumerated by probing the 16 logical addresses
+> (`get_device_power_status`, where Unknown ≡ absent). The QML derives friendly
+> device names from the logical address.
+
+### `cec-scan`
+
+Scan the CEC bus and return all visible devices.
+
+**Response:** a compact single-line JSON **array** of device objects:
+
+```json
+[{"logicalAddress":0,"powerStatus":"on"},{"logicalAddress":5,"powerStatus":"standby"}]
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `logicalAddress` | number | CEC logical address (0–15; TV=0, AudioSystem=5) |
+| `powerStatus` | string | `on` / `standby` / `waking` / `sleeping` / `unknown` |
+
+An empty result is `[]`. Feature/platform off: `error:unsupported on this platform\n`. libcec absent: `error:libcec unavailable\n`.
+
+### `cec-device <addr>`
+
+Return the device object for a single logical address. `<addr>` is a decimal
+logical address (0–15).
+
+| Condition | Response |
+|-----------|----------|
+| Device present | Compact JSON device object (same shape as a `cec-scan` element) |
+| Device absent / `<addr>` not on bus | `error:no device at address <addr>\n` |
+| `<addr>` out of range | `error:invalid address <addr>\n` |
+| Missing `<addr>` argument | `error:usage: cec-device <addr>\n` |
+| Feature/platform off | `error:unsupported on this platform\n` |
+
+### `cec-power-on <addr>`
+
+Send a CEC power-on (Image View On) command to the device at logical address
+`<addr>`.
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok\n` |
+| Failure | `error:<detail>\n` |
+| `<addr>` out of range | `error:invalid address <addr>\n` |
+| Missing `<addr>` argument | `error:usage: cec-power-on <addr>\n` |
+| Feature/platform off | `error:unsupported on this platform\n` |
+
+### `cec-power-off <addr>`
+
+Send a CEC standby command to the device at logical address `<addr>`.
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok\n` |
+| Failure | `error:<detail>\n` |
+| `<addr>` out of range | `error:invalid address <addr>\n` |
+| Missing `<addr>` argument | `error:usage: cec-power-off <addr>\n` |
+| Feature/platform off | `error:unsupported on this platform\n` |
+
+### `cec-active-source`
+
+Announce this adapter as the CEC active source (switches all displays to this
+input). This **is** the "Switch Input" primitive — there is no separate
+`cec-switch-input` command.
+
+**Response:** `ok\n` on success, `error:<detail>\n` on failure. Feature/platform
+off: `error:unsupported on this platform\n`.
+
+
 ## LAN HTTP Control Bridge (#151)
 
 An optional, LAN-bound HTTP/1.1 listener that maps `POST /intent/<target>`,
@@ -1410,6 +1507,27 @@ hypr:activewindow:firefox
 hypr:activewindow:
 hypr:fullscreen:1
 hypr:fullscreen:0
+```
+
+### HDMI-CEC Events (#94, #16)
+
+Streamed to `subscribe` clients by the CEC actor. **Feature-gated and
+Linux-only** (`all(target_os = "linux", feature = "cec")`) — never emitted on a
+default build, a non-Linux build, or when libcec is absent. Each follows the
+bare-text `name:payload` convention; the payload is a compact single-line JSON
+object. `AVControlSettings.qml` merges these into its device list so rows update
+live without re-polling.
+
+| Event | Trigger | Payload |
+|-------|---------|---------|
+| `cec:device:<json>` | A CEC device was discovered or updated (emitted per device after a `cec-scan` and after a `cec-device`) | `{"logicalAddress":N,"powerStatus":"<word>"}` (same shape as a `cec-scan` element) |
+| `cec:power:<json>` | A CEC device's power status changed (emitted after `cec-power-on` / `cec-power-off`) | `{"addr":"N","power":"<word>"}` — `addr` is the wire string the command received; `<word>` is `on`/`standby`/`waking`/`sleeping`/`unknown` |
+
+Example wire lines:
+
+```
+cec:device:{"logicalAddress":0,"powerStatus":"on"}
+cec:power:{"addr":"5","power":"on"}
 ```
 
 ### Config Live-Reload

@@ -74,3 +74,57 @@ jobs:
             echo "| Build (release) | ${{ steps.build.outcome }} |"
             echo "| Test | ${{ steps.test.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Separate leg for the OPTIONAL `cec` feature (#94). The default `build` job
+  # above stays C-free; only this job pulls in libcec-dev + libclang-dev so the
+  # libcec-sys C link is exercised exactly where it belongs. Keeping it separate
+  # preserves the no-system-C-deps invariant for the default build.
+  cec:
+    runs-on: ubuntu-latest
+    container: rust:1-bookworm
+    steps:
+      - uses: actions/checkout@v6
+
+      # libcec-sys links the system libcec C library via bindgen (needs
+      # libclang) and cmake-builds the vendored libcec (needs libp8-platform +
+      # libudev). libdbus is still required by bluer (the feature build is a
+      # superset of the default Linux build).
+      - name: Install CEC + D-Bus build deps
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            libcec-dev libp8-platform-dev libudev-dev libclang-dev \
+            cmake libdbus-1-dev pkg-config
+
+      - name: Add clippy
+        run: rustup component add clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: daemon
+          key: cec
+
+      - name: Clippy (--features cec)
+        id: clippy
+        run: cargo clippy --features cec --all-targets -- -D warnings
+
+      - name: Build (--features cec)
+        id: build
+        run: cargo build --release --features cec
+
+      - name: Test (--features cec)
+        id: test
+        run: cargo test --features cec
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Rust CI — \`daemon/\` (--features cec)"
+            echo ""
+            echo "| Step | Result |"
+            echo "|------|--------|"
+            echo "| Clippy (cec) | ${{ steps.clippy.outcome }} |"
+            echo "| Build (cec, release) | ${{ steps.build.outcome }} |"
+            echo "| Test (cec) | ${{ steps.test.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
