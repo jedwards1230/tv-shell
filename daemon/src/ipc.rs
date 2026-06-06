@@ -8,7 +8,7 @@
 
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
-use crate::{apps, config, health, recents};
+use crate::{apps, config, controllerdb, health, recents, system};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::os::unix::fs::PermissionsExt;
@@ -24,6 +24,41 @@ use crate::hyprland::HyprReq;
 use crate::network::NetReq;
 #[cfg(target_os = "linux")]
 use crate::power::PowerReq;
+
+/// Shared mutable state for the controller DB (updated on refresh).
+///
+/// Wrapped in `Arc<tokio::sync::RwLock<_>>` so multiple IPC connections can
+/// read the status concurrently; the refresh path holds a write lock for the
+/// swap.
+pub type SharedControllerDbState = std::sync::Arc<tokio::sync::RwLock<ControllerDbState>>;
+
+/// Current controller DB state, carried by the IPC layer for `controllerdb-*`
+/// commands.
+#[derive(Debug, Clone)]
+pub struct ControllerDbState {
+    pub source: String,
+    pub entry_count: usize,
+    pub last_downloaded: u64,
+    pub last_error: Option<String>,
+}
+
+impl ControllerDbState {
+    pub fn initial() -> Self {
+        // Populate the initial state from the merged DB at startup. This reads
+        // only the bundled baseline, any already-present on-disk cache, and the
+        // env override — it does NOT perform an upstream network fetch. A fresh
+        // install therefore reports the bundled baseline until an explicit
+        // `controllerdb-refresh` runs.
+        let (db, source) = controllerdb::load_merged_db();
+        let last_downloaded = controllerdb::read_last_downloaded();
+        ControllerDbState {
+            source,
+            entry_count: db.len(),
+            last_downloaded,
+            last_error: None,
+        }
+    }
+}
 
 /// Senders to the Phase 3 D-Bus actors (Bluetooth, Network, Power).
 ///
@@ -51,6 +86,7 @@ pub async fn serve(
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
     dbus: DbusSenders,
+    db_state: SharedControllerDbState,
 ) -> Result<()> {
     let _ = std::fs::remove_file(&sock_path);
     let listener = UnixListener::bind(&sock_path)
@@ -65,8 +101,11 @@ pub async fn serve(
                 let control_tx = control_tx.clone();
                 let events_tx = events_tx.clone();
                 let dbus = dbus.clone();
+                let db_state = db_state.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, control_tx, events_tx, dbus).await {
+                    if let Err(e) =
+                        handle_client(stream, control_tx, events_tx, dbus, db_state).await
+                    {
                         tracing::debug!("client connection ended: {e}");
                     }
                 });
@@ -117,6 +156,7 @@ async fn handle_client(
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
     dbus: DbusSenders,
+    db_state: SharedControllerDbState,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(4096));
 
@@ -128,7 +168,7 @@ async fn handle_client(
                 return stream_events(framed, events_tx).await;
             }
             cmd => {
-                let response = dispatch(&control_tx, &dbus, cmd).await;
+                let response = dispatch(&control_tx, &dbus, &db_state, cmd).await;
                 framed.send(response).await?;
             }
         }
@@ -141,7 +181,7 @@ async fn handle_client(
 /// Filesystem work runs on a blocking thread so the IPC reactor isn't stalled.
 /// Returns `None` for commands that aren't stateless (caller falls through to
 /// the input-runtime dispatch).
-async fn dispatch_stateless(cmd: &Command) -> Option<String> {
+async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -> Option<String> {
     match cmd {
         Command::ListApps => Some(spawn_blocking_string(apps::list_apps_json).await),
         Command::GetConfig => {
@@ -200,6 +240,34 @@ async fn dispatch_stateless(cmd: &Command) -> Option<String> {
             Some(health::handle_sunshine_status(host, port).await)
         }
         Command::SunshineStatusUsage => Some(protocol::resp_sunshine_status_usage()),
+
+        // --- #159: controllerdb-status / controllerdb-refresh ---
+        Command::ControllerDbStatus => {
+            let state = db_state.read().await;
+            // Build the status directly from stored state; avoids constructing a
+            // proxy ControllerDb whose len() is always 0.
+            let status = controllerdb::DbStatus {
+                source: state.source.clone(),
+                entry_count: state.entry_count,
+                last_downloaded: state.last_downloaded,
+                upstream_url: controllerdb::UPSTREAM_URL.to_string(),
+                error: state.last_error.clone(),
+            };
+            Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
+        }
+        // ControllerDbRefresh is NOT stateless — it must send Control::ControllerDbRefreshed
+        // to the input runtime after a successful fetch so the DB is hot-swapped.
+        // Return None here so dispatch() handles it with access to control_tx.
+        Command::ControllerDbRefresh => None,
+
+        // --- #160: pad-battery / pad-rumble-status ---
+        Command::PadBatteryUsage => Some(protocol::resp_pad_battery_usage()),
+        Command::PadRumbleStatusUsage => Some(protocol::resp_pad_rumble_status_usage()),
+
+        // --- #164: sys-status / storage-status ---
+        Command::SysStatus => Some(spawn_blocking_string(system::sys_status_json).await),
+        Command::StorageStatus => Some(spawn_blocking_string(system::storage_status_json).await),
+
         _ => None,
     }
 }
@@ -216,8 +284,13 @@ where
 }
 
 /// Resolve a non-subscribe command to its response line.
-async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: Command) -> String {
-    if let Some(resp) = dispatch_stateless(&cmd).await {
+async fn dispatch(
+    control_tx: &mpsc::Sender<Control>,
+    dbus: &DbusSenders,
+    db_state: &SharedControllerDbState,
+    cmd: Command,
+) -> String {
+    if let Some(resp) = dispatch_stateless(&cmd, db_state).await {
         // A successful set-config mutated settings.json; the input runtime caches
         // some of those keys (rumbleEnabled, #108), so nudge it to refresh. Fire
         // and forget — set-config's reply is already resolved and must not block
@@ -273,11 +346,67 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
             })
             .await
         }
+        // --- #159: controllerdb-refresh — needs control_tx to hot-swap the runtime's DB ---
+        Command::ControllerDbRefresh => {
+            let db_state = db_state.clone();
+            match controllerdb::refresh().await {
+                Ok(text) => {
+                    let (new_db, new_source) = controllerdb::load_merged_db();
+                    let new_ts = controllerdb::read_last_downloaded();
+                    {
+                        let mut state = db_state.write().await;
+                        state.source = new_source.clone();
+                        state.entry_count = new_db.len();
+                        state.last_downloaded = new_ts;
+                        state.last_error = None;
+                    }
+                    tracing::info!(
+                        "controllerdb: refreshed {} entries from upstream ({})",
+                        new_db.len(),
+                        text.lines().count()
+                    );
+                    // Notify the input runtime to hot-swap the DB without a restart.
+                    let _ = request(control_tx, |reply| Control::ControllerDbRefreshed { reply }).await;
+                    let state = db_state.read().await;
+                    let status = controllerdb::DbStatus {
+                        source: state.source.clone(),
+                        entry_count: state.entry_count,
+                        last_downloaded: state.last_downloaded,
+                        upstream_url: controllerdb::UPSTREAM_URL.to_string(),
+                        error: None,
+                    };
+                    Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
+                }
+                Err(e) => {
+                    tracing::warn!("controllerdb refresh failed: {e}");
+                    let mut state = db_state.write().await;
+                    state.last_error = Some(e.clone());
+                    let status = controllerdb::DbStatus {
+                        source: state.source.clone(),
+                        entry_count: state.entry_count,
+                        last_downloaded: state.last_downloaded,
+                        upstream_url: controllerdb::UPSTREAM_URL.to_string(),
+                        error: Some(e),
+                    };
+                    Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
+                }
+            }
+        }
+
+        // --- #160: per-pad battery + rumble status ---
+        Command::PadBatteryQuery(id) => {
+            request(control_tx, move |reply| Control::PadBatteryQuery { id, reply }).await
+        }
+        Command::PadRumbleStatus(id) => {
+            request(control_tx, move |reply| Control::PadRumbleStatus { id, reply }).await
+        }
         // Handled without a round-trip to the runtime:
         Command::IntentUsage => return protocol::resp_intent_usage(),
         Command::RumbleUsage => return protocol::resp_rumble_usage(),
         Command::KeyUsage => return protocol::resp_key_usage(),
         Command::SetBindingUsage => return protocol::resp_set_binding_usage(),
+        Command::PadBatteryUsage => return protocol::resp_pad_battery_usage(),
+        Command::PadRumbleStatusUsage => return protocol::resp_pad_rumble_status_usage(),
         Command::Unknown => return protocol::resp_unknown(),
         // Subscribe is handled by the caller before dispatch.
         Command::Subscribe => return protocol::resp_unknown(),
@@ -292,7 +421,13 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         | Command::GetRecents
         // Phase 4 Sunshine is stateless (consumed by `dispatch_stateless`).
         | Command::SunshineStatus { .. }
-        | Command::SunshineStatusUsage => return protocol::resp_unknown(),
+        | Command::SunshineStatusUsage
+        // Controller DB status is stateless (consumed by `dispatch_stateless`).
+        // ControllerDbRefresh is handled above with control_tx (hot-swap).
+        | Command::ControllerDbStatus
+        // System/storage status commands are stateless (#164).
+        | Command::SysStatus
+        | Command::StorageStatus => return protocol::resp_unknown(),
         // Phase 3 D-Bus commands are consumed by `dispatch_dbus` above (which
         // returns early); they never reach this match. The MAC-usage variant is
         // a stateless error reply handled there too.
@@ -530,6 +665,17 @@ mod tests {
                     // In-memory only; fake just replies ok.
                     let _ = reply.send(protocol::resp_ok());
                 }
+                Control::PadBatteryQuery { id, reply } => {
+                    // Fake: no pads in the test fleet -> pad not found.
+                    let _ = reply.send(protocol::resp_pad_not_found(&id));
+                }
+                Control::PadRumbleStatus { id, reply } => {
+                    // Fake: no pads in the test fleet -> pad not found.
+                    let _ = reply.send(protocol::resp_pad_not_found(&id));
+                }
+                Control::ControllerDbRefreshed { reply } => {
+                    let _ = reply.send(protocol::resp_ok());
+                }
                 Control::Shutdown => break,
             }
         }
@@ -560,11 +706,13 @@ mod tests {
         // No D-Bus actors are wired in the test (Default = all None on Linux,
         // empty on macOS), so Phase 3 query commands reply `unsupported` while
         // the stateless MAC-usage error still works.
+        let db_state = std::sync::Arc::new(tokio::sync::RwLock::new(ControllerDbState::initial()));
         let server = tokio::spawn(serve(
             sock.clone(),
             control_tx,
             events_tx.clone(),
             DbusSenders::default(),
+            db_state,
         ));
 
         // Wait for the socket to appear.

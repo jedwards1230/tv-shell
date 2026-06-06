@@ -306,6 +306,51 @@ mod tests {
     }
 
     #[test]
+    fn json_escapes_special_chars_in_desktop_fields() {
+        // Characters that break hand-rolled JSON: backslash, double-quote,
+        // control characters, and non-ASCII Unicode. serde_json must escape
+        // all of these so the output round-trips through a JSON parser.
+        //
+        // This is the regression guard for the bug surfaced in issue #168:
+        // a real /usr/share/applications file on game-client-1 had a name or
+        // comment field with a backslash/quote that broke the IPC response.
+        let nasty = App {
+            name: "My \"App\" with \\ backslash and \u{65e5}\u{672c}\u{8a9e}".into(),
+            exec: "run --flag=\"val\" --path=C:\\foo".into(),
+            icon: "".into(),
+            comment: "Line1\nLine2\tTabbed\u{0008}backspace\u{000c}form-feed".into(),
+            wm_class: "myapp".into(),
+        };
+        let json = apps_to_json(&[nasty]);
+        // Must be parseable by serde_json without error.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("json with special chars must be valid JSON");
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let obj = &arr[0];
+        // Verify the name round-trips exactly (incl. the literal backslash,
+        // double-quotes, and non-ASCII Unicode).
+        assert_eq!(
+            obj["name"].as_str().unwrap(),
+            "My \"App\" with \\ backslash and \u{65e5}\u{672c}\u{8a9e}"
+        );
+        // Verify the exec round-trips exactly (Windows-style backslash path).
+        assert_eq!(
+            obj["exec"].as_str().unwrap(),
+            "run --flag=\"val\" --path=C:\\foo"
+        );
+        // Must be a single line (no embedded newlines in the JSON envelope).
+        assert!(
+            !json.contains('\n'),
+            "apps_to_json must produce a single line"
+        );
+        // The raw JSON must NOT contain unescaped double-quote inside a string
+        // value (serde_json serialises " as ").
+        // We can verify indirectly: the only way `from_str` succeeds above is
+        // if serde_json correctly escaped all the special characters.
+    }
+
+    #[test]
     fn json_is_compact_single_line_array() {
         let apps = vec![App {
             name: "Firefox".into(),

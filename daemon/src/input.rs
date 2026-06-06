@@ -34,8 +34,9 @@ use crate::config::{self, Binding};
 use crate::device::{self, ControllerDb, SlotAllocator, VirtualRegistry};
 use crate::protocol::{
     is_known_intent, pad_connected_json, resp_cancelled, resp_captured, resp_invalid_button,
-    resp_ok, resp_pads, resp_status, resp_timeout, resp_unknown_action, resp_unknown_intent,
-    resp_unknown_key, Event, InputMode,
+    resp_ok, resp_pad_battery_not_present, resp_pad_battery_present, resp_pad_not_found,
+    resp_pad_rumble_status, resp_pads, resp_status, resp_timeout, resp_unknown_action,
+    resp_unknown_intent, resp_unknown_key, Event, InputMode,
 };
 use crate::state::{self, Control, Reply};
 use evdev::uinput::VirtualDevice;
@@ -2126,6 +2127,49 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             // Set or clear the active game for per-game binding lookup (#104).
             // In-memory only — not persisted to settings.json.
             sh.active_game = id;
+            let _ = reply.send(resp_ok());
+        }
+        Control::PadBatteryQuery { id, reply } => {
+            // #160: reply with battery state for the pad identified by wire id.
+            // A wired pad (no battery sysfs entry) replies `present:false`;
+            // an unknown id replies `error:pad not found '<id>'`.
+            match fleet.find_by_wire_id_mut(&id) {
+                None => {
+                    let _ = reply.send(resp_pad_not_found(&id));
+                }
+                Some(pad) => {
+                    let resp = match pad.battery {
+                        None => resp_pad_battery_not_present(&id),
+                        Some(bs) => resp_pad_battery_present(&id, bs.level, bs.charging),
+                    };
+                    let _ = reply.send(resp);
+                }
+            }
+        }
+        Control::PadRumbleStatus { id, reply } => {
+            // #160: reply with rumble capability and whether it is currently
+            // enabled (the `rumbleEnabled` setting). `supported=true` iff the
+            // pad has an uploaded `ff_effect`.
+            match fleet.find_by_wire_id_mut(&id) {
+                None => {
+                    let _ = reply.send(resp_pad_not_found(&id));
+                }
+                Some(pad) => {
+                    let supported = pad.ff_effect.is_some();
+                    let resp = resp_pad_rumble_status(&id, supported, sh.rumble_enabled);
+                    let _ = reply.send(resp);
+                }
+            }
+        }
+        Control::ControllerDbRefreshed { reply } => {
+            // #159: the IPC layer fetched a fresh upstream DB and updated the
+            // on-disk cache; re-read the merged DB (bundled baseline + cache +
+            // env override) and merge it into the live runtime so new
+            // controllers are identified without a daemon restart. The runtime's
+            // initial DB comes from `device::load_db()` (baseline + env); the
+            // cached upstream entries are folded in here, on refresh.
+            let (fresh, _source) = crate::controllerdb::load_merged_db();
+            sh.db.merge(&fresh);
             let _ = reply.send(resp_ok());
         }
         Control::Shutdown => return false,
