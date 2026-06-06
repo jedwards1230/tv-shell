@@ -62,6 +62,37 @@ pub enum CecReq {
     PowerOff { addr: String, reply: Reply },
     /// `cec-active-source` -> `ok` / `error:*`.
     ActiveSource(Reply),
+    /// Lifecycle wake (start / resume-from-suspend): power on AVR (addr 5) then
+    /// TV (addr 0), then claim active source. Replies `ok` / `error:*`. A no-op
+    /// (still replying `ok`) when the lifecycle flag is off, so callers never
+    /// drive the bus on dev/CI hosts. Not exposed as a manual IPC command.
+    WakeSequence(Reply),
+    /// Lifecycle standby (suspend / session-end SIGTERM): send CEC standby to TV
+    /// (addr 0) then AVR (addr 5). Replies `ok` / `error:*`. A no-op (`ok`) when
+    /// the lifecycle flag is off. Not exposed as a manual IPC command.
+    StandbyAll(Reply),
+}
+
+/// CEC logical address of the AV receiver (Audiosystem).
+const AVR_ADDR: i32 = 5;
+/// CEC logical address of the TV.
+const TV_ADDR: i32 = 0;
+/// Delay between waking the TV and claiming active source, giving the display
+/// time to come out of standby before it's switched to our input. Mirrors the
+/// `cec_wake_delay` concept from the prior `living-room-cec` shell flow.
+const WAKE_ACTIVE_SOURCE_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Whether daemon-owned CEC lifecycle (wake-on-start/resume + standby-on-
+/// suspend/SIGTERM) is enabled. Read from `GAME_SHELL_CEC_LIFECYCLE`: enabled
+/// only when the value is exactly `"1"` or `"true"`. **Default OFF** so a plain
+/// `cargo run`, CI, or a dev box never drives a real CEC bus — it's opted into
+/// on the deploy host via `daemon.env`. The manual `cec-*` IPC commands are
+/// unaffected by this flag.
+pub fn lifecycle_enabled() -> bool {
+    matches!(
+        std::env::var("GAME_SHELL_CEC_LIFECYCLE").as_deref(),
+        Ok("1") | Ok("true")
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +114,8 @@ enum WorkerReq {
         tx: std_mpsc::SyncSender<String>,
     },
     ActiveSource(std_mpsc::SyncSender<String>),
+    WakeSequence(std_mpsc::SyncSender<String>),
+    StandbyAll(std_mpsc::SyncSender<String>),
     Shutdown,
 }
 
@@ -170,6 +203,58 @@ fn scan_devices(conn: &cec_rs::CecConnection) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Lifecycle sequences (blocking-worker context only — they touch libcec).
+// ---------------------------------------------------------------------------
+
+/// Power on the AVR (addr 5) then the TV (addr 0), wait for the display to come
+/// out of standby, then announce ourselves as the active source. Returns a wire
+/// response: `ok` if every step succeeded, otherwise the first `error:*`. Runs
+/// only inside the blocking worker (it issues blocking libcec calls). Emits a
+/// `cec:power` event per successful power-on so subscribers see the change.
+fn wake_sequence(conn: &cec_rs::CecConnection, events_tx: &broadcast::Sender<Event>) -> String {
+    for addr in [AVR_ADDR, TV_ADDR] {
+        let Some(logical) = logical_from_i32(addr) else {
+            return protocol::resp_error(&format!("invalid lifecycle address {addr}"));
+        };
+        if let Err(e) = conn.send_power_on_devices(logical) {
+            return protocol::resp_error(&format!("wake power-on {addr} failed: {e:?}"));
+        }
+        let ps = conn.get_device_power_status(logical);
+        let _ = events_tx.send(Event::CecPower(protocol::cec_power_json(
+            &addr.to_string(),
+            power_status_word(ps),
+        )));
+    }
+    // Give the TV time to leave standby before switching it to our input.
+    std::thread::sleep(WAKE_ACTIVE_SOURCE_DELAY);
+    match conn.set_active_source(cec_rs::CecDeviceType::PlaybackDevice) {
+        Ok(()) => protocol::resp_ok(),
+        Err(e) => protocol::resp_error(&format!("wake active-source failed: {e:?}")),
+    }
+}
+
+/// Send CEC standby to the TV (addr 0) then the AVR (addr 5). Returns a wire
+/// response: `ok` if both standby commands succeeded, otherwise the first
+/// `error:*`. Runs only inside the blocking worker. Emits a `cec:power` event
+/// per successful standby.
+fn standby_all(conn: &cec_rs::CecConnection, events_tx: &broadcast::Sender<Event>) -> String {
+    for addr in [TV_ADDR, AVR_ADDR] {
+        let Some(logical) = logical_from_i32(addr) else {
+            return protocol::resp_error(&format!("invalid lifecycle address {addr}"));
+        };
+        if let Err(e) = conn.send_standby_devices(logical) {
+            return protocol::resp_error(&format!("standby {addr} failed: {e:?}"));
+        }
+        let ps = conn.get_device_power_status(logical);
+        let _ = events_tx.send(Event::CecPower(protocol::cec_power_json(
+            &addr.to_string(),
+            power_status_word(ps),
+        )));
+    }
+    protocol::resp_ok()
+}
+
+// ---------------------------------------------------------------------------
 // Blocking worker: owns the CecConnection for its lifetime.
 // ---------------------------------------------------------------------------
 
@@ -193,6 +278,12 @@ fn drain_unavailable(rx: &std_mpsc::Receiver<WorkerReq>) {
                 let _ = tx.send(err);
             }
             WorkerReq::ActiveSource(tx) => {
+                let _ = tx.send(err);
+            }
+            WorkerReq::WakeSequence(tx) => {
+                let _ = tx.send(err);
+            }
+            WorkerReq::StandbyAll(tx) => {
                 let _ = tx.send(err);
             }
             WorkerReq::Shutdown => break,
@@ -235,6 +326,18 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>, events_tx: broadcast::Send
     };
 
     tracing::info!("cec: libcec connection opened");
+
+    // Wake-on-open: when daemon-owned CEC lifecycle is enabled, run the wake
+    // sequence once at startup (power on AVR + TV, claim active source) so the
+    // shell comes up on an awake display. Off by default — see
+    // `lifecycle_enabled` — so dev/CI never drives the bus from a plain start.
+    if lifecycle_enabled() {
+        tracing::info!("cec: lifecycle enabled — running wake sequence on open");
+        let resp = wake_sequence(&conn, &events_tx);
+        if resp.starts_with("error:") {
+            tracing::warn!("cec: wake-on-open failed: {resp}");
+        }
+    }
 
     while let Ok(req) = rx.recv() {
         match req {
@@ -298,6 +401,12 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>, events_tx: broadcast::Send
                     Err(e) => protocol::resp_error(&format!("active-source failed: {e:?}")),
                 };
                 let _ = tx.send(resp);
+            }
+            WorkerReq::WakeSequence(tx) => {
+                let _ = tx.send(wake_sequence(&conn, &events_tx));
+            }
+            WorkerReq::StandbyAll(tx) => {
+                let _ = tx.send(standby_all(&conn, &events_tx));
             }
             WorkerReq::Shutdown => break,
         }
@@ -370,6 +479,26 @@ pub async fn run(
             CecReq::ActiveSource(reply) => {
                 let _ = reply.send(forward(&work_tx, WorkerReq::ActiveSource).await);
             }
+            // Lifecycle reqs are no-ops (reply `ok` without touching the bus)
+            // when the lifecycle flag is off, so suspend/resume/SIGTERM wiring
+            // never drives a CEC bus on dev/CI hosts. When on, forward to the
+            // blocking worker which owns libcec.
+            CecReq::WakeSequence(reply) => {
+                let resp = if lifecycle_enabled() {
+                    forward(&work_tx, WorkerReq::WakeSequence).await
+                } else {
+                    protocol::resp_ok()
+                };
+                let _ = reply.send(resp);
+            }
+            CecReq::StandbyAll(reply) => {
+                let resp = if lifecycle_enabled() {
+                    forward(&work_tx, WorkerReq::StandbyAll).await
+                } else {
+                    protocol::resp_ok()
+                };
+                let _ = reply.send(resp);
+            }
         }
     }
 
@@ -406,6 +535,19 @@ mod tests {
         assert_eq!(
             power_status_word(cec_rs::CecPowerStatus::Unknown),
             "unknown"
+        );
+    }
+
+    #[test]
+    fn lifecycle_addresses_map_to_expected_logical() {
+        // AVR=5 (Audiosystem), TV=0 (Tv) — the lifecycle wake/standby targets.
+        assert_eq!(
+            logical_from_i32(AVR_ADDR),
+            Some(cec_rs::CecLogicalAddress::Audiosystem)
+        );
+        assert_eq!(
+            logical_from_i32(TV_ADDR),
+            Some(cec_rs::CecLogicalAddress::Tv)
         );
     }
 
