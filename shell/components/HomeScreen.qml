@@ -114,39 +114,49 @@ FocusScope {
     // === Default focus target (B-button on home screen) ===
     // The canonical landing position: top content row, first card.
     // Exposed so shell.qml / screensaver hook can attach later (issue #156).
+    // Qt.callLater defers the focus assignment one event-loop tick so that
+    // declarative focus: bindings that fire synchronously during onEscaped
+    // cannot steal focus back after this function sets it (fix for the B-button
+    // regression where focus landed on moonlightRow instead of recentsRow).
     function focusDefaultPosition() {
-        // If already at the default position (first card of the first visible
-        // row), this is a quiet no-op — no navigation change occurs.
-        var firstRow = null;
-        // Prefer the first app-view row when streaming-apps mode is active.
-        if (root._streamingActive && appsRow) {
-            for (var i = 0; i < appViewRepeater.count; i++) {
-                var item = appViewRepeater.itemAt(i);
-                if (item && item.navigableRow && item.navigableRow.visible) {
-                    firstRow = item.navigableRow;
-                    break;
+        Qt.callLater(function () {
+            var firstRow = null;
+            // Prefer the first app-view row ONLY in streaming-apps mode.
+            // Fix: gate on streamingViewMode === "apps", not just appsRow truthy,
+            // so servers mode falls through to the ordered fallback below.
+            if (root._streamingActive && Theme.streamingViewMode === "apps") {
+                for (var i = 0; i < appViewRepeater.count; i++) {
+                    var item = appViewRepeater.itemAt(i);
+                    if (item && item.navigableRow && item.navigableRow.visible) {
+                        firstRow = item.navigableRow;
+                        break;
+                    }
                 }
             }
-        }
-        if (!firstRow) {
-            var rows = [runningRow, recentsRow];
-            if (root._streamingActive && Theme.streamingViewMode === "servers")
-                rows.push(moonlightRow);
-            rows.push(appsRow);
-            for (var j = 0; j < rows.length; j++) {
-                if (rows[j] && rows[j].visible) {
-                    firstRow = rows[j];
-                    break;
+            if (!firstRow) {
+                var rows = [runningRow, recentsRow];
+                if (root._streamingActive && Theme.streamingViewMode === "servers")
+                    rows.push(moonlightRow);
+                rows.push(appsRow);
+                for (var j = 0; j < rows.length; j++) {
+                    if (rows[j] && rows[j].visible) {
+                        firstRow = rows[j];
+                        break;
+                    }
                 }
             }
-        }
-        if (!firstRow)
-            return;
-        // Already at the default position — no-op.
-        if (firstRow.activeFocus && firstRow.currentIndex === 0)
-            return;
-        firstRow.currentIndex = 0;
-        firstRow.forceActiveFocus();
+            if (!firstRow)
+                return;
+            // Already at the default position — short-circuit only when the
+            // window's active-focus item IS the target row AND its currentIndex
+            // is already 0.  Reading activeFocusItem (not firstRow.activeFocus)
+            // is correct here because we are inside Qt.callLater; at this point
+            // any synchronous focus steal has already settled.
+            if (Window.activeFocusItem === firstRow && firstRow.currentIndex === 0)
+                return;
+            firstRow.currentIndex = 0;
+            firstRow.forceActiveFocus();
+        });
     }
 
     // Computed model for app-view rows, re-evaluated when targets or hostApps change
@@ -288,6 +298,11 @@ FocusScope {
                 QuickActions {
                     id: statusIcons
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                    // B/Escape from the status-icon row must NOT open Settings
+                    // (issue #156 AC1). escapeRequestsSettings: false prevents
+                    // the QuickActions Escape handler from emitting settingsRequested;
+                    // we handle navigation back to home focus ourselves below.
+                    escapeRequestsSettings: false
                     onSettingsRequested: root.settingsRequested()
                     onNotificationCenterRequested: root.notificationCenterRequested()
                     onPowerRequested: root.powerRequested()
@@ -296,6 +311,10 @@ FocusScope {
                     onFocusDownRequested: root._focusFirstVisibleRow()
                     onActiveFocusChanged: if (activeFocus)
                         scrollView.contentY = 0
+                    Keys.onEscapePressed: {
+                        root.userActivity();
+                        root.focusDefaultPosition();
+                    }
                 }
             }
 
