@@ -50,7 +50,7 @@ FocusScope {
     // by then, so moonlightRow's focus: binding cannot steal focus after
     // recentsRow.forceActiveFocus() is called inside focusDefaultPosition().
     function focusDefaultPosition() {
-        Qt.callLater(function() {
+        Qt.callLater(function () {
             if (!homeScreen.visible || settingsPanel.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened)
                 return;
             homeScreen.forceActiveFocus();
