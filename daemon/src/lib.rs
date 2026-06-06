@@ -42,6 +42,12 @@ pub mod power;
 #[cfg(target_os = "linux")]
 pub mod hyprland;
 
+// HDMI-CEC actor (#94): persistent libcec connection via cec-rs. Linux-only AND
+// feature-gated (`cec`) — libcec-sys links a C lib, so default builds exclude it
+// to keep the no-system-C-deps invariant (evdev/zbus/bluer are pure Rust).
+#[cfg(all(target_os = "linux", feature = "cec"))]
+pub mod cec;
+
 // File-watch actor: inotify-watches settings.json for external edits and
 // broadcasts config:changed. Uses notify-debouncer-full (Linux-only crate).
 #[cfg(target_os = "linux")]
