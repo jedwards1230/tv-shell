@@ -18,6 +18,8 @@ use tokio_util::codec::{Framed, LinesCodec};
 
 #[cfg(target_os = "linux")]
 use crate::bluetooth::BtReq;
+#[cfg(all(target_os = "linux", feature = "cec"))]
+use crate::cec::CecReq;
 #[cfg(target_os = "linux")]
 use crate::hyprland::HyprReq;
 #[cfg(target_os = "linux")]
@@ -77,6 +79,11 @@ pub struct DbusSenders {
     pub power: Option<mpsc::Sender<PowerReq>>,
     #[cfg(target_os = "linux")]
     pub hypr: Option<mpsc::Sender<HyprReq>>,
+    /// HDMI-CEC actor (#94). Gated on BOTH linux AND the `cec` feature: the
+    /// field is absent from the default Linux build (no libcec-sys), so the
+    /// `dispatch_dbus` CEC arms that read it are gated identically.
+    #[cfg(all(target_os = "linux", feature = "cec"))]
+    pub cec: Option<mpsc::Sender<CecReq>>,
 }
 
 /// Bind the socket (removing any stale file), chmod 0o600, and serve until the
@@ -507,6 +514,29 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         Command::HyprActive => request_dbus(&dbus.hypr, HyprReq::Active).await,
         Command::HyprClients => request_dbus(&dbus.hypr, HyprReq::Clients).await,
         Command::HyprMonitors => request_dbus(&dbus.hypr, HyprReq::Monitors).await,
+        // HDMI-CEC (#94): the `cec` field exists only under `feature = "cec"`,
+        // so the live arms are feature-gated; the default Linux build keeps the
+        // `resp_unsupported()` fallthrough (libcec isn't linked there).
+        #[cfg(feature = "cec")]
+        Command::CecScan => request_dbus(&dbus.cec, CecReq::Scan).await,
+        #[cfg(feature = "cec")]
+        Command::CecDevice(addr) => {
+            let addr = addr.clone();
+            request_dbus(&dbus.cec, move |reply| CecReq::Device { addr, reply }).await
+        }
+        #[cfg(feature = "cec")]
+        Command::CecPowerOn(addr) => {
+            let addr = addr.clone();
+            request_dbus(&dbus.cec, move |reply| CecReq::PowerOn { addr, reply }).await
+        }
+        #[cfg(feature = "cec")]
+        Command::CecPowerOff(addr) => {
+            let addr = addr.clone();
+            request_dbus(&dbus.cec, move |reply| CecReq::PowerOff { addr, reply }).await
+        }
+        #[cfg(feature = "cec")]
+        Command::CecActiveSource => request_dbus(&dbus.cec, CecReq::ActiveSource).await,
+        #[cfg(not(feature = "cec"))]
         Command::CecScan
         | Command::CecDevice(_)
         | Command::CecPowerOn(_)
@@ -873,5 +903,21 @@ mod tests {
         );
 
         server.abort();
+    }
+
+    /// Degradation: with the `cec` feature on but no CEC actor wired
+    /// (`cec: None`), `cec-scan` still answers `error:unsupported on this
+    /// platform` via `request_dbus`'s `None` path rather than panicking. Gated
+    /// on `feature = "cec"` because the `cec` field only exists then, and on
+    /// linux because `dispatch_dbus` is the Linux variant.
+    #[cfg(all(target_os = "linux", feature = "cec"))]
+    #[tokio::test]
+    async fn cec_scan_unsupported_when_actor_absent() {
+        let dbus = DbusSenders {
+            cec: None,
+            ..Default::default()
+        };
+        let resp = dispatch_dbus(&dbus, &Command::CecScan).await;
+        assert_eq!(resp, Some("error:unsupported on this platform".to_string()));
     }
 }

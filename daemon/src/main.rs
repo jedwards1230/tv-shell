@@ -189,6 +189,11 @@ fn spawn_dbus_actors(
     let (net_tx, net_rx) = mpsc::channel(64);
     let (power_tx, power_rx) = mpsc::channel(64);
     let (hypr_tx, hypr_rx) = mpsc::channel(64);
+    // HDMI-CEC actor (#94): only spawned when the daemon is built `--features
+    // cec`. The module/channel/spawn are all gated so the default build links no
+    // libcec.
+    #[cfg(feature = "cec")]
+    let (cec_tx, cec_rx) = mpsc::channel(64);
     {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
@@ -221,11 +226,22 @@ fn spawn_dbus_actors(
             }
         });
     }
+    #[cfg(feature = "cec")]
+    {
+        let events_tx = events_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = game_shell_input::cec::run(cec_rx, events_tx).await {
+                tracing::warn!("cec actor exited: {e}");
+            }
+        });
+    }
     ipc::DbusSenders {
         bt: Some(bt_tx),
         net: Some(net_tx),
         power: Some(power_tx),
         hypr: Some(hypr_tx),
+        #[cfg(feature = "cec")]
+        cec: Some(cec_tx),
     }
 }
 
