@@ -1019,6 +1019,29 @@ working libcec adapter), the daemon:
 - **Standby on session end:** on a real shutdown (SIGTERM/SIGINT from the
   session wrapper), sends the same standby before exiting. A re-exec restart
   (`/dev/restart-daemon`) is **skipped** so the AV stays awake across it.
+- **Remote input -> navigation:** registers a libcec key-press callback so
+  TV/AVR **remote buttons** arriving on the CEC bus are injected as the SAME
+  synthesized keyboard nav events the gamepad d-pad produces (via the
+  `Control::Key` path → `config::key_for_action`). This replaces the retired
+  kernel `pulse8-cec` evdev "Pulse-Eight CEC Adapter" input device. The callback
+  fires on libcec's own thread and only forwards the keypress over a channel; a
+  dedicated forwarder thread debounces it (acting on the **initial press only**,
+  i.e. libcec `duration == 0`; the release event with a non-zero held duration
+  is ignored) and maps the CEC user-control code to a nav action:
+
+  | CEC user-control code | nav action | emitted key |
+  |-----------------------|------------|-------------|
+  | `UP`     | `up`     | `KEY_UP`    |
+  | `DOWN`   | `down`   | `KEY_DOWN`  |
+  | `LEFT`   | `left`   | `KEY_LEFT`  |
+  | `RIGHT`  | `right`  | `KEY_RIGHT` |
+  | `SELECT` | `select` | `KEY_ENTER` |
+  | `EXIT`   | `back`   | `KEY_ESC`   |
+
+  All other codes (menus, media transport, number/colour keys) are ignored —
+  no new nav vocabulary is introduced. Gated by the **same**
+  `GAME_SHELL_CEC_LIFECYCLE` flag as the wake/standby behavior, so a default
+  build, a host without the flag, or dev/CI never inject keys.
 
 When **disabled** (the default) the CEC actor still serves the manual `cec-*`
 commands, but performs **none** of the above — it never auto-drives the bus on
