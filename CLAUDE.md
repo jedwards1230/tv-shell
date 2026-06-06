@@ -75,7 +75,7 @@ scripts/
 | `nmcli` | WiFi *join* only (`device wifi connect`) — reads go through the daemon's `net-*` IPC |
 | `hyprctl` | Monitor mode/scale changes, app launching, reload, one-shot `dispatch` actions — window/client *reads* go through the daemon's `hypr-*` IPC |
 | `systemctl` | Reboot/poweroff one-shots — suspend goes through the daemon's `power-suspend` IPC |
-| `cec-client` | HDMI-CEC TV/AVR control (`AVController.qml`) — **deferred**, still a shell-out (follow-up) |
+| `cec-client` | _retired_ — HDMI-CEC now owned by the daemon's `cec-*` IPC (`cec-rs`/libcec, #94); built only `--features cec`. The `cec-client`/`cec-ctl`/`living-room-cec` QML fallback chain is removed |
 | `moonlight` | Game streaming client (`stream`, `list`, `pair`) |
 
 The daemon's `bt-*` (BlueZ/`bluer`), `net-*` (NetworkManager/`zbus`, read-only),
@@ -91,8 +91,12 @@ QML shell-outs/HTTP polls that *read* system state. The Linux-only modules
 game-client-1; `sunshine-status` runs cross-platform but its live fetch needs a
 reachable host (its response parser is pure and unit-tested). What deliberately
 stays a shell-out: Wi-Fi **join** (`nmcli`), audio (`wpctl`), one-shot compositor
-*actions* (`hyprctl dispatch`), reboot/poweroff (`systemctl`), and **HDMI-CEC**
-(`cec-client` in `AVController.qml`, deferred as a follow-up).
+*actions* (`hyprctl dispatch`), and reboot/poweroff (`systemctl`). **HDMI-CEC**
+moved into the daemon (`cec-*` IPC via `cec-rs`/libcec, #94/#16): a single
+persistent in-process libcec connection replaces the per-call shell-outs. It is
+**feature-gated** (`cargo build --features cec`) and Linux-only so the default
+build keeps the no-system-C-deps invariant — the libcec-sys C link is exercised
+only in the dedicated `--features cec` CI leg and on game-client-1 (libcec 7).
 
 ## Development
 
@@ -124,6 +128,16 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.pn
 ```bash
 cd daemon && cargo build --release
 install -m755 target/release/game-shell-input /opt/game-shell/bin/game-shell-input
+```
+
+**HDMI-CEC is an opt-in feature (#94).** A plain `cargo build` is C-free; the
+`cec` feature pulls in `cec-rs`/`libcec-sys`, which links the libcec C library
+(needs `libcec-dev`, `libp8-platform-dev`, `libudev-dev`, `libclang-dev` at
+build time). Build it only on a host with those present (game-client-1 / Fedora
+43 ships libcec 7; the deploy build uses `--features cec`):
+
+```bash
+cd daemon && cargo build --release --features cec
 ```
 
 Requires Linux with evdev and uinput access. Auto-discovers gamepad by vendor/product ID (defaults: Xbox controller `045e:028e`, configurable via `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` env vars). The Linux-only evdev/uinput/D-Bus modules build only on the target (or CI); the cross-platform subset (`protocol`, `config`, `state`, `device` GUID math, `apps`, `health`, `recents`) builds and tests on any host.
