@@ -198,6 +198,37 @@ fn png_response_header(png_len: usize) -> Vec<u8> {
     header.into_bytes()
 }
 
+/// Resolve the Wayland display socket name for screenshot subprocesses (grim).
+///
+/// The session wrapper launches the daemon *before* `exec Hyprland`, so the
+/// daemon does not inherit `WAYLAND_DISPLAY`; bare grim would default to
+/// `wayland-0` and fail. Prefer the inherited value when present, otherwise
+/// discover the compositor socket in `$XDG_RUNTIME_DIR` (`wayland-N`, preferring
+/// one with a `wayland-N.lock` sibling, which marks a live server).
+fn resolve_wayland_display() -> Option<String> {
+    if let Some(d) = std::env::var_os("WAYLAND_DISPLAY") {
+        if !d.is_empty() {
+            return Some(d.to_string_lossy().into_owned());
+        }
+    }
+    let dir = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
+    let mut fallback: Option<String> = None;
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(rest) = name.strip_prefix("wayland-") else {
+            continue;
+        };
+        if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        if dir.join(format!("{name}.lock")).exists() {
+            return Some(name);
+        }
+        fallback.get_or_insert(name);
+    }
+    fallback
+}
+
 // ─── Per-connection handler ──────────────────────────────────────────────────
 
 /// Read up to `MAX_REQUEST_BYTES` from the TCP stream and return the raw
@@ -372,8 +403,15 @@ async fn handle_connection(
         HttpAction::Screenshot => {
             // Shell out to grim(1) — captures the Wayland display to stdout as PNG.
             // `grim -` writes the PNG to stdout; we capture it and stream it back.
-            // The daemon runs inside the graphical session so WAYLAND_DISPLAY is set.
-            let result = tokio::process::Command::new("grim").arg("-").output().await;
+            // The daemon is launched before `exec Hyprland`, so it may not inherit
+            // WAYLAND_DISPLAY — resolve and inject it so grim finds the live socket
+            // instead of defaulting to wayland-0 and failing.
+            let mut cmd = tokio::process::Command::new("grim");
+            cmd.arg("-");
+            if let Some(disp) = resolve_wayland_display() {
+                cmd.env("WAYLAND_DISPLAY", disp);
+            }
+            let result = cmd.output().await;
             match result {
                 Ok(out) if out.status.success() => {
                     let png = out.stdout;
