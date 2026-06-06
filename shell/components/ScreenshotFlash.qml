@@ -1,10 +1,15 @@
 import QtQuick
+import Qt5Compat.GraphicalEffects
 
 // ScreenshotFlash (#166)
 //
-// A self-contained full-screen white vignette that plays a brief (~150 ms)
-// fade-in / fade-out animation as visual feedback when a remote screenshot is
-// taken via `GET /screenshot?flash=1`.
+// A self-contained edge vignette that plays a brief (~200 ms) fade-in /
+// fade-out animation as visual feedback when a remote screenshot is taken via
+// `GET /screenshot?flash=1`.
+//
+// Unlike a full-screen white flash, this lights up only the screen *edges*
+// (transparent center → white border), so gameplay/content in the middle stays
+// visible while the capture is clearly acknowledged.
 //
 // Usage:
 //   One instance is created per screen: it is the LAST child of each
@@ -25,35 +30,57 @@ Item {
     // Invisible until flash() is called.
     visible: false
 
-    // The white vignette — full-screen, semi-opaque white rectangle.
-    Rectangle {
+    // Radial gradient vignette: fully transparent through the center, ramping
+    // to white only near the edges. Default radii (width/2, height/2) place the
+    // gradient's outer stop at every mid-edge simultaneously, so the glow is
+    // even all the way around; the corners (beyond the radius) clamp to the
+    // final white stop, giving a clean frame.
+    RadialGradient {
         id: vignette
         anchors.fill: parent
-        color: "white"
         opacity: 0.0
+
+        gradient: Gradient {
+            GradientStop {
+                position: 0.0
+                color: "transparent"
+            }
+            GradientStop {
+                position: 0.62
+                color: "transparent"
+            }
+            GradientStop {
+                position: 0.85
+                color: Qt.rgba(1, 1, 1, 0.35)
+            }
+            GradientStop {
+                position: 1.0
+                color: Qt.rgba(1, 1, 1, 0.95)
+            }
+        }
 
         SequentialAnimation {
             id: flashAnim
             running: false
 
-            // Fade in quickly (≈ 40 ms).
+            // Fade in quickly (≈ 55 ms).
             NumberAnimation {
                 target: vignette
                 property: "opacity"
-                to: 0.85
-                duration: 40
+                to: 1.0
+                duration: 55
                 easing.type: Easing.OutQuad
             }
             // Hold briefly.
             PauseAnimation {
-                duration: 30
+                duration: 40
             }
-            // Fade out over the remainder of the ~150 ms window.
+            // Fade out over the remainder of the ~200 ms window.
             NumberAnimation {
                 target: vignette
                 property: "opacity"
                 to: 0.0
-                duration: 80
+                duration: 105
                 easing.type: Easing.InQuad
             }
 
