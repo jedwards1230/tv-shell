@@ -445,6 +445,21 @@ ShellRoot {
                     }
                 }
             }
+
+            // ScreenshotFlash overlay (#166) — last child in PanelWindow so it
+            // renders on top of ShellLayout. One instance per screen (Variants).
+            // Another lane may also add an overlay here; keep this block additive.
+            Components.ScreenshotFlash {
+                id: screenshotFlash
+                anchors.fill: parent
+            }
+
+            Connections {
+                target: inputManager
+                function onScreenshotFlash() {
+                    screenshotFlash.flash();
+                }
+            }
         }
     }
 }

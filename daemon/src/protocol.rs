@@ -627,6 +627,13 @@ pub enum Event {
     /// only for foreign edits. Carries no payload — subscribers re-fetch the
     /// full document via `get-config`. Wire: `config:changed`.
     ConfigChanged,
+
+    // --- #166: screenshot flash ---
+    /// The HTTP bridge received a `GET /screenshot?flash=1` request. Emitted
+    /// AFTER `grim` captures the frame (so the flash is post-capture feedback,
+    /// not baked into the PNG). The QML `ScreenshotFlash` overlay paints a
+    /// brief white vignette. Wire: `screenshot:flash`.
+    ScreenshotFlash,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -674,6 +681,7 @@ impl fmt::Display for Event {
             Event::CecDevice(json) => write!(f, "cec:device:{json}"),
             Event::CecPower(json) => write!(f, "cec:power:{json}"),
             Event::ConfigChanged => f.write_str("config:changed"),
+            Event::ScreenshotFlash => f.write_str("screenshot:flash"),
         }
     }
 }
@@ -1787,5 +1795,12 @@ mod tests {
         assert_eq!(v["id"], "uniq:aa");
         assert_eq!(v["supported"], true);
         assert_eq!(v["enabled"], false);
+    }
+
+    // --- #166: screenshot flash event ---
+
+    #[test]
+    fn screenshot_flash_event_wire_string() {
+        assert_eq!(Event::ScreenshotFlash.to_string(), "screenshot:flash");
     }
 }
