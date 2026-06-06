@@ -145,6 +145,8 @@ pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Even
         }
 
         // External edit confirmed — broadcast config:changed (payload-less).
+        // The input runtime subscribes to this bus and will refresh its caches
+        // on `Event::ConfigChanged` (#163).
         tracing::info!(
             "watch: external settings.json change detected, broadcasting config:changed"
         );

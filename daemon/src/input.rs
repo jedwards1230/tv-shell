@@ -1795,8 +1795,20 @@ fn list_input_devices_with(grabbed_paths: HashSet<PathBuf>) -> String {
 }
 
 /// Entry point: build the daemon and run the event loop until `Shutdown`.
+///
+/// Subscribes to the broadcast bus so external `config:changed` events
+/// (emitted by the file-watch actor on an external edit to `settings.json`,
+/// #163) refresh the input runtime's caches — `rumble_enabled`,
+/// per-player/per-game bindings — without a daemon restart. Both paths
+/// (IPC `set-config` → `Control::ConfigChanged` and file-watch →
+/// `Event::ConfigChanged`) converge on the same `apply_config_changed`
+/// helper, so cache state is always consistent.
 pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sender<Event>) {
     let (internal_tx, mut internal_rx) = mpsc::channel::<Internal>(256);
+    // Subscribe to the broadcast bus to receive ConfigChanged events fired by
+    // the file-watch actor. A lagged error just means we missed events while
+    // the runtime was busy — treat it the same as receiving one and refresh.
+    let mut event_rx = events.subscribe();
 
     let bindings = config::load_bindings(&config::settings_path());
     let mut button_map = HashMap::new();
@@ -1898,6 +1910,32 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
                     pad.poll_battery(&mut sh);
                 }
             }
+            // External config:changed event (#163): the file-watch actor
+            // detected an external edit to settings.json and broadcast
+            // Event::ConfigChanged. Refresh in-memory caches exactly as the
+            // IPC set-config path does via Control::ConfigChanged, so
+            // rumbleEnabled and per-player/per-game bindings stay current
+            // without a daemon restart.
+            ev = event_rx.recv() => {
+                match ev {
+                    Ok(Event::ConfigChanged) => {
+                        tracing::debug!("input: received Event::ConfigChanged, refreshing caches");
+                        apply_config_changed(&mut sh);
+                    }
+                    // Other events are emitted by this runtime — ignore them.
+                    Ok(_) => {}
+                    // Lagged: the channel overflowed while we were busy. The
+                    // safest recovery is to refresh anyway — the runtime missed
+                    // at least one ConfigChanged and its caches may be stale.
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("input: event bus lagged ({n} events lost), refreshing config caches");
+                        apply_config_changed(&mut sh);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // Sender dropped — daemon is shutting down.
+                    }
+                }
+            }
         }
     }
 
@@ -1984,6 +2022,21 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
 }
 
 // --- control handling ----------------------------------------------------
+
+/// Refresh the input runtime's in-memory caches from disk (#163, #108).
+///
+/// Called by both the `Control::ConfigChanged` arm (IPC `set-config` path)
+/// and the `Event::ConfigChanged` select arm (file-watch path), so the two
+/// sources always apply identical logic.
+fn apply_config_changed(sh: &mut Shared) {
+    sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
+    let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    sh.per_player_bindings = config::parse_per_player_bindings(&doc);
+    sh.per_game_bindings = config::parse_per_game_bindings(&doc);
+}
 
 /// Returns false to stop the loop (shutdown).
 fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
@@ -2080,16 +2133,8 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             }
         }
         Control::ConfigChanged => {
-            // set-config succeeded — refresh cached settings (#108, #104).
-            sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
-            // Re-parse per-player and per-game binding overrides so an external
-            // edit to perPlayerBindings/perGameBindings takes effect live.
-            let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
-                .ok()
-                .and_then(|t| serde_json::from_str(&t).ok());
-            let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            sh.per_player_bindings = config::parse_per_player_bindings(&doc);
-            sh.per_game_bindings = config::parse_per_game_bindings(&doc);
+            // set-config or file-watch: refresh cached settings (#108, #104, #163).
+            apply_config_changed(sh);
         }
         Control::SetActiveGame { id, reply } => {
             // Set or clear the active game for per-game binding lookup (#104).
