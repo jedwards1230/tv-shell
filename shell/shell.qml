@@ -61,13 +61,14 @@ ShellRoot {
     // settings page (if any) is visible. Restarted whenever sleepTimerMinutes
     // changes (folds in the Ea coupled fix from #162).
     //
-    // Activity that resets the countdown (intent-level reset, not every keypress):
+    // Activity that resets the countdown:
     //   - InputManager intent signals: controllerWake, intentHome, intentHomeTap,
     //     intentHomeHold (global/automation intents — these are the wakeup surface)
     //   - Shell state transitions: returnToShell() (launching / returning to idle)
-    //   - HomeScreen B-press / Escaped navigation (onEscaped → userActivity signal)
-    // Ordinary D-pad / A / stick events are NOT wired to _resetIdleTimer — if full
-    // input coverage is needed later, add an onAnyInput signal to InputManager.
+    //   - Any real keypress: ShellLayout's root Keys.onPressed observer emits
+    //     userActivity() for every non-auto-repeat key (D-pad / A / B / arrows /
+    //     Enter / Esc) without consuming the event, so ordinary navigation now
+    //     keeps the shell awake (#162). Wired via ShellLayout.onUserActivity below.
     // The timer fires only when idle (state === "idle") to avoid suspending
     // during an active stream or app session.
 
