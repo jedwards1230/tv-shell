@@ -7,14 +7,15 @@ import QtQuick
 // taken via `GET /screenshot?flash=1`.
 //
 // Usage:
-//   1. Instantiate once as the LAST child of ShellRoot (so it renders on top
-//      of everything else) and assign an id.
-//   2. Call `flash()` when the `inputManager.screenshotFlash` signal fires.
+//   One instance is created per screen: it is the LAST child of each
+//   per-screen PanelWindow inside `Variants` (so it renders on top of
+//   everything else on that output).
+//   Call `flash()` when the `inputManager.screenshotFlash` signal fires.
 //
 // The component is purely cosmetic and stateless: it neither reads nor writes
 // any shared state.  It is safe to call `flash()` while a previous animation
-// is still running — the animation restarts from full opacity for a clean
-// double-flash.
+// is still running — opacity is reset to 0.0 and the animation restarts from
+// that baseline, so every flash looks identical regardless of timing.
 Item {
     id: root
 
@@ -70,11 +71,14 @@ Item {
 
     // Public API: trigger a single flash cycle.
     // Calling flash() while a previous animation is still playing restarts
-    // seamlessly: stop() + visible=true happen synchronously before start(),
-    // so onStopped cannot fire between them and clobber visible.
+    // cleanly: opacity is reset to 0.0 before restart() so every flash starts
+    // from the same baseline regardless of where the previous animation was.
+    // stop() + visible=true happen synchronously before restart(), so onStopped
+    // cannot fire between them and clobber visible.
     function flash() {
         flashAnim.stop();
         root.visible = true;
-        flashAnim.start();
+        vignette.opacity = 0.0;
+        flashAnim.restart();
     }
 }
