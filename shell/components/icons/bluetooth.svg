@@ -1,10 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <g fill="none" stroke="#c0bdb8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <!-- Vertical staff -->
-    <line x1="12" y1="2" x2="12" y2="22"/>
-    <!-- Upper-right arm: from (12,5) out to (17,9) then back to (12,13) -->
-    <polyline points="12,5 17,9 12,13"/>
-    <!-- Lower-right arm: from (12,13) out to (17,17) then back to (12,21) -->
-    <polyline points="12,13 17,17 12,21"/>
+    <path d="M7 8 L17 16 L12 20 V4 L17 8 L7 16"/>
   </g>
 </svg>

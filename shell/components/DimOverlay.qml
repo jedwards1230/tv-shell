@@ -1,4 +1,5 @@
 import QtQuick
+import QtQml
 
 // DimOverlay — OLED burn-in protection (#143).
 //
@@ -7,9 +8,16 @@ import QtQuick
 // a full blackout) so the display is protected without disrupting a visible
 // stream or running app.
 //
-// Placement: instantiated once per PanelWindow in shell.qml. Wire activity
-// via the `resetDimTimer()` function, which is called whenever the parent
-// shell emits a `userActivityDetected` signal (or any Wayland Keys event).
+// Placement: instantiated once per PanelWindow in shell.qml. Activity is wired
+// two ways:
+//   1. `resetDimTimer()` — called from shell.qml whenever `userActivityDetected`
+//      fires (controller wake, Home/Menu/Settings/Power intents, home-screen
+//      navigation). Good for high-level actions.
+//   2. While dimmed, an application-wide Shortcut set below catches the FIRST
+//      navigation key from any device — even keys consumed by a focused control
+//      deep inside a settings page, which never reach the shell's central key
+//      observer. This is what makes "wake on any input" work everywhere, not
+//      just on the home screen.
 //
 // Settings:  SettingsStore.autoDimEnabled / SettingsStore.autoDimDelayMinutes
 // Dim level: 0.85 opacity black overlay — OLED-safe and still readable.
@@ -87,10 +95,29 @@ Item {
         }
     }
 
+    // Wake-on-any-input. While dimmed, these application-wide shortcuts fire on
+    // the first press of any navigation key regardless of which surface holds
+    // focus — so input inside the Settings panel (where the sidebar/page
+    // consumes the key before it reaches the shell's central observer) still
+    // wakes the screen. Enabled ONLY while dimmed, so they never intercept
+    // normal navigation. The activating press is consumed: the first input just
+    // wakes; the user navigates with the next press. High-level intents
+    // (Home/Menu/Settings/Power) clear the dim via resetDimTimer() separately.
+    Instantiator {
+        model: ["Up", "Down", "Left", "Right", "Return", "Enter", "Escape", "Tab", "Backspace"]
+        delegate: Shortcut {
+            sequence: modelData
+            context: Qt.ApplicationShortcut
+            enabled: root.dimmed
+            autoRepeat: false
+            onActivated: root.resetDimTimer()
+        }
+    }
+
     // The dim overlay. z:200 ensures it paints above all other shell overlays
-    // (the debug overlay uses z:100 in ShellLayout). Pointer presses clear the
-    // dim immediately and do NOT consume the event so the underlying UI still
-    // responds normally after waking.
+    // (the debug overlay uses z:100 in ShellLayout). The pointer MouseArea is
+    // active only while dimmed, so a press wakes the screen without blocking
+    // normal interaction the rest of the time.
     Rectangle {
         id: dimRect
         anchors.fill: parent
@@ -100,11 +127,10 @@ Item {
 
         MouseArea {
             anchors.fill: parent
-            // Clear dim on pointer press, but pass the event through so the
-            // underlying interactive element also receives it.
+            enabled: dimRect.opacity > 0.0
             onPressed: mouse => {
                 root.resetDimTimer();
-                mouse.accepted = false;
+                mouse.accepted = true;
             }
         }
     }
