@@ -144,7 +144,7 @@ Rectangle {
         s.push({
             id: "system",
             name: "System",
-            iconSource: "icons/display.svg",
+            iconSource: "icons/system.svg",
             fallback: "\u{1F4BB}",
             component: systemComp
         });
@@ -251,6 +251,8 @@ Rectangle {
                                 Layout.preferredWidth: 64
                                 Layout.fillHeight: true
 
+                                // All sidebar SVG icons use a consistent fill
+                                // color (#161 — normalizes mono/multicolor mix).
                                 Image {
                                     id: secIcon
                                     anchors.centerIn: parent

@@ -1130,7 +1130,7 @@ FocusScope {
             Layout.preferredHeight: 96
 
             KeyNavigation.up: nightLightTempScope
-            KeyNavigation.down: modeList
+            KeyNavigation.down: autoDimToggleScope
 
             property var overscanOptions: [0, 2, 4, 6, 8, 10]
             property int selectedIndex: {
@@ -1207,6 +1207,145 @@ FocusScope {
             color: Theme.textMuted
         }
 
+        // Auto-Dim (OLED burn-in protection, #143)
+        Text {
+            text: "Auto-Dim"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        // Enable / disable toggle
+        FocusScope {
+            id: autoDimToggleScope
+            Layout.fillWidth: true
+            Layout.preferredHeight: 80
+
+            KeyNavigation.up: overscanScope
+            KeyNavigation.down: autoDimDelayScope
+
+            Keys.onReturnPressed: {
+                SettingsStore.setAutoDimEnabled(!SettingsStore.autoDimEnabled);
+            }
+
+            SettingsButton {
+                id: autoDimBtn
+                width: 160
+                height: 72
+                text: SettingsStore.autoDimEnabled ? "On" : "Off"
+                color: SettingsStore.autoDimEnabled ? Theme.sidebarActive : (autoDimToggleScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                border.width: autoDimToggleScope.activeFocus ? 2 : 1
+                border.color: autoDimToggleScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+
+                onActivated: SettingsStore.setAutoDimEnabled(!SettingsStore.autoDimEnabled)
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        autoDimToggleScope.forceActiveFocus();
+                        autoDimBtn.activated();
+                    }
+                }
+            }
+        }
+
+        // Delay selector — 1 / 2 / 5 / 10 minutes
+        Text {
+            text: "Dim Delay"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+            opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
+        }
+
+        FocusScope {
+            id: autoDimDelayScope
+            Layout.fillWidth: true
+            Layout.preferredHeight: 96
+            opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
+
+            KeyNavigation.up: autoDimToggleScope
+            KeyNavigation.down: modeList
+
+            property var delayOptions: [1, 2, 5, 10]
+            property int selectedIndex: {
+                let v = SettingsStore.autoDimDelayMinutes;
+                for (let i = 0; i < delayOptions.length; i++) {
+                    if (delayOptions[i] === v)
+                        return i;
+                }
+                return 1; // default 2 min
+            }
+            property int focusedIndex: selectedIndex
+
+            Keys.onLeftPressed: {
+                if (focusedIndex > 0)
+                    focusedIndex--;
+            }
+            Keys.onRightPressed: {
+                if (focusedIndex < delayOptions.length - 1)
+                    focusedIndex++;
+            }
+            Keys.onReturnPressed: {
+                if (SettingsStore.autoDimEnabled)
+                    SettingsStore.setAutoDimDelayMinutes(delayOptions[focusedIndex]);
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                spacing: 16
+
+                Repeater {
+                    model: autoDimDelayScope.delayOptions
+
+                    FocusScope {
+                        id: delayOptScope
+                        required property var modelData
+                        required property int index
+                        width: delayBtn.width
+                        height: delayBtn.height
+
+                        SettingsButton {
+                            id: delayBtn
+                            text: parent.modelData + " min"
+                            anchors.fill: parent
+
+                            property bool isCurrent: SettingsStore.autoDimDelayMinutes === parent.modelData
+                            property bool isFocused: autoDimDelayScope.activeFocus && autoDimDelayScope.focusedIndex === delayOptScope.index
+
+                            color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
+                            border.width: isFocused ? 2 : 1
+                            border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
+
+                            onActivated: {
+                                if (SettingsStore.autoDimEnabled)
+                                    SettingsStore.setAutoDimDelayMinutes(delayOptScope.modelData);
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    autoDimDelayScope.forceActiveFocus();
+                                    autoDimDelayScope.focusedIndex = delayOptScope.index;
+                                    delayBtn.activated();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: "Dims the display after inactivity. Any input restores full brightness immediately."
+            font.pixelSize: Theme.fontHint
+            color: Theme.textMuted
+        }
+
         // Appearance — Theme Mode
         Text {
             text: "Appearance"
@@ -1266,7 +1405,7 @@ FocusScope {
                 Theme.setThemeMode(modeList.modes[focusIndex].id);
             }
             Keys.onUpPressed: {
-                overscanScope.forceActiveFocus();
+                autoDimDelayScope.forceActiveFocus();
             }
 
             Repeater {
