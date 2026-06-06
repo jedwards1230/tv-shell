@@ -7,6 +7,9 @@ Item {
     height: Theme.cardHeight
 
     property string label: ""
+    // True when this card represents a currently-running window — renders an
+    // ember status dot beside the name.
+    property bool running: false
     property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
     default property alias iconContent: iconArea.data
 
@@ -79,14 +82,37 @@ Item {
                 Layout.fillHeight: true
             }
 
-            MarqueeText {
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Theme.fontSmall * 1.3
-                animate: root.isFocused
-                text: root.label
-                font.pixelSize: Theme.fontSmall
-                font.bold: true
-                color: Theme.textPrimary
+                spacing: 6
+
+                // Running indicator — ember dot beside the name. Ember
+                // (#e06236) is distinct from the crimson focus ring, so the
+                // running state is never confused with focus. Dual cue: color +
+                // circular shape (colorblind-safe). Collapses out of the layout
+                // when not running.
+                Rectangle {
+                    visible: root.running
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: 8
+                    implicitHeight: 8
+                    radius: 4
+                    color: Theme.ember
+
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: "Running"
+                }
+
+                MarqueeText {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Theme.fontSmall * 1.3
+                    animate: root.isFocused
+                    text: root.label
+                    font.pixelSize: Theme.fontSmall
+                    font.bold: true
+                    color: Theme.textPrimary
+                }
             }
         }
     }
