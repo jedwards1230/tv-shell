@@ -46,11 +46,11 @@ Item {
                 color: "transparent"
             }
             GradientStop {
-                position: 0.35
+                position: 0.43
                 color: "transparent"
             }
             GradientStop {
-                position: 0.62
+                position: 0.67
                 color: Qt.rgba(1, 1, 1, 0.30)
             }
             GradientStop {
