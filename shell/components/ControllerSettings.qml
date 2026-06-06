@@ -8,6 +8,7 @@ import QtQuick.Layouts
 //                pad:battery — folded into the live `pads` fleet model.
 FocusScope {
     id: root
+    implicitHeight: ctrlMainCol.implicitHeight + 2 * Theme.padding
 
     // Diagnostic enumeration of EVERY controller-like input device the system
     // sees (incl. ungrabbed/virtual), from the daemon `list-input-devices` IPC.
@@ -246,6 +247,7 @@ FocusScope {
     // --- Layout ---
 
     ColumnLayout {
+        id: ctrlMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32

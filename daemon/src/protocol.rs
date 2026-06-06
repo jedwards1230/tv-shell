@@ -143,6 +143,10 @@ pub enum Command {
     /// at least `class,title,address,workspace`). Replaces the QML
     /// `hyprctl clients -j` shell-out.
     HyprClients,
+    /// All monitors as a compact JSON array, including HDR-relevant fields
+    /// (currentFormat + derived hdr bool). Replaces the QML hyprctl monitors -j
+    /// READ.
+    HyprMonitors,
 
     // --- Phase 4: Sunshine session detection (reqwest) ---
     /// `sunshine-status <host> <port>` -> compact JSON object
@@ -156,6 +160,33 @@ pub enum Command {
     /// `sunshine-status` with a missing/incomplete `<host> <port>` body.
     SunshineStatusUsage,
 
+    // --- Phase 4: HDMI-CEC (cec-rs / libcec) ---
+    /// `cec-scan` — return all visible CEC devices as a compact JSON array.
+    CecScan,
+    /// `cec-device <addr>` — return info for a single logical address as a
+    /// compact JSON object (`{logicalAddress,physicalAddress,vendor,osdName,
+    /// powerStatus,type}`), or `error:*` if the device is absent.
+    CecDevice(String),
+    /// `cec-power-on <addr>` — send a CEC power-on command to the device at
+    /// the given logical address.
+    CecPowerOn(String),
+    /// `cec-power-off <addr>` — send a CEC standby command to the device at
+    /// the given logical address.
+    CecPowerOff(String),
+    /// `cec-active-source` — set this adapter as the CEC active source.
+    CecActiveSource,
+    /// A `cec-device`/`cec-power-on`/`cec-power-off` with a missing address.
+    /// `which` is the bare command word for the usage line (mirrors
+    /// `BtMacUsage`).
+    CecAddrUsage(&'static str),
+
+    /// `set-active-game <id>` — signal the current foreground game to the
+    /// daemon. The daemon activates per-game binding overrides for `<id>` from
+    /// `settings.json`'s `perGameBindings`. In-memory only.
+    SetActiveGame(String),
+    /// `set-active-game` with no body — clears the active game, reverting to
+    /// player/global binding layers only.
+    SetActiveGameClear,
     /// Anything unrecognized -> the daemon replies `unknown`.
     Unknown,
 }
@@ -290,6 +321,10 @@ impl Command {
             // Phase 4 bare commands (no body).
             "hypr-active" => Command::HyprActive,
             "hypr-clients" => Command::HyprClients,
+            "hypr-monitors" => Command::HyprMonitors,
+            // Phase 4 HDMI-CEC bare commands (no body).
+            "cec-scan" => Command::CecScan,
+            "cec-active-source" => Command::CecActiveSource,
             _ => {
                 // `set-config <json>` / `record-launch <json>`: the rest of the
                 // line is a compact single-line JSON body. The command word must
@@ -385,6 +420,35 @@ impl Command {
                             port: port.to_string(),
                         },
                         _ => Command::SunshineStatusUsage,
+                    };
+                }
+                // Phase 4 CEC address-argument commands: `cec-device <addr>` etc.
+                // The body is a single logical-address token (whitespace-trimmed);
+                // a missing body is a usage error. `command_body` enforces the
+                // word boundary so e.g. `cec-deviceX` is not mistaken for
+                // `cec-device`.
+                for word in ["cec-device", "cec-power-on", "cec-power-off"] {
+                    if let Some(body) = command_body(cmd, word) {
+                        if body.is_empty() {
+                            return Command::CecAddrUsage(word);
+                        }
+                        let addr = body.to_string();
+                        return match word {
+                            "cec-device" => Command::CecDevice(addr),
+                            "cec-power-on" => Command::CecPowerOn(addr),
+                            "cec-power-off" => Command::CecPowerOff(addr),
+                            _ => unreachable!("word came from the literal list above"),
+                        };
+                    }
+                }
+                // `set-active-game <id>`: a single game-id token (or bare for
+                // clear). `command_body` enforces the word boundary so
+                // `set-active-gameX` is not mistaken for this command.
+                if let Some(body) = command_body(cmd, "set-active-game") {
+                    return if body.is_empty() {
+                        Command::SetActiveGameClear
+                    } else {
+                        Command::SetActiveGame(body.to_string())
                     };
                 }
                 // Python keys `set-binding` off the `"set-binding "` prefix
@@ -485,6 +549,23 @@ pub enum Event {
     HyprActiveWindow(String),
     /// Active window fullscreen state changed. Wire: `hypr:fullscreen:<0|1>`.
     HyprFullscreen(bool),
+
+    // --- Phase 4 events (HDMI-CEC) ---
+    /// A CEC device was discovered or updated; payload is a compact JSON object
+    /// (`{logicalAddress,physicalAddress,vendor,osdName,powerStatus,type}`).
+    /// Wire: `cec:device:<json>`.
+    CecDevice(String),
+    /// A CEC device's power status changed; payload is a compact JSON object
+    /// `{addr,power}`. Wire: `cec:power:<json>`.
+    CecPower(String),
+
+    // --- Config live-reload ---
+    /// `settings.json` was modified by an **external** writer (SSH / Ansible /
+    /// web UI). The daemon suppresses its own `set-config`/`set-binding` writes
+    /// via the self-write generation guard in `config.rs`, so this event fires
+    /// only for foreign edits. Carries no payload — subscribers re-fetch the
+    /// full document via `get-config`. Wire: `config:changed`.
+    ConfigChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -529,6 +610,9 @@ impl fmt::Display for Event {
             Event::PowerBattery(json) => write!(f, "power:battery:{json}"),
             Event::HyprActiveWindow(class) => write!(f, "hypr:activewindow:{class}"),
             Event::HyprFullscreen(fs) => write!(f, "hypr:fullscreen:{}", if *fs { 1 } else { 0 }),
+            Event::CecDevice(json) => write!(f, "cec:device:{json}"),
+            Event::CecPower(json) => write!(f, "cec:power:{json}"),
+            Event::ConfigChanged => f.write_str("config:changed"),
         }
     }
 }
@@ -652,6 +736,12 @@ pub fn resp_bt_power(on: bool) -> String {
 /// without a MAC. `which` is the bare command word.
 pub fn resp_bt_mac_usage(which: &str) -> String {
     format!("error:usage: {which} <mac>")
+}
+
+/// Usage line for a `cec-device`/`cec-power-on`/`cec-power-off` issued without
+/// a logical address. `which` is the bare command word.
+pub fn resp_cec_addr_usage(which: &str) -> String {
+    format!("error:usage: {which} <addr>")
 }
 
 /// Usage line for `sunshine-status` issued without a `<host> <port>` body.
@@ -1143,6 +1233,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_phase4_hypr_monitors_command() {
+        assert_eq!(Command::parse("hypr-monitors"), Command::HyprMonitors);
+        assert_eq!(Command::parse("  hypr-monitors  "), Command::HyprMonitors);
+        // Word boundary: a longer word is NOT hypr-monitors.
+        assert_eq!(Command::parse("hypr-monitorsX"), Command::Unknown);
+    }
+
+    #[test]
     fn parses_sunshine_status_body() {
         assert_eq!(
             Command::parse("sunshine-status 192.168.8.10 47990"),
@@ -1332,6 +1430,91 @@ mod tests {
     }
 
     #[test]
+    fn parses_phase4_cec_bare_commands() {
+        assert_eq!(Command::parse("cec-scan"), Command::CecScan);
+        assert_eq!(
+            Command::parse("cec-active-source"),
+            Command::CecActiveSource
+        );
+        assert_eq!(Command::parse("  cec-scan  "), Command::CecScan);
+        assert_eq!(
+            Command::parse("  cec-active-source  "),
+            Command::CecActiveSource
+        );
+        // Word boundary: a longer word is NOT a CEC command.
+        assert_eq!(Command::parse("cec-scanX"), Command::Unknown);
+        assert_eq!(Command::parse("cec-active-sourceX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_phase4_cec_addr_commands() {
+        assert_eq!(
+            Command::parse("cec-device 0"),
+            Command::CecDevice("0".into())
+        );
+        assert_eq!(
+            Command::parse("cec-power-on 0"),
+            Command::CecPowerOn("0".into())
+        );
+        assert_eq!(
+            Command::parse("cec-power-off 0"),
+            Command::CecPowerOff("0".into())
+        );
+        // Body is trimmed.
+        assert_eq!(
+            Command::parse("  cec-device   5  "),
+            Command::CecDevice("5".into())
+        );
+        // Word boundary: a longer word is NOT a CEC command.
+        assert_eq!(Command::parse("cec-deviceX"), Command::Unknown);
+        assert_eq!(Command::parse("cec-power-onX"), Command::Unknown);
+    }
+
+    #[test]
+    fn phase4_cec_addr_usage_and_word_boundary() {
+        assert_eq!(
+            Command::parse("cec-device"),
+            Command::CecAddrUsage("cec-device")
+        );
+        assert_eq!(
+            Command::parse("cec-device   "),
+            Command::CecAddrUsage("cec-device")
+        );
+        assert_eq!(
+            Command::parse("cec-power-on"),
+            Command::CecAddrUsage("cec-power-on")
+        );
+        assert_eq!(
+            Command::parse("cec-power-off"),
+            Command::CecAddrUsage("cec-power-off")
+        );
+    }
+
+    #[test]
+    fn phase4_cec_event_wire_strings() {
+        assert_eq!(
+            Event::CecDevice(r#"{"logicalAddress":5}"#.into()).to_string(),
+            r#"cec:device:{"logicalAddress":5}"#
+        );
+        assert_eq!(
+            Event::CecPower(r#"{"addr":5,"power":"on"}"#.into()).to_string(),
+            r#"cec:power:{"addr":5,"power":"on"}"#
+        );
+    }
+
+    #[test]
+    fn phase4_cec_usage_string() {
+        assert_eq!(
+            resp_cec_addr_usage("cec-device"),
+            "error:usage: cec-device <addr>"
+        );
+        assert_eq!(
+            resp_cec_addr_usage("cec-power-on"),
+            "error:usage: cec-power-on <addr>"
+        );
+    }
+
+    #[test]
     fn resp_pads_is_compact_array_with_grabbed() {
         let pads = vec![
             ("uniq:p1".to_string(), 0u8, "Xbox".to_string(), true),
@@ -1387,5 +1570,36 @@ mod tests {
             resp_bindings(&ordered),
             r#"{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}"#
         );
+    }
+
+    #[test]
+    fn parses_set_active_game_body() {
+        // Non-empty body -> SetActiveGame.
+        assert_eq!(
+            Command::parse("set-active-game steam_12345"),
+            Command::SetActiveGame("steam_12345".into())
+        );
+        // Body is trimmed.
+        assert_eq!(
+            Command::parse("  set-active-game   my-game-id  "),
+            Command::SetActiveGame("my-game-id".into())
+        );
+        // Bare command (no body) -> SetActiveGameClear.
+        assert_eq!(
+            Command::parse("set-active-game"),
+            Command::SetActiveGameClear
+        );
+        assert_eq!(
+            Command::parse("  set-active-game  "),
+            Command::SetActiveGameClear
+        );
+        // Word boundary: `set-active-gameX` is NOT set-active-game.
+        assert_eq!(Command::parse("set-active-gameX"), Command::Unknown);
+    }
+
+    #[test]
+    fn config_changed_event_wire_string() {
+        // config:changed is payload-less — the subscriber re-fetches via get-config.
+        assert_eq!(Event::ConfigChanged.to_string(), "config:changed");
     }
 }

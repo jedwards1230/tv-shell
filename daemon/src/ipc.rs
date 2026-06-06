@@ -218,6 +218,13 @@ where
 /// Resolve a non-subscribe command to its response line.
 async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: Command) -> String {
     if let Some(resp) = dispatch_stateless(&cmd).await {
+        // A successful set-config mutated settings.json; the input runtime caches
+        // some of those keys (rumbleEnabled, #108), so nudge it to refresh. Fire
+        // and forget — set-config's reply is already resolved and must not block
+        // on the input runtime. Only on success (the reply isn't an error line).
+        if matches!(cmd, Command::SetConfig(_)) && !resp.starts_with("error:") {
+            let _ = control_tx.send(Control::ConfigChanged).await;
+        }
         return resp;
     }
     if let Some(resp) = dispatch_dbus(dbus, &cmd).await {
@@ -251,6 +258,20 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         }
         Command::Key(name) => {
             request(control_tx, move |reply| Control::Key { name, reply }).await
+        }
+        Command::SetActiveGame(id) => {
+            request(control_tx, move |reply| Control::SetActiveGame {
+                id: Some(id),
+                reply,
+            })
+            .await
+        }
+        Command::SetActiveGameClear => {
+            request(control_tx, move |reply| Control::SetActiveGame {
+                id: None,
+                reply,
+            })
+            .await
         }
         // Handled without a round-trip to the runtime:
         Command::IntentUsage => return protocol::resp_intent_usage(),
@@ -294,7 +315,15 @@ async fn dispatch(control_tx: &mpsc::Sender<Control>, dbus: &DbusSenders, cmd: C
         | Command::PowerBattery
         // Phase 4 Hyprland commands are consumed by `dispatch_dbus` above.
         | Command::HyprActive
-        | Command::HyprClients => return protocol::resp_unknown(),
+        | Command::HyprClients
+        | Command::HyprMonitors
+        // CEC commands fall through to dispatch_dbus (unsupported response) — not reached.
+        | Command::CecScan
+        | Command::CecDevice(_)
+        | Command::CecPowerOn(_)
+        | Command::CecPowerOff(_)
+        | Command::CecActiveSource
+        | Command::CecAddrUsage(_) => return protocol::resp_unknown(),
     }
     .unwrap_or(fallback)
 }
@@ -342,6 +371,13 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         Command::PowerBattery => request_dbus(&dbus.power, PowerReq::Battery).await,
         Command::HyprActive => request_dbus(&dbus.hypr, HyprReq::Active).await,
         Command::HyprClients => request_dbus(&dbus.hypr, HyprReq::Clients).await,
+        Command::HyprMonitors => request_dbus(&dbus.hypr, HyprReq::Monitors).await,
+        Command::CecScan
+        | Command::CecDevice(_)
+        | Command::CecPowerOn(_)
+        | Command::CecPowerOff(_)
+        | Command::CecActiveSource => protocol::resp_unsupported(),
+        Command::CecAddrUsage(which) => protocol::resp_cec_addr_usage(which),
         _ => return None,
     };
     Some(resp)
@@ -354,6 +390,7 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
 async fn dispatch_dbus(_dbus: &DbusSenders, cmd: &Command) -> Option<String> {
     let resp = match cmd {
         Command::BtMacUsage(which) => protocol::resp_bt_mac_usage(which),
+        Command::CecAddrUsage(which) => protocol::resp_cec_addr_usage(which),
         Command::BtPowerStatus
         | Command::BtPowerOn
         | Command::BtPowerOff
@@ -371,7 +408,13 @@ async fn dispatch_dbus(_dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         | Command::PowerSuspend
         | Command::PowerBattery
         | Command::HyprActive
-        | Command::HyprClients => protocol::resp_unsupported(),
+        | Command::HyprClients
+        | Command::HyprMonitors
+        | Command::CecScan
+        | Command::CecDevice(_)
+        | Command::CecPowerOn(_)
+        | Command::CecPowerOff(_)
+        | Command::CecActiveSource => protocol::resp_unsupported(),
         _ => return None,
     };
     Some(resp)
@@ -481,6 +524,11 @@ mod tests {
                         protocol::resp_unknown_key(&name)
                     };
                     let _ = reply.send(resp);
+                }
+                Control::ConfigChanged => {}
+                Control::SetActiveGame { reply, .. } => {
+                    // In-memory only; fake just replies ok.
+                    let _ = reply.send(protocol::resp_ok());
                 }
                 Control::Shutdown => break,
             }

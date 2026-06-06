@@ -33,6 +33,8 @@ libc = "0.2"
 # Sunshine's self-signed cert. The XML/JSON response *parser* is a pure function
 # (unit-tested on macOS); only the fetch needs the runtime/TLS.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Constant-time comparison for HTTP bearer-token auth (prevents timing oracles, #151).
+subtle = "2"
 
 # evdev/uinput are Linux kernel interfaces. Keep them off non-Linux hosts so
 # the pure-logic modules (protocol, config, device GUID math) still compile and
@@ -56,3 +58,8 @@ bluer = { version = "0.17.4", default-features = false, features = ["bluetoothd"
 # in `hyprland.rs` — no crate. The `hyprland` 0.3.x crate hardcoded the legacy
 # `/tmp/hypr/<sig>` socket dir and can't reach Hyprland >= 0.40 (sockets moved to
 # `$XDG_RUNTIME_DIR/hypr/<sig>`); the wire protocol is trivial to own here.
+# notify-debouncer-full wraps inotify (Linux kernel interface) with a built-in
+# debounce window so we don't hand-roll timers. Pulls `notify` transitively.
+# Linux-only: inotify is a Linux syscall; watching is not meaningful on macOS
+# (FSEvents is a different API), and the watch module is cfg-gated to match.
+notify-debouncer-full = "0.3"

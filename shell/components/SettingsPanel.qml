@@ -1,5 +1,7 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 
 Rectangle {
     id: root
@@ -52,13 +54,13 @@ Rectangle {
     }
 
     Component {
-        id: appearanceComp
-        AppearanceSettings {}
+        id: powerComp
+        PowerSettings {}
     }
 
     Component {
-        id: powerComp
-        PowerSettings {}
+        id: systemComp
+        SystemSettings {}
     }
 
     // The streaming section is contributed by the active provider's
@@ -126,13 +128,6 @@ Rectangle {
                 component: provider.settingsComponent
             });
         s.push({
-            id: "appearance",
-            name: "Appearance",
-            iconSource: "icons/appearance.svg",
-            fallback: "\u{1F3A8}",
-            component: appearanceComp
-        });
-        s.push({
             id: "accessibility",
             name: "Accessibility",
             iconSource: "icons/accessibility.svg",
@@ -145,6 +140,13 @@ Rectangle {
             iconSource: "icons/power.svg",
             fallback: "⏻",
             component: powerComp
+        });
+        s.push({
+            id: "system",
+            name: "System",
+            iconSource: "icons/display.svg",
+            fallback: "\u{1F4BB}",
+            component: systemComp
         });
         return s;
     }
@@ -419,11 +421,51 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
 
-                Loader {
-                    id: contentLoader
+                Flickable {
+                    id: contentFlick
                     anchors.fill: parent
-                    sourceComponent: root.sections[root.currentSection].component
+                    clip: true
+                    interactive: false
+                    contentWidth: width
+                    contentHeight: contentLoader.height
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    ScrollBar.vertical: ScrollBar {
+                        policy: contentFlick.contentHeight > contentFlick.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                    }
+
+                    Behavior on contentY {
+                        NumberAnimation {
+                            duration: 150
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    function ensureVisible(it) {
+                        if (!it)
+                            return;
+                        var p = it.mapToItem(contentFlick.contentItem, 0, 0);
+                        if (p.y < contentFlick.contentY)
+                            contentFlick.contentY = Math.max(0, p.y - 24);
+                        else if (p.y + it.height > contentFlick.contentY + contentFlick.height)
+                            contentFlick.contentY = Math.min(p.y + it.height - contentFlick.height + 24, Math.max(0, contentFlick.contentHeight - contentFlick.height));
+                    }
+
+                    Loader {
+                        id: contentLoader
+                        width: contentFlick.width
+                        height: Math.max(item ? item.implicitHeight : 0, contentFlick.height)
+                        sourceComponent: root.sections[root.currentSection].component
+                        onLoaded: contentFlick.contentY = 0
+                    }
                 }
+
+                // Follow keyboard/controller focus — scroll the pane to keep the
+                // focused control visible. Window.activeFocusItem is the attached
+                // property that works here (Window.window can't be a Connections target).
+                property Item _afItem: Window.activeFocusItem
+                on_AfItemChanged: if (contentArea._afItem)
+                    contentFlick.ensureVisible(contentArea._afItem)
             }
         }
     }
@@ -435,6 +477,7 @@ Rectangle {
         if (visible) {
             currentSection = idx;
             sidebarList.currentIndex = idx;
+            contentFlick.contentY = 0;
             // Move focus straight to the sidebar and return — the root is a plain
             // Rectangle (not a FocusScope), so a trailing root.forceActiveFocus()
             // would steal focus back from the sidebar in the already-visible case.

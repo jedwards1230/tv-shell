@@ -8,16 +8,20 @@ import Quickshell.Io
 // `nmcli device wifi connect` and is intentionally not implemented here.
 //
 // IPC commands used (see docs/IPC_PROTOCOL.md):
-//   net-status     -> {connectivity, primaryType, hasWifi, ipv4, activeConnections:[{name,type,device}]}
+//   net-status     -> {connectivity, primaryType, hasWifi, ipv4, gateway, dns, activeConnections:[{name,type,device,speed}]}
 //   net-wifi-list  -> [{ssid, signal, security, inUse}]
 //   net-wifi-rescan -> ok|error (NetworkManager RequestScan)
 FocusScope {
     id: root
+    implicitHeight: netMainCol.implicitHeight + 2 * Theme.padding
 
     property var activeConnections: []
     property string ipAddress: ""
     property var wifiNetworks: []
     property bool hasWifi: false
+    property string gateway: ""
+    property var dnsServers: []
+    property string testResult: ""
 
     // --- Daemon IPC over a native Quickshell socket (SocketClient, #97) — the
     // python3 socket shim was retired in Phase 8. ---
@@ -34,6 +38,8 @@ FocusScope {
                 root.activeConnections = Array.isArray(obj.activeConnections) ? obj.activeConnections : [];
                 root.ipAddress = obj.ipv4 || "";
                 root.hasWifi = obj.hasWifi === true;
+                root.gateway = obj.gateway || "";
+                root.dnsServers = Array.isArray(obj.dns) ? obj.dns : [];
                 if (root.hasWifi)
                     getWifi.request("net-wifi-list");
             } catch (e) {
@@ -81,6 +87,33 @@ FocusScope {
         }
     }
 
+    // Bounded one-shot ping for the Test connection action.
+    // `-c 3 -W 2` ensures it exits within ~6 s regardless of host reachability.
+    property string pingOutput: ""
+
+    Process {
+        id: pingTest
+        command: ["bash", "-c", "ping -c 3 -W 2 1.1.1.1 2>&1"]
+        stdout: SplitParser {
+            onRead: line => {
+                root.pingOutput += line + "\n";
+            }
+        }
+        onExited: (code, status) => {
+            if (code === 0) {
+                // Extract average RTT from the ping summary line, e.g.
+                // "rtt min/avg/max/mdev = 12.3/14.5/16.7/1.2 ms"
+                let match = root.pingOutput.match(/= [\d.]+\/([\d.]+)\//);
+                if (match)
+                    root.testResult = "OK — " + Math.round(parseFloat(match[1])) + " ms avg";
+                else
+                    root.testResult = "OK";
+            } else {
+                root.testResult = "Failed";
+            }
+        }
+    }
+
     function refresh() {
         // A rescan kicks off discovery; net-status/net-wifi-list then read the
         // freshest results. On a wired-only host the rescan is a harmless no-op.
@@ -97,17 +130,17 @@ FocusScope {
             refresh();
     }
 
-    // Read-only page: focus the WiFi list when an adapter exists, otherwise
-    // take scope-level focus on the root so entry still registers and Left/B
-    // bubble back to the sidebar.
+    // Read-only page: focus the WiFi list when an adapter exists; otherwise
+    // focus the Test button so D-pad entry still registers on a wired-only host.
     function focusFirst() {
         if (root.hasWifi)
             wifiList.forceActiveFocus();
         else
-            root.forceActiveFocus();
+            testButtonScope.forceActiveFocus();
     }
 
     ColumnLayout {
+        id: netMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32
@@ -171,6 +204,15 @@ FocusScope {
                         font.pixelSize: Theme.fontSmall
                         color: Theme.textSecondary
                     }
+
+                    // Link speed — shown only for wired connections where NM
+                    // reports a non-zero speed value.
+                    Text {
+                        visible: (modelData.speed || 0) > 0
+                        text: (modelData.speed || 0) + " Mb/s"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
                 }
             }
         }
@@ -205,6 +247,81 @@ FocusScope {
                 font.family: "monospace"
                 color: Theme.textPrimary
                 wrapMode: Text.Wrap
+            }
+        }
+
+        // Gateway / DNS — read-only card mirroring the IP Addresses card.
+        Text {
+            text: "Gateway / DNS"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+            visible: root.gateway !== "" || root.dnsServers.length > 0
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: gatewayDnsContent.implicitHeight + 48
+            radius: 16
+            color: Theme.surface
+            visible: root.gateway !== "" || root.dnsServers.length > 0
+
+            Column {
+                id: gatewayDnsContent
+                anchors.fill: parent
+                anchors.margins: 24
+                spacing: 8
+
+                Text {
+                    text: "GW: " + (root.gateway || "—")
+                    font.pixelSize: Theme.fontSmall
+                    font.family: "monospace"
+                    color: Theme.textPrimary
+                    visible: root.gateway !== ""
+                }
+
+                Repeater {
+                    model: root.dnsServers
+                    Text {
+                        required property var modelData
+                        text: "DNS: " + modelData
+                        font.pixelSize: Theme.fontSmall
+                        font.family: "monospace"
+                        color: Theme.textSecondary
+                    }
+                }
+            }
+        }
+
+        // Test connection action — bounded one-shot ping.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 24
+
+            FocusScope {
+                id: testButtonScope
+                width: testButton.implicitWidth
+                height: testButton.implicitHeight
+
+                SettingsButton {
+                    id: testButton
+                    text: "Test connection"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    onActivated: {
+                        root.testResult = "Testing…";
+                        root.pingOutput = "";
+                        pingTest.running = true;
+                    }
+                }
+            }
+
+            Text {
+                text: root.testResult
+                font.pixelSize: Theme.fontSmall
+                color: root.testResult.startsWith("OK") ? Theme.online : root.testResult === "Failed" ? Theme.offline : Theme.textSecondary
+                visible: root.testResult !== ""
+                Layout.fillWidth: true
             }
         }
 

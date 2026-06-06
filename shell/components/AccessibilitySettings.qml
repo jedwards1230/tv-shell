@@ -7,6 +7,7 @@ import QtQuick.Layouts
 // Left/B from here returns focus to the SettingsPanel sidebar.
 FocusScope {
     id: root
+    implicitHeight: a11yMainCol.implicitHeight + 2 * Theme.padding
 
     readonly property var textSizeOptions: [
         {
@@ -31,6 +32,7 @@ FocusScope {
     }
 
     ColumnLayout {
+        id: a11yMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 48

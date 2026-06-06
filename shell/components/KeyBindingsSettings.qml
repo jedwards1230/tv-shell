@@ -6,6 +6,9 @@ import QtQuick.Layouts
 // Commands used (via SettingsStore): get-bindings, set-binding, capture-next, capture-cancel
 FocusScope {
     id: root
+    // KeyBindings uses an internal ListView that self-scrolls;
+    // the outer Flickable just needs to accommodate the full list height.
+    implicitHeight: root.bindings.length * 90 + 300
 
     property var bindings: [
         {

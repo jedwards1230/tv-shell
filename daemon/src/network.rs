@@ -18,8 +18,9 @@ use crate::state::Reply;
 use anyhow::{Context, Result};
 use futures::stream::StreamExt;
 use serde_json::json;
+use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc};
-use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue};
 use zbus::Connection;
 
 // ---------------------------------------------------------------------------
@@ -64,6 +65,17 @@ trait Device {
     /// Kernel interface name (e.g. `wlan0`).
     #[zbus(property)]
     fn interface(&self) -> zbus::Result<String>;
+}
+
+/// The wired facet of an Ethernet device — Speed in Mb/s (0 when unknown/not linked).
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Wired",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+trait Wired {
+    /// Link speed in Mb/s; 0 when the link is down or speed is unknown.
+    #[zbus(property)]
+    fn speed(&self) -> zbus::Result<u32>;
 }
 
 /// The wireless facet of a Wi-Fi device.
@@ -131,6 +143,31 @@ trait ActiveConnection {
     /// Devices this connection is bound to.
     #[zbus(property)]
     fn devices(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+
+    /// Object path of the IP4Config for this active connection.
+    #[zbus(property)]
+    fn ip4_config(&self) -> zbus::Result<OwnedObjectPath>;
+}
+
+/// IPv4 configuration object — gateway and nameservers.
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.IP4Config",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+trait Ip4Config {
+    /// Gateway IP address string, `""` when none.
+    #[zbus(property)]
+    fn gateway(&self) -> zbus::Result<String>;
+
+    /// Structured nameserver data: each entry is `{address: <ip-string>, ...}`.
+    /// Present on NM >= 1.6; older NM may not expose this property.
+    #[zbus(property)]
+    fn nameserver_data(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+
+    /// Legacy nameserver list as packed big-endian u32 values.
+    /// Fallback when `NameserverData` is empty or unavailable.
+    #[zbus(property)]
+    fn nameservers(&self) -> zbus::Result<Vec<u32>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +179,7 @@ trait ActiveConnection {
 #[derive(Debug)]
 pub enum NetReq {
     /// `net-status` -> compact JSON object
-    /// `{connectivity,primaryType,hasWifi,ipv4,activeConnections}`.
+    /// `{connectivity,primaryType,hasWifi,ipv4,gateway,dns,activeConnections}`.
     Status(Reply),
     /// `net-wifi-list` -> compact JSON array of `{ssid,signal,security,inUse}`.
     WifiList(Reply),
@@ -199,6 +236,13 @@ fn security_label(ap_flags: u32, wpa_flags: u32, rsn_flags: u32) -> &'static str
         return "WEP";
     }
     "Open"
+}
+
+/// Decode a big-endian packed u32 nameserver (legacy NM `Nameservers` property)
+/// into a dotted-quad IPv4 string.
+fn decode_nameserver_u32(raw: u32) -> String {
+    let b = raw.to_be_bytes();
+    format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +328,8 @@ async fn status(conn: &Connection) -> String {
                 "primaryType": "",
                 "hasWifi": false,
                 "ipv4": "",
+                "gateway": "",
+                "dns": [],
                 "activeConnections": [],
             })
             .to_string()
@@ -317,7 +363,14 @@ async fn status_inner(conn: &Connection) -> Result<String> {
         Err(_) => false,
     };
 
-    // Active connections rendered as {name,type,device}. Best-effort per entry.
+    // gateway + DNS: read from the primary connection's IP4Config. Best-effort.
+    let (gateway, dns) = if is_real_path(&primary_path) {
+        read_gateway_dns(conn, &primary_path).await
+    } else {
+        (String::new(), Vec::new())
+    };
+
+    // Active connections rendered as {name,type,device,speed}. Best-effort per entry.
     let mut active = Vec::new();
     if let Ok(paths) = nm.active_connections().await {
         for p in paths {
@@ -336,6 +389,8 @@ async fn status_inner(conn: &Connection) -> Result<String> {
         "primaryType": primary_type,
         "hasWifi": has_wifi,
         "ipv4": ipv4,
+        "gateway": gateway,
+        "dns": dns,
         "activeConnections": active,
     })
     .to_string())
@@ -559,6 +614,14 @@ async fn wireless_proxy(
         .map_err(Into::into)
 }
 
+async fn wired_proxy(conn: &Connection, path: &OwnedObjectPath) -> Result<WiredProxy<'static>> {
+    WiredProxy::builder(conn)
+        .path(path.clone())?
+        .build()
+        .await
+        .map_err(Into::into)
+}
+
 async fn access_point_proxy(
     conn: &Connection,
     path: &OwnedObjectPath,
@@ -581,6 +644,17 @@ async fn active_connection_proxy(
         .map_err(Into::into)
 }
 
+async fn ip4_config_proxy(
+    conn: &Connection,
+    path: &OwnedObjectPath,
+) -> Result<Ip4ConfigProxy<'static>> {
+    Ip4ConfigProxy::builder(conn)
+        .path(path.clone())?
+        .build()
+        .await
+        .map_err(Into::into)
+}
+
 /// Type string (e.g. `802-3-ethernet`) of an active-connection object path.
 async fn active_connection_type(conn: &Connection, path: &OwnedObjectPath) -> Result<String> {
     let ac = active_connection_proxy(conn, path).await?;
@@ -593,7 +667,8 @@ async fn active_connection_id(conn: &Connection, path: &OwnedObjectPath) -> Resu
     Ok(ac.id().await.unwrap_or_default())
 }
 
-/// `{name,type,device}` for an active connection (device = first iface name).
+/// `{name,type,device,speed}` for an active connection.
+/// `speed` is Mb/s from the Device.Wired interface; 0 for non-wired or unknown.
 async fn active_connection_entry(
     conn: &Connection,
     path: &OwnedObjectPath,
@@ -601,17 +676,81 @@ async fn active_connection_entry(
     let ac = active_connection_proxy(conn, path).await?;
     let name = ac.id().await.unwrap_or_default();
     let ty = ac.type_().await.unwrap_or_default();
-    let device = match ac.devices().await {
+    let (device, speed) = match ac.devices().await {
         Ok(devs) => match devs.first() {
-            Some(dp) => match device_proxy(conn, dp).await {
-                Ok(d) => d.interface().await.unwrap_or_default(),
-                Err(_) => String::new(),
-            },
-            None => String::new(),
+            Some(dp) => {
+                let iface = match device_proxy(conn, dp).await {
+                    Ok(d) => d.interface().await.unwrap_or_default(),
+                    Err(_) => String::new(),
+                };
+                // Speed: try the Wired interface; 0 for non-wired or non-linked.
+                let speed = if let Ok(w) = wired_proxy(conn, dp).await {
+                    w.speed().await.unwrap_or(0)
+                } else {
+                    0
+                };
+                (iface, speed)
+            }
+            None => (String::new(), 0u32),
         },
-        Err(_) => String::new(),
+        Err(_) => (String::new(), 0u32),
     };
-    Ok(json!({ "name": name, "type": ty, "device": device }))
+    Ok(json!({ "name": name, "type": ty, "device": device, "speed": speed }))
+}
+
+/// Read gateway and DNS from the primary active connection's IP4Config.
+/// Returns `("", [])` on any failure (best-effort, never errors).
+async fn read_gateway_dns(
+    conn: &Connection,
+    primary_path: &OwnedObjectPath,
+) -> (String, Vec<String>) {
+    let ac = match active_connection_proxy(conn, primary_path).await {
+        Ok(p) => p,
+        Err(_) => return (String::new(), Vec::new()),
+    };
+
+    let ip4_path = match ac.ip4_config().await {
+        Ok(p) => p,
+        Err(_) => return (String::new(), Vec::new()),
+    };
+
+    if !is_real_path(&ip4_path) {
+        return (String::new(), Vec::new());
+    }
+
+    let ip4 = match ip4_config_proxy(conn, &ip4_path).await {
+        Ok(p) => p,
+        Err(_) => return (String::new(), Vec::new()),
+    };
+
+    let gateway = ip4.gateway().await.unwrap_or_default();
+
+    // Prefer structured NameserverData (NM >= 1.6); fall back to legacy u32 list.
+    let dns = {
+        let mut addrs = Vec::new();
+        match ip4.nameserver_data().await {
+            Ok(entries) if !entries.is_empty() => {
+                for entry in entries {
+                    if let Some(addr_val) = entry.get("address") {
+                        if let Ok(s) = <&str>::try_from(addr_val) {
+                            addrs.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Fall back to legacy Nameservers (Vec<u32>, big-endian).
+                if let Ok(raw_list) = ip4.nameservers().await {
+                    for raw in raw_list {
+                        addrs.push(decode_nameserver_u32(raw));
+                    }
+                }
+            }
+        }
+        addrs
+    };
+
+    (gateway, dns)
 }
 
 /// True if any device path is a Wi-Fi device (DeviceType == 2).
@@ -705,5 +844,19 @@ mod tests {
         // Enterprise overrides personal.
         assert_eq!(security_label(0x1, 0, 0x200), "WPA-Enterprise");
         assert_eq!(security_label(0x1, 0x200, 0), "WPA-Enterprise");
+    }
+
+    #[test]
+    fn decode_nameserver_u32_standard() {
+        // 8.8.8.8 big-endian = 0x08080808
+        assert_eq!(decode_nameserver_u32(0x08080808), "8.8.8.8");
+        // 1.1.1.1 big-endian = 0x01010101
+        assert_eq!(decode_nameserver_u32(0x01010101), "1.1.1.1");
+        // 192.168.8.1 big-endian = 0xC0A80801
+        assert_eq!(decode_nameserver_u32(0xC0A80801), "192.168.8.1");
+        // 0.0.0.0
+        assert_eq!(decode_nameserver_u32(0x00000000), "0.0.0.0");
+        // 255.255.255.255
+        assert_eq!(decode_nameserver_u32(0xFFFFFFFF), "255.255.255.255");
     }
 }

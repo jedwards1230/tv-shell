@@ -70,7 +70,8 @@ ShellRoot {
                 streamManager.suspend();
         }
         onControllerWake: {
-            if (root.state === "idle")
+            // Only wake the AV system if the user has enabled wake-on-controller (#130).
+            if (root.state === "idle" && Components.SettingsStore.wakeOnController)
                 avController.wake();
         }
 
@@ -87,7 +88,9 @@ ShellRoot {
             if (root.state === "appRunning") {
                 root.overlayDrawerOpen = !root.overlayDrawerOpen;
             } else if (root.state === "idle" && root._layout) {
-                avController.wake();
+                // Only wake the AV system if the user has enabled wake-on-controller (#130).
+                if (Components.SettingsStore.wakeOnController)
+                    avController.wake();
                 root._layout.toggleMenu();
             }
         }
@@ -326,6 +329,7 @@ ShellRoot {
                 }
                 shellState: root.state
                 runningWindows: appLifecycle.runningWindows
+                pads: inputManager.pads
                 runningAppClass: appLifecycle.runningAppClass
                 overlayDrawerOpen: root.overlayDrawerOpen
                 avSystemOn: avController.systemOn

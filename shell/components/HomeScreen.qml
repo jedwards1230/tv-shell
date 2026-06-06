@@ -12,6 +12,21 @@ FocusScope {
     readonly property bool _streamingActive: StreamProviders.active.providerId !== "none"
 
     property var runningWindows: []
+    property var pads: []
+
+    // Lowest-charge pad that actually reports a battery (batteryLevel >= 0).
+    // null when no wireless pad is reporting — the glyph hides entirely.
+    readonly property var _batteryPad: {
+        var best = null;
+        for (var i = 0; i < root.pads.length; i++) {
+            var p = root.pads[i];
+            if (p.batteryLevel < 0)
+                continue; // wired / no battery reported
+            if (best === null || p.batteryLevel < best.batteryLevel)
+                best = p;
+        }
+        return best;
+    }
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -196,6 +211,35 @@ FocusScope {
 
                 Item {
                     Layout.fillWidth: true
+                }
+
+                // Controller battery glance (#100). Non-interactive status indicator —
+                // NOT part of the QuickActions navigable carousel. Shows only when a
+                // wireless pad reports charge; mirrors ControllerSettings glyph/colors.
+                RowLayout {
+                    id: batteryIndicator
+                    Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: visible ? implicitWidth : 0
+                    spacing: Units.spacingSM
+                    visible: root._batteryPad !== null
+
+                    Text {
+                        text: "⚡" // charging bolt
+                        font.pixelSize: Theme.fontTitle
+                        color: Theme.warning
+                        visible: root._batteryPad !== null && root._batteryPad.batteryCharging === true
+                    }
+                    Text {
+                        text: "\u{1F50B}" // battery glyph
+                        font.pixelSize: Theme.fontTitle
+                        color: Theme.textSecondary
+                    }
+                    Text {
+                        text: root._batteryPad !== null ? root._batteryPad.batteryLevel + "%" : ""
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: (root._batteryPad !== null && root._batteryPad.batteryLevel <= 15) ? Theme.offline : Theme.textSecondary
+                    }
                 }
 
                 // Status icons (right side)
