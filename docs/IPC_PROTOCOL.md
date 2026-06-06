@@ -995,6 +995,40 @@ input). This **is** the "Switch Input" primitive — there is no separate
 **Response:** `ok\n` on success, `error:<detail>\n` on failure. Feature/platform
 off: `error:unsupported on this platform\n`.
 
+### Session-lifecycle CEC (`GAME_SHELL_CEC_LIFECYCLE`)
+
+Beyond the manual `cec-*` commands above, the daemon can drive the AV on session
+lifecycle transitions. This is **separate** from the manual commands — it is an
+internal behavior with no IPC verb, gated entirely by an environment flag.
+
+| Variable | Purpose |
+|----------|---------|
+| `GAME_SHELL_CEC_LIFECYCLE` | Enable daemon-owned CEC lifecycle. Enabled only when set to exactly `1` or `true`. **Unset/any other value → disabled (the default).** Set it in `daemon.env` on the deploy host. |
+
+When **enabled** (and the daemon is built `--features cec` on a host with a
+working libcec adapter), the daemon:
+
+- **Wakes on start:** when the libcec connection opens, powers on the **AVR
+  (logical address 5)** then the **TV (logical address 0)**, waits briefly for
+  the display to leave standby, then claims active source (switches the TV to
+  this input).
+- **Wakes on resume:** on logind `PrepareForSleep(false)` (system resumed from
+  suspend), runs the same wake sequence.
+- **Standby on suspend:** on logind `PrepareForSleep(true)` (system about to
+  suspend), sends CEC standby to the **TV (0)** then the **AVR (5)**.
+- **Standby on session end:** on a real shutdown (SIGTERM/SIGINT from the
+  session wrapper), sends the same standby before exiting. A re-exec restart
+  (`/dev/restart-daemon`) is **skipped** so the AV stays awake across it.
+
+When **disabled** (the default) the CEC actor still serves the manual `cec-*`
+commands, but performs **none** of the above — it never auto-drives the bus on
+start, suspend/resume, or shutdown. This keeps CI, dev boxes, and any host
+without the flag from ever powering a TV/AVR on or off. (On a default build with
+no `cec` feature, the lifecycle wiring is compiled out entirely.)
+
+> **Address mapping:** AVR = CEC logical address **5** (Audiosystem), TV = CEC
+> logical address **0** (Tv).
+
 
 ## LAN HTTP Control Bridge (#151)
 

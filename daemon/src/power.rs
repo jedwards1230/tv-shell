@@ -19,6 +19,8 @@
 //! are folded into the actor's `select!` loop, so no shared state ever crosses
 //! an `.await`.
 
+#[cfg(feature = "cec")]
+use crate::cec::CecReq;
 use crate::protocol::{self, Event};
 use crate::state::Reply;
 use anyhow::Result;
@@ -56,6 +58,13 @@ trait LogindManager {
 
     /// `Suspend(interactive: b)`. We pass `false` (non-interactive).
     fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+
+    /// `PrepareForSleep(start: b)`: emitted by logind around a system sleep
+    /// transition. `start == true` fires just BEFORE the system suspends;
+    /// `start == false` fires just AFTER it resumes. Drives the daemon-owned CEC
+    /// lifecycle (standby on suspend, wake on resume).
+    #[zbus(signal)]
+    fn prepare_for_sleep(&self, start: bool) -> zbus::Result<()>;
 }
 
 /// org.freedesktop.UPower at /org/freedesktop/UPower.
@@ -231,6 +240,12 @@ async fn handle_suspend(logind: Option<&LogindManagerProxy<'_>>) -> String {
 pub async fn run(
     mut rx: mpsc::Receiver<PowerReq>,
     events_tx: broadcast::Sender<Event>,
+    // Optional CEC actor handle for the daemon-owned lifecycle (#94 follow-up):
+    // on logind `PrepareForSleep` this forwards `StandbyAll` (suspend) /
+    // `WakeSequence` (resume). Cloned from the CEC channel in `main.rs` and only
+    // present under `--features cec`; the CEC actor itself no-ops these unless
+    // `GAME_SHELL_CEC_LIFECYCLE` is enabled, so this is inert on dev/CI.
+    #[cfg(feature = "cec")] cec_tx: Option<mpsc::Sender<CecReq>>,
 ) -> Result<()> {
     // A missing system bus is fatal for this actor (nothing it can do), but it
     // must not panic the daemon: log and exit cleanly so `main.rs` just warns.
@@ -262,6 +277,64 @@ pub async fn run(
     match &battery_streams {
         Some(_) => tracing::info!("power: battery present; streaming power:battery changes"),
         None => tracing::info!("power: no battery present (desktop); no power:battery events"),
+    }
+
+    // logind `PrepareForSleep` -> CEC lifecycle (suspend = standby, resume =
+    // wake). Runs as its OWN task, not a `select!` arm: `tokio::select!` cannot
+    // take a `#[cfg(...)]` branch (the macro rejects the attribute even on a
+    // no-`cec` build). The task owns a cloned system-bus connection + its own
+    // logind proxy. Inert unless GAME_SHELL_CEC_LIFECYCLE is set (the CEC actor
+    // no-ops the reqs). On a default (no-`cec`) build the `cec_tx` param and
+    // this whole block compile out.
+    #[cfg(feature = "cec")]
+    if let Some(cec_tx) = cec_tx.clone() {
+        let conn = conn.clone();
+        tokio::spawn(async move {
+            let proxy = match LogindManagerProxy::new(&conn).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("power: PrepareForSleep proxy unavailable ({e}); CEC suspend/resume lifecycle disabled");
+                    return;
+                }
+            };
+            let mut sleep_stream = match proxy.receive_prepare_for_sleep().await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    tracing::warn!("power: PrepareForSleep subscription failed ({e}); CEC suspend/resume lifecycle disabled");
+                    return;
+                }
+            };
+            while let Some(signal) = sleep_stream.next().await {
+                let start = match signal.args() {
+                    Ok(args) => args.start,
+                    Err(e) => {
+                        tracing::warn!("power: malformed PrepareForSleep signal: {e}");
+                        continue;
+                    }
+                };
+                let req_label = if start {
+                    "standby (suspend)"
+                } else {
+                    "wake (resume)"
+                };
+                tracing::info!("power: PrepareForSleep start={start} -> CEC {req_label}");
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let req = if start {
+                    CecReq::StandbyAll(tx)
+                } else {
+                    CecReq::WakeSequence(tx)
+                };
+                if cec_tx.send(req).await.is_err() {
+                    tracing::warn!("power: CEC actor gone; stopping PrepareForSleep listener");
+                    break;
+                }
+                if let Ok(resp) = rx.await {
+                    if resp.starts_with("error:") {
+                        tracing::warn!("power: CEC lifecycle {req_label} failed: {resp}");
+                    }
+                }
+            }
+        });
     }
 
     loop {
