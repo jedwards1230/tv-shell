@@ -6,8 +6,9 @@ import Quickshell.Io
 
 // System/About page (#128): displays OS, kernel, hostname, and uptime, plus a
 // storage free-space readout (folded in from the former standalone Storage
-// page). Values are read via lightweight shell-outs (df / uname / os-release);
-// moving these behind a daemon sys-status/storage-status IPC is tracked in #164.
+// page). Values are now read from the daemon via IPC (#164):
+//   sys-status     -> {os, kernel, hostname, uptime}
+//   storage-status -> [{mount, size, used, avail, pct}, …]
 FocusScope {
     id: root
     implicitHeight: contentColumn.implicitHeight + 2 * Theme.padding
@@ -22,52 +23,53 @@ FocusScope {
     property bool storageLoading: false
 
     function focusFirst() {
-        refreshBtn.forceActiveFocus();
+        sysRefreshScope.forceActiveFocus();
     }
 
-    Process {
-        id: dfProc
-        command: ["bash", "-c", "df -h --output=target,size,used,avail,pcent 2>/dev/null | tail -n +2 | " + "awk 'NF>=5{printf \"{\\\"mount\\\":\\\"%s\\\",\\\"size\\\":\\\"%s\\\",\\\"used\\\":\\\"%s\\\",\\\"avail\\\":\\\"%s\\\",\\\"pct\\\":\\\"%s\\\"}\\n\",$1,$2,$3,$4,$5}'"]
-        stdout: SplitParser {
-            onRead: line => {
-                try {
-                    let obj = JSON.parse(line.trim());
-                    // Skip pseudo and system filesystems
-                    if (obj.mount && !obj.mount.startsWith("/sys") && !obj.mount.startsWith("/proc") && !obj.mount.startsWith("/dev/pts") && !obj.mount.startsWith("/run/user")) {
-                        let arr = root.storageMounts.slice();
-                        arr.push(obj);
-                        root.storageMounts = arr;
-                    }
-                } catch (e) {}
+    // Daemon IPC — sys-status (#164)
+    SocketClient {
+        id: getSysStatus
+        onResponseReceived: line => {
+            try {
+                let obj = JSON.parse(line);
+                root.osName = obj.os || "";
+                root.kernelVersion = obj.kernel || "";
+                root.hostname = obj.hostname || "";
+                root.uptime = obj.uptime || "";
+            } catch (e) {
+                console.log("SystemSettings: failed to parse sys-status:", e);
             }
+            root.loading = false;
         }
-        onExited: {
+        onRequestFailed: {
+            root.loading = false;
+        }
+    }
+
+    // Daemon IPC — storage-status (#164). Returns raw bytes; formatted in the
+    // delegate as human-readable using Qt's locale number formatting.
+    SocketClient {
+        id: getStorageStatus
+        onResponseReceived: line => {
+            try {
+                let mounts = JSON.parse(line);
+                root.storageMounts = Array.isArray(mounts) ? mounts : [];
+            } catch (e) {
+                console.log("SystemSettings: failed to parse storage-status:", e);
+                root.storageMounts = [];
+            }
             root.storageLoading = false;
         }
-    }
-
-    Process {
-        id: sysInfo
-        command: ["bash", "-c", "printf '{\"os\":\"%s\",\"kernel\":\"%s\",\"hostname\":\"%s\",\"uptime\":\"%s\"}' " + "\"$(grep '^NAME=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"' || echo Unknown)\" " + "\"$(uname -r)\" " + "\"$(hostname)\" " + "\"$(uptime -p 2>/dev/null || uptime | sed 's/.*up //' | cut -d, -f1)\""]
-        stdout: SplitParser {
-            onRead: line => {
-                try {
-                    let obj = JSON.parse(line.trim());
-                    root.osName = obj.os || "";
-                    root.kernelVersion = obj.kernel || "";
-                    root.hostname = obj.hostname || "";
-                    root.uptime = obj.uptime || "";
-                } catch (e) {}
-                root.loading = false;
-            }
+        onRequestFailed: {
+            root.storageLoading = false;
         }
     }
 
     Component.onCompleted: {
         root.loading = true;
-        sysInfo.running = true;
+        getSysStatus.request("sys-status");
         root.storageLoading = true;
-        dfProc.running = true;
+        getStorageStatus.request("storage-status");
     }
 
     ColumnLayout {
@@ -131,26 +133,33 @@ FocusScope {
         }
 
         FocusScope {
-            id: refreshBtn
-            width: refreshBtnInner.implicitWidth
-            height: refreshBtnInner.implicitHeight
+            id: sysRefreshScope
+            width: sysRefreshBtn.width
+            height: sysRefreshBtn.height
             focus: true
+            activeFocusOnTab: true
+
+            KeyNavigation.down: storageRefreshScope
 
             SettingsButton {
-                id: refreshBtnInner
+                id: sysRefreshBtn
                 text: "Refresh"
-                activeFocusOnTab: false
+                focus: parent.activeFocus
+                anchors.fill: parent
+
                 onActivated: {
                     root.loading = true;
-                    sysInfo.running = true;
+                    getSysStatus.request("sys-status");
                 }
-            }
 
-            Keys.onPressed: event => {
-                if (event.key === Qt.Key_Return || event.key === Qt.Key_Space) {
-                    root.loading = true;
-                    sysInfo.running = true;
-                    event.accepted = true;
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        sysRefreshScope.forceActiveFocus();
+                        sysRefreshBtn.activated();
+                    }
                 }
             }
         }
@@ -173,18 +182,18 @@ FocusScope {
             model: root.storageLoading ? [
                 {
                     mount: "Loading…",
-                    size: "",
-                    used: "",
-                    avail: "",
-                    pct: ""
+                    size: 0,
+                    used: 0,
+                    avail: 0,
+                    pct: 0
                 }
             ] : (root.storageMounts.length > 0 ? root.storageMounts : [
                     {
                         mount: "No filesystems found",
-                        size: "",
-                        used: "",
-                        avail: "",
-                        pct: ""
+                        size: 0,
+                        used: 0,
+                        avail: 0,
+                        pct: 0
                     }
                 ])
 
@@ -196,6 +205,21 @@ FocusScope {
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
+
+                // Format raw bytes to a human-readable string (GiB/MiB/KiB).
+                // Exactly 0 renders "0 B" (a legitimate value, e.g. a full
+                // filesystem with 0 bytes free); negative/unknown renders "".
+                function fmtBytes(n) {
+                    if (n < 0)
+                        return "";
+                    if (n === 0)
+                        return "0 B";
+                    if (n >= 1073741824)
+                        return (n / 1073741824).toFixed(1) + " GiB";
+                    if (n >= 1048576)
+                        return (n / 1048576).toFixed(1) + " MiB";
+                    return (n / 1024).toFixed(1) + " KiB";
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -212,7 +236,16 @@ FocusScope {
                     }
 
                     Text {
-                        text: modelData.avail ? (modelData.avail + " free / " + modelData.size + " (" + modelData.pct + " used)") : ""
+                        text: {
+                            // Placeholder rows (Loading… / No filesystems found)
+                            // carry size === 0; suppress the readout for those.
+                            // A real filesystem always has a positive total.
+                            if (modelData.size <= 0)
+                                return "";
+                            let avail = fmtBytes(modelData.avail);
+                            let size = fmtBytes(modelData.size);
+                            return avail + " free / " + size + " (" + modelData.pct + "% used)";
+                        }
                         font.pixelSize: Theme.fontBody
                         color: Theme.textSecondary
                         Layout.fillWidth: true
@@ -222,27 +255,33 @@ FocusScope {
         }
 
         FocusScope {
-            id: storageRefreshBtn
-            width: storageRefreshBtnInner.implicitWidth
-            height: storageRefreshBtnInner.implicitHeight
+            id: storageRefreshScope
+            width: storageRefreshBtn.width
+            height: storageRefreshBtn.height
+            activeFocusOnTab: true
+
+            KeyNavigation.up: sysRefreshScope
 
             SettingsButton {
-                id: storageRefreshBtnInner
+                id: storageRefreshBtn
                 text: "Refresh"
-                activeFocusOnTab: false
+                focus: parent.activeFocus
+                anchors.fill: parent
+
                 onActivated: {
                     root.storageLoading = true;
                     root.storageMounts = [];
-                    dfProc.running = true;
+                    getStorageStatus.request("storage-status");
                 }
-            }
 
-            Keys.onPressed: event => {
-                if (event.key === Qt.Key_Return || event.key === Qt.Key_Space) {
-                    root.storageLoading = true;
-                    root.storageMounts = [];
-                    dfProc.running = true;
-                    event.accepted = true;
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        storageRefreshScope.forceActiveFocus();
+                        storageRefreshBtn.activated();
+                    }
                 }
             }
         }

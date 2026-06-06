@@ -257,6 +257,160 @@ unparseable file yields `[]`. Returns at most 15 entries.
 [{"name":"Firefox","exec":"firefox","comment":"Browse the web","time":1716950400.0}]
 ```
 
+## Controller DB Commands (#159)
+
+### `controllerdb-status`
+
+Return the current state of the bundled SDL `GameControllerDB` (the known-controller
+lookup table used for pad discovery). Stateless — answered directly by the IPC layer.
+
+**Response:** Compact single-line JSON object.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `source` | string | Which source was used: `"bundled_baseline"` (only shipped DB), `"upstream_cache"` (cache overrides baseline), or `"env_override"` (env var overrides all — last source wins, not a union) |
+| `entryCount` | number | Total number of known (vendor, product) pairs after merging all sources |
+| `lastDownloaded` | number | Unix timestamp (seconds) of the last successful upstream fetch, or `0` if never fetched |
+| `upstreamUrl` | string | The URL used for upstream fetches |
+| `error` | string? | Last fetch error, omitted when the most recent fetch succeeded |
+
+Example:
+```json
+{"source":"upstream_cache","entryCount":3712,"lastDownloaded":1749200000,"upstreamUrl":"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt"}
+```
+
+The **Controllers** settings page (`ControllerSettings.qml`) renders this status
+(entry count, last-download timestamp, source) and exposes a **Refresh DB**
+button that issues `controllerdb-refresh` and updates the status line in place.
+
+### `controllerdb-refresh`
+
+Fetch the upstream SDL `GameControllerDB`, persist it to
+`~/.local/share/game-shell/gamecontrollerdb.txt`, and hot-swap the live db in
+the input runtime (new controllers are identified without a daemon restart — the
+IPC layer sends `Control::ControllerDbRefreshed` to the runtime after a
+successful fetch). **Linux-only** (`reqwest` HTTPS); on non-Linux the fetch
+always fails gracefully.
+
+**Response:** Same JSON shape as `controllerdb-status`, reflecting the post-refresh state.
+
+| Condition | Response |
+|-----------|----------|
+| Success | `controllerdb-status` JSON with updated `entryCount`/`lastDownloaded` |
+| Fetch error | `controllerdb-status` JSON with `error` field set, `entryCount`/`source` unchanged |
+
+---
+
+## Per-Pad Battery and Rumble Status (#160)
+
+### `pad-battery <id>`
+
+Query the current battery state of the pad whose stable wire id is `<id>`. For
+wired pads (no battery sysfs entry), `present` is `false`. An unknown id replies
+`error:pad not found '<id>'` (not a `present:false` object).
+
+**Response:** Compact single-line JSON object.
+
+| Field | Type | Condition | Meaning |
+|-------|------|-----------|---------|
+| `id` | string | always | The requested wire id |
+| `present` | bool | always | `true` if a battery reading is available |
+| `level` | number | `present=true` | Charge percentage 0–100 |
+| `charging` | bool | `present=true` | `true` when charging |
+
+Examples:
+```
+pad-battery uniq:e4:17:d8:ab:cd:ef
+{"id":"uniq:e4:17:d8:ab:cd:ef","present":true,"level":82,"charging":false}
+
+pad-battery uniq:unknown
+error:pad not found 'uniq:unknown'
+```
+
+| Condition | Response |
+|-----------|----------|
+| Pad found, has battery | JSON with `present:true`, `level`, `charging` |
+| Pad found, wired/no battery | JSON with `present:false` |
+| Pad not found | `error:pad not found '<id>'` |
+| Missing/empty `<id>` | `error:usage: pad-battery <id>` |
+
+### `pad-rumble-status <id>`
+
+Query whether the pad whose stable wire id is `<id>` supports rumble and whether
+it is currently enabled (the `rumbleEnabled` setting in `settings.json`).
+
+**Response:** Compact single-line JSON object.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `id` | string | The requested wire id |
+| `supported` | bool | `true` if the pad has an `EV_FF`/`FF_RUMBLE` effect uploaded |
+| `enabled` | bool | `true` if the `rumbleEnabled` setting is on (affects all pads) |
+
+Example:
+```
+pad-rumble-status uniq:e4:17:d8:ab:cd:ef
+{"id":"uniq:e4:17:d8:ab:cd:ef","supported":true,"enabled":true}
+```
+
+| Condition | Response |
+|-----------|----------|
+| Pad found | JSON with `supported` and `enabled` |
+| Pad not found | `error:pad not found '<id>'` |
+| Missing/empty `<id>` | `error:usage: pad-rumble-status <id>` |
+
+---
+
+## System Status Commands (#164)
+
+These commands back the System/About settings page. Both are **stateless** (read
+from procfs/sysfs/`/etc` at call time) and cross-platform (on non-Linux hosts the
+reads degrade gracefully to `"Unknown"`).
+
+### `sys-status`
+
+Return OS name, kernel version, hostname and uptime as a compact JSON object.
+
+**Response:** Compact single-line JSON object.
+
+| Field | Type | Source |
+|-------|------|--------|
+| `os` | string | `NAME=` from `/etc/os-release` |
+| `kernel` | string | `/proc/sys/kernel/osrelease` (`uname -r`) |
+| `hostname` | string | `/proc/sys/kernel/hostname` |
+| `uptime` | string | `/proc/uptime`, formatted as `Xd Xh Xm Xs` |
+
+Example:
+```json
+{"os":"Arch Linux","kernel":"6.9.3-arch1-1","hostname":"game-client-1","uptime":"2d 14h 32m 10s"}
+```
+
+### `storage-status`
+
+Return a JSON array of real filesystem mounts with raw-byte sizes. Pseudo-
+filesystems (`proc`, `sysfs`, `devtmpfs`, `cgroup`, etc.) and system paths
+(`/proc`, `/sys`, `/run/user/*`) are excluded automatically. Duplicate devices
+(bind mounts) are de-duplicated by device path.
+
+**Response:** Compact single-line JSON array.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `mount` | string | Mount point path |
+| `size` | number | Total bytes |
+| `used` | number | Used bytes |
+| `avail` | number | Available (free) bytes |
+| `pct` | number | Usage percentage 0–100 |
+
+Example:
+```json
+[{"mount":"/","size":500107862016,"used":125026959360,"avail":375080902656,"pct":25},{"mount":"/home","size":1000204886016,"used":400000000000,"avail":600204886016,"pct":40}]
+```
+
+Empty array `[]` if no real filesystems are found (e.g. non-Linux host).
+
+---
+
 ## Phase 3 Commands (D-Bus backbone)
 
 Phase 3 adds D-Bus integrations to the daemon for Bluetooth (`bluer`/BlueZ),

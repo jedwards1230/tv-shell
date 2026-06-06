@@ -187,6 +187,46 @@ pub enum Command {
     /// `set-active-game` with no body — clears the active game, reverting to
     /// player/global binding layers only.
     SetActiveGameClear,
+    /// `controllerdb-status` — return the current controller DB status as a
+    /// compact JSON object: `{source, entryCount, lastDownloaded, upstreamUrl,
+    /// error?}`. Stateless (no input-runtime round-trip); served directly by
+    /// the IPC layer. See `docs/IPC_PROTOCOL.md`.
+    ControllerDbStatus,
+    /// `controllerdb-refresh` — re-download the upstream SDL_GameControllerDB,
+    /// update the on-disk cache, and reload the active DB live (no daemon
+    /// restart). Returns the same status JSON shape as `controllerdb-status`,
+    /// with the `error` field set when the fetch fails. The daemon keeps the
+    /// existing DB on failure (graceful degradation). Served by the IPC layer
+    /// (async fetch), which sends `Control::ControllerDbRefreshed` to hot-swap
+    /// the runtime DB after a successful refresh.
+    ControllerDbRefresh,
+
+    // --- #160: per-pad battery + rumble capability/status ---
+    /// `pad-battery <id>` — return the current battery state for the pad whose
+    /// stable wire id is `<id>` as a compact JSON object. `id` and `present`
+    /// are always present; `level` and `charging` are added only when
+    /// `present` is `true` (a battery reading is available). Wired pads / pads
+    /// with no battery sysfs entry report `{"id":…,"present":false}`. An
+    /// unknown id replies `error:pad not found '<id>'`. `<id>` is a single
+    /// whitespace-trimmed token.
+    PadBatteryQuery(String),
+    /// `pad-battery` with a missing/empty `<id>` body.
+    PadBatteryUsage,
+    /// `pad-rumble-status <id>` — return the rumble capability and current
+    /// status for the pad whose stable wire id is `<id>` as a compact JSON
+    /// object `{id, supported, enabled}`. `<id>` is a single token.
+    PadRumbleStatus(String),
+    /// `pad-rumble-status` with a missing/empty `<id>` body.
+    PadRumbleStatusUsage,
+
+    // --- #164: sys-status / storage-status ---
+    /// `sys-status` — return OS name, kernel version, hostname and uptime
+    /// as a compact JSON object `{os, kernel, hostname, uptime}`.
+    SysStatus,
+    /// `storage-status` — return a JSON array of real filesystem mounts with
+    /// raw-byte sizes `[{mount, size, used, avail, pct}, …]`.
+    StorageStatus,
+
     /// Anything unrecognized -> the daemon replies `unknown`.
     Unknown,
 }
@@ -325,6 +365,10 @@ impl Command {
             // Phase 4 HDMI-CEC bare commands (no body).
             "cec-scan" => Command::CecScan,
             "cec-active-source" => Command::CecActiveSource,
+            "controllerdb-status" => Command::ControllerDbStatus,
+            "controllerdb-refresh" => Command::ControllerDbRefresh,
+            "sys-status" => Command::SysStatus,
+            "storage-status" => Command::StorageStatus,
             _ => {
                 // `set-config <json>` / `record-launch <json>`: the rest of the
                 // line is a compact single-line JSON body. The command word must
@@ -440,6 +484,23 @@ impl Command {
                             _ => unreachable!("word came from the literal list above"),
                         };
                     }
+                }
+                // `pad-battery <id>` / `pad-rumble-status <id>`: a single pad
+                // wire-id token (whitespace-trimmed). A missing body is a usage
+                // error. `command_body` enforces the word boundary.
+                if let Some(body) = command_body(cmd, "pad-battery") {
+                    return if body.is_empty() {
+                        Command::PadBatteryUsage
+                    } else {
+                        Command::PadBatteryQuery(body.to_string())
+                    };
+                }
+                if let Some(body) = command_body(cmd, "pad-rumble-status") {
+                    return if body.is_empty() {
+                        Command::PadRumbleStatusUsage
+                    } else {
+                        Command::PadRumbleStatus(body.to_string())
+                    };
                 }
                 // `set-active-game <id>`: a single game-id token (or bare for
                 // clear). `command_body` enforces the word boundary so
@@ -875,6 +936,53 @@ pub fn resp_input_devices(devices: &[InputDeviceInfo]) -> String {
         })
         .collect();
     serde_json::to_string(&serde_json::Value::Array(arr)).expect("input-devices serialize")
+}
+
+/// Usage line for a `pad-battery` issued without a `<id>` body.
+pub fn resp_pad_battery_usage() -> String {
+    "error:usage: pad-battery <id>".to_string()
+}
+
+/// Usage line for a `pad-rumble-status` issued without a `<id>` body.
+pub fn resp_pad_rumble_status_usage() -> String {
+    "error:usage: pad-rumble-status <id>".to_string()
+}
+
+/// Compact JSON reply for `pad-battery <id>` when the pad has no battery
+/// (wired pad or battery state unknown).
+pub fn resp_pad_battery_not_present(id: &str) -> String {
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+    obj.insert("present".into(), serde_json::Value::Bool(false));
+    serde_json::to_string(&serde_json::Value::Object(obj)).expect("pad battery serialize")
+}
+
+/// Compact JSON reply for `pad-battery <id>` when the pad has a battery.
+/// `level` is 0..=100, `charging` is true when charging.
+pub fn resp_pad_battery_present(id: &str, level: u8, charging: bool) -> String {
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+    obj.insert("present".into(), serde_json::Value::Bool(true));
+    obj.insert("level".into(), serde_json::Value::Number(level.into()));
+    obj.insert("charging".into(), serde_json::Value::Bool(charging));
+    serde_json::to_string(&serde_json::Value::Object(obj)).expect("pad battery serialize")
+}
+
+/// Compact JSON reply for `pad-rumble-status <id>`.
+/// `supported` — pad advertises EV_FF/FF_RUMBLE; `enabled` — the daemon's
+/// `rumbleEnabled` setting is true.
+pub fn resp_pad_rumble_status(id: &str, supported: bool, enabled: bool) -> String {
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+    obj.insert("supported".into(), serde_json::Value::Bool(supported));
+    obj.insert("enabled".into(), serde_json::Value::Bool(enabled));
+    serde_json::to_string(&serde_json::Value::Object(obj)).expect("pad rumble status serialize")
+}
+
+/// Error reply when a `pad-battery` or `pad-rumble-status` references a pad id
+/// that is not in the current fleet.
+pub fn resp_pad_not_found(id: &str) -> String {
+    format!("error:pad not found '{id}'")
 }
 
 #[cfg(test)]
@@ -1601,5 +1709,83 @@ mod tests {
     fn config_changed_event_wire_string() {
         // config:changed is payload-less — the subscriber re-fetches via get-config.
         assert_eq!(Event::ConfigChanged.to_string(), "config:changed");
+    }
+
+    #[test]
+    fn parses_controllerdb_commands() {
+        assert_eq!(
+            Command::parse("controllerdb-status"),
+            Command::ControllerDbStatus
+        );
+        assert_eq!(
+            Command::parse("  controllerdb-status  "),
+            Command::ControllerDbStatus
+        );
+        assert_eq!(
+            Command::parse("controllerdb-refresh"),
+            Command::ControllerDbRefresh
+        );
+        assert_eq!(
+            Command::parse("  controllerdb-refresh  "),
+            Command::ControllerDbRefresh
+        );
+        // Word boundary: a longer word is NOT the command.
+        assert_eq!(Command::parse("controllerdb-statusX"), Command::Unknown);
+        assert_eq!(Command::parse("controllerdb-refreshX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_pad_battery_and_rumble_status_commands() {
+        assert_eq!(
+            Command::parse("pad-battery uniq:aa:bb:cc"),
+            Command::PadBatteryQuery("uniq:aa:bb:cc".into())
+        );
+        // Body is trimmed.
+        assert_eq!(
+            Command::parse("  pad-battery   phys:usb-1/input0  "),
+            Command::PadBatteryQuery("phys:usb-1/input0".into())
+        );
+        // Bare command -> usage.
+        assert_eq!(Command::parse("pad-battery"), Command::PadBatteryUsage);
+        assert_eq!(Command::parse("pad-battery   "), Command::PadBatteryUsage);
+        // Word boundary.
+        assert_eq!(Command::parse("pad-batteryX"), Command::Unknown);
+
+        assert_eq!(
+            Command::parse("pad-rumble-status uniq:aa:bb"),
+            Command::PadRumbleStatus("uniq:aa:bb".into())
+        );
+        assert_eq!(
+            Command::parse("pad-rumble-status"),
+            Command::PadRumbleStatusUsage
+        );
+        assert_eq!(Command::parse("pad-rumble-statusX"), Command::Unknown);
+    }
+
+    #[test]
+    fn pad_battery_resp_builders() {
+        // present=false (wired pad)
+        let j = resp_pad_battery_not_present("uniq:aa");
+        let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(v["id"], "uniq:aa");
+        assert_eq!(v["present"], false);
+        assert!(v.get("level").is_none());
+
+        // present=true (wireless pad)
+        let j = resp_pad_battery_present("phys:usb-1", 80, true);
+        let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(v["id"], "phys:usb-1");
+        assert_eq!(v["present"], true);
+        assert_eq!(v["level"], 80);
+        assert_eq!(v["charging"], true);
+    }
+
+    #[test]
+    fn pad_rumble_status_resp_builder() {
+        let j = resp_pad_rumble_status("uniq:aa", true, false);
+        let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(v["id"], "uniq:aa");
+        assert_eq!(v["supported"], true);
+        assert_eq!(v["enabled"], false);
     }
 }
