@@ -27,6 +27,10 @@ FocusScope {
 
     // --- Controller DB (#159) ---
     property var controllerDb: null  // null while loading, object once received
+    property bool dbRefreshing: false  // true while controllerdb-refresh is in flight
+    // Transient confirmation shown briefly after a refresh completes:
+    // "Updated" (count changed), "Up to date" (unchanged), or "Refresh failed".
+    property string dbConfirm: ""
 
     SocketClient {
         id: getControllerDbStatus
@@ -43,16 +47,39 @@ FocusScope {
     SocketClient {
         id: refreshControllerDb
         onResponseReceived: line => {
+            root.dbRefreshing = false;
             try {
-                root.controllerDb = JSON.parse(line);
+                let prevCount = root.controllerDb ? root.controllerDb.entryCount : -1;
+                let next = JSON.parse(line);
+                root.controllerDb = next;
+                if (next.error !== undefined && next.error !== "")
+                    root.dbConfirm = "Refresh failed";
+                else if (next.entryCount !== prevCount)
+                    root.dbConfirm = "Updated";
+                else
+                    root.dbConfirm = "Up to date";
+                dbConfirmTimer.restart();
             } catch (e) {
                 console.log("ControllerSettings: failed to parse controllerdb-refresh:", e);
+                root.dbConfirm = "Refresh failed";
+                dbConfirmTimer.restart();
             }
         }
         onRequestFailed: {
             // Refresh failed; re-fetch status to reflect any error.
+            root.dbRefreshing = false;
+            root.dbConfirm = "Refresh failed";
+            dbConfirmTimer.restart();
             getControllerDbStatus.request("controllerdb-status");
         }
+    }
+
+    // Clears the transient confirmation a few seconds after a refresh finishes.
+    Timer {
+        id: dbConfirmTimer
+        interval: 4000
+        repeat: false
+        onTriggered: root.dbConfirm = ""
     }
 
     // --- Device Discovery (#97 — last python3 shim removed) ---
@@ -345,7 +372,9 @@ FocusScope {
                             Layout.fillWidth: true
                         }
 
-                        // Battery — only when the pad reports one (wireless).
+                        // Battery — show the level when the pad reports one
+                        // (wireless), otherwise an explicit "not reported" label
+                        // so an absent battery reads as "no data", not a bug.
                         RowLayout {
                             spacing: 8
                             visible: modelData.batteryLevel >= 0
@@ -374,6 +403,17 @@ FocusScope {
                                     return Theme.textSecondary;
                                 }
                             }
+                        }
+
+                        // Explicit no-data label for pads that don't report a
+                        // battery (wired pads, or controllers with no battery
+                        // sysfs entry — e.g. these have an empty
+                        // /sys/class/power_supply).
+                        Text {
+                            text: "Battery: not reported"
+                            font.pixelSize: Theme.fontSmall
+                            color: Theme.textMuted
+                            visible: modelData.batteryLevel < 0
                         }
                     }
                 }
@@ -627,20 +667,41 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 24
 
-            // Status: entry count + last-download timestamp + source
+            // Status: entry count + last-download timestamp + source, plus a
+            // transient "Refreshing…" / "Updated" / "Up to date" confirmation.
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 4
 
-                Text {
-                    text: {
-                        if (root.controllerDb === null)
-                            return "Loading…";
-                        return root.controllerDb.entryCount + " controllers known";
-                    }
-                    font.pixelSize: Theme.fontSmall
-                    color: Theme.textSecondary
+                RowLayout {
                     Layout.fillWidth: true
+                    spacing: 12
+
+                    Text {
+                        text: {
+                            if (root.dbRefreshing)
+                                return "Refreshing…";
+                            if (root.controllerDb === null)
+                                return "Loading…";
+                            return root.controllerDb.entryCount + " controllers known";
+                        }
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+
+                    // Brief post-refresh confirmation ("Updated" / "Up to date" /
+                    // "Refresh failed"), cleared by dbConfirmTimer.
+                    Text {
+                        text: root.dbConfirm
+                        font.pixelSize: Theme.fontHint
+                        font.bold: true
+                        color: root.dbConfirm === "Refresh failed" ? Theme.offline : Theme.online
+                        visible: root.dbConfirm !== "" && !root.dbRefreshing
+                    }
+
+                    Item {
+                        Layout.fillWidth: true
+                    }
                 }
 
                 Text {
@@ -666,7 +727,7 @@ FocusScope {
                     text: root.controllerDb ? (root.controllerDb.error || "") : ""
                     font.pixelSize: Theme.fontHint
                     color: Theme.offline
-                    visible: root.controllerDb !== null && root.controllerDb.error !== undefined
+                    visible: root.controllerDb !== null && root.controllerDb.error !== undefined && root.controllerDb.error !== ""
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -683,11 +744,15 @@ FocusScope {
 
                 SettingsButton {
                     id: dbRefreshBtn
-                    text: "Refresh DB"
+                    text: root.dbRefreshing ? "Refreshing…" : "Refresh DB"
                     focus: parent.activeFocus
                     anchors.fill: parent
 
                     onActivated: {
+                        if (root.dbRefreshing)
+                            return;  // ignore re-entry while a refresh is in flight
+                        root.dbConfirm = "";
+                        root.dbRefreshing = true;
                         refreshControllerDb.request("controllerdb-refresh");
                     }
 

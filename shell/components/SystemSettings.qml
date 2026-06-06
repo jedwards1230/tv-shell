@@ -23,7 +23,7 @@ FocusScope {
     property bool storageLoading: false
 
     function focusFirst() {
-        refreshBtn.forceActiveFocus();
+        sysRefreshScope.forceActiveFocus();
     }
 
     // Daemon IPC — sys-status (#164)
@@ -133,26 +133,33 @@ FocusScope {
         }
 
         FocusScope {
-            id: refreshBtn
-            width: refreshBtnInner.implicitWidth
-            height: refreshBtnInner.implicitHeight
+            id: sysRefreshScope
+            width: sysRefreshBtn.width
+            height: sysRefreshBtn.height
             focus: true
+            activeFocusOnTab: true
+
+            KeyNavigation.down: storageRefreshScope
 
             SettingsButton {
-                id: refreshBtnInner
+                id: sysRefreshBtn
                 text: "Refresh"
-                activeFocusOnTab: false
+                focus: parent.activeFocus
+                anchors.fill: parent
+
                 onActivated: {
                     root.loading = true;
                     getSysStatus.request("sys-status");
                 }
-            }
 
-            Keys.onPressed: event => {
-                if (event.key === Qt.Key_Return || event.key === Qt.Key_Space) {
-                    root.loading = true;
-                    getSysStatus.request("sys-status");
-                    event.accepted = true;
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        sysRefreshScope.forceActiveFocus();
+                        sysRefreshBtn.activated();
+                    }
                 }
             }
         }
@@ -248,27 +255,33 @@ FocusScope {
         }
 
         FocusScope {
-            id: storageRefreshBtn
-            width: storageRefreshBtnInner.implicitWidth
-            height: storageRefreshBtnInner.implicitHeight
+            id: storageRefreshScope
+            width: storageRefreshBtn.width
+            height: storageRefreshBtn.height
+            activeFocusOnTab: true
+
+            KeyNavigation.up: sysRefreshScope
 
             SettingsButton {
-                id: storageRefreshBtnInner
+                id: storageRefreshBtn
                 text: "Refresh"
-                activeFocusOnTab: false
+                focus: parent.activeFocus
+                anchors.fill: parent
+
                 onActivated: {
                     root.storageLoading = true;
                     root.storageMounts = [];
                     getStorageStatus.request("storage-status");
                 }
-            }
 
-            Keys.onPressed: event => {
-                if (event.key === Qt.Key_Return || event.key === Qt.Key_Space) {
-                    root.storageLoading = true;
-                    root.storageMounts = [];
-                    getStorageStatus.request("storage-status");
-                    event.accepted = true;
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        storageRefreshScope.forceActiveFocus();
+                        storageRefreshBtn.activated();
+                    }
                 }
             }
         }
