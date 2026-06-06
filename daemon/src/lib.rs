@@ -16,6 +16,10 @@ pub mod protocol;
 pub mod recents;
 pub mod state;
 
+// Session-environment self-discovery and daemon.env loading (#165).
+// Cross-platform: no Linux-only imports.
+pub mod session_env;
+
 // LAN HTTP control bridge — cross-platform (tokio only; no Linux-only imports).
 pub mod http;
 
