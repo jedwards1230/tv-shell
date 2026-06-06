@@ -151,6 +151,7 @@ ShellRoot {
         // always leave the running app, regardless of focus. Fires instantly.
         onIntentHome: {
             root._resetIdleTimer();
+            root.userActivityDetected();
             root.returnToShell();
         }
 
@@ -160,6 +161,7 @@ ShellRoot {
         // on the home screen -> toggle the nav drawer (the `menu` action).
         onIntentHomeTap: {
             root._resetIdleTimer();
+            root.userActivityDetected();
             if (root.state === "appRunning") {
                 root.overlayDrawerOpen = !root.overlayDrawerOpen;
             } else if (root.state === "idle" && root._layout) {
@@ -174,6 +176,7 @@ ShellRoot {
         // keyboard Super+Backspace.
         onIntentHomeHold: {
             root._resetIdleTimer();
+            root.userActivityDetected();
             root.resetToHome();
         }
 
@@ -183,18 +186,21 @@ ShellRoot {
         // Super+<key> chord, so over a running app `menu` is a deliberate no-op
         // (the chord's intent:home/home-hold does the real work, no overlay flash).
         onIntentMenu: {
+            root.userActivityDetected();
             if (root.state === "idle" && root._layout)
                 root._layout.toggleMenu();
         }
 
         // intent:settings / intent:power open their panels from the home screen.
         onIntentSettings: {
+            root.userActivityDetected();
             if (root.state === "idle" && root._layout) {
                 root._layout.settingsPanel.visible = true;
                 root._layout.settingsPanel.forceActiveFocus();
             }
         }
         onIntentPower: {
+            root.userActivityDetected();
             if (root.state === "idle" && root._layout) {
                 root._layout.powerOverlay.opened = true;
                 root._layout.powerOverlay.forceActiveFocus();
@@ -204,6 +210,7 @@ ShellRoot {
         // Deep-link intent handlers — open a specific view in one command.
         // All guarded by root.state === "idle" to match coarse intents.
         onIntentSettingsPage: page => {
+            root.userActivityDetected();
             if (root.state === "idle" && root._layout) {
                 let ok = root._layout.settingsPanel.openSectionById(page);
                 if (!ok)
@@ -211,6 +218,7 @@ ShellRoot {
             }
         }
         onIntentOverlay: target => {
+            root.userActivityDetected();
             if (root.state === "idle" && root._layout) {
                 if (target === "volume")
                     root._layout.volumeOverlay.openAt(null);
@@ -221,6 +229,7 @@ ShellRoot {
             }
         }
         onIntentApp: appId => {
+            root.userActivityDetected();
             if (root.state === "idle") {
                 let apps = root._applications || [];
                 let match = null;
@@ -460,6 +469,8 @@ ShellRoot {
                 // shellIdleTimer (suspend path) and reset by any activity:
                 //   - Wayland key/gamepad nav: ShellLayout.userActivity → root.userActivityDetected
                 //   - Controller daemon wake:  InputManager.controllerWake → root.userActivityDetected
+                //   - Gamepad/keyboard intents: InputManager.onIntent* → root.userActivityDetected
+                //     (Home/Menu/Settings/Power + deep-links — so nav-only input cannot dim mid-use)
                 // Using root.userActivityDetected (a signal on ShellRoot, the QML
                 // document root) avoids id-scope problems with Variants delegates.
                 Components.DimOverlay {
