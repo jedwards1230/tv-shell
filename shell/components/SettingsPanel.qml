@@ -483,8 +483,17 @@ Rectangle {
         }
     }
 
-    // Global key handling
-    Keys.onEscapePressed: root.closed()
+    // Global key handling — B / Escape is hierarchical. The controller B button
+    // arrives as Escape, so this is the handler the pad actually hits (the
+    // Key_B handlers cover a literal keyboard 'B'). From inside a settings page
+    // it backs focus out to the sidebar; from the sidebar it closes the panel
+    // and returns Home. So: page -> B -> sidebar -> B -> Home.
+    Keys.onEscapePressed: {
+        if (!sidebarList.activeFocus)
+            returnToSidebar();
+        else
+            root.closed();
+    }
 
     function openSection(idx) {
         if (visible) {
