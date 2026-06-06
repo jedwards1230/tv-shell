@@ -6,6 +6,9 @@ Item {
 
     property string runningAppClass: ""
     property var runningWindows: []
+    // Signature of the last published runningWindows; gate reassignment on it
+    // so an unchanged poll doesn't rebuild the home row and drop controller focus.
+    property string _runningWindowsSig: ""
     property var applications: []
     property string shellState: ""
 
@@ -76,6 +79,31 @@ Item {
         appLaunched();
     }
 
+    // Address-based focus/close for the per-window home cards. Each running
+    // card carries its Hyprland window address, so we target that exact window
+    // instead of the first one matching a class.
+    function focusByAddress(address) {
+        if (!address || address === "")
+            return;
+        // Track the focused window's class for appClosed detection.
+        for (let i = 0; i < runningWindows.length; i++) {
+            if (runningWindows[i].address === address) {
+                runningAppClass = runningWindows[i].windowClass;
+                break;
+            }
+        }
+        focusWindowAddr.addr = address;
+        focusWindowAddr.running = true;
+        appLaunched();
+    }
+
+    function closeByAddress(address) {
+        if (address && address !== "") {
+            closeWindowAddr.addr = address;
+            closeWindowAddr.running = true;
+        }
+    }
+
     onShellStateChanged: {
         if (shellState === "idle") {
             if (!windowPoller.running)
@@ -87,6 +115,24 @@ Item {
         id: closeAppWindow
         property string appClass: ""
         command: ["hyprctl", "dispatch", "closewindow", "class:" + appClass]
+    }
+
+    Process {
+        id: closeWindowAddr
+        property string addr: ""
+        command: ["hyprctl", "dispatch", "closewindow", "address:" + addr]
+    }
+
+    Process {
+        id: focusWindowAddr
+        property string addr: ""
+        command: ["hyprctl", "dispatch", "focuswindow", "address:" + addr]
+        onExited: exitCode => {
+            if (exitCode !== 0 && root.shellState === "appRunning")
+                root.appClosed();
+            else
+                ensureFullscreen.running = true;
+        }
     }
 
     Process {
@@ -195,15 +241,13 @@ Item {
         onClientsReceived: clients => {
             let apps = (root.applications || []);
             let windows = [];
-            let seenClasses = Object.create(null);
+            // One entry PER WINDOW (no class dedup) so the home row can show a
+            // card per running window and focus/close each one individually.
             for (let i = 0; i < clients.length; i++) {
                 let c = clients[i];
                 let cls = c["class"] || "";
                 if (cls === "" || cls.indexOf("quickshell") >= 0)
                     continue;
-                if (seenClasses[cls])
-                    continue;
-                seenClasses[cls] = true;
 
                 let iconName = (c["initialClass"] || cls).toLowerCase();
                 let appIcon = iconName;
@@ -220,13 +264,27 @@ Item {
 
                 windows.push({
                     windowClass: cls,
+                    address: c["address"] || "",
                     title: c["title"] || cls,
                     name: appName,
                     icon: appIcon,
+                    // Hyprland focus order (0 = most recently focused); used to
+                    // sort the running cards most-recently-used first.
+                    focusHistoryId: (c["focusHistoryId"] !== undefined) ? c["focusHistoryId"] : 9999,
                     exec: ""
                 });
             }
-            root.runningWindows = windows;
+            // Only publish when the window set actually changed (class/address/
+            // name/icon/focus-order). The poll fires every few seconds; a blind
+            // reassignment rebuilds the home row's delegates and can drop
+            // controller focus to nothing (dead stick until the mouse re-anchors).
+            let sig = windows.map(function (w) {
+                return w.windowClass + "|" + w.address + "|" + w.name + "|" + w.icon + "|" + w.focusHistoryId;
+            }).join(";");
+            if (sig !== root._runningWindowsSig) {
+                root._runningWindowsSig = sig;
+                root.runningWindows = windows;
+            }
 
             // Track miss counts in _launchedApps
             let tracked = root._launchedApps;

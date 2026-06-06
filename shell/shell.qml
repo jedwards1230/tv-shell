@@ -29,6 +29,13 @@ ShellRoot {
                 name: "idle"
                 PropertyChanges {
                     target: root
+                    // restoreEntryValues:false — when idle is entered with the
+                    // overlay drawer open (Home-tap over an app, then Home from
+                    // the nav), force it closed but do NOT restore the prior
+                    // `true` on exit. Without this, launching the next app
+                    // restores overlayDrawerOpen=true and the drawer reopens
+                    // over the fresh app.
+                    restoreEntryValues: false
                     overlayDrawerOpen: false
                 }
             },
@@ -436,8 +443,8 @@ ShellRoot {
                     }
                 }
                 onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
-                onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
-                onAppCloseRequested: windowClass => appLifecycle.closeAppByClass(windowClass)
+                onAppFocusRequested: address => appLifecycle.focusByAddress(address)
+                onAppCloseRequested: address => appLifecycle.closeByAddress(address)
                 onReturnToShellRequested: root.returnToShell()
                 onUserActivity: {
                     root._resetIdleTimer();

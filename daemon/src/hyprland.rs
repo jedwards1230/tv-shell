@@ -215,6 +215,13 @@ fn client_entry(v: &Value) -> Value {
             .and_then(|w| w.get("name"))
             .and_then(Value::as_str)
             .unwrap_or(""),
+        // Hyprland's per-window focus order (0 = most recently focused). Lets the
+        // shell sort running-window cards most-recently-used first. Absent -> a
+        // large sentinel so unknown windows sort last.
+        "focusHistoryId": v
+            .get("focusHistoryID")
+            .and_then(Value::as_i64)
+            .unwrap_or(9999),
     })
 }
 
@@ -338,14 +345,16 @@ mod tests {
 
     #[test]
     fn clients_reshapes_each_entry_with_workspace_name() {
-        let body = r#"[{"address":"0x1","class":"foo","title":"Foo","workspace":{"id":2,"name":"web"}},
+        let body = r#"[{"address":"0x1","class":"foo","title":"Foo","focusHistoryID":0,"workspace":{"id":2,"name":"web"}},
                        {"address":"0x2","class":"bar","title":"Bar","workspace":{"id":3,"name":"games"}}]"#;
         let out = parse_clients(body);
         let v: Value = serde_json::from_str(&out).unwrap();
         let arr = v.as_array().unwrap();
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0].get("workspace").unwrap(), "web");
+        assert_eq!(arr[0].get("focusHistoryId").unwrap(), 0);
         assert_eq!(arr[1].get("class").unwrap(), "bar");
+        assert_eq!(arr[1].get("focusHistoryId").unwrap(), 9999); // absent -> sentinel
     }
 
     #[test]

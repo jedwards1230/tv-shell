@@ -31,8 +31,8 @@ FocusScope {
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
-    signal appFocusRequested(string windowClass)
-    signal appCloseRequested(string windowClass)
+    signal appFocusRequested(string address)
+    signal appCloseRequested(string address)
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
@@ -43,27 +43,40 @@ FocusScope {
     // from shell.qml's timer implementation.
     signal userActivity
 
-    onActiveFocusChanged: {
-        if (activeFocus)
-            _ensureRowFocusTimer.restart();
+    // Re-anchor controller focus to a row whenever HomeScreen holds focus but
+    // no row does. Otherwise directional input has nothing to act on and the
+    // stick goes dead until the mouse re-anchors focus (forceActiveFocus on
+    // hover). Returns silently when a row (or the popover/app-view rows) is
+    // already focused.
+    function _reanchorFocusIfNeeded() {
+        if (!root.activeFocus)
+            return;
+        if (statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
+            return;
+        for (let i = 0; i < appViewRepeater.count; i++) {
+            let item = appViewRepeater.itemAt(i);
+            if (item && item.navigableRow && item.navigableRow.activeFocus)
+                return;
+        }
+        root._focusFirstVisibleRow();
     }
 
+    // Safety net: a one-shot restart on focus-gain isn't enough — focus can be
+    // lost from a row WHILE HomeScreen keeps focus (a delegate rebuild on a
+    // model change destroys the focused card), which fires no activeFocus
+    // signal. Poll on a low interval while focused so any drop self-heals fast.
     Timer {
         id: _ensureRowFocusTimer
-        interval: 10
-        onTriggered: {
-            if (!root.activeFocus)
-                return;
-            if (statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
-                return;
-            for (let i = 0; i < appViewRepeater.count; i++) {
-                let item = appViewRepeater.itemAt(i);
-                if (item && item.navigableRow && item.navigableRow.activeFocus)
-                    return;
-            }
-            root._focusFirstVisibleRow();
-        }
+        interval: 150
+        repeat: true
+        running: root.activeFocus
+        triggeredOnStart: true
+        onTriggered: root._reanchorFocusIfNeeded()
     }
+
+    // Re-check immediately (next tick, after delegates rebuild) whenever the
+    // running-window model changes — the most common trigger for a dropped card.
+    onRunningWindowsChanged: Qt.callLater(root._reanchorFocusIfNeeded)
 
     function launchApp(app) {
         root.appLaunchRequested(app);
@@ -164,6 +177,10 @@ FocusScope {
     readonly property var _mergedModel: {
         let running = root.runningWindows || [];
         let recents = RecentsTracker.recentApps || [];
+        // Desktop apps (with icons) for resolving a recent's icon once it is no
+        // longer running. Recents persist only {name,exec,comment}, so a closed
+        // app would otherwise lose its icon and fall back to the letter glyph.
+        let allApps = AppDiscoveryManager.applications || [];
 
         // Build a set of exec basenames / names for running windows so we can
         // match them against recent app entries (which carry exec/name, not
@@ -205,42 +222,54 @@ FocusScope {
             return false;
         }
 
-        // Build enriched running entries, pairing each window with its recent entry if any
+        // Resolve a recent's icon from the desktop app list (recents don't store
+        // icons). Match by exact app name, else by exec basename, so the icon
+        // stays put after the app's windows close.
+        function resolveRecentIcon(rec) {
+            let rexec = execBasename(rec.exec || "");
+            for (let i = 0; i < allApps.length; i++) {
+                let a = allApps[i];
+                if (a.name && rec.name && a.name === rec.name)
+                    return a.icon || "";
+                if (rexec !== "" && execBasename(a.exec || "") === rexec)
+                    return a.icon || "";
+            }
+            return rec.icon || "";
+        }
+
+        // One entry per running WINDOW (no class collapse). Label by window
+        // title so multiple windows of one app are distinguishable; the icon
+        // stays the app icon (the same glyph repeated per window). Mark any
+        // recent a window represents so it isn't ALSO shown as a non-running
+        // recent card.
         let runningEntries = [];
         let matchedRecentIndices = new Set();
 
         for (let r = 0; r < running.length; r++) {
             let win = running[r];
-            let recentMatch = null;
-            let recentIdx = recents.length;
             for (let j = 0; j < recents.length; j++) {
-                if (runningMatchesRecent(win, recents[j])) {
-                    recentMatch = recents[j];
-                    recentIdx = j;
+                if (runningMatchesRecent(win, recents[j]))
                     matchedRecentIndices.add(j);
-                    break;
-                }
             }
             runningEntries.push({
-                // Merge window info over recent info: prefer window's live title/name,
-                // but use recent's icon/exec when available for better display.
                 windowClass: win.windowClass,
-                name: (recentMatch && recentMatch.name) ? recentMatch.name : win.name,
-                icon: (recentMatch && recentMatch.icon) ? recentMatch.icon : win.icon,
-                exec: (recentMatch && recentMatch.exec) ? recentMatch.exec : win.exec,
-                comment: (recentMatch && recentMatch.comment) ? recentMatch.comment : "",
+                address: win.address || "",
+                name: win.title || win.name || win.windowClass,
+                icon: win.icon || "",
+                exec: "",
+                comment: "",
                 running: true,
-                recentRank: recentIdx
+                focusHistoryId: (win.focusHistoryId !== undefined) ? win.focusHistoryId : 9999
             });
         }
 
-        // Sort running entries: paired-with-recent apps first (by recency rank),
-        // then externally-started windows (never in recents) after.
+        // Most-recently-focused window first (Hyprland focusHistoryId, 0 = most
+        // recent) so jumping between windows reorders the row live.
         runningEntries.sort(function (a, b) {
-            return a.recentRank - b.recentRank;
+            return a.focusHistoryId - b.focusHistoryId;
         });
 
-        // Collect non-running recents (those not matched to any running window)
+        // Non-running recents (apps not currently open) follow, in recency order.
         let result = runningEntries.slice();
         for (let k = 0; k < recents.length; k++) {
             if (matchedRecentIndices.has(k))
@@ -248,12 +277,13 @@ FocusScope {
             let rec = recents[k];
             result.push({
                 windowClass: "",
+                address: "",
                 name: rec.name || "",
-                icon: rec.icon || "",
+                icon: resolveRecentIcon(rec),
                 exec: rec.exec || "",
                 comment: rec.comment || "",
                 running: false,
-                recentRank: k
+                focusHistoryId: 9999
             });
         }
 
@@ -460,7 +490,7 @@ FocusScope {
                     focus: index === mergedRow.currentIndex
                     onActivated: {
                         if (modelData.running === true) {
-                            root.appFocusRequested(modelData.windowClass);
+                            root.appFocusRequested(modelData.address);
                         } else {
                             root.launchApp(modelData);
                         }
@@ -474,18 +504,18 @@ FocusScope {
                         popoverMenu.targetX = pos.x;
                         popoverMenu.targetY = pos.y;
                         if (entry.running === true) {
-                            let wc = entry.windowClass;
+                            let addr = entry.address;
                             popoverMenu.actions = [
                                 {
                                     label: "Resume",
                                     action: function () {
-                                        root.appFocusRequested(wc);
+                                        root.appFocusRequested(addr);
                                     }
                                 },
                                 {
                                     label: "Quit App",
                                     action: function () {
-                                        root.appCloseRequested(wc);
+                                        root.appCloseRequested(addr);
                                     }
                                 }
                             ];
