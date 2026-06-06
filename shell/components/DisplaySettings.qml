@@ -1166,8 +1166,10 @@ FocusScope {
                         id: overscanOptScope
                         required property var modelData
                         required property int index
-                        width: overscanBtn.width
-                        height: overscanBtn.height
+                        // Intrinsic size avoids a parent.width -> overscanBtn.width
+                        // -> parent.width binding loop (same fix as the dim-delay row).
+                        width: overscanBtn.implicitWidth
+                        height: overscanBtn.implicitHeight
 
                         SettingsButton {
                             id: overscanBtn
@@ -1308,8 +1310,11 @@ FocusScope {
                         id: delayOptScope
                         required property var modelData
                         required property int index
-                        width: delayBtn.width
-                        height: delayBtn.height
+                        // Size from the button's intrinsic size (not its actual
+                        // width/height) to avoid a parent.width -> delayBtn.width
+                        // -> parent.width binding loop while it anchors.fill: parent.
+                        width: delayBtn.implicitWidth
+                        height: delayBtn.implicitHeight
 
                         SettingsButton {
                             id: delayBtn

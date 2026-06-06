@@ -70,10 +70,16 @@ Item {
     }
 
     // Inactivity countdown — fires once when the idle delay elapses.
+    //
+    // `running` is NOT bound to autoDimEnabled: that binding would re-assert
+    // running:true after the one-shot fired (autoDimEnabled stays true), so the
+    // timer would restart forever and re-dim immediately. Instead the timer is
+    // driven explicitly — restarted on each activity (resetDimTimer / settings
+    // changes / startup) and left stopped after it fires, so it dims exactly
+    // once per inactivity period and only re-arms on real input.
     Timer {
         id: dimTimer
         interval: SettingsStore.autoDimDelayMinutes * 60000
-        running: SettingsStore.autoDimEnabled
         repeat: false
         onTriggered: {
             if (SettingsStore.autoDimEnabled)
