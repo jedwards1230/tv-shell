@@ -2,107 +2,187 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 
+// AV Control settings — rewritten (#16) to consume the daemon's `cec-*` IPC
+// instead of shelling out to cec-ctl / cec-client / living-room-cec. The daemon
+// owns one persistent in-process libcec connection (cec-rs), which fixes the
+// intermittent detection the per-call subprocess approach suffered from.
+//
+// IPC commands used (see docs/IPC_PROTOCOL.md):
+//   cec-scan              -> JSON array of {logicalAddress, powerStatus}
+//   cec-power-on <addr>   -> ok | error:*
+//   cec-power-off <addr>  -> ok | error:*
+//   cec-active-source     -> ok | error:*  ("Switch Input" = set active source)
+//
+// Subscribe events (prefix-matched on the subscribe stream):
+//   cec:device:<json>  -> {logicalAddress, powerStatus}; merge into root.devices
+//   cec:power:<json>   -> {addr, power}; update powerStatus for that device
+//
+// NOTE: cec-rs 12.0.1 wraps no per-device metadata query (OSD name, physical
+// address, vendor, type), so the daemon emits only logicalAddress + powerStatus.
+// Friendly names are derived locally from the logical address. The former
+// living-room-cec / cec-ctl / cec-client QML fallback chain is removed — when
+// the daemon is built without `--features cec` (or libcec is absent at runtime)
+// every cec-* command replies error:* and this panel shows an unavailable card.
+//
 // Root MUST be a FocusScope (not Item) so SettingsPanel's
-// contentLoader.item.forceActiveFocus() delegates focus into the
-// focus:true child (wakeScope). A plain Item swallows focus and the
-// page becomes unnavigable when entered via the Right d-pad.
+// contentLoader.item.forceActiveFocus() delegates focus into the focus:true
+// child (wakeScope). A plain Item swallows focus and the page becomes
+// unnavigable when entered via the Right d-pad.
 FocusScope {
     id: root
-    implicitHeight: avMainCol.implicitHeight + 2 * Theme.padding
 
     property bool cecAvailable: false
-    property bool hasAvScript: false
-    // "cec-ctl" or "cec-client" — whichever was found
-    property string cecTool: ""
-    // Resolved path to living-room-cec (empty if not found)
-    property string avScriptPath: ""
     property var devices: []
     property string statusText: "Checking CEC availability..."
     property string actionFeedback: ""
 
-    // --- Tool detection: living-room-cec > cec-ctl > cec-client ---
-    // Checks command -v AND explicit paths to handle PATH gaps
-    Process {
-        id: detectTools
-        command: ["bash", "-c", "if [ -x /usr/local/bin/living-room-cec ]; then echo script:/usr/local/bin/living-room-cec; elif [ -x /usr/local/sbin/living-room-cec ]; then echo script:/usr/local/sbin/living-room-cec; elif command -v living-room-cec >/dev/null 2>&1; then echo script:$(command -v living-room-cec); fi; command -v cec-ctl >/dev/null 2>&1 && echo tool:cec-ctl; command -v cec-client >/dev/null 2>&1 && echo tool:cec-client; echo done"]
-        stdout: SplitParser {
-            onRead: line => {
-                var trimmed = line.trim();
-                if (trimmed.startsWith("script:")) {
-                    root.hasAvScript = true;
-                    root.avScriptPath = trimmed.substring(7);
-                } else if (trimmed.startsWith("tool:") && root.cecTool === "") {
-                    // First tool found wins (cec-ctl before cec-client)
-                    root.cecTool = trimmed.substring(5);
+    // Friendly label for a CEC logical address (no OSD name in cec-rs 12.0.1).
+    function nameForAddress(addr) {
+        switch (addr) {
+        case 0:
+            return "TV";
+        case 1:
+        case 2:
+            return "Recorder " + addr;
+        case 3:
+        case 6:
+        case 7:
+        case 10:
+            return "Tuner";
+        case 4:
+        case 8:
+        case 11:
+            return "Playback Device";
+        case 5:
+            return "Audio System";
+        default:
+            return "Device " + addr;
+        }
+    }
+
+    // --- Daemon IPC via SocketClient (mirrors NetworkSettings.qml) ---
+
+    // Round-trip scan: request `cec-scan`, receive a JSON array of devices.
+    SocketClient {
+        id: scanClient
+        onResponseReceived: line => {
+            var trimmed = line.trim();
+            if (trimmed.length === 0 || (trimmed[0] !== "[" && trimmed[0] !== "{")) {
+                // error:* reply or empty — daemon reports no usable CEC adapter.
+                root.cecAvailable = false;
+                root.statusText = "CEC unavailable";
+            } else {
+                try {
+                    var arr = JSON.parse(trimmed);
+                    root.devices = Array.isArray(arr) ? arr : [];
                     root.cecAvailable = true;
-                } else if (trimmed === "done") {
-                    // If we have a script but no low-level tool, still mark available
-                    if (root.hasAvScript && !root.cecAvailable) {
-                        root.cecAvailable = true;
-                    }
-                    if (root.cecAvailable) {
-                        root.statusText = "CEC available — scanning devices...";
-                        root.startScan();
+                    if (root.devices.length > 0) {
+                        root.statusText = root.devices.length + " device" + (root.devices.length !== 1 ? "s" : "") + " detected";
                     } else {
-                        root.statusText = "CEC tools not installed";
+                        root.statusText = "No CEC devices found";
                     }
+                } catch (e) {
+                    console.log("AVControlSettings: failed to parse cec-scan:", e);
+                    root.cecAvailable = false;
+                    root.statusText = "CEC unavailable";
+                }
+            }
+        }
+        onRequestFailed: {
+            root.cecAvailable = false;
+            root.statusText = "CEC unavailable";
+        }
+    }
+
+    // Subscribe stream: receive live cec:device:* and cec:power:* events so
+    // device rows update without re-polling — the reliability win behind #16.
+    SocketClient {
+        id: cecEvents
+        subscribe: true
+        onLineReceived: line => {
+            if (line.startsWith("cec:device:")) {
+                try {
+                    var obj = JSON.parse(line.substring(11));
+                    // Merge/update the device into root.devices by logicalAddress.
+                    var updated = false;
+                    var copy = root.devices.slice();
+                    for (var i = 0; i < copy.length; i++) {
+                        if (copy[i].logicalAddress === obj.logicalAddress) {
+                            copy[i] = obj;
+                            updated = true;
+                            break;
+                        }
+                    }
+                    if (!updated)
+                        copy.push(obj);
+                    root.devices = copy;
+                    root.cecAvailable = true;
+                    if (root.devices.length > 0) {
+                        root.statusText = root.devices.length + " device" + (root.devices.length !== 1 ? "s" : "") + " detected";
+                    }
+                } catch (e) {
+                    console.log("AVControlSettings: failed to parse cec:device event:", e);
+                }
+            } else if (line.startsWith("cec:power:")) {
+                try {
+                    var pwr = JSON.parse(line.substring(10));
+                    // The daemon sends addr as a wire string ("0"); logicalAddress
+                    // is numeric, so coerce before matching.
+                    var pwrAddr = Number(pwr.addr);
+                    var pwrCopy = root.devices.slice();
+                    for (var j = 0; j < pwrCopy.length; j++) {
+                        if (pwrCopy[j].logicalAddress === pwrAddr) {
+                            pwrCopy[j] = Object.assign({}, pwrCopy[j], {
+                                powerStatus: pwr.power
+                            });
+                            break;
+                        }
+                    }
+                    root.devices = pwrCopy;
+                } catch (e) {
+                    console.log("AVControlSettings: failed to parse cec:power event:", e);
                 }
             }
         }
     }
 
-    // --- Device scan ---
-    // Probes well-known CEC logical addresses using whatever tool is available.
-    // cec-ctl: query power, OSD name, vendor per address
-    // cec-client: legacy scan command
-    Process {
-        id: scanDevices
-        command: ["bash", "-c", "true"]
-        stdout: SplitParser {
-            property string buffer: ""
-            onRead: line => {
-                buffer += line + "\n";
-            }
-        }
-        onExited: {
-            root._parseScanOutput(scanDevices.stdout.buffer);
-            scanDevices.stdout.buffer = "";
-        }
-    }
-
-    function startScan() {
-        scanDevices.command = ["bash", "-c", root._buildScanCommand()];
-        scanDevices.running = true;
-    }
-
-    // --- CEC commands ---
-    Process {
-        id: wakeCmd
-        command: ["bash", "-c", ""]
-        onExited: exitCode => {
-            root.actionFeedback = exitCode === 0 ? "Wake command sent" : "Wake command failed";
+    // Action clients — each is a one-shot request/response socket.
+    SocketClient {
+        id: wakeClient
+        onResponseReceived: response => {
+            root.actionFeedback = response === "ok" ? "Wake command sent" : "Wake command failed";
             feedbackTimer.restart();
-            if (exitCode === 0)
+            if (response === "ok")
                 refreshAfterAction.restart();
         }
-    }
-
-    Process {
-        id: sleepCmd
-        command: ["bash", "-c", ""]
-        onExited: exitCode => {
-            root.actionFeedback = exitCode === 0 ? "Sleep command sent" : "Sleep command failed";
+        onRequestFailed: {
+            root.actionFeedback = "Wake command failed";
             feedbackTimer.restart();
-            if (exitCode === 0)
-                refreshAfterAction.restart();
         }
     }
 
-    Process {
-        id: switchInputCmd
-        command: ["bash", "-c", ""]
-        onExited: exitCode => {
-            root.actionFeedback = exitCode === 0 ? "Input switch command sent" : "Input switch command failed";
+    SocketClient {
+        id: sleepClient
+        onResponseReceived: response => {
+            root.actionFeedback = response === "ok" ? "Sleep command sent" : "Sleep command failed";
+            feedbackTimer.restart();
+            if (response === "ok")
+                refreshAfterAction.restart();
+        }
+        onRequestFailed: {
+            root.actionFeedback = "Sleep command failed";
+            feedbackTimer.restart();
+        }
+    }
+
+    SocketClient {
+        id: switchClient
+        onResponseReceived: response => {
+            root.actionFeedback = response === "ok" ? "Input switch command sent" : "Input switch command failed";
+            feedbackTimer.restart();
+        }
+        onRequestFailed: {
+            root.actionFeedback = "Input switch command failed";
             feedbackTimer.restart();
         }
     }
@@ -114,7 +194,7 @@ FocusScope {
         running: root.visible && root.cecAvailable
         repeat: true
         onTriggered: {
-            root.startScan();
+            scanClient.request("cec-scan");
         }
     }
 
@@ -130,17 +210,21 @@ FocusScope {
         id: refreshAfterAction
         interval: 5000
         onTriggered: {
-            root.startScan();
+            scanClient.request("cec-scan");
         }
     }
 
     Component.onCompleted: {
-        detectTools.running = true;
+        scanClient.request("cec-scan");
+        cecEvents.start();
     }
 
     onVisibleChanged: {
         if (visible) {
-            detectTools.running = true;
+            scanClient.request("cec-scan");
+            cecEvents.start();
+        } else {
+            cecEvents.stop();
         }
     }
 
@@ -153,221 +237,20 @@ FocusScope {
             root.forceActiveFocus();
     }
 
-    // --- Build scan command based on available tool ---
-    function _buildScanCommand() {
-        // Prefer living-room-cec status — it's the high-level wrapper that works reliably
-        if (root.hasAvScript) {
-            return root.avScriptPath + " status 2>/dev/null";
-        }
-        if (root.cecTool === "cec-ctl") {
-            // Probe TV (0) and Audio System (5) — the standard CEC addresses
-            // For each: query power status, OSD name, vendor ID
-            return ["for addr in 0 5; do", "  echo \"===DEVICE addr=$addr===\"", "  timeout 3 cec-ctl --to $addr --give-device-power-status 2>/dev/null", "  timeout 3 cec-ctl --to $addr --give-osd-name 2>/dev/null", "  timeout 3 cec-ctl --to $addr --give-device-vendor-id 2>/dev/null", "done"].join("; ");
-        }
-        if (root.cecTool === "cec-client") {
-            return "echo 'scan' | timeout 10 cec-client -s -d 1 2>/dev/null";
-        }
-        // No tools available
-        return "echo 'no-tool'";
-    }
-
-    // --- Parse scan output based on tool ---
-    function _parseScanOutput(output) {
-        if (root.hasAvScript) {
-            _parseScriptStatusOutput(output);
-        } else if (root.cecTool === "cec-ctl") {
-            _parseCecCtlOutput(output);
-        } else if (root.cecTool === "cec-client") {
-            _parseCecClientOutput(output);
-        }
-    }
-
-    // --- Parse cec-ctl output ---
-    function _parseCecCtlOutput(output) {
-        var devs = [];
-        var sections = output.split("===DEVICE");
-        for (var i = 1; i < sections.length; i++) {
-            var section = sections[i];
-
-            // Extract logical address from header
-            var addrMatch = section.match(/addr=(\d+)===/);
-            if (!addrMatch)
-                continue;
-            var logAddr = parseInt(addrMatch[1]);
-            var dev = {
-                logicalAddress: logAddr,
-                name: logAddr === 0 ? "TV" : logAddr === 5 ? "Audio System" : "Device " + logAddr,
-                physicalAddress: "",
-                vendor: "",
-                powerStatus: "unknown",
-                type: logAddr === 0 ? "TV" : logAddr === 5 ? "Audio System" : ""
-            };
-
-            // Power status: "pwr-state: on (0x00)" or "pwr-state: standby (0x01)"
-            var pwrMatch = section.match(/pwr-state:\s*(\S+)/);
-            if (pwrMatch) {
-                dev.powerStatus = pwrMatch[1].toLowerCase();
-            } else {
-                // No response = device not present on bus
-                continue;
-            }
-
-            // OSD name: "name: OLED65C2PU"
-            var nameMatch = section.match(/^\s*name:\s*(.+)$/m);
-            if (nameMatch) {
-                dev.name = nameMatch[1].trim();
-            }
-
-            // Vendor: "vendor-id: 0x00e091 (LG)"
-            var vendorMatch = section.match(/vendor-id:\s*\S+\s*\((\S+)\)/);
-            if (vendorMatch) {
-                dev.vendor = vendorMatch[1];
-            }
-
-            devs.push(dev);
-        }
-
-        root.devices = devs;
-        if (devs.length > 0) {
-            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected";
-        } else {
-            root.statusText = "No CEC devices found";
-        }
-    }
-
-    // --- Parse cec-client scan output ---
-    function _parseCecClientOutput(output) {
-        var devs = [];
-        var lines = output.split("\n");
-        var current = null;
-
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-
-            var deviceMatch = line.match(/device\s+#(\d+):/);
-            if (deviceMatch) {
-                if (current)
-                    devs.push(current);
-                current = {
-                    logicalAddress: parseInt(deviceMatch[1]),
-                    name: "Unknown",
-                    physicalAddress: "",
-                    vendor: "",
-                    powerStatus: "unknown",
-                    type: ""
-                };
-                continue;
-            }
-            if (!current)
-                continue;
-            var osdMatch = line.match(/osd string\s*:\s*(.+)/i);
-            if (osdMatch) {
-                current.name = osdMatch[1].trim();
-                continue;
-            }
-
-            var physMatch = line.match(/address\s*:\s*([0-9.]+)/i);
-            if (physMatch) {
-                current.physicalAddress = physMatch[1].trim();
-                continue;
-            }
-
-            var vendorMatch = line.match(/vendor\s*:\s*(.+)/i);
-            if (vendorMatch) {
-                current.vendor = vendorMatch[1].trim();
-                continue;
-            }
-
-            var powerMatch = line.match(/power status\s*:\s*(.+)/i);
-            if (powerMatch) {
-                current.powerStatus = powerMatch[1].trim().toLowerCase();
-                continue;
-            }
-
-            var typeMatch = line.match(/type\s*:\s*(.+)/i);
-            if (typeMatch) {
-                current.type = typeMatch[1].trim();
-                continue;
-            }
-        }
-        if (current)
-            devs.push(current);
-
-        root.devices = devs;
-        if (devs.length > 0) {
-            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected";
-        } else {
-            root.statusText = "No CEC devices found";
-        }
-    }
-
-    // --- Parse living-room-cec status output ---
-    // Output format: "  TV: on" / "  AVR: standby"
-    function _parseScriptStatusOutput(output) {
-        var devs = [];
-        var lines = output.split("\n");
-
-        for (var i = 0; i < lines.length; i++) {
-            var match = lines[i].match(/^\s*(TV|AVR)\s*:\s*(\S+)/i);
-            if (match) {
-                devs.push({
-                    logicalAddress: match[1].toUpperCase() === "TV" ? 0 : 5,
-                    name: match[1].toUpperCase(),
-                    physicalAddress: "",
-                    vendor: "",
-                    powerStatus: match[2].toLowerCase(),
-                    type: match[1].toUpperCase() === "TV" ? "TV" : "Audio System"
-                });
-            }
-        }
-
-        root.devices = devs;
-        if (devs.length > 0) {
-            root.statusText = devs.length + " device" + (devs.length !== 1 ? "s" : "") + " detected";
-        } else {
-            root.statusText = "No CEC devices found";
-        }
-    }
-
     function doWake() {
-        if (root.hasAvScript) {
-            wakeCmd.command = [root.avScriptPath, "on"];
-        } else if (root.cecTool === "cec-ctl") {
-            wakeCmd.command = ["bash", "-c", "cec-ctl --to 0 --image-view-on 2>/dev/null"];
-        } else {
-            wakeCmd.command = ["bash", "-c", "echo 'on 0' | cec-client -s -d 1 2>/dev/null"];
-        }
-        wakeCmd.running = true;
+        wakeClient.request("cec-power-on 0");
     }
 
     function doSleep() {
-        if (root.hasAvScript) {
-            sleepCmd.command = [root.avScriptPath, "off"];
-        } else if (root.cecTool === "cec-ctl") {
-            sleepCmd.command = ["bash", "-c", "cec-ctl --to 0 --standby 2>/dev/null; cec-ctl --to 15 --standby 2>/dev/null"];
-        } else {
-            sleepCmd.command = ["bash", "-c", "echo 'standby 0' | cec-client -s -d 1 2>/dev/null"];
-        }
-        sleepCmd.running = true;
+        sleepClient.request("cec-power-off 0");
     }
 
     function doSwitchInput() {
-        if (root.hasAvScript) {
-            // living-room-cec "on" includes input switching
-            switchInputCmd.command = [root.avScriptPath, "on"];
-        } else if (root.cecTool === "cec-ctl") {
-            switchInputCmd.command = ["bash", "-c", "cec-ctl --active-source phys-addr=$(cec-ctl -s 2>/dev/null | grep -oP 'Physical Address\\s*:\\s*\\K[0-9.]+') 2>/dev/null"];
-        } else if (root.cecTool === "cec-client") {
-            switchInputCmd.command = ["bash", "-c", "echo 'as' | cec-client -s -d 1 2>/dev/null"];
-        } else {
-            switchInputCmd.command = ["bash", "-c", "echo 'no CEC tool available'; exit 1"];
-        }
-        switchInputCmd.running = true;
+        switchClient.request("cec-active-source");
     }
 
     // --- UI ---
     ColumnLayout {
-        id: avMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32
@@ -425,7 +308,7 @@ FocusScope {
 
                     onActivated: {
                         root.statusText = "Scanning...";
-                        root.startScan();
+                        scanClient.request("cec-scan");
                     }
                 }
 
@@ -464,7 +347,7 @@ FocusScope {
                 }
 
                 Text {
-                    text: "Install v4l-utils (cec-ctl) or libcec (cec-client) for HDMI-CEC device control."
+                    text: "CEC requires the daemon built with libcec support."
                     font.pixelSize: Theme.fontSmall
                     color: Theme.textSecondary
                     Layout.alignment: Qt.AlignHCenter
@@ -504,8 +387,8 @@ FocusScope {
                     width: 340
                     height: 120
                     // Only claim the root scope's focus when actually visible
-                    // (CEC available). Otherwise the root FocusScope holds
-                    // focus itself so the read-only state stays dismissable.
+                    // (CEC available). Otherwise the root FocusScope holds focus
+                    // itself so the read-only state stays dismissable.
                     focus: root.cecAvailable
                     activeFocusOnTab: true
 
@@ -539,7 +422,7 @@ FocusScope {
                             }
 
                             Text {
-                                text: root.hasAvScript ? "Using AV script" : "CEC power on"
+                                text: "CEC power on"
                                 font.pixelSize: Theme.fontSmall
                                 color: wakeScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
                                 Layout.alignment: Qt.AlignHCenter
@@ -599,7 +482,7 @@ FocusScope {
                             }
 
                             Text {
-                                text: root.hasAvScript ? "Using AV script" : "CEC standby"
+                                text: "CEC standby"
                                 font.pixelSize: Theme.fontSmall
                                 color: sleepScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
                                 Layout.alignment: Qt.AlignHCenter
@@ -748,7 +631,7 @@ FocusScope {
                         anchors.rightMargin: 32
                         spacing: 24
 
-                        // Device icon/name
+                        // Device name + power badge + address detail.
                         ColumnLayout {
                             spacing: 8
                             Layout.fillWidth: true
@@ -757,7 +640,9 @@ FocusScope {
                                 spacing: 16
 
                                 Text {
-                                    text: modelData.name
+                                    // cec-rs 12.0.1 exposes no OSD name; derive a
+                                    // friendly label from the logical address.
+                                    text: root.nameForAddress(modelData.logicalAddress)
                                     font.pixelSize: Theme.fontBody
                                     font.bold: true
                                     color: Theme.textPrimary
@@ -784,6 +669,10 @@ FocusScope {
                                                 return "On";
                                             if (modelData.powerStatus === "standby")
                                                 return "Standby";
+                                            if (modelData.powerStatus === "waking")
+                                                return "Waking";
+                                            if (modelData.powerStatus === "sleeping")
+                                                return "Sleeping";
                                             return "Unknown";
                                         }
                                         font.pixelSize: Theme.fontCaption
@@ -798,28 +687,10 @@ FocusScope {
                                 }
                             }
 
-                            RowLayout {
-                                spacing: 32
-
-                                Text {
-                                    text: "Address: " + modelData.logicalAddress + (modelData.physicalAddress ? " (" + modelData.physicalAddress + ")" : "")
-                                    font.pixelSize: Theme.fontSmall
-                                    color: Theme.textSecondary
-                                }
-
-                                Text {
-                                    text: "Vendor: " + (modelData.vendor || "Unknown")
-                                    font.pixelSize: Theme.fontSmall
-                                    color: Theme.textSecondary
-                                    visible: modelData.vendor !== ""
-                                }
-
-                                Text {
-                                    text: "Type: " + modelData.type
-                                    font.pixelSize: Theme.fontSmall
-                                    color: Theme.textSecondary
-                                    visible: modelData.type !== ""
-                                }
+                            Text {
+                                text: "Logical address: " + modelData.logicalAddress
+                                font.pixelSize: Theme.fontSmall
+                                color: Theme.textSecondary
                             }
                         }
                     }
@@ -839,7 +710,7 @@ FocusScope {
 
         // Hint bar
         Text {
-            text: root.cecAvailable ? "A: Select  |  Auto-refresh every 30s" + (root.cecTool ? "  |  " + root.cecTool : "") : "Install v4l-utils or libcec for CEC support"
+            text: root.cecAvailable ? "A: Select  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
