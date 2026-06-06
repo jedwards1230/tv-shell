@@ -1222,7 +1222,8 @@ FocusScope {
             Layout.preferredHeight: 80
 
             KeyNavigation.up: overscanScope
-            KeyNavigation.down: autoDimDelayScope
+            // #143: skip the disabled delay row — jump straight to modeList when auto-dim is off
+            KeyNavigation.down: SettingsStore.autoDimEnabled ? autoDimDelayScope : modeList
 
             Keys.onReturnPressed: {
                 SettingsStore.setAutoDimEnabled(!SettingsStore.autoDimEnabled);
@@ -1265,7 +1266,10 @@ FocusScope {
             Layout.fillWidth: true
             Layout.preferredHeight: 96
             opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
-
+            // #143: exclude from nav chain when disabled so D-pad focus cannot enter
+            activeFocusOnTab: SettingsStore.autoDimEnabled
+            // When disabled, up from modeList should land on autoDimToggleScope, not here.
+            // We handle this on the modeList side; here just wire up the enabled case.
             KeyNavigation.up: autoDimToggleScope
             KeyNavigation.down: modeList
 
@@ -1405,7 +1409,11 @@ FocusScope {
                 Theme.setThemeMode(modeList.modes[focusIndex].id);
             }
             Keys.onUpPressed: {
-                autoDimDelayScope.forceActiveFocus();
+                // #143: skip the disabled delay row — land on toggle when auto-dim is off
+                if (SettingsStore.autoDimEnabled)
+                    autoDimDelayScope.forceActiveFocus();
+                else
+                    autoDimToggleScope.forceActiveFocus();
             }
 
             Repeater {

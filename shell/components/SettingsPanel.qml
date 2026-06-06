@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
+import Qt5Compat.GraphicalEffects
 
 Rectangle {
     id: root
@@ -251,8 +252,10 @@ Rectangle {
                                 Layout.preferredWidth: 64
                                 Layout.fillHeight: true
 
-                                // All sidebar SVG icons use a consistent fill
-                                // color (#161 — normalizes mono/multicolor mix).
+                                // Sidebar icons use a color overlay (#161) so all icons
+                                // (including the multicolor appearance.svg) render in one
+                                // consistent style that tracks the theme in both dark and
+                                // light modes.  Selected = textPrimary, unselected = textSecondary.
                                 Image {
                                     id: secIcon
                                     anchors.centerIn: parent
@@ -262,6 +265,10 @@ Rectangle {
                                     height: Units.iconSizeMD
                                     fillMode: Image.PreserveAspectFit
                                     visible: status === Image.Ready
+                                    layer.enabled: status === Image.Ready
+                                    layer.effect: ColorOverlay {
+                                        color: root.currentSection === index ? Theme.textPrimary : Theme.textSecondary
+                                    }
                                 }
 
                                 Text {
@@ -397,6 +404,10 @@ Rectangle {
                         height: Theme.fontTitle
                         fillMode: Image.PreserveAspectFit
                         visible: status === Image.Ready
+                        layer.enabled: status === Image.Ready
+                        layer.effect: ColorOverlay {
+                            color: Theme.textPrimary
+                        }
                     }
 
                     Text {
