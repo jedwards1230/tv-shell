@@ -47,28 +47,12 @@ FocusScope {
         }
     }
 
-    // Idle-suspend timer: fires power-suspend after sleepTimerMinutes of idle
-    // time. Restarted on page visibility and key activity; disabled when
-    // sleepTimerMinutes === 0 or canSuspend is false.
-    Timer {
-        id: idleTimer
-        interval: SettingsStore.sleepTimerMinutes * 60000
-        running: SettingsStore.sleepTimerMinutes > 0 && root.canSuspend
-        repeat: false
-        onTriggered: {
-            if (root.canSuspend)
-                suspendCmd.request("power-suspend");
-        }
-    }
-
     Component.onCompleted: canSuspendProc.request("power-can-suspend")
 
     onVisibleChanged: {
         if (visible) {
             root.confirmAction = "";
             canSuspendProc.request("power-can-suspend");
-            if (SettingsStore.sleepTimerMinutes > 0)
-                idleTimer.restart();
         }
     }
 
@@ -106,11 +90,6 @@ FocusScope {
                     activeFocusOnTab: true
 
                     KeyNavigation.down: wakeOnControllerScope
-
-                    Keys.onReturnPressed: {
-                        if (SettingsStore.sleepTimerMinutes > 0)
-                            idleTimer.restart();
-                    }
 
                     SettingsButton {
                         id: sleepTimerBtn
@@ -308,8 +287,6 @@ FocusScope {
                 }
 
                 Keys.onReturnPressed: {
-                    if (SettingsStore.sleepTimerMinutes > 0)
-                        idleTimer.restart();
                     if (root.canSuspend)
                         root.confirmAction = "suspend";
                 }
@@ -369,8 +346,6 @@ FocusScope {
                 }
 
                 Keys.onReturnPressed: {
-                    if (SettingsStore.sleepTimerMinutes > 0)
-                        idleTimer.restart();
                     root.confirmAction = "restart";
                 }
             }
@@ -428,8 +403,6 @@ FocusScope {
                 }
 
                 Keys.onReturnPressed: {
-                    if (SettingsStore.sleepTimerMinutes > 0)
-                        idleTimer.restart();
                     root.confirmAction = "shutdown";
                 }
             }

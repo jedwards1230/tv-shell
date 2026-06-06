@@ -38,6 +38,24 @@ FocusScope {
         homeFocusTimer.restart();
     }
 
+    // Reset the home screen to its default focus position (first card of the
+    // first visible row). Called by shell.qml resetToHome() and by the future
+    // screensaver hook (issue #156).
+    function focusDefaultPosition() {
+        homeFocusTimer.restart();
+        // Post-timer: tell the home screen to reset to its canonical position.
+        defaultPosFocusTimer.restart();
+    }
+
+    Timer {
+        id: defaultPosFocusTimer
+        interval: 60  // slightly after homeFocusTimer (50 ms) has settled focus
+        onTriggered: {
+            if (homeScreen.visible && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened)
+                homeScreen.focusDefaultPosition();
+        }
+    }
+
     // Toggle the nav drawer — the focus-scoped `menu` action. Converges every
     // drawer-toggle surface: the gamepad Home-tap (shell.qml's onIntentHomeTap
     // when idle), the on-screen menu button, and the keyboard Tab path below.

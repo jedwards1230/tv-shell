@@ -107,6 +107,44 @@ FocusScope {
         }
     }
 
+    // === Default focus target (B-button on home screen) ===
+    // The canonical landing position: top content row, first card.
+    // Exposed so shell.qml / screensaver hook can attach later (issue #156).
+    function focusDefaultPosition() {
+        // If already at the default position (first card of the first visible
+        // row), this is a quiet no-op — no navigation change occurs.
+        var firstRow = null;
+        // Prefer the first app-view row when streaming-apps mode is active.
+        if (root._streamingActive && appsRow) {
+            for (var i = 0; i < appViewRepeater.count; i++) {
+                var item = appViewRepeater.itemAt(i);
+                if (item && item.navigableRow && item.navigableRow.visible) {
+                    firstRow = item.navigableRow;
+                    break;
+                }
+            }
+        }
+        if (!firstRow) {
+            var rows = [runningRow, recentsRow];
+            if (root._streamingActive && Theme.streamingViewMode === "servers")
+                rows.push(moonlightRow);
+            rows.push(appsRow);
+            for (var j = 0; j < rows.length; j++) {
+                if (rows[j] && rows[j].visible) {
+                    firstRow = rows[j];
+                    break;
+                }
+            }
+        }
+        if (!firstRow)
+            return;
+        // Already at the default position — no-op.
+        if (firstRow.activeFocus && firstRow.currentIndex === 0)
+            return;
+        firstRow.currentIndex = 0;
+        firstRow.forceActiveFocus();
+    }
+
     // Computed model for app-view rows, re-evaluated when targets or hostApps change
     property var _appViewRows: {
         // Explicitly reference both properties so QML re-evaluates this binding
@@ -313,7 +351,7 @@ FocusScope {
                         popoverMenu.forceActiveFocus();
                     }
                 }
-                onEscaped: root.settingsRequested()
+                onEscaped: root.focusDefaultPosition()
             }
 
             // === Recents Row ===
@@ -355,7 +393,7 @@ FocusScope {
                     onActivated: root.launchApp(modelData)
                 }
 
-                onEscaped: root.settingsRequested()
+                onEscaped: root.focusDefaultPosition()
             }
 
             // === Moonlight Section (server-view or app-view) ===
@@ -420,7 +458,7 @@ FocusScope {
                         }
                     }
                 }
-                onEscaped: root.settingsRequested()
+                onEscaped: root.focusDefaultPosition()
             }
 
             // App view: one row per host, each card is an available app
@@ -560,7 +598,7 @@ FocusScope {
                                     }
                                 }
                             }
-                            onEscaped: root.settingsRequested()
+                            onEscaped: root.focusDefaultPosition()
                         }
                     }
                 }
@@ -600,12 +638,12 @@ FocusScope {
                     onActivated: root.launchApp(modelData)
                 }
 
-                onEscaped: root.settingsRequested()
+                onEscaped: root.focusDefaultPosition()
             }
 
             // === Hint Bar ===
             Text {
-                text: runningRow.activeFocus ? "A: Resume  |  Y: Actions  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row" : (moonlightRow.activeFocus ? "A: Stream  |  Y: Actions  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row" : "A: Launch  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row")
+                text: runningRow.activeFocus ? "A: Resume  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row" : (moonlightRow.activeFocus ? "A: Stream  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row" : "A: Launch  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row")
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
                 Layout.alignment: Qt.AlignHCenter
