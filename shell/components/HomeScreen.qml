@@ -121,10 +121,17 @@ FocusScope {
     function focusDefaultPosition() {
         Qt.callLater(function () {
             var firstRow = null;
-            // Prefer the first app-view row ONLY in streaming-apps mode.
-            // Fix: gate on streamingViewMode === "apps", not just appsRow truthy,
-            // so servers mode falls through to the ordered fallback below.
-            if (root._streamingActive && Theme.streamingViewMode === "apps") {
+            // Priority order: runningRow > recentsRow > app-view rows (apps mode)
+            // > moonlightRow (servers mode) > appsRow.
+            // runningRow and recentsRow always take precedence over streaming rows
+            // so that B from any deeper row returns to the highest visible content
+            // row — matching AC for issue #156.
+            if (runningRow.visible) {
+                firstRow = runningRow;
+            } else if (recentsRow.visible) {
+                firstRow = recentsRow;
+            } else if (root._streamingActive && Theme.streamingViewMode === "apps") {
+                // No recents/running — prefer the first visible app-view row.
                 for (var i = 0; i < appViewRepeater.count; i++) {
                     var item = appViewRepeater.itemAt(i);
                     if (item && item.navigableRow && item.navigableRow.visible) {
@@ -132,21 +139,11 @@ FocusScope {
                         break;
                     }
                 }
-            }
-            if (!firstRow) {
-                var rows = [runningRow, recentsRow];
-                if (root._streamingActive && Theme.streamingViewMode === "servers")
-                    rows.push(moonlightRow);
-                rows.push(appsRow);
-                for (var j = 0; j < rows.length; j++) {
-                    if (rows[j] && rows[j].visible) {
-                        firstRow = rows[j];
-                        break;
-                    }
-                }
+            } else if (root._streamingActive && Theme.streamingViewMode === "servers" && moonlightRow.visible) {
+                firstRow = moonlightRow;
             }
             if (!firstRow)
-                return;
+                firstRow = appsRow;
             // Already at the default position — short-circuit only when the
             // window's active-focus item IS the target row AND its currentIndex
             // is already 0.  Reading activeFocusItem (not firstRow.activeFocus)
