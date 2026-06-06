@@ -315,7 +315,6 @@ async fn run_with_adapter(
                     // BlueZ restarted. Signal the caller to reconnect.
                     None => {
                         if discovery.is_some() {
-                            discovery = None;
                             return Err(anyhow!("adapter discovery stream ended unexpectedly"));
                         }
                     }
