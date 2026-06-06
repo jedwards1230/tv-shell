@@ -676,6 +676,8 @@ mod tests {
                 Control::ControllerDbRefreshed { reply } => {
                     let _ = reply.send(protocol::resp_ok());
                 }
+                // No reply, no device in the fake fleet — mirror the runtime no-op.
+                Control::SetSessionActive(_) => {}
                 Control::Shutdown => break,
             }
         }

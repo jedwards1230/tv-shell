@@ -46,3 +46,9 @@ pub mod hyprland;
 // broadcasts config:changed. Uses notify-debouncer-full (Linux-only crate).
 #[cfg(target_os = "linux")]
 pub mod watch;
+
+// logind session-active watcher: releases the gamepad grab while our session is
+// backgrounded (e.g. VT-switched away) so the foreground DE gets the controller.
+// zbus + logind; Linux-only.
+#[cfg(target_os = "linux")]
+pub mod session;
