@@ -813,6 +813,36 @@ pub fn resp_cec_addr_usage(which: &str) -> String {
     format!("error:usage: {which} <addr>")
 }
 
+/// Build the compact-JSON body for a single CEC device (`cec-device` reply and
+/// the `cec:device:<json>` event payload). Pure string/serde — no `cec-rs`
+/// types — so it compiles and unit-tests in the default (C-free) build leg even
+/// though the libcec actor that calls it is feature-gated. `power_word` is the
+/// already-mapped wire word from `cec::power_status_word` (e.g. "on"/"standby").
+///
+/// Field order is fixed by `serde_json`'s `preserve_order` feature, so the wire
+/// bytes are stable: `{"logicalAddress":N,"powerStatus":"WORD"}`.
+pub fn cec_device_json(logical_addr: i32, power_word: &str) -> String {
+    serde_json::json!({
+        "logicalAddress": logical_addr,
+        "powerStatus": power_word,
+    })
+    .to_string()
+}
+
+/// Build the compact-JSON body for a CEC power-status change (`cec:power:<json>`
+/// event payload after a power-on/power-off). `addr` is the logical address as
+/// a wire string (the daemon keeps it as the small-integer string it received);
+/// `power_word` is the mapped wire word. Pure — testable in the default leg.
+///
+/// Wire bytes: `{"addr":"N","power":"WORD"}`.
+pub fn cec_power_json(addr: &str, power_word: &str) -> String {
+    serde_json::json!({
+        "addr": addr,
+        "power": power_word,
+    })
+    .to_string()
+}
+
 /// Usage line for `sunshine-status` issued without a `<host> <port>` body.
 pub fn resp_sunshine_status_usage() -> String {
     "error:usage: sunshine-status <host> <port>".to_string()
@@ -1615,6 +1645,39 @@ mod tests {
         assert_eq!(
             Event::CecPower(r#"{"addr":5,"power":"on"}"#.into()).to_string(),
             r#"cec:power:{"addr":5,"power":"on"}"#
+        );
+    }
+
+    #[test]
+    fn cec_device_json_is_compact_ordered() {
+        // Field order is fixed (preserve_order): logicalAddress then powerStatus.
+        assert_eq!(
+            cec_device_json(0, "on"),
+            r#"{"logicalAddress":0,"powerStatus":"on"}"#
+        );
+        assert_eq!(
+            cec_device_json(5, "standby"),
+            r#"{"logicalAddress":5,"powerStatus":"standby"}"#
+        );
+    }
+
+    #[test]
+    fn cec_power_json_is_compact_ordered() {
+        // addr stays a wire string; field order is addr then power.
+        assert_eq!(cec_power_json("0", "on"), r#"{"addr":"0","power":"on"}"#);
+        assert_eq!(
+            cec_power_json("5", "sleeping"),
+            r#"{"addr":"5","power":"sleeping"}"#
+        );
+    }
+
+    #[test]
+    fn cec_device_json_round_trips_through_event() {
+        // The device builder output is exactly what the CecDevice event wraps.
+        let body = cec_device_json(4, "waking");
+        assert_eq!(
+            Event::CecDevice(body).to_string(),
+            r#"cec:device:{"logicalAddress":4,"powerStatus":"waking"}"#
         );
     }
 
