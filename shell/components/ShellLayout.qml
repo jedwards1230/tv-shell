@@ -42,8 +42,9 @@ FocusScope {
     }
 
     // Reset the home screen to its default focus position (first card of the
-    // first visible row). Called by shell.qml resetToHome() and by the future
-    // screensaver hook (issue #156).
+    // first visible row). Exposed for the future screensaver hook (issue #156);
+    // shell.qml's resetToHome() / returnToShell() reset path uses focusHome()
+    // (above), not this function.
     //
     // A single Qt.callLater defers both steps until the current event-loop
     // iteration completes — layout and declarative focus bindings have settled
@@ -152,6 +153,16 @@ FocusScope {
                 debugOverlay.currentKeys = names.join(" + ");
             }
         }
+        // Any real keypress is user activity — reset the auto-suspend idle
+        // countdown so the shell never sleeps mid-navigation (#162). This is
+        // the central, non-consuming observer: directional/A/B nav keys are
+        // accepted by the focused row's Keys handlers, but this FocusScope-root
+        // handler still sees every event first. We DON'T consume it
+        // (event.accepted = false below) so navigation is unaffected. Skip
+        // auto-repeat so a held key doesn't fire the signal on every tick; the
+        // shell.qml side already gates the actual restart on state === "idle".
+        if (!event.isAutoRepeat)
+            root.userActivity();
         event.accepted = false;
     }
 
