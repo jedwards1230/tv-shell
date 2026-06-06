@@ -1389,9 +1389,9 @@ mod tests {
     #[test]
     fn parses_sunshine_status_body() {
         assert_eq!(
-            Command::parse("sunshine-status 192.168.8.10 47990"),
+            Command::parse("sunshine-status 192.0.2.1 47990"),
             Command::SunshineStatus {
-                host: "192.168.8.10".into(),
+                host: "192.0.2.1".into(),
                 port: "47990".into()
             }
         );
