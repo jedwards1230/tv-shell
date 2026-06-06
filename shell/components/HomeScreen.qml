@@ -144,6 +144,12 @@ FocusScope {
             }
             if (!firstRow)
                 firstRow = appsRow;
+            // Snap the home view back to the top so the hero clock/date header
+            // is visible again — the canonical home position is focus AND scroll
+            // reset. Done before the short-circuit below so that pressing B while
+            // already focused on the first row (but scrolled down) still scrolls
+            // up. The Flickable's Behavior on contentY animates this smoothly.
+            scrollView.contentY = 0;
             // Already at the default position — short-circuit only when the
             // window's active-focus item IS the target row AND its currentIndex
             // is already 0.  Reading activeFocusItem (not firstRow.activeFocus)
