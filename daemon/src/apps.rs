@@ -315,12 +315,10 @@ mod tests {
         // a real /usr/share/applications file on game-client-1 had a name or
         // comment field with a backslash/quote that broke the IPC response.
         let nasty = App {
-            name: r#"My "App" with ackslash and 日本語"#.into(),
-            exec: r#"run --flag="val" --path=C:oo"#.into(),
+            name: "My \"App\" with \\ backslash and \u{65e5}\u{672c}\u{8a9e}".into(),
+            exec: "run --flag=\"val\" --path=C:\\foo".into(),
             icon: "".into(),
-            comment: "Line1
-Line2	Tabbedbackspace"
-                .into(),
+            comment: "Line1\nLine2\tTabbed\u{0008}backspace\u{000c}form-feed".into(),
             wm_class: "myapp".into(),
         };
         let json = apps_to_json(&[nasty]);
@@ -330,15 +328,16 @@ Line2	Tabbedbackspace"
         let arr = parsed.as_array().unwrap();
         assert_eq!(arr.len(), 1);
         let obj = &arr[0];
-        // Verify the name round-trips exactly.
+        // Verify the name round-trips exactly (incl. the literal backslash,
+        // double-quotes, and non-ASCII Unicode).
         assert_eq!(
             obj["name"].as_str().unwrap(),
-            r#"My "App" with ackslash and 日本語"#
+            "My \"App\" with \\ backslash and \u{65e5}\u{672c}\u{8a9e}"
         );
-        // Verify the exec round-trips exactly.
+        // Verify the exec round-trips exactly (Windows-style backslash path).
         assert_eq!(
             obj["exec"].as_str().unwrap(),
-            r#"run --flag="val" --path=C:oo"#
+            "run --flag=\"val\" --path=C:\\foo"
         );
         // Must be a single line (no embedded newlines in the JSON envelope).
         assert!(

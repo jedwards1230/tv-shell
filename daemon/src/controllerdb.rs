@@ -2,8 +2,10 @@
 //!
 //! The daemon ships a small `assets/gamecontrollerdb.txt` baseline (compiled
 //! in via `include_str!`). This module extends that with a *cached upstream*
-//! copy fetched from GitHub at startup (and on demand via `controllerdb-refresh`
-//! IPC). The runtime match set is:
+//! copy that is fetched from GitHub **on demand** via the `controllerdb-refresh`
+//! IPC (never automatically at startup — no network call on boot). At startup
+//! the daemon reads only the bundled baseline plus any already-present on-disk
+//! cache and env override. The runtime match set is:
 //!
 //!   cached upstream ∪ bundled baseline ∪ GAME_SHELL_GAMECONTROLLERDB env override
 //!
@@ -34,8 +36,12 @@ const BUNDLED_DB: &str = include_str!("../assets/gamecontrollerdb.txt");
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbStatus {
-    /// How the current DB was loaded: `"upstream_cache"`, `"bundled_baseline"`,
-    /// or `"env_override"` (the last one indicates the env var extended the set).
+    /// Which source was applied **last** (last-applied-source-wins, not a
+    /// union): `"bundled_baseline"` when only the shipped DB loaded,
+    /// `"upstream_cache"` when the on-disk cache merged over the baseline, or
+    /// `"env_override"` when the `GAME_SHELL_GAMECONTROLLERDB` override merged
+    /// last. All lower-priority sources are still merged into `entry_count`;
+    /// this label only names the highest-priority active source.
     pub source: String,
     /// Total number of recognized (vendor, product) pairs.
     pub entry_count: usize,
@@ -94,12 +100,17 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// Load the controller DB from all sources (cached upstream ∪ bundled baseline
-/// ∪ env override) in offline-safe order. Also returns the `source` label for
-/// the status reply.
+/// Load the controller DB from all sources (bundled baseline ∪ cached upstream
+/// ∪ env override) in offline-safe priority order. Also returns the `source`
+/// label for the status reply.
 ///
-/// This is a pure, synchronous helper — the async wrapper `fetch_and_update`
-/// is used for network fetches.
+/// The returned `db` is the **union** of every source that was present. The
+/// `source` label, however, names only the **last-applied (highest-priority)**
+/// source — `bundled_baseline` < `upstream_cache` < `env_override`. It is not a
+/// combination string; the union is reflected in `entry_count`, not in `source`.
+///
+/// This is a pure, synchronous helper — the async wrapper `refresh` is used for
+/// network fetches.
 pub fn load_merged_db() -> (ControllerDb, String) {
     let mut db = ControllerDb::parse(BUNDLED_DB);
     let mut source = "bundled_baseline".to_string();
@@ -151,7 +162,7 @@ pub async fn fetch_upstream() -> Result<String, String> {
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
-    let resp = client
+    let mut resp = client
         .get(UPSTREAM_URL)
         .send()
         .await
@@ -161,21 +172,34 @@ pub async fn fetch_upstream() -> Result<String, String> {
         return Err(format!("upstream returned HTTP {}", resp.status()));
     }
 
-    // Cap the download size to guard against a malicious/corrupted response.
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("reading body failed: {e}"))?;
-
-    if bytes.len() as u64 > MAX_DOWNLOAD_BYTES {
-        return Err(format!(
-            "download too large ({} bytes > {} limit)",
-            bytes.len(),
-            MAX_DOWNLOAD_BYTES
-        ));
+    // Reject early on an advertised Content-Length over the cap, before reading
+    // any of the body — cheapest rejection for a well-behaved (or honestly
+    // oversized) server.
+    if let Some(len) = resp.content_length() {
+        if len > MAX_DOWNLOAD_BYTES {
+            return Err(format!(
+                "download too large ({len} bytes > {MAX_DOWNLOAD_BYTES} limit)"
+            ));
+        }
     }
 
-    let text = String::from_utf8_lossy(&bytes).into_owned();
+    // Stream the body chunk-by-chunk with a hard byte cap so a missing or lying
+    // Content-Length can't make us buffer an unbounded response into memory.
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("reading body failed: {e}"))?
+    {
+        if buf.len() as u64 + chunk.len() as u64 > MAX_DOWNLOAD_BYTES {
+            return Err(format!(
+                "download too large (exceeded {MAX_DOWNLOAD_BYTES} byte limit)"
+            ));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+
+    let text = String::from_utf8_lossy(&buf).into_owned();
 
     // Sanity-check: must parse into a non-empty DB (guards against e.g. an
     // HTML 404 page that happens to return a 2xx redirect).
