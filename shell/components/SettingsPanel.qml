@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
+import Qt5Compat.GraphicalEffects
 
 Rectangle {
     id: root
@@ -144,7 +145,7 @@ Rectangle {
         s.push({
             id: "system",
             name: "System",
-            iconSource: "icons/display.svg",
+            iconSource: "icons/system.svg",
             fallback: "\u{1F4BB}",
             component: systemComp
         });
@@ -251,6 +252,10 @@ Rectangle {
                                 Layout.preferredWidth: 64
                                 Layout.fillHeight: true
 
+                                // Sidebar icons use a color overlay (#161) so all icons
+                                // (including the multicolor appearance.svg) render in one
+                                // consistent style that tracks the theme in both dark and
+                                // light modes.  Selected = textPrimary, unselected = textSecondary.
                                 Image {
                                     id: secIcon
                                     anchors.centerIn: parent
@@ -260,6 +265,10 @@ Rectangle {
                                     height: Units.iconSizeMD
                                     fillMode: Image.PreserveAspectFit
                                     visible: status === Image.Ready
+                                    layer.enabled: status === Image.Ready
+                                    layer.effect: ColorOverlay {
+                                        color: root.currentSection === index ? Theme.textPrimary : Theme.textSecondary
+                                    }
                                 }
 
                                 Text {
@@ -395,6 +404,10 @@ Rectangle {
                         height: Theme.fontTitle
                         fillMode: Image.PreserveAspectFit
                         visible: status === Image.Ready
+                        layer.enabled: status === Image.Ready
+                        layer.effect: ColorOverlay {
+                            color: Theme.textPrimary
+                        }
                     }
 
                     Text {
@@ -470,8 +483,17 @@ Rectangle {
         }
     }
 
-    // Global key handling
-    Keys.onEscapePressed: root.closed()
+    // Global key handling — B / Escape is hierarchical. The controller B button
+    // arrives as Escape, so this is the handler the pad actually hits (the
+    // Key_B handlers cover a literal keyboard 'B'). From inside a settings page
+    // it backs focus out to the sidebar; from the sidebar it closes the panel
+    // and returns Home. So: page -> B -> sidebar -> B -> Home.
+    Keys.onEscapePressed: {
+        if (!sidebarList.activeFocus)
+            returnToSidebar();
+        else
+            root.closed();
+    }
 
     function openSection(idx) {
         if (visible) {
