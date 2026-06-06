@@ -671,31 +671,21 @@ pub fn resolve_button_key(
     game: Option<&std::collections::HashMap<&'static str, u16>>,
     button: u16,
 ) -> Option<u16> {
-    // Build the effective action->button map by overlaying player then game onto
-    // global. There are at most 4 actions, so this is O(1) in practice.
-    let mut action_button: std::collections::HashMap<&'static str, u16> =
-        std::collections::HashMap::with_capacity(4);
+    // At most 4 actions, so compute each action's effective button inline
+    // (game → player → global) instead of allocating an overlay map. The first
+    // action whose effective button matches `button` wins; its key comes from
+    // the global bindings (the key never changes per-player/game — only the
+    // button assignment does).
     for b in global {
-        action_button.insert(b.action, b.button);
-    }
-    if let Some(p) = player {
-        for (&action, &btn) in p {
-            action_button.insert(action, btn);
+        let effective = game
+            .and_then(|g| g.get(b.action).copied())
+            .or_else(|| player.and_then(|p| p.get(b.action).copied()))
+            .unwrap_or(b.button);
+        if effective == button {
+            return Some(b.key);
         }
     }
-    if let Some(g) = game {
-        for (&action, &btn) in g {
-            action_button.insert(action, btn);
-        }
-    }
-    // Find which action is triggered by `button` in the overlaid map.
-    let action = action_button
-        .iter()
-        .find(|(_, &btn)| btn == button)
-        .map(|(&action, _)| action)?;
-    // Look up the key for that action from the global bindings (key never
-    // changes per-player/game — only the button assignment changes).
-    global.iter().find(|b| b.action == action).map(|b| b.key)
+    None
 }
 
 /// Default for the `rumbleEnabled` setting when the key is absent or malformed.

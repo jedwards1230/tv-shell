@@ -1,18 +1,6 @@
 import Quickshell.Io
 import QtQuick
 
-// AV power controller for the living-room system (TV + AVR).
-//
-// Polls AV power status via the daemon's `cec-device <addr>` IPC (logical
-// address 5 = AVR / audio-system) every 30 s while the shell is idle, and
-// wakes the AV system via `cec-power-on 0` (TV) + `cec-active-source` when
-// the shell enters streaming or is asked to wake explicitly.
-//
-// Public API (unchanged from the prior living-room-cec shell-out version):
-//   wake()        — wake if not already on/waking (guarded by cooldown).
-//   forceWake()   — unconditional wake (no guard).
-//   systemOn      — reflects the AVR power state (bool).
-//   shellState    — bound from shell.qml ("idle" enables polling).
 Item {
     id: root
 
@@ -22,32 +10,29 @@ Item {
     property bool _initialized: false
 
     function wake() {
-        if (waking || avWakeCooldown.running)
+        if (waking || avWake.running || avWakeCooldown.running)
             return;
         if (!systemOn)
             waking = true;
-        cecPowerOn.request("cec-power-on", "0");
+        avWake.running = true;
         avWakeCooldown.restart();
     }
 
     function forceWake() {
-        cecPowerOn.request("cec-power-on", "0");
+        avWake.running = true;
     }
 
-    // --- Status polling (AVR at logical address 5 = AudioSystem) ---
-
-    SocketClient {
-        id: cecStatus
-        onResponseReceived: line => {
-            try {
-                var obj = JSON.parse(line);
-                if (obj && typeof obj === "object" && "powerStatus" in obj) {
-                    root.systemOn = (obj.powerStatus === "on");
+    Process {
+        id: avStatusCheck
+        command: ["/usr/local/bin/living-room-cec", "status"]
+        stdout: SplitParser {
+            onRead: line => {
+                var match = line.match(/^\s*(AVR)\s*:\s*(\S+)/i);
+                if (match) {
+                    root.systemOn = (match[2].toLowerCase() === "on");
                     root._initialized = true;
                 }
-            } catch (e)
-            // parse error or error:* reply — leave systemOn unchanged
-            {}
+            }
         }
     }
 
@@ -58,7 +43,8 @@ Item {
         repeat: true
         triggeredOnStart: true
         onTriggered: {
-            cecStatus.request("cec-device", "5");
+            if (!avStatusCheck.running)
+                avStatusCheck.running = true;
         }
     }
 
@@ -67,33 +53,13 @@ Item {
         interval: 30000
     }
 
-    // --- Wake sequence: power-on TV then set active source ---
-
-    SocketClient {
-        id: cecPowerOn
-        onResponseReceived: line => {
-            if (line === "ok") {
-                // Power-on sent — follow up with active-source so the AVR
-                // switches to the correct HDMI input.
-                cecActiveSource.request("cec-active-source");
-            } else {
-                root.waking = false;
-            }
-        }
-        onRequestFailed: {
+    Process {
+        id: avWake
+        command: ["/usr/local/bin/living-room-cec", "on"]
+        onExited: exitCode => {
             root.waking = false;
-        }
-    }
-
-    SocketClient {
-        id: cecActiveSource
-        onResponseReceived: line => {
-            root.waking = false;
-            // Re-poll status to confirm wake.
-            cecStatus.request("cec-device", "5");
-        }
-        onRequestFailed: {
-            root.waking = false;
+            if (exitCode === 0 && !avStatusCheck.running)
+                avStatusCheck.running = true;
         }
     }
 

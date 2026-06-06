@@ -4,9 +4,10 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 
-// System/About page (#128): displays OS, kernel, hostname, and uptime
-// from the daemon's sys-status IPC command. Also shows storage free-space
-// readout (folded in from the former standalone Storage page).
+// System/About page (#128): displays OS, kernel, hostname, and uptime, plus a
+// storage free-space readout (folded in from the former standalone Storage
+// page). Values are read via lightweight shell-outs (df / uname / os-release);
+// moving these behind a daemon sys-status/storage-status IPC is tracked in #164.
 FocusScope {
     id: root
     implicitHeight: contentColumn.implicitHeight + 2 * Theme.padding
