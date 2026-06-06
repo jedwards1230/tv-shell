@@ -22,7 +22,8 @@ use game_shell_input::{
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
-    use tokio::sync::{broadcast, mpsc};
+    use std::sync::Arc;
+    use tokio::sync::{broadcast, mpsc, Notify};
 
     // Load daemon.env before anything else so GAME_SHELL_HTTP_BIND and
     // other vars are available even when the session wrapper didn't source
@@ -38,9 +39,16 @@ fn main() -> anyhow::Result<()> {
     let (events_tx, _events_rx) = broadcast::channel::<protocol::Event>(256);
     let (control_tx, control_rx) = mpsc::channel::<state::Control>(64);
 
+    // Dedicated channel for the file-watch actor to signal the input runtime
+    // of external settings.json changes. A separate Notify (rather than a
+    // broadcast receiver) avoids adding a permanent receiver on the global
+    // Event bus that would defeat receiver_count()==0 fast-paths (#163).
+    let config_changed = Arc::new(Notify::new());
+
     // Input subsystem on a dedicated OS thread with its own current-thread
     // runtime (isolated timing).
     let input_events = events_tx.clone();
+    let input_config_changed = Arc::clone(&config_changed);
     let input_thread = std::thread::Builder::new()
         .name("input".into())
         .spawn(move || {
@@ -48,7 +56,7 @@ fn main() -> anyhow::Result<()> {
                 .enable_all()
                 .build()
                 .expect("build input runtime");
-            rt.block_on(input::run(control_rx, input_events));
+            rt.block_on(input::run(control_rx, input_events, input_config_changed));
         })?;
 
     // Re-exec notification: the HTTP /dev/restart-daemon endpoint sets this
@@ -74,12 +82,13 @@ fn main() -> anyhow::Result<()> {
         let dbus = spawn_dbus_actors(&events_tx);
 
         // Spawn the file-watch actor. It inotify-watches settings.json for
-        // external edits and broadcasts config:changed. Fire-and-forget like the
-        // D-Bus actors — it logs and degrades gracefully if inotify fails.
+        // external edits and signals the input runtime via config_changed.
+        // Fire-and-forget like the D-Bus actors — it logs and degrades
+        // gracefully if inotify fails.
         {
-            let events_tx = events_tx.clone();
+            let watch_config_changed = Arc::clone(&config_changed);
             tokio::spawn(async move {
-                watch::run(events_tx).await;
+                watch::run(watch_config_changed).await;
             });
         }
 

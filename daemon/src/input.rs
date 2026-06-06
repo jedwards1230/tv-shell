@@ -1795,7 +1795,19 @@ fn list_input_devices_with(grabbed_paths: HashSet<PathBuf>) -> String {
 }
 
 /// Entry point: build the daemon and run the event loop until `Shutdown`.
-pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sender<Event>) {
+///
+/// Receives external `config:changed` signals from the file-watch actor via a
+/// dedicated [`tokio::sync::Notify`] (not the global broadcast bus) so that
+/// the input runtime does not hold a permanent broadcast receiver — which
+/// would prevent `receiver_count()==0` fast-paths like `notify_held_buttons()`.
+/// Both paths (IPC `set-config` → `Control::ConfigChanged` and file-watch →
+/// `config_changed` notification) converge on the same `apply_config_changed`
+/// helper, so cache state is always consistent (#163).
+pub async fn run(
+    mut control_rx: mpsc::Receiver<Control>,
+    events: broadcast::Sender<Event>,
+    config_changed: std::sync::Arc<tokio::sync::Notify>,
+) {
     let (internal_tx, mut internal_rx) = mpsc::channel::<Internal>(256);
 
     let bindings = config::load_bindings(&config::settings_path());
@@ -1898,6 +1910,18 @@ pub async fn run(mut control_rx: mpsc::Receiver<Control>, events: broadcast::Sen
                     pad.poll_battery(&mut sh);
                 }
             }
+            // External config:changed signal (#163): the file-watch actor
+            // detected an external edit to settings.json and notified via the
+            // dedicated Notify channel. Refresh in-memory caches exactly as
+            // the IPC set-config path does via Control::ConfigChanged, so
+            // rumbleEnabled and per-player/per-game bindings stay current
+            // without a daemon restart. Using a Notify instead of subscribing
+            // to the global broadcast bus avoids a permanent receiver that
+            // would defeat receiver_count()==0 fast-paths.
+            _ = config_changed.notified() => {
+                tracing::debug!("input: config_changed notified, refreshing caches");
+                apply_config_changed(&mut sh);
+            }
         }
     }
 
@@ -1984,6 +2008,21 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
 }
 
 // --- control handling ----------------------------------------------------
+
+/// Refresh the input runtime's in-memory caches from disk (#163, #108).
+///
+/// Called by both the `Control::ConfigChanged` arm (IPC `set-config` path)
+/// and the `config_changed.notified()` select arm (file-watch path), so the
+/// two sources always apply identical logic.
+fn apply_config_changed(sh: &mut Shared) {
+    sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
+    let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    sh.per_player_bindings = config::parse_per_player_bindings(&doc);
+    sh.per_game_bindings = config::parse_per_game_bindings(&doc);
+}
 
 /// Returns false to stop the loop (shutdown).
 fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
@@ -2080,16 +2119,8 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             }
         }
         Control::ConfigChanged => {
-            // set-config succeeded — refresh cached settings (#108, #104).
-            sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
-            // Re-parse per-player and per-game binding overrides so an external
-            // edit to perPlayerBindings/perGameBindings takes effect live.
-            let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
-                .ok()
-                .and_then(|t| serde_json::from_str(&t).ok());
-            let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            sh.per_player_bindings = config::parse_per_player_bindings(&doc);
-            sh.per_game_bindings = config::parse_per_game_bindings(&doc);
+            // set-config or file-watch: refresh cached settings (#108, #104, #163).
+            apply_config_changed(sh);
         }
         Control::SetActiveGame { id, reply } => {
             // Set or clear the active game for per-game binding lookup (#104).
