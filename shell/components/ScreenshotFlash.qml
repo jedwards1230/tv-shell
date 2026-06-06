@@ -57,14 +57,24 @@ Item {
             }
 
             onStopped: {
-                root.visible = false;
+                // Only hide when the animation truly finished and was not
+                // immediately restarted by a rapid back-to-back flash() call.
+                // Without this guard, restart() fires onStopped before the new
+                // animation starts, clobbering visible on the next frame.
+                if (!flashAnim.running) {
+                    root.visible = false;
+                }
             }
         }
     }
 
     // Public API: trigger a single flash cycle.
+    // Calling flash() while a previous animation is still playing restarts
+    // seamlessly: stop() + visible=true happen synchronously before start(),
+    // so onStopped cannot fire between them and clobber visible.
     function flash() {
+        flashAnim.stop();
         root.visible = true;
-        flashAnim.restart();
+        flashAnim.start();
     }
 }
