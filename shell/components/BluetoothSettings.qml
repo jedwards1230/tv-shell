@@ -15,6 +15,7 @@ import Quickshell.Io
 //   bt:powered:on|off, bt:scanning:on|off
 FocusScope {
     id: root
+    implicitHeight: btMainCol.implicitHeight + 2 * Theme.padding
 
     property bool powered: false
     property bool scanning: false
@@ -298,6 +299,7 @@ FocusScope {
     }
 
     ColumnLayout {
+        id: btMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 24

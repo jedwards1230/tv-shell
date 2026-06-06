@@ -14,7 +14,7 @@ The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communic
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, and the Phase 4 query replies `hypr-active`, `hypr-clients`, and `sunshine-status`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -125,6 +125,30 @@ Remap a button for the given action. Rebuilds the internal button map and persis
 
 Valid actions: `select`, `back`, `altSelect`, `confirm`
 
+### `set-active-game <id>`
+
+Signal the currently foregrounded app/game to the daemon. The daemon uses this
+to activate the matching per-game binding override layer from
+`settings.json`'s `perGameBindings`. Sending bare `set-active-game` (no body)
+clears the active game, reverting to the player/global binding layers only.
+In-memory only — resets on daemon restart.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Game set | `ok\n` |
+| Game cleared (bare command) | `ok\n` |
+
+**Notes:**
+- Touches no device; pure in-memory state change.
+- The per-game override layer is read from `perGameBindings` in `settings.json`
+  (see [Settings Persistence](#settings-persistence)). An unrecognized game id
+  silently uses only the player/global layers.
+- Resolution order: game override → player override → global → default.
+- The shell sends this command when an app or game is foregrounded (e.g. after
+  `record-launch`), and clears it when returning to the shell.
+
 ### `capture-next`
 
 Wait for the next remappable button press on the gamepad (10-second timeout). If a capture is already pending, the previous one is cancelled. Non-remappable button presses during capture are silently ignored.
@@ -196,6 +220,10 @@ Stateless. Written single-line compact JSON.
 | Write failed | `error:set-config failed: <detail>\n` |
 
 Example request: `set-config {"themeMode":"dark","controllerDebug":false,"moonlightViewMode":null}\n`
+
+After a successful merge, the daemon refreshes its cached input-runtime settings
+(currently `rumbleEnabled`) so a rumble toggle takes effect immediately without a
+daemon restart.
 
 ### `record-launch <json-object>`
 
@@ -332,7 +360,7 @@ Current connectivity and primary/active connection state.
 **Response:** A compact single-line JSON **object**:
 
 ```json
-{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.168.8.50","activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0"}]}
+{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.168.8.50","gateway":"192.168.8.1","dns":["192.168.8.1","8.8.8.8"],"activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0","speed":1000}]}
 ```
 
 | Field | Type | Notes |
@@ -341,12 +369,14 @@ Current connectivity and primary/active connection state.
 | `primaryType` | string | Connection type of NM's primary connection (`""` if none) |
 | `hasWifi` | bool | True if any NM device is a Wi-Fi device (`DeviceType == 2`) |
 | `ipv4` | string | Best-effort non-loopback IPv4 addresses as `"<iface>: <ip>"` lines (newline-joined, up to 3; `""` if none). Read via an `ip -4 -o addr` shell-out — explicitly allowed, since only `nmcli` *reads* must move to D-Bus |
-| `activeConnections` | array | `{name, type, device}` objects; `device` is the first interface name |
+| `gateway` | string | IPv4 gateway address from the primary connection's IP4Config (`""` when none/unknown); best-effort |
+| `dns` | string array | DNS server addresses from the primary connection's IP4Config (`[]` when none/unknown); best-effort. Prefer `NameserverData` (NM ≥ 1.6); fall back to legacy packed-u32 `Nameservers` property |
+| `activeConnections` | array | `{name, type, device, speed}` objects; `device` is the first interface name; `speed` is link speed in Mb/s from `Device.Wired` (0 for non-wired devices, virtual devices, or when the link speed is not yet known — render only when > 0) |
 
 If NetworkManager is unreachable, a best-effort object is returned with
-`connectivity:"unknown"`, empty strings, `hasWifi:false`, and
-`activeConnections:[]` (the command does not error). On a non-Linux build:
-`error:unsupported on this platform\n`.
+`connectivity:"unknown"`, empty strings, `hasWifi:false`, `gateway:""`,
+`dns:[]`, and `activeConnections:[]` (the command does not error). On a
+non-Linux build: `error:unsupported on this platform\n`.
 
 #### `net-wifi-list`
 
@@ -537,8 +567,9 @@ echo "rumble uniq:e4:17:d8:01:02:03 200" | nc -U "$GAME_SHELL_SOCK"
 
 > **`rumbleEnabled` setting.** A QML-owned boolean in `settings.json`
 > (default `true`) gating all daemon-fired rumble — both the `rumble` command and
-> the connect pulse. Read by the daemon via `get-config`; toggled like any other
-> QML-owned key via `set-config`.
+> the connect pulse. The daemon caches this flag at startup and refreshes it on a
+> successful `set-config`, so a toggle takes effect immediately with no per-rumble
+> disk read.
 
 ### `key <name>`
 
@@ -641,6 +672,36 @@ Sends `j/clients` to Hyprland's request socket (no `hyprctl` shell-out).
 An empty result (or any IPC failure) is `[]`. On a non-Linux build:
 `error:unsupported on this platform\n`.
 
+#### `hypr-monitors`
+
+List all Hyprland monitors. Sends `j/monitors` to Hyprland's request socket.
+
+**Response:** A compact single-line JSON **array** of monitor objects:
+
+```json
+[{"name":"DP-1","description":"LG OLED","width":3840,"height":2160,"refreshRate":120.0,"scale":1.0,"x":0,"y":0,"activeWorkspace":"1","dpmsStatus":true,"vrr":true,"availableModes":["3840x2160@120.00000"],"currentFormat":"XRGB2101010","hdr":true}]
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `name` | string | Monitor name (e.g. `DP-1`) |
+| `description` | string | Human-readable description |
+| `width` | number | Current resolution width in pixels |
+| `height` | number | Current resolution height in pixels |
+| `refreshRate` | number | Current refresh rate in Hz |
+| `scale` | number | DPI scale factor |
+| `x` | number | X position in the global compositor layout |
+| `y` | number | Y position in the global compositor layout |
+| `activeWorkspace` | string | Name of the active workspace on this monitor |
+| `dpmsStatus` | bool | `true` = display powered on |
+| `vrr` | bool | Variable refresh rate enabled |
+| `availableModes` | array | Mode strings in `WxH@Hz` format |
+| `currentFormat` | string | Current pixel format (e.g. `XRGB2101010`, `XRGB8888`) |
+| `hdr` | bool | **Derived**: `true` when `currentFormat` contains `"2101010"` (10-bit packed formats indicate HDR/wide-gamut path). Hyprland exposes no explicit HDR flag; 10-bit `currentFormat` is the proxy. |
+
+An empty result (or any IPC failure) is `[]`. On a non-Linux build:
+`error:unsupported on this platform\n`.
+
 ### Sunshine session detection (`reqwest`)
 
 #### `sunshine-status <host> <port>`
@@ -683,6 +744,141 @@ body degrades to the offline object (the command does not error):
 The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
 
+
+## LAN HTTP Control Bridge (#151)
+
+An optional, LAN-bound HTTP/1.1 listener that maps `POST /intent/<target>`,
+`POST /key/<name>`, and `GET /screenshot` onto the daemon's existing intent/key
+broadcast paths and the `grim` screenshotter, so Home Assistant `rest_command` /
+curl / scripts can drive the shell without needing a Unix socket client.
+
+### Opt-in via environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `GAME_SHELL_HTTP_BIND` | `host:port` address to bind (e.g. `192.168.8.50:8731` or `0.0.0.0:8731`). When **unset** (the default), no TCP socket is opened and no control surface is exposed. |
+| `GAME_SHELL_HTTP_TOKEN` | Bearer token for auth. When auth is enabled (the default), every request must carry `Authorization: Bearer <token>` (constant-time match); requests without a valid token receive 401. |
+| `GAME_SHELL_HTTP_AUTH_ENABLED` | Auth toggle. Default: **enabled** (unset or any value other than `0`/`false`). Set to `0` to skip auth entirely for local-only dev. When auth is enabled but `GAME_SHELL_HTTP_TOKEN` is not set, **all requests are rejected with 401** (secure by default — you cannot authenticate without a token). |
+
+> **Security note**: bind to a trusted LAN interface (e.g. `192.168.8.x:8731`),
+> not a public one. The bridge is a control surface — a mis-bound listener would
+> expose shell control to the public internet. Pair with `GAME_SHELL_HTTP_TOKEN`
+> for defence-in-depth even on a LAN.
+
+Default port suggestion: **8731**. The bind address must include the port.
+
+### Per-box opt-in via `daemon.env`
+
+The session script (`scripts/game-shell-session.sh`) sources an optional
+machine-local env file before starting the daemon, so per-box overrides survive
+git deploys without touching tracked files:
+
+```
+~/.config/game-shell/daemon.env
+```
+
+Example file to opt a box into the LAN HTTP bridge:
+
+```sh
+# ~/.config/game-shell/daemon.env
+# Bind the HTTP bridge to the LAN interface on this box.
+GAME_SHELL_HTTP_BIND=192.168.8.50:8731
+# Set a bearer token (required when auth is enabled, the default).
+GAME_SHELL_HTTP_TOKEN=mysecret
+# Uncomment to disable auth entirely for local-only dev:
+# GAME_SHELL_HTTP_AUTH_ENABLED=0
+```
+
+### Routes
+
+| Method | Path | Action |
+|--------|------|--------|
+| `POST` | `/intent/<target>` | Forward `<target>` to the [`intent <name>`](#intent-name) surface. `<target>` is the full remainder after `/intent/`, percent-decoded (`settings%3Abluetooth` → `settings:bluetooth`). The daemon's existing vocabulary gate applies — unknown intents return 400. |
+| `POST` | `/key/<name>` | Forward `<name>` to the [`key <name>`](#key-name) surface (synthesize a keystroke). |
+| `GET` | `/screenshot` or `/screenshot.png` | Capture the current screen via `grim -` and return the PNG bytes with `Content-Type: image/png`. Auth applies (the screenshot exposes screen content). Returns 500 if `grim` fails or is not installed. |
+| Any other method | Any path | 405 |
+| POST | Any other path | 404 |
+
+`<target>` is the **same string** the Unix-socket `intent` command accepts,
+including deep-link namespaces (`settings:<page>`, `overlay:volume`,
+`overlay:network`, `app:<wmClass>`). Unknown vocabulary → 400 (the daemon's
+`is_known_intent` gate is the single source of truth; the HTTP layer does not
+re-validate).
+
+### HTTP status mapping
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Request accepted (`ok`, or PNG body for `/screenshot`) |
+| 400 | Unknown intent or key (daemon returned `error:*`) |
+| 401 | Missing or invalid `Authorization: Bearer <token>`, or auth enabled with no token configured |
+| 404 | Unknown POST route |
+| 405 | Wrong method for the requested path |
+| 500 | `grim` failed or is not installed (`/screenshot` only) |
+| 503 | Daemon unavailable (control channel closed) |
+
+### Home Assistant `rest_command` example
+
+```yaml
+# configuration.yaml
+rest_command:
+  game_shell_intent:
+    url: "http://192.168.8.50:8731/intent/{{ intent }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ token }}"
+  game_shell_key:
+    url: "http://192.168.8.50:8731/key/{{ key }}"
+    method: POST
+    headers:
+      Authorization: "Bearer mysecret"
+  game_shell_screenshot:
+    url: "http://192.168.8.50:8731/screenshot"
+    method: GET
+    headers:
+      Authorization: "Bearer mysecret"
+```
+
+Usage in an automation:
+
+```yaml
+action: rest_command.game_shell_intent
+data:
+  intent: "settings:bluetooth"
+  token: "mysecret"
+```
+
+### curl examples
+
+```bash
+# Open Bluetooth settings (no auth)
+curl -X POST http://192.168.8.50:8731/intent/settings:bluetooth
+
+# Same with bearer token
+curl -X POST http://192.168.8.50:8731/intent/settings:bluetooth \
+     -H "Authorization: Bearer mysecret"
+
+# Colon percent-encoded (HA encodes `:` as `%3A`)
+curl -X POST http://192.168.8.50:8731/intent/settings%3Abluetooth
+
+# Synthesize a key press
+curl -X POST http://192.168.8.50:8731/key/select
+
+# Capture a screenshot (returns image/png)
+curl -H "Authorization: Bearer mysecret" \
+     http://192.168.8.50:8731/screenshot > screenshot.png
+
+# Screenshot without auth (GAME_SHELL_HTTP_AUTH_ENABLED=0)
+curl http://192.168.8.50:8731/screenshot > screenshot.png
+```
+
+### Relation to the Unix socket intent surface
+
+The HTTP bridge builds on the deep-link vocabulary introduced in issue #150.
+`<target>` is the same string the socket `intent` command accepts. See
+[`intent <name>`](#intent-name) for the full vocabulary and deep-link namespace
+documentation.
+
 ### Unrecognized Commands
 
 Any command not listed above receives:
@@ -701,7 +897,7 @@ Subscribers (registered via `subscribe`) receive these events as newline-termina
 | `controller-disconnected` | A gamepad stream errored during event read (USB disconnect; fires per leaving pad) |
 | `pad:connected:<json>` | A pad joined the fleet and was assigned a player slot. Payload: compact `{id,index,name}` object (#101) |
 | `pad:disconnected:<id>` | A pad left the fleet; its slot is freed for reuse. Payload: the pad's stable wire `id` |
-| `pad:index:<json>` | A pad's player-indicator LED was lit to match its slot at assignment (#101 LED). Payload: compact `{id,index}` object. Emitted for pads with a controllable LED — via `EV_LED`, or via the `/sys/class/leds` xpad fallback (Xbox 360 pads expose their ring through sysfs, not `EV_LED`); a no-op for pads with neither |
+| `pad:index:<json>` | A pad's player-indicator LED was lit to match its slot at assignment (#101 LED). Payload: compact `{id,index}` object. Emitted for pads with a controllable LED — via `EV_LED`, or via the sysfs `/sys/class/leds` fallback (xpad/Sony driver families); a no-op for pads with neither |
 | `pad:battery:<json>` | A pad's battery level/charging state changed (#100). Payload: compact `{id,level,charging}` object (`level` 0–100, `charging` bool). Only emitted for pads that report a battery (wireless); wired pads emit none |
 
 `controller-wake` / `controller-disconnected` are the legacy single-pad signals
@@ -715,9 +911,19 @@ when the pad lacks the hardware:
 
 - **LED (#101):** at slot assignment the daemon lights the pad's player LED and
   emits `pad:index:{id,index}`. It tries `EV_LED` (LED code == player slot)
-  first, then falls back to the `/sys/class/leds` xpad node (Xbox 360 pads expose
-  their player ring through sysfs, not `EV_LED`). No controllable LED → no
-  event.
+  first, then falls back to the `/sys/class/leds` sysfs tree. The sysfs fallback
+  correlates the correct node per physical pad (longest shared canonical-path
+  prefix with the pad's own sysfs device path; ties broken by sorted name) so
+  two identical pads each light their own ring with no cross-talk. Two driver
+  conventions are supported: xpad (Xbox 360/One) pads write `6 + slot` to the
+  node's `brightness` attribute; Sony DualSense/DualShock4 pads drive either
+  `*:white:player-N` per-slot LED-class entries (write `1` to the matching
+  `player-<slot+1>` sibling, `0` to the others) or an `*:rgb:indicator`
+  lightbar node (per-slot solid colour via `multi_intensity`). No LED command
+  is exposed over IPC — the indicator is driven internally on pad join and the
+  result is published as `pad:index:*`. Pads with neither EV_LED nor a usable
+  sysfs leds node are a clean no-op: no event is emitted. The Sony lightbar
+  path requires on-device verification on game-client-1 with a DualSense.
 - **Battery (#100):** the daemon polls the pad's `power_supply` sysfs and emits
   `pad:battery:{id,level,charging}` on change (and once at connect). Wired pads
   report no battery → no event.
@@ -878,6 +1084,34 @@ hypr:fullscreen:1
 hypr:fullscreen:0
 ```
 
+### Config Live-Reload
+
+Emitted by the file-watch actor (Linux-only, inotify-based) when
+`settings.json` is modified by an **external** writer (SSH, Ansible, a web UI,
+or any tool other than the daemon itself). The daemon suppresses its own
+`set-config` and `set-binding` writes via a self-write generation guard
+(`config::note_self_write()` + `config::self_write_gen()`), so this event fires
+only for foreign edits.
+
+Carries **no payload** — subscribers re-fetch the full settings document via the
+existing `get-config` command (one re-read path, no inline JSON concerns).
+
+| Event | Trigger | Payload |
+|-------|---------|---------|
+| `config:changed` | `settings.json` was modified by an external writer | _(none)_ |
+
+Example wire line:
+
+```
+config:changed
+```
+
+> **QML wiring**: `SettingsStore.qml` subscribes to this event via its
+> `configWatch` `SocketClient` (subscribe mode). On receipt it calls
+> `store.load()` (the same `get-config` path used at startup), re-applying all
+> QML-owned keys (`themeMode`, `streamingViewMode`, `controllerDebug`,
+> `rumbleEnabled`, `reduceMotion`, `textScale`) and `keyBindings` live.
+
 ## Default Button Mappings
 
 | Action | Default Button | Keyboard Output | Remappable |
@@ -969,6 +1203,48 @@ Key bindings are persisted to `~/.config/game-shell/settings.json` under the `ke
 ```
 
 Values are evdev code names (e.g., `BTN_SOUTH`). On load, if a value is an array, the last element is used. Unknown actions and non-remappable buttons are silently skipped.
+
+### Per-player and per-game override layers (#104)
+
+Two optional keys in `settings.json` provide additive override layers on top of
+the global `keyBindings`. Absent keys mean today's behavior — no migration needed.
+
+**`perPlayerBindings`** — object keyed by player slot (`"0"`, `"1"`, `"2"`, `"3"`).
+Each value is an `{action: button_name}` object (same shape as `keyBindings`).
+Overrides the global binding for that slot only.
+
+```json
+{
+  "perPlayerBindings": {
+    "0": {"select": "BTN_NORTH"},
+    "1": {"back": "BTN_WEST"}
+  }
+}
+```
+
+**`perGameBindings`** — object keyed by arbitrary game-id strings (non-empty).
+Each value is an `{action: button_name}` object.
+The active game id is set at runtime via `set-active-game <id>`.
+
+```json
+{
+  "perGameBindings": {
+    "steam_12345": {"select": "BTN_SOUTH", "confirm": "BTN_EAST"}
+  }
+}
+```
+
+**Resolution order** (first matching layer wins for each action):
+1. **Game override** — `perGameBindings[active_game]` (if a game is active)
+2. **Player override** — `perPlayerBindings[slot]` (for that pad's slot)
+3. **Global** — `keyBindings`
+4. **Default** — built-in defaults (`select=BTN_SOUTH`, etc.)
+
+These keys are daemon-owned (the daemon is the sole writer for `keyBindings`;
+QML/external tools write `perPlayerBindings`/`perGameBindings`). The daemon
+re-reads both keys live on every `set-config` change (or external file edit
+that triggers `config:changed`). The `active_game` state is in-memory only
+and is never written to `settings.json`.
 
 ## Virtual Input Devices
 

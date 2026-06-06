@@ -16,7 +16,9 @@
 // only wires them together. (lib+bin split — see lib.rs — so the cross-platform
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
-use game_shell_input::{bluetooth, hyprland, input, ipc, network, power, protocol, state};
+use game_shell_input::{
+    bluetooth, http, hyprland, input, ipc, network, power, protocol, state, watch,
+};
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -55,12 +57,44 @@ fn main() -> anyhow::Result<()> {
         // absent, so spawning them unconditionally is safe.
         let dbus = spawn_dbus_actors(&events_tx);
 
+        // Spawn the file-watch actor. It inotify-watches settings.json for
+        // external edits and broadcasts config:changed. Fire-and-forget like the
+        // D-Bus actors — it logs and degrades gracefully if inotify fails.
+        {
+            let events_tx = events_tx.clone();
+            tokio::spawn(async move {
+                watch::run(events_tx).await;
+            });
+        }
+
         let ipc_task = tokio::spawn(ipc::serve(
             sock_path,
             control_tx.clone(),
             events_tx.clone(),
             dbus,
         ));
+
+        // LAN HTTP control bridge (#151): opt-in via GAME_SHELL_HTTP_BIND.
+        // When the env var is unset (the default), no socket is opened and no
+        // control surface is exposed. When set, it must be a `host:port`
+        // address the operator has bound to a trusted LAN interface.
+        if let Ok(bind_str) = std::env::var("GAME_SHELL_HTTP_BIND") {
+            match bind_str.parse::<std::net::SocketAddr>() {
+                Ok(addr) => {
+                    let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
+                    // Read auth-enabled flag here so it is logged once at startup
+                    // alongside the bind address, before the task is spawned.
+                    let auth_enabled = http::read_auth_enabled();
+                    tokio::spawn(http::serve(addr, token, auth_enabled, control_tx.clone()));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "GAME_SHELL_HTTP_BIND={bind_str:?} is not a valid host:port address: {e}"
+                    );
+                }
+            }
+        }
+
         wait_for_signal().await;
         tracing::info!("signal received, shutting down");
         let _ = control_tx.send(state::Control::Shutdown).await;
@@ -87,7 +121,6 @@ fn spawn_dbus_actors(
     let (net_tx, net_rx) = mpsc::channel(64);
     let (power_tx, power_rx) = mpsc::channel(64);
     let (hypr_tx, hypr_rx) = mpsc::channel(64);
-
     {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
@@ -120,7 +153,6 @@ fn spawn_dbus_actors(
             }
         });
     }
-
     ipc::DbusSenders {
         bt: Some(bt_tx),
         net: Some(net_tx),

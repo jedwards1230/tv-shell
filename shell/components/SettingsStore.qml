@@ -21,6 +21,11 @@ import QtQuick
 // IPC protocol: see docs/IPC_PROTOCOL.md
 // Commands used: get-config, set-config, get-bindings, set-binding,
 //                capture-next, capture-cancel
+// Events subscribed: config:changed (live-reload — daemon broadcasts when an
+//                    external writer modifies settings.json; QML re-fetches via
+//                    get-config so all keys re-apply live without a restart)
+// QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan,
+//                         sleepTimerMinutes, wakeOnController, defaultSink
 Item {
     id: store
 
@@ -31,11 +36,18 @@ Item {
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
     property bool reduceMotion: false             // suppress animations (#109)
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
+    property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
+    property bool nightLightEnabled: false       // drives hyprsunset
+    property int nightLightTemp: 4500            // color temperature in Kelvin
+    property int overscan: 0                     // safe-area overscan percent (0-10)
+    property int sleepTimerMinutes: 0            // 0 = disabled; cycle: 0/5/10/15/30/60
+    property bool wakeOnController: true         // declarative preference (no suspend wiring)
+    property string defaultSink: ""              // WirePlumber sink node.name (stable across reboots)
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
 
-    // === Change notification (foundation for #53 file-watching) ===
+    // === Change notification ===
     signal settingsChanged(string key, var value)
 
     // === Binding IPC signals ===
@@ -66,6 +78,20 @@ Item {
                     store.reduceMotion = obj.reduceMotion;
                 if (typeof obj.textScale === "number")
                     store.textScale = obj.textScale;
+                if (typeof obj.hdrEnabled === "boolean")
+                    store.hdrEnabled = obj.hdrEnabled;
+                if (typeof obj.nightLightEnabled === "boolean")
+                    store.nightLightEnabled = obj.nightLightEnabled;
+                if (typeof obj.nightLightTemp === "number")
+                    store.nightLightTemp = obj.nightLightTemp;
+                if (typeof obj.overscan === "number")
+                    store.overscan = obj.overscan;
+                if (typeof obj.sleepTimerMinutes === "number")
+                    store.sleepTimerMinutes = obj.sleepTimerMinutes;
+                if (typeof obj.wakeOnController === "boolean")
+                    store.wakeOnController = obj.wakeOnController;
+                if (typeof obj.defaultSink === "string")
+                    store.defaultSink = obj.defaultSink;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
             } catch (e) {
@@ -95,6 +121,13 @@ Item {
             "rumbleEnabled": store.rumbleEnabled,
             "reduceMotion": store.reduceMotion,
             "textScale": store.textScale,
+            "hdrEnabled": store.hdrEnabled,
+            "nightLightEnabled": store.nightLightEnabled,
+            "nightLightTemp": store.nightLightTemp,
+            "overscan": store.overscan,
+            "sleepTimerMinutes": store.sleepTimerMinutes,
+            "wakeOnController": store.wakeOnController,
+            "defaultSink": store.defaultSink,
             "moonlightViewMode": null
         });
         saveProc.request("set-config", body);
@@ -138,6 +171,48 @@ Item {
         textScale = scale;
         save();
         settingsChanged("textScale", scale);
+    }
+
+    function setHdrEnabled(enabled) {
+        hdrEnabled = enabled;
+        save();
+        settingsChanged("hdrEnabled", enabled);
+    }
+
+    function setNightLightEnabled(enabled) {
+        nightLightEnabled = enabled;
+        save();
+        settingsChanged("nightLightEnabled", enabled);
+    }
+
+    function setNightLightTemp(temp) {
+        nightLightTemp = temp;
+        save();
+        settingsChanged("nightLightTemp", temp);
+    }
+
+    function setOverscan(pct) {
+        overscan = pct;
+        save();
+        settingsChanged("overscan", pct);
+    }
+
+    function setSleepTimerMinutes(m) {
+        sleepTimerMinutes = m;
+        save();
+        settingsChanged("sleepTimerMinutes", m);
+    }
+
+    function setWakeOnController(enabled) {
+        wakeOnController = enabled;
+        save();
+        settingsChanged("wakeOnController", enabled);
+    }
+
+    function setDefaultSink(name) {
+        defaultSink = name;
+        save();
+        settingsChanged("defaultSink", name);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===
@@ -197,5 +272,44 @@ Item {
         id: cancelCaptureProc
     }
 
-    Component.onCompleted: load()
+    // --- Live-reload: subscribe to config:changed events from the daemon. ---
+    // The daemon inotify-watches settings.json and broadcasts config:changed
+    // when an external writer (SSH/Ansible/web UI) modifies it. The daemon
+    // suppresses its own set-config/set-binding writes via a self-write
+    // generation guard, so this fires only for foreign edits. We re-fetch the
+    // full document via get-config (the same path as startup load()), so every
+    // QML-owned key re-applies live and keyBindings propagates to consumers.
+    SocketClient {
+        id: configWatch
+        subscribe: true
+        onLineReceived: line => {
+            if (line === "config:changed")
+                store.load();
+        }
+    }
+
+    // Re-apply persisted default audio sink once at shell startup, after
+    // settings have been loaded from the daemon. The AudioSettings page only
+    // re-applies when that page is opened; this ensures the correct sink is
+    // active even if the user never visits Audio Settings. (#131)
+    //
+    // The sink name is passed via the GAME_SHELL_SINK environment variable so
+    // it cannot inject shell commands regardless of its content. (#131 injection fix)
+    Process {
+        id: startupSinkApply
+        environment: ({
+                "GAME_SHELL_SINK": store.defaultSink
+            })
+        command: ["bash", "-c", "[ -z \"$GAME_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$GAME_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$GAME_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
+    }
+
+    onDefaultSinkChanged: {
+        if (defaultSink !== "" && !startupSinkApply.running)
+            startupSinkApply.running = true;
+    }
+
+    Component.onCompleted: {
+        load();
+        configWatch.start();
+    }
 }
