@@ -77,6 +77,28 @@ pub enum Control {
     /// a successful `set-config`; the input runtime re-reads the affected keys
     /// from disk.
     ConfigChanged,
+
+    // --- #160: per-pad battery + rumble status queries ---
+    /// `pad-battery <id>` — reply with the current battery state for the pad
+    /// whose stable wire id is `<id>`. Reply is a compact JSON object
+    /// `{id, present, level?, charging?}`. `present=false` for wired/unknown.
+    PadBatteryQuery {
+        id: String,
+        reply: Reply,
+    },
+    /// `pad-rumble-status <id>` — reply with rumble capability/enabled status.
+    /// Reply is `{id, supported, enabled}`.
+    PadRumbleStatus {
+        id: String,
+        reply: Reply,
+    },
+
+    /// `controllerdb-refresh` notification: the IPC layer fetched and updated
+    /// the upstream DB; the input runtime should swap in the new DB live.
+    ControllerDbRefreshed {
+        reply: Reply,
+    },
+
     Shutdown,
 }
 

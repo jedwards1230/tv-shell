@@ -21,6 +21,9 @@ use game_shell_input::{
 };
 
 #[cfg(target_os = "linux")]
+use game_shell_input::ipc::{ControllerDbState, SharedControllerDbState};
+
+#[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
     use tokio::sync::{broadcast, mpsc, Notify};
@@ -92,11 +95,17 @@ fn main() -> anyhow::Result<()> {
             });
         }
 
+        // Initialize the controller DB state once at startup. The IPC server
+        // shares it across connections (Arc<RwLock<_>>).
+        let db_state: SharedControllerDbState =
+            std::sync::Arc::new(tokio::sync::RwLock::new(ControllerDbState::initial()));
+
         let ipc_task = tokio::spawn(ipc::serve(
             sock_path,
             control_tx.clone(),
             events_tx.clone(),
             dbus,
+            db_state,
         ));
 
         // LAN HTTP control bridge (#151): opt-in via GAME_SHELL_HTTP_BIND.

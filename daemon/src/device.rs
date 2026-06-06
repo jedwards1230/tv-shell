@@ -114,6 +114,11 @@ impl ControllerDb {
     pub fn is_empty(&self) -> bool {
         self.known.is_empty()
     }
+
+    /// Merge another `ControllerDb` into this one (union of known pairs).
+    pub fn merge(&mut self, other: &ControllerDb) {
+        self.known.extend(other.known.iter().copied());
+    }
 }
 
 /// The bundled baseline DB (common controllers). A fuller upstream
