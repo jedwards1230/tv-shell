@@ -268,7 +268,7 @@ lookup table used for pad discovery). Stateless — answered directly by the IPC
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `source` | string | Which source was loaded: `"bundled"`, `"env"`, `"cached"`, or a combination |
+| `source` | string | Which source was used: `"bundled_baseline"` (only shipped DB), `"upstream_cache"` (cache overrides baseline), or `"env_override"` (env var overrides all — last source wins, not a union) |
 | `entryCount` | number | Total number of known (vendor, product) pairs after merging all sources |
 | `lastDownloaded` | number | Unix timestamp (seconds) of the last successful upstream fetch, or `0` if never fetched |
 | `upstreamUrl` | string | The URL used for upstream fetches |
@@ -276,7 +276,7 @@ lookup table used for pad discovery). Stateless — answered directly by the IPC
 
 Example:
 ```json
-{"source":"bundled+cached","entryCount":3712,"lastDownloaded":1749200000,"upstreamUrl":"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt"}
+{"source":"upstream_cache","entryCount":3712,"lastDownloaded":1749200000,"upstreamUrl":"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt"}
 ```
 
 ### `controllerdb-refresh`
