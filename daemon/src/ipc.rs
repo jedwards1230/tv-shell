@@ -240,69 +240,21 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         // --- #159: controllerdb-status / controllerdb-refresh ---
         Command::ControllerDbStatus => {
             let state = db_state.read().await;
-            let db_for_status = crate::device::ControllerDb::default();
-            Some(
-                controllerdb::status_json(
-                    // We only store entry_count, not the live db, so construct a
-                    // proxy struct with the right count via a custom helper.
-                    &db_for_status,
-                    &state.source,
-                    state.last_downloaded,
-                    state.last_error.as_deref(),
-                )
-                .replace(
-                    // The status_json helper reads db.len(), which is 0 for default.
-                    // Replace the entryCount field with the stored value.
-                    r#""entryCount":0"#,
-                    &format!(r#""entryCount":{}"#, state.entry_count),
-                ),
-            )
+            // Build the status directly from stored state; avoids constructing a
+            // proxy ControllerDb whose len() is always 0.
+            let status = controllerdb::DbStatus {
+                source: state.source.clone(),
+                entry_count: state.entry_count,
+                last_downloaded: state.last_downloaded,
+                upstream_url: controllerdb::UPSTREAM_URL.to_string(),
+                error: state.last_error.clone(),
+            };
+            Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
         }
-        Command::ControllerDbRefresh => {
-            // Async fetch — do not block on a blocking thread (reqwest is async).
-            let db_state = db_state.clone();
-            Some(match controllerdb::refresh().await {
-                Ok(text) => {
-                    // Reload the merged DB and update the shared state.
-                    let (new_db, new_source) = controllerdb::load_merged_db();
-                    let new_ts = controllerdb::read_last_downloaded();
-                    {
-                        let mut state = db_state.write().await;
-                        state.source = new_source.clone();
-                        state.entry_count = new_db.len();
-                        state.last_downloaded = new_ts;
-                        state.last_error = None;
-                    }
-                    // Notify the input runtime to hot-swap the DB.
-                    // (ControllerDbRefreshed is a best-effort fire-and-forget
-                    // via the db_state; the runtime reloads on next pad discovery.)
-                    tracing::info!(
-                        "controllerdb: refreshed {} entries from upstream ({})",
-                        new_db.len(),
-                        text.lines().count()
-                    );
-                    let state = db_state.read().await;
-                    controllerdb::status_json(&new_db, &state.source, state.last_downloaded, None)
-                }
-                Err(e) => {
-                    tracing::warn!("controllerdb refresh failed: {e}");
-                    let mut state = db_state.write().await;
-                    state.last_error = Some(e.clone());
-                    // Build status from current (unchanged) state.
-                    let db_proxy = crate::device::ControllerDb::default();
-                    controllerdb::status_json(
-                        &db_proxy,
-                        &state.source,
-                        state.last_downloaded,
-                        Some(&e),
-                    )
-                    .replace(
-                        r#""entryCount":0"#,
-                        &format!(r#""entryCount":{}"#, state.entry_count),
-                    )
-                }
-            })
-        }
+        // ControllerDbRefresh is NOT stateless — it must send Control::ControllerDbRefreshed
+        // to the input runtime after a successful fetch so the DB is hot-swapped.
+        // Return None here so dispatch() handles it with access to control_tx.
+        Command::ControllerDbRefresh => None,
 
         // --- #160: pad-battery / pad-rumble-status ---
         Command::PadBatteryUsage => Some(protocol::resp_pad_battery_usage()),
@@ -390,6 +342,53 @@ async fn dispatch(
             })
             .await
         }
+        // --- #159: controllerdb-refresh — needs control_tx to hot-swap the runtime's DB ---
+        Command::ControllerDbRefresh => {
+            let db_state = db_state.clone();
+            match controllerdb::refresh().await {
+                Ok(text) => {
+                    let (new_db, new_source) = controllerdb::load_merged_db();
+                    let new_ts = controllerdb::read_last_downloaded();
+                    {
+                        let mut state = db_state.write().await;
+                        state.source = new_source.clone();
+                        state.entry_count = new_db.len();
+                        state.last_downloaded = new_ts;
+                        state.last_error = None;
+                    }
+                    tracing::info!(
+                        "controllerdb: refreshed {} entries from upstream ({})",
+                        new_db.len(),
+                        text.lines().count()
+                    );
+                    // Notify the input runtime to hot-swap the DB without a restart.
+                    let _ = request(control_tx, |reply| Control::ControllerDbRefreshed { reply }).await;
+                    let state = db_state.read().await;
+                    let status = controllerdb::DbStatus {
+                        source: state.source.clone(),
+                        entry_count: state.entry_count,
+                        last_downloaded: state.last_downloaded,
+                        upstream_url: controllerdb::UPSTREAM_URL.to_string(),
+                        error: None,
+                    };
+                    Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
+                }
+                Err(e) => {
+                    tracing::warn!("controllerdb refresh failed: {e}");
+                    let mut state = db_state.write().await;
+                    state.last_error = Some(e.clone());
+                    let status = controllerdb::DbStatus {
+                        source: state.source.clone(),
+                        entry_count: state.entry_count,
+                        last_downloaded: state.last_downloaded,
+                        upstream_url: controllerdb::UPSTREAM_URL.to_string(),
+                        error: Some(e),
+                    };
+                    Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
+                }
+            }
+        }
+
         // --- #160: per-pad battery + rumble status ---
         Command::PadBatteryQuery(id) => {
             request(control_tx, move |reply| Control::PadBatteryQuery { id, reply }).await
@@ -419,9 +418,9 @@ async fn dispatch(
         // Phase 4 Sunshine is stateless (consumed by `dispatch_stateless`).
         | Command::SunshineStatus { .. }
         | Command::SunshineStatusUsage
-        // Controller DB commands are stateless (consumed by `dispatch_stateless`).
+        // Controller DB status is stateless (consumed by `dispatch_stateless`).
+        // ControllerDbRefresh is handled above with control_tx (hot-swap).
         | Command::ControllerDbStatus
-        | Command::ControllerDbRefresh
         // System/storage status commands are stateless (#164).
         | Command::SysStatus
         | Command::StorageStatus => return protocol::resp_unknown(),

@@ -25,6 +25,36 @@ FocusScope {
     property bool daemonConnected: false
     property bool daemonGrabbed: false
 
+    // --- Controller DB (#159) ---
+    property var controllerDb: null  // null while loading, object once received
+
+    SocketClient {
+        id: getControllerDbStatus
+        onResponseReceived: line => {
+            try {
+                root.controllerDb = JSON.parse(line);
+            } catch (e) {
+                console.log("ControllerSettings: failed to parse controllerdb-status:", e);
+            }
+        }
+        onRequestFailed: root.controllerDb = null
+    }
+
+    SocketClient {
+        id: refreshControllerDb
+        onResponseReceived: line => {
+            try {
+                root.controllerDb = JSON.parse(line);
+            } catch (e) {
+                console.log("ControllerSettings: failed to parse controllerdb-refresh:", e);
+            }
+        }
+        onRequestFailed: {
+            // Refresh failed; re-fetch status to reflect any error.
+            getControllerDbStatus.request("controllerdb-status");
+        }
+    }
+
     // --- Device Discovery (#97 — last python3 shim removed) ---
     //
     // Diagnostic enumerator of ALL controller-like input devices (incl.
@@ -218,6 +248,7 @@ FocusScope {
             root.scanDevices();
             root.refreshPads();
             daemonStatus.request("status");
+            getControllerDbStatus.request("controllerdb-status");
         }
     }
 
@@ -226,6 +257,7 @@ FocusScope {
         root.scanDevices();
         root.refreshPads();
         daemonStatus.request("status");
+        getControllerDbStatus.request("controllerdb-status");
     }
 
     onVisibleChanged: {
@@ -233,6 +265,7 @@ FocusScope {
             root.scanDevices();
             root.refreshPads();
             daemonStatus.request("status");
+            getControllerDbStatus.request("controllerdb-status");
         }
     }
 
@@ -552,7 +585,7 @@ FocusScope {
                 activeFocusOnTab: true
 
                 KeyNavigation.up: controllerList
-                KeyNavigation.down: debugScope
+                KeyNavigation.down: dbScope
 
                 SettingsButton {
                     id: grabBtn
@@ -575,6 +608,96 @@ FocusScope {
                         onClicked: {
                             grabScope.forceActiveFocus();
                             grabBtn.activated();
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Controller Database (#159) ---
+
+        Text {
+            text: "Controller Database"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 24
+
+            // Status: entry count + last-download timestamp + source
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                Text {
+                    text: {
+                        if (root.controllerDb === null)
+                            return "Loading…";
+                        return root.controllerDb.entryCount + " controllers known";
+                    }
+                    font.pixelSize: Theme.fontSmall
+                    color: Theme.textSecondary
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    text: {
+                        if (root.controllerDb === null)
+                            return "";
+                        let ts = root.controllerDb.lastDownloaded;
+                        let src = root.controllerDb.source || "";
+                        let srcLabel = src === "upstream_cache" ? "upstream cache" : src === "env_override" ? "env override" : "bundled baseline";
+                        if (ts === 0)
+                            return "Never downloaded  ·  " + srcLabel;
+                        let d = new Date(ts * 1000);
+                        return "Downloaded " + d.toLocaleDateString() + "  ·  " + srcLabel;
+                    }
+                    font.pixelSize: Theme.fontHint
+                    color: root.controllerDb && root.controllerDb.error ? Theme.offline : Theme.textMuted
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    visible: root.controllerDb !== null
+                }
+
+                Text {
+                    text: root.controllerDb ? (root.controllerDb.error || "") : ""
+                    font.pixelSize: Theme.fontHint
+                    color: Theme.offline
+                    visible: root.controllerDb !== null && root.controllerDb.error !== undefined
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            FocusScope {
+                id: dbScope
+                width: dbRefreshBtn.width
+                height: dbRefreshBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: grabScope
+                KeyNavigation.down: debugScope
+
+                SettingsButton {
+                    id: dbRefreshBtn
+                    text: "Refresh DB"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+
+                    onActivated: {
+                        refreshControllerDb.request("controllerdb-refresh");
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            dbScope.forceActiveFocus();
+                            dbRefreshBtn.activated();
                         }
                     }
                 }
@@ -607,7 +730,7 @@ FocusScope {
                 height: debugBtn.height
                 activeFocusOnTab: true
 
-                KeyNavigation.up: grabScope
+                KeyNavigation.up: dbScope
                 KeyNavigation.down: rumbleScope
 
                 SettingsButton {

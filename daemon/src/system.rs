@@ -152,6 +152,7 @@ fn is_skipped_fstype(fstype: &str) -> bool {
             | "sysfs"
             | "devtmpfs"
             | "devpts"
+            | "tmpfs"
             | "cgroup"
             | "cgroup2"
             | "pstore"
@@ -291,6 +292,10 @@ mod tests {
         assert!(is_skipped_fstype("sysfs"));
         assert!(is_skipped_fstype("devtmpfs"));
         assert!(is_skipped_fstype("cgroup2"));
+        assert!(
+            is_skipped_fstype("tmpfs"),
+            "tmpfs must be skipped (covers /dev/shm, /run, /tmp)"
+        );
         assert!(!is_skipped_fstype("ext4"));
         assert!(!is_skipped_fstype("btrfs"));
         assert!(!is_skipped_fstype("xfs"));
