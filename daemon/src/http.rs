@@ -502,20 +502,22 @@ async fn handle_connection(
             match result {
                 Ok(out) if out.status.success() => {
                     let png = out.stdout;
+                    // Broadcast the flash signal immediately after grim succeeds
+                    // (capture complete) so the UI overlay is prompt — before
+                    // streaming the PNG bytes, which TCP backpressure could delay.
+                    // The overlay never appears in the captured PNG because the
+                    // flash fires AFTER capture (#166).
+                    // Ignored when no subscribers are connected (send returns
+                    // SendError when receiver_count == 0, which is fine here).
+                    if flash {
+                        let _ = events_tx.send(Event::ScreenshotFlash);
+                    }
                     // Binary-safe response: write the header then the raw PNG bytes.
                     // We do NOT use http_response() here — that function takes a &str
                     // body and would corrupt arbitrary binary data.
                     let header = png_response_header(png.len());
                     let _ = stream.write_all(&header).await;
                     let _ = stream.write_all(&png).await;
-                    // Broadcast the flash signal AFTER the clean capture so the
-                    // PNG is not polluted by the overlay (#166). The QML overlay
-                    // paints a short white vignette as post-capture feedback.
-                    // Ignored when no subscribers are connected (send returns
-                    // SendError when receiver_count == 0, which is fine here).
-                    if flash {
-                        let _ = events_tx.send(Event::ScreenshotFlash);
-                    }
                 }
                 Ok(out) => {
                     // grim exited non-zero — include stderr in the 500 body.
