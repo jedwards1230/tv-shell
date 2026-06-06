@@ -9,12 +9,14 @@
 
 pub mod apps;
 pub mod config;
+pub mod controllerdb;
 pub mod device;
 pub mod health;
 pub mod ipc;
 pub mod protocol;
 pub mod recents;
 pub mod state;
+pub mod system;
 
 // Session-environment self-discovery and daemon.env loading (#165).
 // Cross-platform: no Linux-only imports.
