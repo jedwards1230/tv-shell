@@ -1,0 +1,105 @@
+# Automatic PR code review using Claude Code Action (Haiku model).
+# Triggers on PR open/update; posts inline comments, summary via tracking comment.
+# Read-only — writes nothing beyond PR review comments.
+
+name: Claude PR Review
+
+run-name: "Review PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write # Required by claude-code-action for OIDC GitHub token exchange
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code Review
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          track_progress: true
+          claude_args: |
+            --model claude-haiku-4-5
+            --max-turns 50
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git fetch:*),Bash(git show:*),Read,Glob,Grep"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are reviewing a PR for game-shell, a Quickshell/QML + Hyprland TV
+            gaming shell with a Rust input daemon (daemon/, evdev/uinput/IPC,
+            optional --features cec). The PR branch is checked out.
+
+            DO NOT comment on QML formatting, whitespace, or brace style — a separate
+            qmlformat CI job (Qt 6.8) owns formatting; commenting on it is noise.
+
+            ### Focus
+
+            QML:
+            - Binding loops; leaked dynamic objects never `destroy()`ed; `Connections`,
+              `Timer`, or `Process` left running; handlers attached and never cleaned up.
+            - Controller-nav regressions: missing `KeyNavigation` links, no B/Escape
+              back path, focus that can get stuck (this is a D-pad/remote UI).
+            - New components not registered in `components/qmldir`.
+
+            Shell scripts (scripts/*.sh):
+            - Missing `set -euo pipefail`; unquoted `$var`/`$(...)`; word-splitting.
+            - Hardcoded host paths or secrets — Sunshine creds must NOT be committed.
+
+            Rust daemon (daemon/):
+            - Resource cleanup: grabbed evdev fds, uinput devices, Unix sockets, and
+              the libcec connection released on all error/exit paths.
+            - Races in process/session/IPC lifecycle; `.unwrap()`/`panic!` on
+              device- or attacker-controllable input; unhandled error paths.
+
+            ### Output
+
+            Post specific issues as inline comments with
+            `mcp__github_inline_comment__create_inline_comment`. Give your overall
+            verdict as your final message — track_progress posts it to the PR.
+
+            Only flag real, actionable problems — no nitpicking, no praise. If the
+            change looks good, say so in one line and skip inline comments. Cite
+            file:line with a concrete fix. Keep total comment volume low.
+
+      - name: Write job summary
+        if: always()
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          EXEC_FILE="${RUNNER_TEMP}/claude-execution-output.json"
+          {
+            echo "## Claude PR Review"
+            echo ""
+            echo "**PR:** #${{ github.event.pull_request.number }} — ${PR_TITLE}"
+            echo "**Session:** \`${{ steps.claude.outputs.session_id }}\`"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$EXEC_FILE" ]; then
+            RESULT=$(jq -r 'last | .subtype // "unknown"' "$EXEC_FILE" 2>/dev/null || echo "unknown")
+            TURNS=$(jq -r 'last | .num_turns // "?"' "$EXEC_FILE" 2>/dev/null || echo "?")
+            COST=$(jq -r 'last | .total_cost_usd // "?"' "$EXEC_FILE" 2>/dev/null || echo "?")
+            {
+              echo "| Metric | Value |"
+              echo "|--------|-------|"
+              echo "| Result | \`$RESULT\` |"
+              echo "| Turns | $TURNS |"
+              echo "| Cost | \$${COST} |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
