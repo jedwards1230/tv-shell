@@ -100,8 +100,10 @@ Item {
                     radius: 4
                     color: Theme.ember
 
-                    Accessible.role: Accessible.StaticText
-                    Accessible.name: "Running"
+                    // Purely visual — running state is exposed via the card's
+                    // Accessible.description, so ignore this node to avoid an
+                    // orphan "Running" element in the accessibility tree.
+                    Accessible.ignored: true
                 }
 
                 MarqueeText {

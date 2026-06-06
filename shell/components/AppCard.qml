@@ -8,6 +8,9 @@ BaseCard {
     // beside the name and enables Resume/Close actions instead of Launch.
 
     label: root.app.name || "Unknown"
+    // Expose running state on the card itself (mirrors StreamCard's
+    // online/session Accessible.description) rather than via a separate a11y node.
+    Accessible.description: root.running ? "Running" : ""
 
     Image {
         id: iconImage

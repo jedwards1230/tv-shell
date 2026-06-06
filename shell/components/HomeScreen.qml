@@ -161,19 +161,19 @@ FocusScope {
         });
     }
 
-    // === Merged row model (running-pinned recents) ===
+    // === Merged row model (running windows + recents) ===
     //
     // Produces a single sorted list:
-    //   1. Running apps, sorted most-recently-focused first, then by launch recency.
-    //      Externally-started windows (not in recents) are included here too.
-    //   2. Non-running recents, in their existing recency order.
+    //   1. One card per running WINDOW, sorted most-recently-focused first
+    //      (Hyprland focusHistoryId; 0 = most recent). Externally-started
+    //      windows are included here too.
+    //   2. Non-running recents (apps with no open window), in recency order.
     //
-    // Deduplication: an app that is both running and recent appears once only
-    // (as the running card at the front). Identity is keyed on windowClass for
-    // running windows matched to recents via exec-basename / name heuristic.
+    // A recent whose app has any open window is represented by that window's
+    // card(s) and is not also listed as a separate non-running recent.
     //
-    // Reactivity: this binding re-evaluates whenever either root.runningWindows
-    // or RecentsTracker.recentApps changes, so close→reorder is live.
+    // Reactivity: this binding re-evaluates whenever root.runningWindows or
+    // RecentsTracker.recentApps changes, so close→reorder is live.
     readonly property var _mergedModel: {
         let running = root.runningWindows || [];
         let recents = RecentsTracker.recentApps || [];
@@ -800,8 +800,11 @@ FocusScope {
                     if (mergedRow.activeFocus) {
                         let idx = mergedRow.currentIndex;
                         let model = root._mergedModel;
-                        if (idx >= 0 && idx < model.length && model[idx].running === true)
-                            return "A: Resume  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
+                        let running = (idx >= 0 && idx < model.length && model[idx].running === true);
+                        // Both running and non-running merged cards have a Y
+                        // context menu (Resume/Quit vs Launch), so advertise it
+                        // for both — only the A label differs.
+                        return (running ? "A: Resume" : "A: Launch") + "  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                     }
                     if (moonlightRow.activeFocus)
                         return "A: Stream  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
@@ -819,7 +822,11 @@ FocusScope {
         id: popoverMenu
         onClosed: {
             popoverMenu.opened = false;
-            mergedRow.forceActiveFocus();
+            // Restore focus to the first visible row rather than mergedRow
+            // specifically — when opened from Moonlight/app-view with no
+            // running apps or recents, mergedRow is hidden (zero-height) and
+            // focusing it would strand focus on an invisible row.
+            root._focusFirstVisibleRow();
         }
     }
 }
