@@ -39,6 +39,7 @@
 //! Linux-gated, so in practice the listener only runs on Linux — but the pure
 //! parser and unit tests compile and run on macOS / CI.
 
+use crate::session_env;
 use crate::state::Control;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -69,6 +70,22 @@ pub enum HttpAction {
     Key(String),
     /// Capture the current screen via `grim -` and return the PNG.
     Screenshot,
+    // ── Dev-control routes (#167) ────────────────────────────────────────────
+    /// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset.
+    DevDeploy { git_ref: Option<String> },
+    /// `POST /dev/build` — cargo build --release + install binary.
+    DevBuild,
+    /// `POST /dev/restart-shell` — pkill quickshell, relaunch detached.
+    DevRestartShell,
+    /// `POST /dev/restart-daemon` — write ok response then re-exec daemon.
+    DevRestartDaemon,
+    /// `GET /dev/logs[?lines=N&filter=<str>]` — tail /tmp/qs-log.txt.
+    DevLogs {
+        lines: usize,
+        filter: Option<String>,
+    },
+    /// `GET /dev/status` — JSON status blob.
+    DevStatus,
 }
 
 // ─── Pure parser (unit-testable on any host) ────────────────────────────────
@@ -115,26 +132,56 @@ pub fn url_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Parse a URL query string (`key=value&key2=value2`) into a list of pairs.
+/// Percent-encoding on values is NOT decoded here (the dev routes use simple
+/// ASCII values); keys are compared verbatim.
+pub fn parse_query(qs: &str) -> Vec<(String, String)> {
+    if qs.is_empty() {
+        return Vec::new();
+    }
+    qs.split('&')
+        .filter_map(|kv| {
+            let mut it = kv.splitn(2, '=');
+            let k = it.next()?;
+            let v = it.next().unwrap_or("");
+            if k.is_empty() {
+                return None;
+            }
+            Some((url_decode(k), url_decode(v)))
+        })
+        .collect()
+}
+
 /// Parse an HTTP request line (`METHOD SP PATH SP HTTP/...`) and map it to an
 /// [`HttpAction`].
 ///
-/// - `GET /screenshot`       → [`HttpAction::Screenshot`]
-/// - `GET /screenshot.png`   → [`HttpAction::Screenshot`]
+/// - `GET /screenshot`          → [`HttpAction::Screenshot`]
+/// - `GET /screenshot.png`      → [`HttpAction::Screenshot`]
 /// - Non-GET for `/screenshot[.png]` → [`HttpError::MethodNotAllowed`]
-/// - `POST /intent/<target>` → [`HttpAction::Intent`] (`<target>` percent-decoded;
+/// - `POST /intent/<target>`    → [`HttpAction::Intent`] (`<target>` percent-decoded;
 ///   empty target → [`HttpError::NotFound`]).
-/// - `POST /key/<name>`      → [`HttpAction::Key`] (percent-decoded; empty →
+/// - `POST /key/<name>`         → [`HttpAction::Key`] (percent-decoded; empty →
 ///   [`HttpError::NotFound`]).
+/// - `GET /dev/status`          → [`HttpAction::DevStatus`]
+/// - `GET /dev/logs`            → [`HttpAction::DevLogs`] (`?lines=N&filter=F`)
+/// - `POST /dev/deploy`         → [`HttpAction::DevDeploy`] (`?ref=<git-ref>`)
+/// - `POST /dev/build`          → [`HttpAction::DevBuild`]
+/// - `POST /dev/restart-shell`  → [`HttpAction::DevRestartShell`]
+/// - `POST /dev/restart-daemon` → [`HttpAction::DevRestartDaemon`]
 /// - Non-POST for any other path → [`HttpError::MethodNotAllowed`].
-/// - Unknown POST path       → [`HttpError::NotFound`].
+/// - Unknown POST path           → [`HttpError::NotFound`].
 ///
-/// Query strings (everything after `?`) are stripped before routing.
+/// Query strings are stripped for non-dev routes; dev routes preserve them for
+/// parameter extraction.
 pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpError> {
-    // Strip query string.
-    let path = path.split('?').next().unwrap_or(path);
+    // Split path and query string — dev routes use query params.
+    let (bare_path, qs) = match path.find('?') {
+        Some(i) => (&path[..i], &path[i + 1..]),
+        None => (path, ""),
+    };
 
     // Screenshot routes: GET only.
-    if path == "/screenshot" || path == "/screenshot.png" {
+    if bare_path == "/screenshot" || bare_path == "/screenshot.png" {
         if method == "GET" {
             return Ok(HttpAction::Screenshot);
         } else {
@@ -142,12 +189,18 @@ pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpEr
         }
     }
 
+    // Dev routes (#167).
+    if bare_path.starts_with("/dev/") {
+        let params = parse_query(qs);
+        return parse_dev_route(method, bare_path, &params);
+    }
+
     // All remaining routes require POST.
     if method != "POST" {
         return Err(HttpError::MethodNotAllowed);
     }
 
-    if let Some(rest) = path.strip_prefix("/intent/") {
+    if let Some(rest) = bare_path.strip_prefix("/intent/") {
         let name = url_decode(rest);
         if name.is_empty() {
             return Err(HttpError::NotFound);
@@ -155,7 +208,7 @@ pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpEr
         return Ok(HttpAction::Intent(name));
     }
 
-    if let Some(rest) = path.strip_prefix("/key/") {
+    if let Some(rest) = bare_path.strip_prefix("/key/") {
         let name = url_decode(rest);
         if name.is_empty() {
             return Err(HttpError::NotFound);
@@ -164,6 +217,47 @@ pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpEr
     }
 
     Err(HttpError::NotFound)
+}
+
+/// Parse a `/dev/*` route.  Called only when `bare_path` starts with `/dev/`.
+fn parse_dev_route(
+    method: &str,
+    bare_path: &str,
+    params: &[(String, String)],
+) -> Result<HttpAction, HttpError> {
+    let get = |k: &str| -> Option<&str> {
+        params
+            .iter()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.as_str())
+    };
+
+    match (method, bare_path) {
+        ("GET", "/dev/status") => Ok(HttpAction::DevStatus),
+        ("GET", "/dev/logs") => {
+            let lines = get("lines")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(100)
+                .min(1000);
+            let filter = get("filter").map(str::to_owned);
+            Ok(HttpAction::DevLogs { lines, filter })
+        }
+        ("POST", "/dev/deploy") => {
+            let git_ref = get("ref").map(str::to_owned);
+            Ok(HttpAction::DevDeploy { git_ref })
+        }
+        ("POST", "/dev/build") => Ok(HttpAction::DevBuild),
+        ("POST", "/dev/restart-shell") => Ok(HttpAction::DevRestartShell),
+        ("POST", "/dev/restart-daemon") => Ok(HttpAction::DevRestartDaemon),
+        // Known dev paths with wrong method.
+        (_, "/dev/status") | (_, "/dev/logs") => Err(HttpError::MethodNotAllowed),
+        (_, "/dev/deploy")
+        | (_, "/dev/build")
+        | (_, "/dev/restart-shell")
+        | (_, "/dev/restart-daemon") => Err(HttpError::MethodNotAllowed),
+        // Unknown /dev/* path.
+        _ => Err(HttpError::NotFound),
+    }
 }
 
 // ─── HTTP response helpers ───────────────────────────────────────────────────
@@ -196,37 +290,6 @@ fn png_response_header(png_len: usize) -> Vec<u8> {
         "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {png_len}\r\nConnection: close\r\n\r\n"
     );
     header.into_bytes()
-}
-
-/// Resolve the Wayland display socket name for screenshot subprocesses (grim).
-///
-/// The session wrapper launches the daemon *before* `exec Hyprland`, so the
-/// daemon does not inherit `WAYLAND_DISPLAY`; bare grim would default to
-/// `wayland-0` and fail. Prefer the inherited value when present, otherwise
-/// discover the compositor socket in `$XDG_RUNTIME_DIR` (`wayland-N`, preferring
-/// one with a `wayland-N.lock` sibling, which marks a live server).
-fn resolve_wayland_display() -> Option<String> {
-    if let Some(d) = std::env::var_os("WAYLAND_DISPLAY") {
-        if !d.is_empty() {
-            return Some(d.to_string_lossy().into_owned());
-        }
-    }
-    let dir = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
-    let mut fallback: Option<String> = None;
-    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(rest) = name.strip_prefix("wayland-") else {
-            continue;
-        };
-        if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        if dir.join(format!("{name}.lock")).exists() {
-            return Some(name);
-        }
-        fallback.get_or_insert(name);
-    }
-    fallback
 }
 
 // ─── Per-connection handler ──────────────────────────────────────────────────
@@ -306,11 +369,24 @@ async fn handle_connection(
     token: Option<&str>,
     auth_enabled: bool,
     control_tx: &mpsc::Sender<Control>,
+    reexec_notify: &std::sync::Arc<tokio::sync::Notify>,
+    reexec_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
-    let raw = match read_headers(&mut stream).await {
-        Some(b) => b,
-        None => {
+    // Bound the header read with a short timeout (anti-slowloris); the longer
+    // outer DEV_TIMEOUT_SECS budget covers dev-op subprocess execution only.
+    let raw = match tokio::time::timeout(
+        std::time::Duration::from_secs(READ_TIMEOUT_SECS),
+        read_headers(&mut stream),
+    )
+    .await
+    {
+        Ok(Some(b)) => b,
+        Ok(None) => {
             tracing::debug!("http: client disconnected before headers");
+            return;
+        }
+        Err(_) => {
+            tracing::debug!("http: header read timed out");
             return;
         }
     };
@@ -404,12 +480,14 @@ async fn handle_connection(
             // Shell out to grim(1) — captures the Wayland display to stdout as PNG.
             // `grim -` writes the PNG to stdout; we capture it and stream it back.
             // The daemon is launched before `exec Hyprland`, so it may not inherit
-            // WAYLAND_DISPLAY — resolve and inject it so grim finds the live socket
-            // instead of defaulting to wayland-0 and failing.
+            // WAYLAND_DISPLAY — resolve via session_env (which also checks
+            // XDG_RUNTIME_DIR) so grim finds the live socket.
             let mut cmd = tokio::process::Command::new("grim");
             cmd.arg("-");
-            if let Some(disp) = resolve_wayland_display() {
-                cmd.env("WAYLAND_DISPLAY", disp);
+            // Inject all available session env vars (WAYLAND_DISPLAY,
+            // HYPRLAND_INSTANCE_SIGNATURE, XDG_RUNTIME_DIR) for consistency.
+            for (k, v) in session_env::session_env_pairs() {
+                cmd.env(k, v);
             }
             let result = cmd.output().await;
             match result {
@@ -436,7 +514,360 @@ async fn handle_connection(
                 }
             }
         }
+
+        // ── Dev-control routes (#167) ────────────────────────────────────────
+        HttpAction::DevDeploy { git_ref } => {
+            let resp = handle_dev_deploy(git_ref.as_deref()).await;
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+        HttpAction::DevBuild => {
+            let resp = handle_dev_build().await;
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+        HttpAction::DevRestartShell => {
+            let resp = handle_dev_restart_shell().await;
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+        HttpAction::DevRestartDaemon => {
+            // Write the response FIRST, then signal main to re-exec.
+            let resp = http_response(200, "ok, re-execing\n");
+            let _ = stream.write_all(resp.as_bytes()).await;
+            let _ = stream.flush().await;
+            reexec_flag.store(true, std::sync::atomic::Ordering::Release);
+            reexec_notify.notify_one();
+        }
+        HttpAction::DevLogs { lines, filter } => {
+            let resp = handle_dev_logs(lines, filter.as_deref());
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+        HttpAction::DevStatus => {
+            let resp = handle_dev_status().await;
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
     }
+}
+
+// ─── Dev-control handlers (#167) ────────────────────────────────────────────
+
+/// Run a git command with `cwd` and collect stdout+stderr.
+/// Returns `(exit_ok, combined_output)`.
+async fn git_run(root: &std::path::Path, args: &[&str]) -> (bool, String) {
+    let out = tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .await;
+    match out {
+        Ok(o) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            (o.status.success(), combined)
+        }
+        Err(e) => (false, format!("git error: {e}")),
+    }
+}
+
+/// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset to remote.
+async fn handle_dev_deploy(git_ref: Option<&str>) -> String {
+    let root = session_env::install_root();
+    let r = git_ref.unwrap_or("main");
+    tracing::info!("dev/deploy: ref={r} root={}", root.display());
+
+    // Fetch
+    let (ok, out) = git_run(
+        &root,
+        &[
+            "-C",
+            root.to_str().unwrap_or("."),
+            "fetch",
+            "origin",
+            "--prune",
+        ],
+    )
+    .await;
+    if !ok {
+        return http_response(500, &format!("git fetch failed: {out}"));
+    }
+
+    // Checkout
+    let (ok, out) = git_run(
+        &root,
+        &["-C", root.to_str().unwrap_or("."), "checkout", "-f", r],
+    )
+    .await;
+    if !ok {
+        return http_response(500, &format!("git checkout failed: {out}"));
+    }
+
+    // Try to reset to remote tracking branch
+    let remote_ref = format!("origin/{r}");
+    let (has_remote, _) = git_run(
+        &root,
+        &[
+            "-C",
+            root.to_str().unwrap_or("."),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &remote_ref,
+        ],
+    )
+    .await;
+    if has_remote {
+        let (ok, out) = git_run(
+            &root,
+            &[
+                "-C",
+                root.to_str().unwrap_or("."),
+                "reset",
+                "--hard",
+                &remote_ref,
+            ],
+        )
+        .await;
+        if !ok {
+            return http_response(500, &format!("git reset failed: {out}"));
+        }
+    }
+
+    // Report the resulting SHA
+    let (ok, sha_out) = git_run(
+        &root,
+        &[
+            "-C",
+            root.to_str().unwrap_or("."),
+            "rev-parse",
+            "--short",
+            "HEAD",
+        ],
+    )
+    .await;
+    if !ok {
+        return http_response(500, &format!("git rev-parse failed: {sha_out}"));
+    }
+    let sha = sha_out.trim();
+    let body = format!("deployed {r} @ {sha}\n");
+    http_response(200, &body)
+}
+
+/// `POST /dev/build` — cargo build --release + install the binary.
+async fn handle_dev_build() -> String {
+    let root = session_env::install_root();
+    let daemon_dir = root.join("daemon");
+    tracing::info!("dev/build: cwd={}", daemon_dir.display());
+
+    let out = tokio::process::Command::new("cargo")
+        .args(["build", "--release"])
+        .current_dir(&daemon_dir)
+        .output()
+        .await;
+
+    match out {
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let tail: String = stderr
+                .lines()
+                .rev()
+                .take(12)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if !o.status.success() {
+                return http_response(500, &format!("cargo build failed:\n{tail}"));
+            }
+
+            // Install the binary
+            let src = daemon_dir.join("target/release/game-shell-input");
+            let dst = root.join("bin/game-shell-input");
+            let install = tokio::process::Command::new("install")
+                .args(["-m755"])
+                .arg(&src)
+                .arg(&dst)
+                .output()
+                .await;
+
+            match install {
+                Ok(i) if i.status.success() => {
+                    let body = format!("{tail}\nok\n");
+                    http_response(200, &body)
+                }
+                Ok(i) => {
+                    let err = String::from_utf8_lossy(&i.stderr);
+                    http_response(500, &format!("install failed: {err}"))
+                }
+                Err(e) => http_response(500, &format!("install error: {e}")),
+            }
+        }
+        Err(e) => http_response(500, &format!("cargo error: {e}")),
+    }
+}
+
+/// `POST /dev/restart-shell` — kill quickshell and relaunch detached.
+async fn handle_dev_restart_shell() -> String {
+    // Kill existing quickshell (ignore failure — it may not be running).
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-x", "quickshell"])
+        .output()
+        .await;
+
+    // Open log file for child stdio.
+    let log_path = "/tmp/qs-log.txt";
+    let log_file = match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(log_path)
+    {
+        Ok(f) => f,
+        Err(e) => return http_response(500, &format!("open log failed: {e}")),
+    };
+    let log_stderr = match log_file.try_clone() {
+        Ok(f) => f,
+        Err(e) => return http_response(500, &format!("clone log fd failed: {e}")),
+    };
+
+    // Spawn quickshell detached (new session so it outlives this handler task).
+    let mut cmd = std::process::Command::new("setsid");
+    cmd.args(["quickshell", "-c", "game-shell"]);
+    cmd.stdout(log_file);
+    cmd.stderr(log_stderr);
+    // Inject session env vars so quickshell finds the compositor sockets.
+    for (k, v) in session_env::session_env_pairs() {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
+        Ok(_) => {}
+        Err(e) => return http_response(500, &format!("spawn failed: {e}")),
+    }
+
+    // Give quickshell a moment to start up and emit initial log lines.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Read and filter the log file.
+    let log_content = std::fs::read_to_string(log_path).unwrap_or_default();
+    let filtered: String = log_content
+        .lines()
+        .filter(|l| {
+            let upper = l.to_uppercase();
+            (upper.contains("WARN") || upper.contains("ERROR"))
+                && !upper.contains("COULD NOT LOAD ICON")
+        })
+        .rev()
+        .take(30)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let body = if filtered.is_empty() {
+        "started (no WARN/ERROR in first 3s)\n".to_owned()
+    } else {
+        format!("{filtered}\n")
+    };
+    http_response(200, &body)
+}
+
+/// `GET /dev/logs[?lines=N&filter=F]` — tail /tmp/qs-log.txt.
+fn handle_dev_logs(lines: usize, filter: Option<&str>) -> String {
+    let log_path = "/tmp/qs-log.txt";
+    let content = match std::fs::read_to_string(log_path) {
+        Ok(c) => c,
+        // No log yet (e.g. on a fresh boot quickshell isn't redirected here until
+        // a /dev/restart-shell). Degrade gracefully rather than returning 500.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return http_response(
+                200,
+                "(no /tmp/qs-log.txt yet — POST /dev/restart-shell to capture quickshell logs)\n",
+            );
+        }
+        Err(e) => return http_response(500, &format!("read log failed: {e}")),
+    };
+
+    let filtered: Vec<&str> = match filter {
+        Some(f) => {
+            let f_lower = f.to_lowercase();
+            content
+                .lines()
+                .filter(|l| l.to_lowercase().contains(&f_lower))
+                .collect()
+        }
+        None => content.lines().collect(),
+    };
+
+    let tail: String = filtered
+        .iter()
+        .rev()
+        .take(lines)
+        .copied()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let body = format!("{tail}\n");
+    http_response(200, &body)
+}
+
+/// `GET /dev/status` — JSON status blob.
+async fn handle_dev_status() -> String {
+    let root = session_env::install_root();
+
+    // SHA from git.
+    let sha = {
+        let out = tokio::process::Command::new("git")
+            .args([
+                "-C",
+                root.to_str().unwrap_or("."),
+                "rev-parse",
+                "--short",
+                "HEAD",
+            ])
+            .output()
+            .await;
+        match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+            _ => "unknown".to_owned(),
+        }
+    };
+
+    // Is quickshell running?
+    let shell_running = matches!(
+        tokio::process::Command::new("pgrep")
+            .args(["-x", "quickshell"])
+            .output()
+            .await,
+        Ok(o) if o.status.success()
+    );
+
+    let wayland = match session_env::resolve_wayland_display() {
+        Some(d) => format!("\"{}\"", d.replace('\\', "\\\\").replace('"', "\\\"")),
+        None => "null".to_owned(),
+    };
+
+    let hypr_sig_present = session_env::resolve_hypr_signature().is_some();
+
+    let version = env!("CARGO_PKG_VERSION");
+    let pid = std::process::id();
+
+    let json = format!(
+        r#"{{"sha":"{sha}","daemon_pid":{pid},"version":"{version}","shell_running":{shell_running},"wayland_display":{wayland},"hypr_sig_present":{hypr_sig_present}}}"#
+    );
+
+    // Return JSON with appropriate Content-Type.
+    let reason = "OK";
+    format!(
+        "HTTP/1.1 200 {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        json.len(),
+        json
+    )
 }
 
 // ─── Public serve entry point ────────────────────────────────────────────────
@@ -444,8 +875,15 @@ async fn handle_connection(
 /// Maximum number of concurrently active HTTP connections (#151 DoS hardening).
 const MAX_ACTIVE_CONNS: usize = 128;
 
-/// Read timeout for each accepted connection in seconds (#151 DoS hardening).
+/// Read timeout for standard connections in seconds (#151 DoS hardening).
 const READ_TIMEOUT_SECS: u64 = 5;
+
+/// Extended timeout for /dev/* connections: cargo build (~15 s typical) and
+/// git fetch can easily exceed the 5-second limit.  180 s covers a cold cargo
+/// build with dependency downloads on a slow LAN connection.  Auth is checked
+/// before routing, so the longer window is never exposed to unauthenticated
+/// senders.
+const DEV_TIMEOUT_SECS: u64 = 180;
 
 /// Parse `GAME_SHELL_HTTP_AUTH_ENABLED` from the environment.
 /// Returns `true` (auth enabled) unless the value is exactly `"0"` or `"false"`.
@@ -477,6 +915,8 @@ pub async fn serve(
     token: Option<String>,
     auth_enabled: bool,
     control_tx: mpsc::Sender<Control>,
+    reexec_notify: std::sync::Arc<tokio::sync::Notify>,
+    reexec_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     if !auth_enabled {
         tracing::warn!(
@@ -533,13 +973,25 @@ pub async fn serve(
                 let token = token.clone();
                 let control_tx = control_tx.clone();
                 let conns = active_conns.clone();
+                let reexec_notify = reexec_notify.clone();
+                let reexec_flag = reexec_flag.clone();
                 tokio::spawn(async move {
-                    // Wrap the handler in a timeout so a slow sender that
-                    // never sends the blank-line terminator cannot hold a
-                    // task slot indefinitely (#151).
+                    // Use DEV_TIMEOUT_SECS (180 s) for all connections.
+                    // /dev/build and /dev/deploy need up to ~15 s and ~30 s
+                    // respectively; standard ops finish in <1 s so the extra
+                    // budget is free.  Auth is checked before routing, so the
+                    // longer timeout is never exposed to unauthenticated senders.
+                    // The 503 connection-cap still protects against floods.
                     let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(READ_TIMEOUT_SECS),
-                        handle_connection(stream, token.as_deref(), auth_enabled, &control_tx),
+                        std::time::Duration::from_secs(DEV_TIMEOUT_SECS),
+                        handle_connection(
+                            stream,
+                            token.as_deref(),
+                            auth_enabled,
+                            &control_tx,
+                            &reexec_notify,
+                            &reexec_flag,
+                        ),
                     )
                     .await;
                     conns.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -826,5 +1278,173 @@ mod tests {
         assert!(parse_auth_enabled_val("true"));
         assert!(parse_auth_enabled_val("yes"));
         assert!(parse_auth_enabled_val(""));
+    }
+
+    // ── parse_query ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_query_empty() {
+        assert_eq!(parse_query(""), Vec::<(String, String)>::new());
+    }
+
+    #[test]
+    fn parse_query_single() {
+        assert_eq!(
+            parse_query("ref=main"),
+            vec![("ref".to_owned(), "main".to_owned())]
+        );
+    }
+
+    #[test]
+    fn parse_query_multiple() {
+        let q = parse_query("lines=50&filter=error");
+        assert_eq!(q.len(), 2);
+        assert_eq!(q[0], ("lines".to_owned(), "50".to_owned()));
+        assert_eq!(q[1], ("filter".to_owned(), "error".to_owned()));
+    }
+
+    #[test]
+    fn parse_query_missing_value() {
+        let q = parse_query("foo");
+        assert_eq!(q, vec![("foo".to_owned(), "".to_owned())]);
+    }
+
+    #[test]
+    fn parse_query_value_with_equals() {
+        let q = parse_query("foo=bar=baz");
+        assert_eq!(q, vec![("foo".to_owned(), "bar=baz".to_owned())]);
+    }
+
+    // ── dev routes ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn dev_status_get() {
+        assert_eq!(
+            parse_request_line("GET", "/dev/status"),
+            Ok(HttpAction::DevStatus)
+        );
+    }
+
+    #[test]
+    fn dev_status_post_method_not_allowed() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/status"),
+            Err(HttpError::MethodNotAllowed)
+        );
+    }
+
+    #[test]
+    fn dev_logs_defaults() {
+        assert_eq!(
+            parse_request_line("GET", "/dev/logs"),
+            Ok(HttpAction::DevLogs {
+                lines: 100,
+                filter: None
+            })
+        );
+    }
+
+    #[test]
+    fn dev_logs_with_params() {
+        assert_eq!(
+            parse_request_line("GET", "/dev/logs?lines=50&filter=error"),
+            Ok(HttpAction::DevLogs {
+                lines: 50,
+                filter: Some("error".to_owned())
+            })
+        );
+    }
+
+    #[test]
+    fn dev_logs_lines_only() {
+        assert_eq!(
+            parse_request_line("GET", "/dev/logs?lines=200"),
+            Ok(HttpAction::DevLogs {
+                lines: 200,
+                filter: None
+            })
+        );
+    }
+
+    #[test]
+    fn dev_logs_post_method_not_allowed() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/logs"),
+            Err(HttpError::MethodNotAllowed)
+        );
+    }
+
+    #[test]
+    fn dev_deploy_no_ref() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/deploy"),
+            Ok(HttpAction::DevDeploy { git_ref: None })
+        );
+    }
+
+    #[test]
+    fn dev_deploy_with_ref() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/deploy?ref=feat/my-branch"),
+            Ok(HttpAction::DevDeploy {
+                git_ref: Some("feat/my-branch".to_owned())
+            })
+        );
+    }
+
+    #[test]
+    fn dev_deploy_get_method_not_allowed() {
+        assert_eq!(
+            parse_request_line("GET", "/dev/deploy"),
+            Err(HttpError::MethodNotAllowed)
+        );
+    }
+
+    #[test]
+    fn dev_build() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/build"),
+            Ok(HttpAction::DevBuild)
+        );
+    }
+
+    #[test]
+    fn dev_build_get_method_not_allowed() {
+        assert_eq!(
+            parse_request_line("GET", "/dev/build"),
+            Err(HttpError::MethodNotAllowed)
+        );
+    }
+
+    #[test]
+    fn dev_restart_shell() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/restart-shell"),
+            Ok(HttpAction::DevRestartShell)
+        );
+    }
+
+    #[test]
+    fn dev_restart_daemon() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/restart-daemon"),
+            Ok(HttpAction::DevRestartDaemon)
+        );
+    }
+
+    #[test]
+    fn dev_restart_daemon_get_method_not_allowed() {
+        assert_eq!(
+            parse_request_line("GET", "/dev/restart-daemon"),
+            Err(HttpError::MethodNotAllowed)
+        );
+    }
+
+    #[test]
+    fn dev_unknown_path_not_found() {
+        assert_eq!(
+            parse_request_line("POST", "/dev/nonexistent"),
+            Err(HttpError::NotFound)
+        );
     }
 }
