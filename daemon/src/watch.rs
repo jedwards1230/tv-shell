@@ -147,9 +147,7 @@ pub async fn run(config_changed: std::sync::Arc<tokio::sync::Notify>) {
         // dedicated config-changed channel. Using a separate Notify avoids
         // adding a permanent receiver on the global Event broadcast bus,
         // which would defeat receiver_count()-based fast-paths (#163).
-        tracing::info!(
-            "watch: external settings.json change detected, notifying input runtime"
-        );
+        tracing::info!("watch: external settings.json change detected, notifying input runtime");
         config_changed.notify_waiters();
         // last_seen_gen stays the same (no daemon write happened in this window).
     }
