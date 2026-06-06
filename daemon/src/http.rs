@@ -147,7 +147,7 @@ pub fn parse_query(qs: &str) -> Vec<(String, String)> {
             if k.is_empty() {
                 return None;
             }
-            Some((k.to_owned(), v.to_owned()))
+            Some((url_decode(k), url_decode(v)))
         })
         .collect()
 }
@@ -237,7 +237,8 @@ fn parse_dev_route(
         ("GET", "/dev/logs") => {
             let lines = get("lines")
                 .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(100);
+                .unwrap_or(100)
+                .min(1000);
             let filter = get("filter").map(str::to_owned);
             Ok(HttpAction::DevLogs { lines, filter })
         }
@@ -719,7 +720,8 @@ async fn handle_dev_restart_shell() -> String {
     let log_path = "/tmp/qs-log.txt";
     let log_file = match std::fs::OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open(log_path)
     {
         Ok(f) => f,

@@ -61,10 +61,10 @@ pub fn parse_env_lines(content: &str) -> Vec<(String, String)> {
 
 /// Strip a single layer of matching surrounding single or double quotes.
 fn strip_quotes(s: &str) -> &str {
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        if s.len() >= 2 {
-            return &s[1..s.len() - 1];
-        }
+    if ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+        && s.len() >= 2
+    {
+        return &s[1..s.len() - 1];
     }
     s
 }

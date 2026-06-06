@@ -976,11 +976,9 @@ with `install -m755`. Returns the last 12 lines of cargo stderr plus `ok` on suc
 or a 500 with the cargo/install error on failure. Typical build time is ~15 s on a
 warm cache; the connection timeout is 180 s to cover cold builds.
 
-**Response:** Plain text — last 12 lines of `cargo build` stderr, then `ok
-`.
+**Response:** Plain text — last 12 lines of `cargo build` stderr, then `ok`.
 
-500 body on failure: `cargo build failed:
-<tail>` or `install failed: <detail>`.
+500 body on failure: `cargo build failed: <tail>` or `install failed: <detail>`.
 
 #### `POST /dev/deploy[?ref=<ref>]`
 
@@ -1003,8 +1001,7 @@ deployed main @ a1b2c3d
 
 #### `POST /dev/restart-daemon`
 
-Triggers a **self re-exec** of the daemon: the response `ok, re-execing
-` is written
+Triggers a **self re-exec** of the daemon: the response `ok, re-execing` is written
 and flushed before the re-exec, then `execv` replaces the current process image with
 the installed binary (same PID). The daemon re-grabs input pads and the HTTP bridge
 rebinds to the same address within ~3 s. Use this after `/dev/build` to hot-swap the
