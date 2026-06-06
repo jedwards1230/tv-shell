@@ -38,6 +38,10 @@ FocusScope {
     signal powerRequested
     signal networkRequested(var anchorRect)
     signal volumeRequested(var anchorRect)
+    // Emitted on user-initiated navigation (B-press / Escaped) so the shell
+    // root can reset the auto-suspend idle timer. Keeps HomeScreen decoupled
+    // from shell.qml's timer implementation.
+    signal userActivity
 
     onActiveFocusChanged: {
         if (activeFocus)
@@ -105,6 +109,57 @@ FocusScope {
             }
             row = (row.nextRow !== undefined) ? row.nextRow : null;
         }
+    }
+
+    // === Default focus target (B-button on home screen) ===
+    // The canonical landing position: top content row, first card.
+    // Exposed so shell.qml / screensaver hook can attach later (issue #156).
+    // Qt.callLater defers the focus assignment one event-loop tick so that
+    // declarative focus: bindings that fire synchronously during onEscaped
+    // cannot steal focus back after this function sets it (fix for the B-button
+    // regression where focus landed on moonlightRow instead of recentsRow).
+    function focusDefaultPosition() {
+        Qt.callLater(function () {
+            var firstRow = null;
+            // Priority order: runningRow > recentsRow > app-view rows (apps mode)
+            // > moonlightRow (servers mode) > appsRow.
+            // runningRow and recentsRow always take precedence over streaming rows
+            // so that B from any deeper row returns to the highest visible content
+            // row — matching AC for issue #156.
+            if (runningRow.visible) {
+                firstRow = runningRow;
+            } else if (recentsRow.visible) {
+                firstRow = recentsRow;
+            } else if (root._streamingActive && Theme.streamingViewMode === "apps") {
+                // No recents/running — prefer the first visible app-view row.
+                for (var i = 0; i < appViewRepeater.count; i++) {
+                    var item = appViewRepeater.itemAt(i);
+                    if (item && item.navigableRow && item.navigableRow.visible) {
+                        firstRow = item.navigableRow;
+                        break;
+                    }
+                }
+            } else if (root._streamingActive && Theme.streamingViewMode === "servers" && moonlightRow.visible) {
+                firstRow = moonlightRow;
+            }
+            if (!firstRow)
+                firstRow = appsRow;
+            // Snap the home view back to the top so the hero clock/date header
+            // is visible again — the canonical home position is focus AND scroll
+            // reset. Done before the short-circuit below so that pressing B while
+            // already focused on the first row (but scrolled down) still scrolls
+            // up. The Flickable's Behavior on contentY animates this smoothly.
+            scrollView.contentY = 0;
+            // Already at the default position — short-circuit only when the
+            // window's active-focus item IS the target row AND its currentIndex
+            // is already 0.  Reading activeFocusItem (not firstRow.activeFocus)
+            // is correct here because we are inside Qt.callLater; at this point
+            // any synchronous focus steal has already settled.
+            if (Window.activeFocusItem === firstRow && firstRow.currentIndex === 0)
+                return;
+            firstRow.currentIndex = 0;
+            firstRow.forceActiveFocus();
+        });
     }
 
     // Computed model for app-view rows, re-evaluated when targets or hostApps change
@@ -246,6 +301,11 @@ FocusScope {
                 QuickActions {
                     id: statusIcons
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                    // B/Escape from the status-icon row must NOT open Settings
+                    // (issue #156 AC1). escapeRequestsSettings: false prevents
+                    // the QuickActions Escape handler from emitting settingsRequested;
+                    // we handle navigation back to home focus ourselves below.
+                    escapeRequestsSettings: false
                     onSettingsRequested: root.settingsRequested()
                     onNotificationCenterRequested: root.notificationCenterRequested()
                     onPowerRequested: root.powerRequested()
@@ -254,6 +314,10 @@ FocusScope {
                     onFocusDownRequested: root._focusFirstVisibleRow()
                     onActiveFocusChanged: if (activeFocus)
                         scrollView.contentY = 0
+                    Keys.onEscapePressed: {
+                        root.userActivity();
+                        root.focusDefaultPosition();
+                    }
                 }
             }
 
@@ -313,7 +377,10 @@ FocusScope {
                         popoverMenu.forceActiveFocus();
                     }
                 }
-                onEscaped: root.settingsRequested()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // === Recents Row ===
@@ -355,7 +422,10 @@ FocusScope {
                     onActivated: root.launchApp(modelData)
                 }
 
-                onEscaped: root.settingsRequested()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // === Moonlight Section (server-view or app-view) ===
@@ -420,7 +490,10 @@ FocusScope {
                         }
                     }
                 }
-                onEscaped: root.settingsRequested()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // App view: one row per host, each card is an available app
@@ -560,7 +633,10 @@ FocusScope {
                                     }
                                 }
                             }
-                            onEscaped: root.settingsRequested()
+                            onEscaped: {
+                                root.userActivity();
+                                root.focusDefaultPosition();
+                            }
                         }
                     }
                 }
@@ -600,12 +676,15 @@ FocusScope {
                     onActivated: root.launchApp(modelData)
                 }
 
-                onEscaped: root.settingsRequested()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // === Hint Bar ===
             Text {
-                text: runningRow.activeFocus ? "A: Resume  |  Y: Actions  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row" : (moonlightRow.activeFocus ? "A: Stream  |  Y: Actions  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row" : "A: Launch  |  B: Settings  |  ←→: Scroll  |  ↑↓: Switch Row")
+                text: runningRow.activeFocus ? "A: Resume  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row" : (moonlightRow.activeFocus ? "A: Stream  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row" : "A: Launch  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row")
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
                 Layout.alignment: Qt.AlignHCenter

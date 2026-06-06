@@ -56,9 +56,73 @@ ShellRoot {
         }
     }
 
+    // === Hoisted auto-suspend idle timer (issue #162) ===
+    // Lives at the shell root so it is always running, independent of which
+    // settings page (if any) is visible. Restarted whenever sleepTimerMinutes
+    // changes (folds in the Ea coupled fix from #162).
+    //
+    // Activity that resets the countdown:
+    //   - InputManager intent signals: controllerWake, intentHome, intentHomeTap,
+    //     intentHomeHold (global/automation intents — these are the wakeup surface)
+    //   - Shell state transitions: returnToShell() (launching / returning to idle)
+    //   - Any real keypress: ShellLayout's root Keys.onPressed observer emits
+    //     userActivity() for every non-auto-repeat key (D-pad / A / B / arrows /
+    //     Enter / Esc) without consuming the event, so ordinary navigation now
+    //     keeps the shell awake (#162). Wired via ShellLayout.onUserActivity below.
+    // The timer fires only when idle (state === "idle") to avoid suspending
+    // during an active stream or app session.
+
+    // Whether logind reports suspend is available; mirrors PowerSettings.canSuspend.
+    // Defaults true so the timer fires until told otherwise.
+    property bool _canSuspend: true
+
+    Components.SocketClient {
+        id: shellSuspendCmd
+    }
+
+    Components.SocketClient {
+        id: shellCanSuspendProc
+        onResponseReceived: response => {
+            let t = response.trim();
+            if (t === "yes")
+                root._canSuspend = true;
+            else if (t === "no")
+                root._canSuspend = false;
+        }
+    }
+
+    Timer {
+        id: shellIdleTimer
+        interval: Components.SettingsStore.sleepTimerMinutes * 60000
+        running: Components.SettingsStore.sleepTimerMinutes > 0 && root._canSuspend
+        repeat: false
+        onTriggered: {
+            if (root._canSuspend && root.state === "idle")
+                shellSuspendCmd.request("power-suspend");
+        }
+    }
+
+    // Restart the idle timer whenever the sleep-timer setting changes (Ea fix).
+    Connections {
+        target: Components.SettingsStore
+        function onSleepTimerMinutesChanged() {
+            if (Components.SettingsStore.sleepTimerMinutes > 0 && root._canSuspend)
+                shellIdleTimer.restart();
+            else
+                shellIdleTimer.stop();
+        }
+    }
+
+    function _resetIdleTimer() {
+        if (Components.SettingsStore.sleepTimerMinutes > 0 && root._canSuspend)
+            shellIdleTimer.restart();
+    }
+
     Component.onCompleted: {
         inputManager.grab();
         inputManager.startListening();
+        // Query logind CanSuspend so the idle timer reflects availability.
+        shellCanSuspendProc.request("power-can-suspend");
     }
 
     Components.InputManager {
@@ -70,6 +134,7 @@ ShellRoot {
                 streamManager.suspend();
         }
         onControllerWake: {
+            root._resetIdleTimer();
             // Only wake the AV system if the user has enabled wake-on-controller (#130).
             if (root.state === "idle" && Components.SettingsStore.wakeOnController)
                 avController.wake();
@@ -78,13 +143,17 @@ ShellRoot {
         // --- Control-surface intents (de-overloaded "home") ---
         // intent:home is the GLOBAL escape (keyboard Super+Escape / automation):
         // always leave the running app, regardless of focus. Fires instantly.
-        onIntentHome: root.returnToShell()
+        onIntentHome: {
+            root._resetIdleTimer();
+            root.returnToShell();
+        }
 
         // intent:home-tap is the gamepad Home neutral (short press). The shell
         // owns the focus, so it decides: over a running app -> toggle the app
         // overlay drawer (the full return-to-shell is Home-hold / intent:home);
         // on the home screen -> toggle the nav drawer (the `menu` action).
         onIntentHomeTap: {
+            root._resetIdleTimer();
             if (root.state === "appRunning") {
                 root.overlayDrawerOpen = !root.overlayDrawerOpen;
             } else if (root.state === "idle" && root._layout) {
@@ -97,7 +166,10 @@ ShellRoot {
 
         // intent:home-hold = reset. Fired by the gamepad Home long-press AND by
         // keyboard Super+Backspace.
-        onIntentHomeHold: root.resetToHome()
+        onIntentHomeHold: {
+            root._resetIdleTimer();
+            root.resetToHome();
+        }
 
         // intent:menu toggles the nav drawer. Fired by bare Super (keyboard),
         // the gamepad Home-tap on the home screen, and the on-screen menu
@@ -263,6 +335,7 @@ ShellRoot {
     function returnToShell() {
         root.state = "idle";
         inputManager.grab();
+        root._resetIdleTimer();
         if (root._layout) {
             root._layout.overlay.hide();
             root._layout.settingsPanel.visible = false;
@@ -351,6 +424,7 @@ ShellRoot {
                 onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
                 onAppCloseRequested: windowClass => appLifecycle.closeAppByClass(windowClass)
                 onReturnToShellRequested: root.returnToShell()
+                onUserActivity: root._resetIdleTimer()
                 onOverlayDrawerClosed: {
                     root.overlayDrawerOpen = false;
                 }
