@@ -26,8 +26,8 @@ FocusScope {
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
-    signal appFocusRequested(string windowClass)
-    signal appCloseRequested(string windowClass)
+    signal appFocusRequested(string address)
+    signal appCloseRequested(string address)
     signal returnToShellRequested
     signal overlayDrawerClosed
     // Forwarded from HomeScreen.userActivity — any B-press / Escaped navigation.
@@ -190,8 +190,8 @@ FocusScope {
         onStreamRequested: target => root.streamRequested(target)
         onStreamQuitRequested: target => root.streamQuitRequested(target)
         onAppLaunchRequested: app => root.appLaunchRequested(app)
-        onAppFocusRequested: windowClass => root.appFocusRequested(windowClass)
-        onAppCloseRequested: windowClass => root.appCloseRequested(windowClass)
+        onAppFocusRequested: address => root.appFocusRequested(address)
+        onAppCloseRequested: address => root.appCloseRequested(address)
         onSettingsRequested: {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();

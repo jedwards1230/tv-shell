@@ -29,6 +29,13 @@ ShellRoot {
                 name: "idle"
                 PropertyChanges {
                     target: root
+                    // restoreEntryValues:false — when idle is entered with the
+                    // overlay drawer open (Home-tap over an app, then Home from
+                    // the nav), force it closed but do NOT restore the prior
+                    // `true` on exit. Without this, launching the next app
+                    // restores overlayDrawerOpen=true and the drawer reopens
+                    // over the fresh app.
+                    restoreEntryValues: false
                     overlayDrawerOpen: false
                 }
             },
@@ -436,8 +443,8 @@ ShellRoot {
                     }
                 }
                 onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
-                onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
-                onAppCloseRequested: windowClass => appLifecycle.closeAppByClass(windowClass)
+                onAppFocusRequested: address => appLifecycle.focusByAddress(address)
+                onAppCloseRequested: address => appLifecycle.closeByAddress(address)
                 onReturnToShellRequested: root.returnToShell()
                 onUserActivity: {
                     root._resetIdleTimer();
@@ -484,18 +491,50 @@ ShellRoot {
                     }
                 }
             }
+        }
+    }
 
-            // ScreenshotFlash overlay (#166) — last child in PanelWindow so it
-            // renders on top of ShellLayout. One instance per screen (Variants).
-            // Another lane may also add an overlay here; keep this block additive.
+    // Screenshot-flash overlay (#166). A dedicated layer-shell window on the
+    // Overlay layer, so the flash shows even over a fullscreen app or stream:
+    // the main shell window is hidden in those states, so a flash parented to it
+    // never renders. Mapped ONLY for the duration of a flash — an always-present
+    // overlay surface would block Hyprland's direct scanout and hurt game/stream
+    // latency. Click-through (empty input mask) and no keyboard focus, so it
+    // never intercepts input.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            id: flashWindow
+            required property var modelData
+            screen: modelData
+            visible: false
+
+            anchors {
+                top: true
+                bottom: true
+                left: true
+                right: true
+            }
+
+            color: "transparent"
+            exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            // Empty input mask -> fully click-through; input passes to the app
+            // or shell beneath.
+            mask: Region {}
+
             Components.ScreenshotFlash {
                 id: screenshotFlash
                 anchors.fill: parent
+                onFinished: flashWindow.visible = false
             }
 
             Connections {
                 target: inputManager
                 function onScreenshotFlash() {
+                    flashWindow.visible = true;
                     screenshotFlash.flash();
                 }
             }
