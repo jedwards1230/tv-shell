@@ -28,5 +28,4 @@ BaseCard {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }
-
 }
