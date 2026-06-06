@@ -36,6 +36,12 @@ Item {
     signal intentOverlay(string target)
     signal intentApp(string appId)
 
+    // --- #166: screenshot flash feedback ---
+    // Emitted when the HTTP bridge receives `GET /screenshot?flash=1` and grim
+    // has successfully captured the frame. The QML overlay reacts to this and
+    // paints a short white vignette as visual feedback.
+    signal screenshotFlash
+
     // --- Gamepad fleet model (#98/#100/#101) ---
     //
     // `pads` is the per-pad model the controller UI renders: an array of
@@ -276,6 +282,9 @@ Item {
                 root._padDisconnected(line.substring(17));
             } else if (line.startsWith("intent:")) {
                 root._handleIntent(line.substring(7));
+            } else if (line === "screenshot:flash") {
+                // Post-capture flash feedback from the HTTP bridge (#166).
+                root.screenshotFlash();
             }
         }
     }

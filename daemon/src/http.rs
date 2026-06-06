@@ -39,12 +39,13 @@
 //! Linux-gated, so in practice the listener only runs on Linux — but the pure
 //! parser and unit tests compile and run on macOS / CI.
 
+use crate::protocol::Event;
 use crate::session_env;
 use crate::state::Control;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 // ─── Error types ────────────────────────────────────────────────────────────
 
@@ -69,7 +70,10 @@ pub enum HttpAction {
     /// The `name` is the single token after `/key/`, percent-decoded.
     Key(String),
     /// Capture the current screen via `grim -` and return the PNG.
-    Screenshot,
+    /// `flash` is `true` when the caller passed `?flash=1`; the handler
+    /// broadcasts `Event::ScreenshotFlash` after a successful capture so the
+    /// QML shell can paint a brief white vignette as feedback.
+    Screenshot { flash: bool },
     // ── Dev-control routes (#167) ────────────────────────────────────────────
     /// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset.
     DevDeploy { git_ref: Option<String> },
@@ -181,9 +185,13 @@ pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpEr
     };
 
     // Screenshot routes: GET only.
+    // Optional ?flash=1 causes a post-capture flash event on the IPC event bus.
     if bare_path == "/screenshot" || bare_path == "/screenshot.png" {
         if method == "GET" {
-            return Ok(HttpAction::Screenshot);
+            let flash = parse_query(qs)
+                .iter()
+                .any(|(k, v)| k == "flash" && v == "1");
+            return Ok(HttpAction::Screenshot { flash });
         } else {
             return Err(HttpError::MethodNotAllowed);
         }
@@ -369,6 +377,7 @@ async fn handle_connection(
     token: Option<&str>,
     auth_enabled: bool,
     control_tx: &mpsc::Sender<Control>,
+    events_tx: &broadcast::Sender<Event>,
     reexec_notify: &std::sync::Arc<tokio::sync::Notify>,
     reexec_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
@@ -476,7 +485,7 @@ async fn handle_connection(
             };
             let _ = stream.write_all(resp.as_bytes()).await;
         }
-        HttpAction::Screenshot => {
+        HttpAction::Screenshot { flash } => {
             // Shell out to grim(1) — captures the Wayland display to stdout as PNG.
             // `grim -` writes the PNG to stdout; we capture it and stream it back.
             // The daemon is launched before `exec Hyprland`, so it may not inherit
@@ -499,6 +508,14 @@ async fn handle_connection(
                     let header = png_response_header(png.len());
                     let _ = stream.write_all(&header).await;
                     let _ = stream.write_all(&png).await;
+                    // Broadcast the flash signal AFTER the clean capture so the
+                    // PNG is not polluted by the overlay (#166). The QML overlay
+                    // paints a short white vignette as post-capture feedback.
+                    // Ignored when no subscribers are connected (send returns
+                    // SendError when receiver_count == 0, which is fine here).
+                    if flash {
+                        let _ = events_tx.send(Event::ScreenshotFlash);
+                    }
                 }
                 Ok(out) => {
                     // grim exited non-zero — include stderr in the 500 body.
@@ -915,6 +932,7 @@ pub async fn serve(
     token: Option<String>,
     auth_enabled: bool,
     control_tx: mpsc::Sender<Control>,
+    events_tx: broadcast::Sender<Event>,
     reexec_notify: std::sync::Arc<tokio::sync::Notify>,
     reexec_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
@@ -972,6 +990,7 @@ pub async fn serve(
                 tracing::debug!("http: connection from {peer}");
                 let token = token.clone();
                 let control_tx = control_tx.clone();
+                let events_tx = events_tx.clone();
                 let conns = active_conns.clone();
                 let reexec_notify = reexec_notify.clone();
                 let reexec_flag = reexec_flag.clone();
@@ -989,6 +1008,7 @@ pub async fn serve(
                             token.as_deref(),
                             auth_enabled,
                             &control_tx,
+                            &events_tx,
                             &reexec_notify,
                             &reexec_flag,
                         ),
@@ -1077,7 +1097,7 @@ mod tests {
     fn get_screenshot() {
         assert_eq!(
             parse_request_line("GET", "/screenshot"),
-            Ok(HttpAction::Screenshot)
+            Ok(HttpAction::Screenshot { flash: false })
         );
     }
 
@@ -1085,15 +1105,51 @@ mod tests {
     fn get_screenshot_png() {
         assert_eq!(
             parse_request_line("GET", "/screenshot.png"),
-            Ok(HttpAction::Screenshot)
+            Ok(HttpAction::Screenshot { flash: false })
         );
     }
 
     #[test]
-    fn get_screenshot_with_query_stripped() {
+    fn get_screenshot_with_unknown_query_no_flash() {
+        // Unknown query params are ignored; flash defaults to false.
         assert_eq!(
             parse_request_line("GET", "/screenshot?foo=bar"),
-            Ok(HttpAction::Screenshot)
+            Ok(HttpAction::Screenshot { flash: false })
+        );
+    }
+
+    #[test]
+    fn get_screenshot_flash_on() {
+        // ?flash=1 enables the post-capture flash event (#166).
+        assert_eq!(
+            parse_request_line("GET", "/screenshot?flash=1"),
+            Ok(HttpAction::Screenshot { flash: true })
+        );
+    }
+
+    #[test]
+    fn get_screenshot_flash_other_values_no_flash() {
+        // Only "1" triggers flash; "true"/"yes"/"0" etc. do not.
+        assert_eq!(
+            parse_request_line("GET", "/screenshot?flash=true"),
+            Ok(HttpAction::Screenshot { flash: false })
+        );
+        assert_eq!(
+            parse_request_line("GET", "/screenshot?flash=0"),
+            Ok(HttpAction::Screenshot { flash: false })
+        );
+        assert_eq!(
+            parse_request_line("GET", "/screenshot.png?flash=1"),
+            Ok(HttpAction::Screenshot { flash: true })
+        );
+    }
+
+    #[test]
+    fn get_screenshot_flash_combined_with_other_params() {
+        // flash=1 may appear alongside other params.
+        assert_eq!(
+            parse_request_line("GET", "/screenshot?foo=bar&flash=1"),
+            Ok(HttpAction::Screenshot { flash: true })
         );
     }
 
