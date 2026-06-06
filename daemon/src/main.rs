@@ -83,7 +83,13 @@ fn main() -> anyhow::Result<()> {
         // connection and pushes events onto the shared broadcast bus. They log
         // and never panic the daemon if BlueZ/NetworkManager/logind/UPower are
         // absent, so spawning them unconditionally is safe.
-        let dbus = spawn_dbus_actors(&events_tx);
+        let dbus = spawn_dbus_actors(&events_tx, &control_tx);
+
+        // Clone the CEC channel for the graceful-shutdown standby (below) before
+        // `dbus` is moved into `ipc::serve`. Only present under `--features cec`;
+        // the CEC actor no-ops the standby unless GAME_SHELL_CEC_LIFECYCLE is on.
+        #[cfg(feature = "cec")]
+        let shutdown_cec_tx = dbus.cec.clone();
 
         // Spawn the file-watch actor. It inotify-watches settings.json for
         // external edits and signals the input runtime via config_changed.
@@ -151,14 +157,45 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        let mut reexec_shutdown = false;
         tokio::select! {
             _ = wait_for_signal() => {
                 tracing::info!("signal received, shutting down");
             }
             _ = reexec_notify.notified() => {
                 tracing::info!("re-exec requested, shutting down for restart");
+                reexec_shutdown = true;
             }
         }
+
+        // Session-end standby: on a real shutdown (SIGTERM/SIGINT from the
+        // session wrapper, #94), put the TV + AVR to standby before stopping.
+        // Skipped on a re-exec restart so the AV stays awake across it. The CEC
+        // actor itself no-ops this unless GAME_SHELL_CEC_LIFECYCLE is enabled,
+        // so this is inert on dev/CI. Bounded by a short timeout so a wedged or
+        // absent CEC bus never delays shutdown.
+        #[cfg(feature = "cec")]
+        if !reexec_shutdown {
+            if let Some(cec_tx) = shutdown_cec_tx {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if cec_tx
+                    .send(game_shell_input::cec::CecReq::StandbyAll(tx))
+                    .await
+                    .is_ok()
+                {
+                    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+                        Ok(Ok(resp)) if resp.starts_with("error:") => {
+                            tracing::warn!("shutdown CEC standby failed: {resp}");
+                        }
+                        Err(_) => tracing::warn!("shutdown CEC standby timed out"),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        #[cfg(not(feature = "cec"))]
+        let _ = reexec_shutdown;
+
         let _ = control_tx.send(state::Control::Shutdown).await;
         ipc_task.abort();
     });
@@ -193,9 +230,14 @@ fn main() -> anyhow::Result<()> {
 /// Bluetooth/Network/Power commands. Channels use the same size (64) as the
 /// input control channel. Each actor logs and exits cleanly if its service is
 /// absent; the IPC side degrades those commands to `error:*`.
+///
+/// `control_tx` is a clone of the input runtime's control channel. It is handed
+/// to the CEC actor (under `--features cec`) so CEC remote keypresses can be
+/// injected as `Control::Key` nav events — gated by `GAME_SHELL_CEC_LIFECYCLE`.
 #[cfg(target_os = "linux")]
 fn spawn_dbus_actors(
     events_tx: &tokio::sync::broadcast::Sender<protocol::Event>,
+    control_tx: &tokio::sync::mpsc::Sender<state::Control>,
 ) -> ipc::DbusSenders {
     use tokio::sync::mpsc;
 
@@ -203,6 +245,11 @@ fn spawn_dbus_actors(
     let (net_tx, net_rx) = mpsc::channel(64);
     let (power_tx, power_rx) = mpsc::channel(64);
     let (hypr_tx, hypr_rx) = mpsc::channel(64);
+    // HDMI-CEC actor (#94): only spawned when the daemon is built `--features
+    // cec`. The module/channel/spawn are all gated so the default build links no
+    // libcec.
+    #[cfg(feature = "cec")]
+    let (cec_tx, cec_rx) = mpsc::channel(64);
     {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
@@ -221,8 +268,18 @@ fn spawn_dbus_actors(
     }
     {
         let events_tx = events_tx.clone();
+        // Hand the power actor a clone of the CEC channel so logind
+        // PrepareForSleep can drive the CEC lifecycle (standby on suspend, wake
+        // on resume). Only present under `--features cec`; the CEC actor no-ops
+        // these unless GAME_SHELL_CEC_LIFECYCLE is enabled.
+        #[cfg(feature = "cec")]
+        let power_cec_tx = Some(cec_tx.clone());
         tokio::spawn(async move {
-            if let Err(e) = power::run(power_rx, events_tx).await {
+            #[cfg(feature = "cec")]
+            let result = power::run(power_rx, events_tx, power_cec_tx).await;
+            #[cfg(not(feature = "cec"))]
+            let result = power::run(power_rx, events_tx).await;
+            if let Err(e) = result {
                 tracing::warn!("power actor exited: {e}");
             }
         });
@@ -235,11 +292,31 @@ fn spawn_dbus_actors(
             }
         });
     }
+    #[cfg(feature = "cec")]
+    {
+        let events_tx = events_tx.clone();
+        // Clone of the input control channel so the CEC actor can inject remote
+        // keypresses as nav `Control::Key` events (gated by the lifecycle flag).
+        let cec_control_tx = control_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = game_shell_input::cec::run(cec_rx, events_tx, cec_control_tx).await {
+                tracing::warn!("cec actor exited: {e}");
+            }
+        });
+    }
+    // On the default (no `cec` feature) build, `control_tx` is only used by the
+    // CEC actor spawn above, so discard it explicitly to avoid an unused-arg
+    // warning under clippy `-D warnings`.
+    #[cfg(not(feature = "cec"))]
+    let _ = control_tx;
+
     ipc::DbusSenders {
         bt: Some(bt_tx),
         net: Some(net_tx),
         power: Some(power_tx),
         hypr: Some(hypr_tx),
+        #[cfg(feature = "cec")]
+        cec: Some(cec_tx),
     }
 }
 

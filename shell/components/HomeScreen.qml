@@ -31,8 +31,8 @@ FocusScope {
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
-    signal appFocusRequested(string windowClass)
-    signal appCloseRequested(string windowClass)
+    signal appFocusRequested(string address)
+    signal appCloseRequested(string address)
     signal settingsRequested
     signal notificationCenterRequested
     signal powerRequested
@@ -43,27 +43,40 @@ FocusScope {
     // from shell.qml's timer implementation.
     signal userActivity
 
-    onActiveFocusChanged: {
-        if (activeFocus)
-            _ensureRowFocusTimer.restart();
+    // Re-anchor controller focus to a row whenever HomeScreen holds focus but
+    // no row does. Otherwise directional input has nothing to act on and the
+    // stick goes dead until the mouse re-anchors focus (forceActiveFocus on
+    // hover). Returns silently when a row (or the popover/app-view rows) is
+    // already focused.
+    function _reanchorFocusIfNeeded() {
+        if (!root.activeFocus)
+            return;
+        if (statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
+            return;
+        for (let i = 0; i < appViewRepeater.count; i++) {
+            let item = appViewRepeater.itemAt(i);
+            if (item && item.navigableRow && item.navigableRow.activeFocus)
+                return;
+        }
+        root._focusFirstVisibleRow();
     }
 
+    // Safety net: a one-shot restart on focus-gain isn't enough — focus can be
+    // lost from a row WHILE HomeScreen keeps focus (a delegate rebuild on a
+    // model change destroys the focused card), which fires no activeFocus
+    // signal. Poll on a low interval while focused so any drop self-heals fast.
     Timer {
         id: _ensureRowFocusTimer
-        interval: 10
-        onTriggered: {
-            if (!root.activeFocus)
-                return;
-            if (statusIcons.activeFocus || runningRow.activeFocus || recentsRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
-                return;
-            for (let i = 0; i < appViewRepeater.count; i++) {
-                let item = appViewRepeater.itemAt(i);
-                if (item && item.navigableRow && item.navigableRow.activeFocus)
-                    return;
-            }
-            root._focusFirstVisibleRow();
-        }
+        interval: 150
+        repeat: true
+        running: root.activeFocus
+        triggeredOnStart: true
+        onTriggered: root._reanchorFocusIfNeeded()
     }
+
+    // Re-check immediately (next tick, after delegates rebuild) whenever the
+    // running-window model changes — the most common trigger for a dropped card.
+    onRunningWindowsChanged: Qt.callLater(root._reanchorFocusIfNeeded)
 
     function launchApp(app) {
         root.appLaunchRequested(app);
@@ -101,7 +114,7 @@ FocusScope {
     }
 
     function _focusFirstVisibleRow() {
-        var row = runningRow;
+        var row = mergedRow;
         while (row) {
             if (row.visible) {
                 row.forceActiveFocus();
@@ -116,20 +129,14 @@ FocusScope {
     // Exposed so shell.qml / screensaver hook can attach later (issue #156).
     // Qt.callLater defers the focus assignment one event-loop tick so that
     // declarative focus: bindings that fire synchronously during onEscaped
-    // cannot steal focus back after this function sets it (fix for the B-button
-    // regression where focus landed on moonlightRow instead of recentsRow).
+    // cannot steal focus back after this function sets it.
     function focusDefaultPosition() {
         Qt.callLater(function () {
             var firstRow = null;
-            // Priority order: runningRow > recentsRow > app-view rows (apps mode)
-            // > moonlightRow (servers mode) > appsRow.
-            // runningRow and recentsRow always take precedence over streaming rows
-            // so that B from any deeper row returns to the highest visible content
-            // row — matching AC for issue #156.
-            if (runningRow.visible) {
-                firstRow = runningRow;
-            } else if (recentsRow.visible) {
-                firstRow = recentsRow;
+            // Priority order: mergedRow (recents+running) > app-view rows
+            // (apps mode) > moonlightRow (servers mode) > appsRow.
+            if (mergedRow.visible) {
+                firstRow = mergedRow;
             } else if (root._streamingActive && Theme.streamingViewMode === "apps") {
                 // No recents/running — prefer the first visible app-view row.
                 for (var i = 0; i < appViewRepeater.count; i++) {
@@ -145,21 +152,142 @@ FocusScope {
             if (!firstRow)
                 firstRow = appsRow;
             // Snap the home view back to the top so the hero clock/date header
-            // is visible again — the canonical home position is focus AND scroll
-            // reset. Done before the short-circuit below so that pressing B while
-            // already focused on the first row (but scrolled down) still scrolls
-            // up. The Flickable's Behavior on contentY animates this smoothly.
+            // is visible again. The Flickable's Behavior on contentY animates this smoothly.
             scrollView.contentY = 0;
-            // Already at the default position — short-circuit only when the
-            // window's active-focus item IS the target row AND its currentIndex
-            // is already 0.  Reading activeFocusItem (not firstRow.activeFocus)
-            // is correct here because we are inside Qt.callLater; at this point
-            // any synchronous focus steal has already settled.
             if (Window.activeFocusItem === firstRow && firstRow.currentIndex === 0)
                 return;
             firstRow.currentIndex = 0;
             firstRow.forceActiveFocus();
         });
+    }
+
+    // === Merged row model (running windows + recents) ===
+    //
+    // Produces a single sorted list:
+    //   1. One card per running WINDOW, sorted most-recently-focused first
+    //      (Hyprland focusHistoryId; 0 = most recent). Externally-started
+    //      windows are included here too.
+    //   2. Non-running recents (apps with no open window), in recency order.
+    //
+    // A recent whose app has any open window is represented by that window's
+    // card(s) and is not also listed as a separate non-running recent.
+    //
+    // Reactivity: this binding re-evaluates whenever root.runningWindows or
+    // RecentsTracker.recentApps changes, so close→reorder is live.
+    readonly property var _mergedModel: {
+        let running = root.runningWindows || [];
+        let recents = RecentsTracker.recentApps || [];
+        // Desktop apps (with icons) for resolving a recent's icon once it is no
+        // longer running. Recents persist only {name,exec,comment}, so a closed
+        // app would otherwise lose its icon and fall back to the letter glyph.
+        let allApps = AppDiscoveryManager.applications || [];
+
+        // Build a set of exec basenames / names for running windows so we can
+        // match them against recent app entries (which carry exec/name, not
+        // windowClass). This is intentionally lenient — the same heuristic the
+        // window poller uses for icon/name resolution.
+        function execBasename(exec) {
+            if (!exec)
+                return "";
+            let cmd = exec.split(/\s/)[0];
+            return cmd.split("/").pop().toLowerCase();
+        }
+
+        function normalize(s) {
+            return (s || "").toLowerCase().replace(/[-_.]/g, "");
+        }
+
+        function runningMatchesRecent(win, recent) {
+            let cls = (win.windowClass || "").toLowerCase();
+            let execBase = execBasename(recent.exec || "");
+            let appName = (recent.name || "").toLowerCase();
+
+            // Check window title/name match
+            let winName = (win.name || "").toLowerCase();
+            if (winName !== "" && winName === appName)
+                return true;
+
+            // Check exec basename match
+            if (execBase !== "") {
+                if (cls === execBase || normalize(cls) === normalize(execBase))
+                    return true;
+                if (cls !== "" && (execBase.indexOf(cls) >= 0 || cls.indexOf(execBase) >= 0))
+                    return true;
+            }
+
+            // Check app name against class
+            if (appName !== "" && (cls === appName || normalize(cls) === normalize(appName)))
+                return true;
+
+            return false;
+        }
+
+        // Resolve a recent's icon from the desktop app list (recents don't store
+        // icons). Match by exact app name, else by exec basename, so the icon
+        // stays put after the app's windows close.
+        function resolveRecentIcon(rec) {
+            let rexec = execBasename(rec.exec || "");
+            for (let i = 0; i < allApps.length; i++) {
+                let a = allApps[i];
+                if (a.name && rec.name && a.name === rec.name)
+                    return a.icon || "";
+                if (rexec !== "" && execBasename(a.exec || "") === rexec)
+                    return a.icon || "";
+            }
+            return rec.icon || "";
+        }
+
+        // One entry per running WINDOW (no class collapse). Label by window
+        // title so multiple windows of one app are distinguishable; the icon
+        // stays the app icon (the same glyph repeated per window). Mark any
+        // recent a window represents so it isn't ALSO shown as a non-running
+        // recent card.
+        let runningEntries = [];
+        let matchedRecentIndices = new Set();
+
+        for (let r = 0; r < running.length; r++) {
+            let win = running[r];
+            for (let j = 0; j < recents.length; j++) {
+                if (runningMatchesRecent(win, recents[j]))
+                    matchedRecentIndices.add(j);
+            }
+            runningEntries.push({
+                windowClass: win.windowClass,
+                address: win.address || "",
+                name: win.title || win.name || win.windowClass,
+                icon: win.icon || "",
+                exec: "",
+                comment: "",
+                running: true,
+                focusHistoryId: (win.focusHistoryId !== undefined) ? win.focusHistoryId : 9999
+            });
+        }
+
+        // Most-recently-focused window first (Hyprland focusHistoryId, 0 = most
+        // recent) so jumping between windows reorders the row live.
+        runningEntries.sort(function (a, b) {
+            return a.focusHistoryId - b.focusHistoryId;
+        });
+
+        // Non-running recents (apps not currently open) follow, in recency order.
+        let result = runningEntries.slice();
+        for (let k = 0; k < recents.length; k++) {
+            if (matchedRecentIndices.has(k))
+                continue;
+            let rec = recents[k];
+            result.push({
+                windowClass: "",
+                address: "",
+                name: rec.name || "",
+                icon: resolveRecentIcon(rec),
+                exec: rec.exec || "",
+                comment: rec.comment || "",
+                running: false,
+                focusHistoryId: 9999
+            });
+        }
+
+        return result;
     }
 
     // Computed model for app-view rows, re-evaluated when targets or hostApps change
@@ -321,71 +449,11 @@ FocusScope {
                 }
             }
 
-            // === Running Windows Row ===
+            // === Merged Recents + Running Row ===
+            // Running apps are pinned to the front with an ember dot indicator.
+            // Non-running recents follow in recency order. No separate Running row.
             Text {
-                visible: root.runningWindows.length > 0
-                text: "Running"
-                font.pixelSize: Theme.fontTitle
-                font.bold: true
-                color: Theme.textPrimary
-            }
-
-            NavigableRow {
-                id: runningRow
-                visible: root.runningWindows.length > 0
-                Layout.fillWidth: true
-                Layout.preferredHeight: visible ? Theme.rowHeight : 0
-                keyNavigationWraps: true
-                focus: visible
-                previousRow: statusIcons
-                nextRow: recentsRow
-                model: root.runningWindows
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
-
-                delegate: AppCard {
-                    required property int index
-                    required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    app: modelData
-                    focus: index === runningRow.currentIndex
-                    onActivated: root.appFocusRequested(modelData.windowClass)
-                }
-
-                onContextRequested: {
-                    if (currentItem && currentIndex >= 0 && currentIndex < root.runningWindows.length) {
-                        let pos = currentItem.mapToItem(root, currentItem.width / 2, 0);
-                        popoverMenu.targetX = pos.x;
-                        popoverMenu.targetY = pos.y;
-                        let wc = root.runningWindows[currentIndex].windowClass;
-                        popoverMenu.actions = [
-                            {
-                                label: "Resume",
-                                action: function () {
-                                    root.appFocusRequested(wc);
-                                }
-                            },
-                            {
-                                label: "Quit App",
-                                action: function () {
-                                    root.appCloseRequested(wc);
-                                }
-                            }
-                        ];
-                        popoverMenu.opened = true;
-                        popoverMenu.forceActiveFocus();
-                    }
-                }
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-            }
-
-            // === Recents Row ===
-            Text {
-                visible: RecentsTracker.recentApps.length > 0
+                visible: root._mergedModel.length > 0
                 text: "Recent"
                 font.pixelSize: Theme.fontTitle
                 font.bold: true
@@ -393,15 +461,13 @@ FocusScope {
             }
 
             NavigableRow {
-                id: recentsRow
-                visible: RecentsTracker.recentApps.length > 0
+                id: mergedRow
+                visible: root._mergedModel.length > 0
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
-                focus: visible && !runningRow.visible
-                previousRow: runningRow
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
+                focus: visible
+                previousRow: statusIcons
                 nextRow: {
                     var _ = appViewRepeater.count;
                     if (!root._streamingActive)
@@ -410,7 +476,9 @@ FocusScope {
                         return moonlightRow;
                     return root._appViewRowItem(0) || appsRow;
                 }
-                model: RecentsTracker.recentApps
+                model: root._mergedModel
+                onActiveFocusChanged: if (activeFocus)
+                    scrollView.ensureVisible(this)
 
                 delegate: AppCard {
                     required property int index
@@ -418,10 +486,54 @@ FocusScope {
                     height: Theme.cardHeight
                     width: Theme.cardWidth
                     app: modelData
-                    focus: index === recentsRow.currentIndex
-                    onActivated: root.launchApp(modelData)
+                    running: modelData.running === true
+                    focus: index === mergedRow.currentIndex
+                    onActivated: {
+                        if (modelData.running === true) {
+                            root.appFocusRequested(modelData.address);
+                        } else {
+                            root.launchApp(modelData);
+                        }
+                    }
                 }
 
+                onContextRequested: {
+                    if (currentItem && currentIndex >= 0 && currentIndex < root._mergedModel.length) {
+                        let entry = root._mergedModel[currentIndex];
+                        let pos = currentItem.mapToItem(root, currentItem.width / 2, 0);
+                        popoverMenu.targetX = pos.x;
+                        popoverMenu.targetY = pos.y;
+                        if (entry.running === true) {
+                            let addr = entry.address;
+                            popoverMenu.actions = [
+                                {
+                                    label: "Resume",
+                                    action: function () {
+                                        root.appFocusRequested(addr);
+                                    }
+                                },
+                                {
+                                    label: "Quit App",
+                                    action: function () {
+                                        root.appCloseRequested(addr);
+                                    }
+                                }
+                            ];
+                        } else {
+                            let app = entry;
+                            popoverMenu.actions = [
+                                {
+                                    label: "Launch",
+                                    action: function () {
+                                        root.launchApp(app);
+                                    }
+                                }
+                            ];
+                        }
+                        popoverMenu.opened = true;
+                        popoverMenu.forceActiveFocus();
+                    }
+                }
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
@@ -445,8 +557,8 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
-                focus: root._streamingActive && Theme.streamingViewMode === "servers" && !recentsRow.visible && !runningRow.visible
-                previousRow: recentsRow
+                focus: root._streamingActive && Theme.streamingViewMode === "servers" && !mergedRow.visible
+                previousRow: mergedRow
                 nextRow: appsRow
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
@@ -579,13 +691,13 @@ FocusScope {
                             anchors.fill: parent
                             visible: hostAppList.length > 0
                             keyNavigationWraps: true
-                            focus: Theme.streamingViewMode === "apps" && appViewRowDelegate.index === 0 && !recentsRow.visible && !runningRow.visible
+                            focus: Theme.streamingViewMode === "apps" && appViewRowDelegate.index === 0 && !mergedRow.visible
                             onActiveFocusChanged: if (activeFocus)
                                 scrollView.ensureVisible(appViewRowDelegate)
                             model: hostAppList
                             previousRow: {
                                 var _ = appViewRepeater.count;
-                                return appViewRowDelegate.index === 0 ? recentsRow : root._appViewRowItem(appViewRowDelegate.index - 1);
+                                return appViewRowDelegate.index === 0 ? mergedRow : root._appViewRowItem(appViewRowDelegate.index - 1);
                             }
                             nextRow: appViewRowDelegate.index < appViewRepeater.count - 1 ? root._appViewRowItem(appViewRowDelegate.index + 1) : appsRow
 
@@ -659,10 +771,10 @@ FocusScope {
                     scrollView.ensureVisible(this)
                 previousRow: {
                     if (!root._streamingActive)
-                        return recentsRow;
+                        return mergedRow;
                     if (Theme.streamingViewMode === "servers")
                         return moonlightRow;
-                    return root._appViewRowItem(appViewRepeater.count - 1) || recentsRow;
+                    return root._appViewRowItem(appViewRepeater.count - 1) || mergedRow;
                 }
                 model: AppDiscoveryManager.applications
 
@@ -684,7 +796,20 @@ FocusScope {
 
             // === Hint Bar ===
             Text {
-                text: runningRow.activeFocus ? "A: Resume  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row" : (moonlightRow.activeFocus ? "A: Stream  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row" : "A: Launch  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row")
+                text: {
+                    if (mergedRow.activeFocus) {
+                        let idx = mergedRow.currentIndex;
+                        let model = root._mergedModel;
+                        let running = (idx >= 0 && idx < model.length && model[idx].running === true);
+                        // Both running and non-running merged cards have a Y
+                        // context menu (Resume/Quit vs Launch), so advertise it
+                        // for both — only the A label differs.
+                        return (running ? "A: Resume" : "A: Launch") + "  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
+                    }
+                    if (moonlightRow.activeFocus)
+                        return "A: Stream  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
+                    return "A: Launch  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
+                }
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
                 Layout.alignment: Qt.AlignHCenter
@@ -697,7 +822,11 @@ FocusScope {
         id: popoverMenu
         onClosed: {
             popoverMenu.opened = false;
-            runningRow.forceActiveFocus();
+            // Restore focus to the first visible row rather than mergedRow
+            // specifically — when opened from Moonlight/app-view with no
+            // running apps or recents, mergedRow is hidden (zero-height) and
+            // focusing it would strand focus on an invisible row.
+            root._focusFirstVisibleRow();
         }
     }
 }

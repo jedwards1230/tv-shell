@@ -4,7 +4,13 @@ BaseCard {
     id: root
 
     required property var app
+    // `running` is inherited from BaseCard, which renders the ember status dot
+    // beside the name and enables Resume/Close actions instead of Launch.
+
     label: root.app.name || "Unknown"
+    // Expose running state on the card itself (mirrors StreamCard's
+    // online/session Accessible.description) rather than via a separate a11y node.
+    Accessible.description: root.running ? "Running" : ""
 
     Image {
         id: iconImage
