@@ -91,7 +91,12 @@ type TaggedDeviceEvents = Pin<Box<dyn Stream<Item = (Address, DeviceEvent)> + Se
 /// connect emits `bt:powered:*` so the QML page refreshes. Falls back to a
 /// permanent degraded loop only when the maximum retry count is exhausted.
 pub async fn run(rx: mpsc::Receiver<BtReq>, events_tx: broadcast::Sender<Event>) -> Result<()> {
-    match open_adapter_with_retry(MAX_CONNECT_ATTEMPTS).await {
+    // The startup connect predates the shutdown path (`rx` moves into the live
+    // loop below), so it passes a standalone Notify that is never fired —
+    // preserving the pre-#154 startup behavior. Runtime reconnects are made
+    // shutdown-cancellable in `run_resilient`.
+    let startup_notify = tokio::sync::Notify::new();
+    match open_adapter_with_retry(MAX_CONNECT_ATTEMPTS, &startup_notify).await {
         Ok((session, adapter)) => {
             tracing::info!("bluetooth actor started (adapter {})", adapter.name());
             // Emit initial power state so the QML page is consistent with
