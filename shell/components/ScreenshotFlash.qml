@@ -30,6 +30,11 @@ Item {
     // Invisible until flash() is called.
     visible: false
 
+    // Emitted when a flash cycle fully completes (animation stopped and not
+    // restarted). The host overlay window uses this to unmap itself, so the
+    // flash surface only exists for the duration of the flash.
+    signal finished
+
     // Radial gradient vignette: fully transparent through the center, ramping
     // to white only near the edges. Default radii (width/2, height/2) place the
     // gradient's outer stop at every mid-edge simultaneously, so the glow is
@@ -95,6 +100,7 @@ Item {
                 // animation starts, clobbering visible on the next frame.
                 if (!flashAnim.running) {
                     root.visible = false;
+                    root.finished();
                 }
             }
         }
