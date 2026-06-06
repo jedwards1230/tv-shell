@@ -61,9 +61,13 @@ ShellRoot {
     // settings page (if any) is visible. Restarted whenever sleepTimerMinutes
     // changes (folds in the Ea coupled fix from #162).
     //
-    // Activity that resets the countdown:
-    //   - Any InputManager signal (controller input)
-    //   - Shell state transitions (launching / returning to idle)
+    // Activity that resets the countdown (intent-level reset, not every keypress):
+    //   - InputManager intent signals: controllerWake, intentHome, intentHomeTap,
+    //     intentHomeHold (global/automation intents — these are the wakeup surface)
+    //   - Shell state transitions: returnToShell() (launching / returning to idle)
+    //   - HomeScreen B-press / Escaped navigation (onEscaped → userActivity signal)
+    // Ordinary D-pad / A / stick events are NOT wired to _resetIdleTimer — if full
+    // input coverage is needed later, add an onAnyInput signal to InputManager.
     // The timer fires only when idle (state === "idle") to avoid suspending
     // during an active stream or app session.
 
@@ -419,6 +423,7 @@ ShellRoot {
                 onAppFocusRequested: windowClass => appLifecycle.focusApp(windowClass)
                 onAppCloseRequested: windowClass => appLifecycle.closeAppByClass(windowClass)
                 onReturnToShellRequested: root.returnToShell()
+                onUserActivity: root._resetIdleTimer()
                 onOverlayDrawerClosed: {
                     root.overlayDrawerOpen = false;
                 }

@@ -38,6 +38,10 @@ FocusScope {
     signal powerRequested
     signal networkRequested(var anchorRect)
     signal volumeRequested(var anchorRect)
+    // Emitted on user-initiated navigation (B-press / Escaped) so the shell
+    // root can reset the auto-suspend idle timer. Keeps HomeScreen decoupled
+    // from shell.qml's timer implementation.
+    signal userActivity
 
     onActiveFocusChanged: {
         if (activeFocus)
@@ -351,7 +355,10 @@ FocusScope {
                         popoverMenu.forceActiveFocus();
                     }
                 }
-                onEscaped: root.focusDefaultPosition()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // === Recents Row ===
@@ -393,7 +400,10 @@ FocusScope {
                     onActivated: root.launchApp(modelData)
                 }
 
-                onEscaped: root.focusDefaultPosition()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // === Moonlight Section (server-view or app-view) ===
@@ -458,7 +468,10 @@ FocusScope {
                         }
                     }
                 }
-                onEscaped: root.focusDefaultPosition()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // App view: one row per host, each card is an available app
@@ -598,7 +611,10 @@ FocusScope {
                                     }
                                 }
                             }
-                            onEscaped: root.focusDefaultPosition()
+                            onEscaped: {
+                                root.userActivity();
+                                root.focusDefaultPosition();
+                            }
                         }
                     }
                 }
@@ -638,7 +654,10 @@ FocusScope {
                     onActivated: root.launchApp(modelData)
                 }
 
-                onEscaped: root.focusDefaultPosition()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
             }
 
             // === Hint Bar ===
