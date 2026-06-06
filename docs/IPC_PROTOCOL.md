@@ -879,6 +879,183 @@ The HTTP bridge builds on the deep-link vocabulary introduced in issue #150.
 [`intent <name>`](#intent-name) for the full vocabulary and deep-link namespace
 documentation.
 
+### Dev-control surface (`/dev/*`) (#167)
+
+An additional set of routes for iterating on the shell from a remote machine — deploy
+a new git ref, build the daemon, restart quickshell, tail logs, and query daemon state,
+all over HTTP. These routes require a freshly-built binary (issues #167 + #165).
+
+All `/dev/*` routes are gated by the same `AUTH_ENABLED` bearer auth as the rest of
+the bridge, and are LAN-only by design. `/dev/deploy` and `/dev/build` execute
+arbitrary code on the host and are **RCE-by-design** — acceptable for a trusted LAN
+box, but never expose the bridge to a public interface.
+
+The daemon now self-discovers session env at startup (#165): it loads
+`~/.config/game-shell/daemon.env` into the process environment (variables not already
+set) and resolves `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE` from
+`$XDG_RUNTIME_DIR` when they are not inherited. This means the bridge binds and
+subprocesses (`grim`, `quickshell`) work correctly even when the daemon is launched
+before `exec Hyprland` in the session script.
+
+#### Route table
+
+| Method | Path | Query params | Description |
+|--------|------|--------------|-------------|
+| `GET` | `/dev/status` | — | JSON status blob for the running daemon. |
+| `GET` | `/dev/logs` | `lines=N`, `filter=F` | Tail `/tmp/qs-log.txt`. Graceful 200 when the file is absent. |
+| `POST` | `/dev/restart-shell` | — | Kill and relaunch quickshell detached via `setsid`. Returns WARN/ERROR tail. |
+| `POST` | `/dev/build` | — | `cargo build --release` in `daemon/` + install binary to `bin/`. ~15 s; connection timeout is 180 s. |
+| `POST` | `/dev/deploy` | `ref=<ref>` | `git fetch origin --prune` + `checkout -f <ref>` + `reset --hard origin/<ref>`. Default ref: `main`. |
+| `POST` | `/dev/restart-daemon` | — | Self re-exec: replies `ok, re-execing`, then calls `execv` of the installed binary. Same PID; pads re-grabbed; bridge rebinds in ~3 s. |
+
+#### `GET /dev/status`
+
+Returns a JSON object with a snapshot of the running daemon's state. No query params.
+
+**Response** (`Content-Type: application/json`):
+
+```json
+{
+  "sha": "a1b2c3d",
+  "daemon_pid": 12345,
+  "version": "0.5.0",
+  "shell_running": true,
+  "wayland_display": "wayland-1",
+  "hypr_sig_present": true
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `sha` | string | Short git SHA of HEAD in the install root (`unknown` when git is unavailable) |
+| `daemon_pid` | number | PID of the running daemon process |
+| `version` | string | Cargo package version baked in at build time |
+| `shell_running` | bool | True when a `quickshell` process is currently running (`pgrep -x quickshell`) |
+| `wayland_display` | string \| null | Resolved Wayland display socket name; `null` when not found |
+| `hypr_sig_present` | bool | True when `HYPRLAND_INSTANCE_SIGNATURE` (or its `$XDG_RUNTIME_DIR/hypr/` equivalent) is resolvable |
+
+#### `GET /dev/logs[?lines=N&filter=F]`
+
+Tail `/tmp/qs-log.txt` — the quickshell log file created (or appended to) by
+`/dev/restart-shell`. **The file only exists after a `/dev/restart-shell`** call; the
+boot launch of quickshell is not redirected there. Returns a graceful 200 with an
+advisory message when the file is absent.
+
+| Query param | Default | Description |
+|-------------|---------|-------------|
+| `lines` | `100` | Maximum number of lines to return (counting from the end). |
+| `filter` | _(none)_ | Case-insensitive substring filter applied to each line before tail truncation. |
+
+**Response:** Plain text; the last `lines` lines of the file (after optional filter),
+one line per line. 200 even when the file is absent:
+
+```
+(no /tmp/qs-log.txt yet — POST /dev/restart-shell to capture quickshell logs)
+```
+
+#### `POST /dev/restart-shell`
+
+Sends `pkill -x quickshell` (ignoring failures if quickshell is not running), then
+spawns a new `quickshell -c game-shell` process detached via `setsid` with stdout and
+stderr redirected to `/tmp/qs-log.txt`. Session env (`WAYLAND_DISPLAY`,
+`HYPRLAND_INSTANCE_SIGNATURE`, `XDG_RUNTIME_DIR`) is injected into the child via
+`session_env`. The handler waits 3 seconds for initial log output, then returns the
+WARN/ERROR tail (up to 30 lines, excluding noisy `COULD NOT LOAD ICON` lines).
+
+**Response:** Plain text — WARN/ERROR lines from the first 3 s of the log, or:
+
+```
+started (no WARN/ERROR in first 3s)
+```
+
+#### `POST /dev/build`
+
+Runs `cargo build --release` inside the `daemon/` subdirectory of the install root
+(default `/opt/game-shell`). On success, installs the built binary to `bin/game-shell-input`
+with `install -m755`. Returns the last 12 lines of cargo stderr plus `ok` on success,
+or a 500 with the cargo/install error on failure. Typical build time is ~15 s on a
+warm cache; the connection timeout is 180 s to cover cold builds.
+
+**Response:** Plain text — last 12 lines of `cargo build` stderr, then `ok
+`.
+
+500 body on failure: `cargo build failed:
+<tail>` or `install failed: <detail>`.
+
+#### `POST /dev/deploy[?ref=<ref>]`
+
+Fetches the latest refs from `origin` (`git fetch origin --prune`), checks out the
+given ref (`git checkout -f <ref>`), and — when a corresponding `origin/<ref>` tracking
+branch exists — resets hard to it (`git reset --hard origin/<ref>`). Returns the short
+SHA of the resulting HEAD.
+
+| Query param | Default | Description |
+|-------------|---------|-------------|
+| `ref` | `main` | Branch name, tag, or commit SHA to check out. |
+
+**Response** (200):
+
+```
+deployed main @ a1b2c3d
+```
+
+500 on any git failure with the failed command's output in the body.
+
+#### `POST /dev/restart-daemon`
+
+Triggers a **self re-exec** of the daemon: the response `ok, re-execing
+` is written
+and flushed before the re-exec, then `execv` replaces the current process image with
+the installed binary (same PID). The daemon re-grabs input pads and the HTTP bridge
+rebinds to the same address within ~3 s. Use this after `/dev/build` to hot-swap the
+running binary without a full process restart.
+
+**Response** (200, sent before re-exec):
+
+```
+ok, re-execing
+```
+
+The TCP connection closes immediately after the response; the bridge is briefly
+unreachable during the ~3 s re-exec window.
+
+#### HTTP status codes for `/dev/*` routes
+
+The standard HTTP status codes from the [HTTP status mapping](#http-status-mapping)
+table apply. Additional codes specific to dev routes:
+
+| Status | Condition |
+|--------|-----------|
+| 200 | Operation succeeded |
+| 405 | Correct `/dev/*` path but wrong HTTP method (e.g. `GET /dev/build`) |
+| 404 | Unknown `/dev/*` path |
+| 500 | Subprocess failed (`cargo build`, `git`, `install`, log open); body contains the error detail |
+
+#### curl examples
+
+```bash
+# Check daemon status
+curl -H "Authorization: Bearer mysecret" http://192.168.8.50:8731/dev/status
+
+# Tail the last 50 lines of the quickshell log, filtered to errors
+curl -H "Authorization: Bearer mysecret"      "http://192.168.8.50:8731/dev/logs?lines=50&filter=error"
+
+# Restart quickshell and see initial WARN/ERROR output
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/restart-shell
+
+# Build the daemon (~15 s)
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/build
+
+# Deploy the main branch
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/deploy
+
+# Deploy a specific branch
+curl -X POST -H "Authorization: Bearer mysecret"      "http://192.168.8.50:8731/dev/deploy?ref=feat/my-branch"
+
+# Hot-swap the binary after a build (daemon re-execs; bridge back in ~3 s)
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/restart-daemon
+```
+
 ### Unrecognized Commands
 
 Any command not listed above receives:

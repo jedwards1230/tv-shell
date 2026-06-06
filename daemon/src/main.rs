@@ -17,12 +17,17 @@
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
 use game_shell_input::{
-    bluetooth, http, hyprland, input, ipc, network, power, protocol, state, watch,
+    bluetooth, http, hyprland, input, ipc, network, power, protocol, session_env, state, watch,
 };
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
     use tokio::sync::{broadcast, mpsc};
+
+    // Load daemon.env before anything else so GAME_SHELL_HTTP_BIND and
+    // other vars are available even when the session wrapper didn't source
+    // the file (#165).
+    session_env::load_daemon_env();
 
     init_tracing();
 
@@ -45,6 +50,17 @@ fn main() -> anyhow::Result<()> {
                 .expect("build input runtime");
             rt.block_on(input::run(control_rx, input_events));
         })?;
+
+    // Re-exec notification: the HTTP /dev/restart-daemon endpoint sets this
+    // flag and wakes the main select! so the process can re-exec itself
+    // (#167). The Notify is woken by the HTTP handler; the AtomicBool
+    // survives past the runtime shutdown so the final re-exec check after
+    // input_thread.join() can read it without holding an Arc<Notify>.
+    let reexec_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let reexec_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Keep a handle outside the runtime closure for the post-join re-exec check
+    // (the `async move` block below moves `reexec_flag` into the HTTP task).
+    let reexec_flag_check = reexec_flag.clone();
 
     // Main runtime: IPC server + signal handling + Phase 3 D-Bus actors.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -85,7 +101,14 @@ fn main() -> anyhow::Result<()> {
                     // Read auth-enabled flag here so it is logged once at startup
                     // alongside the bind address, before the task is spawned.
                     let auth_enabled = http::read_auth_enabled();
-                    tokio::spawn(http::serve(addr, token, auth_enabled, control_tx.clone()));
+                    tokio::spawn(http::serve(
+                        addr,
+                        token,
+                        auth_enabled,
+                        control_tx.clone(),
+                        reexec_notify.clone(),
+                        reexec_flag.clone(),
+                    ));
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -95,14 +118,40 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        wait_for_signal().await;
-        tracing::info!("signal received, shutting down");
+        tokio::select! {
+            _ = wait_for_signal() => {
+                tracing::info!("signal received, shutting down");
+            }
+            _ = reexec_notify.notified() => {
+                tracing::info!("re-exec requested, shutting down for restart");
+            }
+        }
         let _ = control_tx.send(state::Control::Shutdown).await;
         ipc_task.abort();
     });
 
     // Let the input thread reset stick state and close uinput devices.
+    // Gamepad grabs are released in input::run's shutdown path before this
+    // returns, so the re-exec'd daemon can re-grab cleanly.
     let _ = input_thread.join();
+
+    // Re-exec if the HTTP /dev/restart-daemon endpoint requested it.
+    // Performed AFTER input_thread.join() so pads are released before the
+    // new process image starts grabbing them again.
+    if reexec_flag_check.load(std::sync::atomic::Ordering::Acquire) {
+        use std::os::unix::process::CommandExt;
+        // Re-exec the canonical install-path binary, NOT current_exe(): a fresh
+        // `/dev/build` replaces the binary inode, so /proc/self/exe resolves to
+        // "…/game-shell-input (deleted)" and exec()ing that path fails ENOENT.
+        // The install path always points at the just-built binary.
+        let exe = session_env::install_root().join("bin/game-shell-input");
+        let err = std::process::Command::new(&exe)
+            .args(std::env::args_os().skip(1))
+            .exec();
+        // exec() only returns on error.
+        return Err(anyhow::anyhow!("re-exec failed ({}): {err}", exe.display()));
+    }
+
     Ok(())
 }
 
