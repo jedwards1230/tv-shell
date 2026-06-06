@@ -82,7 +82,7 @@ fn main() -> anyhow::Result<()> {
         // connection and pushes events onto the shared broadcast bus. They log
         // and never panic the daemon if BlueZ/NetworkManager/logind/UPower are
         // absent, so spawning them unconditionally is safe.
-        let dbus = spawn_dbus_actors(&events_tx);
+        let dbus = spawn_dbus_actors(&events_tx, &control_tx);
 
         // Clone the CEC channel for the graceful-shutdown standby (below) before
         // `dbus` is moved into `ipc::serve`. Only present under `--features cec`;
@@ -216,9 +216,14 @@ fn main() -> anyhow::Result<()> {
 /// Bluetooth/Network/Power commands. Channels use the same size (64) as the
 /// input control channel. Each actor logs and exits cleanly if its service is
 /// absent; the IPC side degrades those commands to `error:*`.
+///
+/// `control_tx` is a clone of the input runtime's control channel. It is handed
+/// to the CEC actor (under `--features cec`) so CEC remote keypresses can be
+/// injected as `Control::Key` nav events — gated by `GAME_SHELL_CEC_LIFECYCLE`.
 #[cfg(target_os = "linux")]
 fn spawn_dbus_actors(
     events_tx: &tokio::sync::broadcast::Sender<protocol::Event>,
+    control_tx: &tokio::sync::mpsc::Sender<state::Control>,
 ) -> ipc::DbusSenders {
     use tokio::sync::mpsc;
 
@@ -276,12 +281,21 @@ fn spawn_dbus_actors(
     #[cfg(feature = "cec")]
     {
         let events_tx = events_tx.clone();
+        // Clone of the input control channel so the CEC actor can inject remote
+        // keypresses as nav `Control::Key` events (gated by the lifecycle flag).
+        let cec_control_tx = control_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = game_shell_input::cec::run(cec_rx, events_tx).await {
+            if let Err(e) = game_shell_input::cec::run(cec_rx, events_tx, cec_control_tx).await {
                 tracing::warn!("cec actor exited: {e}");
             }
         });
     }
+    // On the default (no `cec` feature) build, `control_tx` is only used by the
+    // CEC actor spawn above, so discard it explicitly to avoid an unused-arg
+    // warning under clippy `-D warnings`.
+    #[cfg(not(feature = "cec"))]
+    let _ = control_tx;
+
     ipc::DbusSenders {
         bt: Some(bt_tx),
         net: Some(net_tx),

@@ -8,6 +8,15 @@
 //! when devices are discovered/updated and `cec:power:<json>` when power status
 //! changes.
 //!
+//! **Remote input -> navigation.** When the `GAME_SHELL_CEC_LIFECYCLE` flag is
+//! on, the worker registers a libcec key-press callback. Each TV/AVR remote
+//! button (a `CecUserControlCode`) arriving on the CEC bus is forwarded over a
+//! std channel to a dedicated forwarder thread, debounced (initial press only),
+//! mapped to a nav action, and injected onto the input runtime's control
+//! channel as a `Control::Key` — the SAME synthesized keyboard event the
+//! gamepad d-pad produces. This replaces the retired kernel `pulse8-cec` evdev
+//! input device. Off by default, so dev/CI never inject keys.
+//!
 //! Linux-only AND feature-gated (`cec`): libcec is a Linux/udev C library, and
 //! `libcec-sys` links it at build time (needs libcec-dev + libclang-dev), so
 //! `lib.rs` declares this module under
@@ -38,10 +47,10 @@
 //! is gone in 12.x — we enumerate the known variants directly instead.
 
 use crate::protocol::{self, Event};
-use crate::state::Reply;
+use crate::state::{Control, Reply};
 use anyhow::Result;
 use std::sync::mpsc as std_mpsc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 // ---------------------------------------------------------------------------
 // Request type.
@@ -93,6 +102,43 @@ pub fn lifecycle_enabled() -> bool {
         std::env::var("GAME_SHELL_CEC_LIFECYCLE").as_deref(),
         Ok("1") | Ok("true")
     )
+}
+
+// ---------------------------------------------------------------------------
+// CEC remote input -> navigation key mapping.
+// ---------------------------------------------------------------------------
+
+/// Map a CEC user-control code (a TV/AVR remote button arriving over the CEC
+/// bus) to the `config::key_for_action` name the input runtime already
+/// understands. Returns `None` for codes we deliberately ignore (media
+/// transport, menus, numbers, colour buttons, etc. — follow-up scope). The six
+/// mapped codes reuse the EXACT same nav vocabulary the gamepad emits, so a
+/// remote keypress lands as the same synthesized keyboard event:
+///
+/// | CEC code | action | key |
+/// |----------|--------|-----|
+/// | `Up`     | `up`    | KEY_UP    |
+/// | `Down`   | `down`  | KEY_DOWN  |
+/// | `Left`   | `left`  | KEY_LEFT  |
+/// | `Right`  | `right` | KEY_RIGHT |
+/// | `Select` | `select`| KEY_ENTER |
+/// | `Exit`   | `back`  | KEY_ESC   |
+///
+/// Pure (no libcec calls), so it is unit-tested in the `cec` feature leg. It
+/// references `CecUserControlCode` (a cec-rs type) so it must live here in the
+/// feature-gated module, not in the cross-platform `protocol.rs`.
+fn cec_key_action(code: cec_rs::CecUserControlCode) -> Option<&'static str> {
+    use cec_rs::CecUserControlCode as K;
+    match code {
+        K::Up => Some("up"),
+        K::Down => Some("down"),
+        K::Left => Some("left"),
+        K::Right => Some("right"),
+        K::Select => Some("select"),
+        K::Exit => Some("back"),
+        // RootMenu / media transport / numbers / colour keys: ignored for now.
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -295,16 +341,39 @@ fn drain_unavailable(rx: &std_mpsc::Receiver<WorkerReq>) {
 /// `tokio::task::spawn_blocking`.  Returns once a `Shutdown` message is received
 /// or `rx` is closed.  Broadcasts `cec:device` / `cec:power` push events on
 /// `events_tx` after each scan or power command.
-fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>, events_tx: broadcast::Sender<Event>) {
+fn blocking_worker(
+    rx: std_mpsc::Receiver<WorkerReq>,
+    events_tx: broadcast::Sender<Event>,
+    control_tx: mpsc::Sender<Control>,
+) {
     // cec-rs 12.0.1: CecConnectionCfg is built via the derive_builder
-    // CecConnectionCfgBuilder; `open(self)` consumes the config.
-    let cfg = match cec_rs::CecConnectionCfgBuilder::default()
+    // CecConnectionCfgBuilder (owned pattern, so each setter consumes+returns
+    // the builder); `open(self)` consumes the config.
+    let mut builder = cec_rs::CecConnectionCfgBuilder::default()
         .device_name("game-shell".to_string())
         .device_types(cec_rs::CecDeviceTypeVec::new(
             cec_rs::CecDeviceType::PlaybackDevice,
-        ))
-        .build()
-    {
+        ));
+
+    // Remote-input bridge (gated by the SAME lifecycle flag as wake/standby):
+    // register a libcec key-press callback that forwards each CecKeypress over a
+    // std channel to a dedicated forwarder thread (below). The callback fires on
+    // libcec's OWN thread, so it must not block or re-enter libcec — it only does
+    // a non-blocking `send` on a std mpsc (which is `Send`, satisfying the
+    // `FnMut(CecKeypress) + Send` bound). When the flag is off, no callback is
+    // registered at all, so dev/CI never inject keys.
+    let key_rx = if lifecycle_enabled() {
+        let (key_tx, key_rx) = std_mpsc::channel::<cec_rs::CecKeypress>();
+        builder = builder.key_press_callback(Box::new(move |kp| {
+            // Best-effort: a closed receiver (forwarder gone) just drops the key.
+            let _ = key_tx.send(kp);
+        }));
+        Some(key_rx)
+    } else {
+        None
+    };
+
+    let cfg = match builder.build() {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(
@@ -326,6 +395,52 @@ fn blocking_worker(rx: std_mpsc::Receiver<WorkerReq>, events_tx: broadcast::Send
     };
 
     tracing::info!("cec: libcec connection opened");
+
+    // Spawn the remote-input forwarder thread. The blocking worker thread itself
+    // is busy in its `rx.recv()` request loop, so a DEDICATED std thread drains
+    // the key-press channel: it debounces, maps the CEC code to a nav action,
+    // and pushes it onto the input runtime's control channel via
+    // `blocking_send` (the tokio `mpsc::Sender` supports this from a non-async
+    // thread). Only present when `key_rx` is `Some`, i.e. the lifecycle flag is
+    // on. The thread exits when the callback's `key_tx` is dropped (connection
+    // torn down) or the control channel closes.
+    if let Some(key_rx) = key_rx {
+        let control_tx = control_tx.clone();
+        std::thread::Builder::new()
+            .name("cec-input".into())
+            .spawn(move || {
+                while let Ok(kp) = key_rx.recv() {
+                    // DEBOUNCE: libcec fires the callback with `duration == 0` on
+                    // the INITIAL key-down, then again on release with the actual
+                    // held duration (> 0). We act on the initial press only, so a
+                    // single button push emits exactly one nav event (no repeat /
+                    // double-fire on release).
+                    if !kp.duration.is_zero() {
+                        continue;
+                    }
+                    let Some(action) = cec_key_action(kp.keycode) else {
+                        continue; // unmapped code (menu/media/etc.) — ignore.
+                    };
+                    // The input runtime's `Control::Key` carries a oneshot reply;
+                    // we don't need the response (fire-and-forget nav injection),
+                    // so we drop the receiver and ignore send errors.
+                    let (reply_tx, _reply_rx) = oneshot::channel();
+                    if control_tx
+                        .blocking_send(Control::Key {
+                            name: action.to_string(),
+                            reply: reply_tx,
+                        })
+                        .is_err()
+                    {
+                        // Control channel closed (daemon shutting down): stop.
+                        break;
+                    }
+                }
+                tracing::debug!("cec: remote-input forwarder stopped");
+            })
+            .map_err(|e| tracing::warn!("cec: failed to spawn remote-input forwarder: {e}"))
+            .ok();
+    }
 
     // Wake-on-open: when daemon-owned CEC lifecycle is enabled, run the wake
     // sequence once at startup (power on AVR + TV, claim active source) so the
@@ -447,15 +562,23 @@ async fn forward(
 /// its channel replying `error:*` to each request. Push events
 /// (`cec:device:<json>` / `cec:power:<json>`) are broadcast on `events_tx` for
 /// each scan and power command.
+///
+/// `control_tx` is a clone of the input runtime's control channel: when the
+/// lifecycle flag is on, the worker uses it to inject CEC remote keypresses as
+/// `Control::Key` nav events (see the module docs).
 pub async fn run(
     mut rx: mpsc::Receiver<CecReq>,
     events_tx: broadcast::Sender<Event>,
+    control_tx: mpsc::Sender<Control>,
 ) -> Result<()> {
     // Bounded sync channel from the async loop to the blocking worker.
     let (work_tx, work_rx) = std_mpsc::sync_channel::<WorkerReq>(64);
 
-    // Spawn the blocking worker on tokio's blocking pool.
-    let worker_handle = tokio::task::spawn_blocking(move || blocking_worker(work_rx, events_tx));
+    // Spawn the blocking worker on tokio's blocking pool. It owns the libcec
+    // connection and (when the lifecycle flag is on) the remote-input forwarder
+    // thread that injects CEC keypresses onto `control_tx`.
+    let worker_handle =
+        tokio::task::spawn_blocking(move || blocking_worker(work_rx, events_tx, control_tx));
 
     tracing::info!("cec actor started");
 
@@ -549,6 +672,30 @@ mod tests {
             logical_from_i32(TV_ADDR),
             Some(cec_rs::CecLogicalAddress::Tv)
         );
+    }
+
+    #[test]
+    fn cec_key_action_maps_nav_codes() {
+        use cec_rs::CecUserControlCode as K;
+        // The six mapped nav codes reuse the gamepad's key_for_action names.
+        assert_eq!(cec_key_action(K::Up), Some("up"));
+        assert_eq!(cec_key_action(K::Down), Some("down"));
+        assert_eq!(cec_key_action(K::Left), Some("left"));
+        assert_eq!(cec_key_action(K::Right), Some("right"));
+        assert_eq!(cec_key_action(K::Select), Some("select"));
+        assert_eq!(cec_key_action(K::Exit), Some("back"));
+        // Every mapped action must be a name the input runtime accepts.
+        for code in [K::Up, K::Down, K::Left, K::Right, K::Select, K::Exit] {
+            let action = cec_key_action(code).expect("mapped");
+            assert!(
+                crate::config::key_for_action(action).is_some(),
+                "action {action:?} must be a valid key_for_action name"
+            );
+        }
+        // Unmapped codes are ignored (no new vocabulary).
+        assert_eq!(cec_key_action(K::RootMenu), None);
+        assert_eq!(cec_key_action(K::Play), None);
+        assert_eq!(cec_key_action(K::Number0), None);
     }
 
     #[test]
