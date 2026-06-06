@@ -22,7 +22,7 @@
 //!
 //! **Boot-race resilience** (#154): the actor retries the initial BlueZ/D-Bus
 //! connection with capped exponential backoff (up to
-//! [`MAX_CONNECT_ATTEMPTS`] attempts over ~64 seconds) instead of latching
+//! [`MAX_CONNECT_ATTEMPTS`] attempts over ~90 seconds) instead of latching
 //! `unavailable` on the first failure. Once connected, adapter errors detected
 //! while servicing requests trigger a full reconnect cycle (same backoff) so
 //! a `bluetoothd` restart during the session is also recovered. On every
@@ -41,8 +41,8 @@ use tokio::sync::{broadcast, mpsc};
 
 /// Maximum number of adapter-open attempts before giving up and entering the
 /// permanent degraded loop. With 1-second initial delay doubling each retry
-/// (capped at 30 s) this covers ~2 minutes of wait time, enough for a slow
-/// boot that starts bluetoothd 30–60 s after the daemon.
+/// (capped at 30 s) this covers ~90 seconds of wait time (1+2+4+8+16+30+30 s),
+/// enough for a slow boot that starts bluetoothd 30–60 s after the daemon.
 const MAX_CONNECT_ATTEMPTS: u32 = 8;
 /// Initial retry delay in milliseconds for the exponential backoff.
 const RETRY_INITIAL_MS: u64 = 1_000;
@@ -130,7 +130,14 @@ async fn open_adapter() -> Result<(Session, Adapter)> {
 /// Attempt to open the adapter up to `max_attempts` times with capped
 /// exponential backoff. Returns the first successful `(Session, Adapter)` pair,
 /// or the last error if all attempts fail.
-async fn open_adapter_with_retry(max_attempts: u32) -> Result<(Session, Adapter)> {
+///
+/// Each backoff sleep is raced against `shutdown`: when the daemon is shutting
+/// down `shutdown` is notified and the function returns the most recent error
+/// immediately so the actor does not block for up to ~90 s.
+async fn open_adapter_with_retry(
+    max_attempts: u32,
+    shutdown: &tokio::sync::Notify,
+) -> Result<(Session, Adapter)> {
     let mut delay_ms = RETRY_INITIAL_MS;
     let mut last_err = anyhow!("no attempts made");
     for attempt in 1..=max_attempts {
@@ -142,7 +149,14 @@ async fn open_adapter_with_retry(max_attempts: u32) -> Result<(Session, Adapter)
                     tracing::debug!(
                         "bluetooth: adapter open failed ({last_err}), retry {attempt}/{max_attempts} in {delay_ms}ms"
                     );
-                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.notified() => {
+                            tracing::debug!("bluetooth: shutdown signalled during backoff, aborting retry");
+                            return Err(last_err);
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
+                    }
                     delay_ms = (delay_ms * 2).min(RETRY_MAX_MS);
                 }
             }
@@ -197,13 +211,43 @@ async fn run_resilient(
     }
 
     // Adapter dropped or errored: retry with backoff, same as the initial
-    // connect path.
+    // connect path. We pass a Notify (`shutdown_notify`) to
+    // `open_adapter_with_retry` so a shutdown that arrives mid-sleep cancels
+    // the sleep promptly instead of waiting up to ~90 s. The notify is
+    // triggered by placing `rx.recv()` in a concurrent select at the call
+    // site: if `rx` closes while we are in a backoff sleep, the recv arm
+    // fires first and we notify before exiting the loop.
+    let shutdown_notify = tokio::sync::Notify::new();
     loop {
         if rx.is_closed() {
             // Daemon shut down while we were backing off.
             break;
         }
-        match open_adapter_with_retry(MAX_CONNECT_ATTEMPTS).await {
+        // Race the retry sequence against daemon shutdown (rx closed).
+        // `tokio::select!` cancels the other branch when one completes, so
+        // if `rx.recv()` returns `None` the retry future is dropped mid-sleep.
+        let reconnect_result = tokio::select! {
+            biased;
+            msg = rx.recv() => {
+                // rx closed (None) or an unexpected message arrived.
+                // In either case treat it as a shutdown signal.
+                if let Some(req) = msg {
+                    // Unexpected request while reconnecting — reply with error
+                    // and keep reconnecting.
+                    reply_of(req)
+                        .send(protocol::resp_error("bluetooth: reconnecting"))
+                        .ok();
+                    // Signal any in-progress sleep to abort, then keep looping.
+                    shutdown_notify.notify_waiters();
+                    continue;
+                }
+                // None: rx closed — notify and exit.
+                shutdown_notify.notify_waiters();
+                break;
+            }
+            result = open_adapter_with_retry(MAX_CONNECT_ATTEMPTS, &shutdown_notify) => result,
+        };
+        match reconnect_result {
             Ok((new_session, new_adapter)) => {
                 tracing::info!("bluetooth: reconnected (adapter {})", new_adapter.name());
                 emit_power_state(&new_adapter, &events_tx).await;
@@ -215,6 +259,10 @@ async fn run_resilient(
                 }
             }
             Err(e) => {
+                if rx.is_closed() {
+                    // Shutdown was requested; don't fall into degraded mode.
+                    break;
+                }
                 tracing::warn!(
                     "bluetooth: reconnect failed after retries ({e}); serving degraded replies"
                 );
@@ -455,13 +503,17 @@ async fn handle_req(
 ///
 /// bluer errors for a dead session surface as D-Bus `ServiceUnknown`
 /// ("org.freedesktop.DBus.Error.ServiceUnknown") or `NoReply`
-/// ("org.freedesktop.DBus.Error.NoReply"). We match on common substrings so
-/// the check is robust to minor text variation across BlueZ / D-Bus versions.
+/// ("org.freedesktop.DBus.Error.NoReply"). We deliberately do NOT match on
+/// the bare "org.bluez" namespace prefix — that prefix appears in ordinary
+/// per-operation errors too (e.g. `org.bluez.Error.AuthenticationFailed`,
+/// `org.bluez.Error.AlreadyConnected`) and would cause needless full
+/// reconnect cycles on transient failures.
 fn is_adapter_lost_error(msg: &str) -> bool {
     msg.contains("ServiceUnknown")
         || msg.contains("NoReply")
-        || msg.contains("org.bluez")
         || msg.contains("adapter not available")
+        || msg.contains("NotConnected")
+        || msg.contains("NotReady")
 }
 
 /// Subscribe to a newly-discovered device's property stream (once) and emit its
@@ -571,24 +623,36 @@ mod tests {
 
     #[test]
     fn is_adapter_lost_error_matches_known_patterns() {
+        // D-Bus session/bus errors that mean bluetoothd is gone.
         assert!(is_adapter_lost_error(
             "org.freedesktop.DBus.Error.ServiceUnknown: The name org.bluez was not provided"
         ));
         assert!(is_adapter_lost_error(
             "org.freedesktop.DBus.Error.NoReply: Did not receive a reply"
         ));
+        assert!(is_adapter_lost_error("adapter not available"));
+        // BlueZ adapter-level states that indicate the adapter itself is gone.
         assert!(is_adapter_lost_error(
             "org.bluez.Error.NotReady: Resource Not Ready"
         ));
-        assert!(is_adapter_lost_error("adapter not available"));
+        assert!(is_adapter_lost_error(
+            "connect: org.bluez.Error.NotConnected: Not Connected"
+        ));
     }
 
     #[test]
     fn is_adapter_lost_error_does_not_match_transient_errors() {
         // Per-operation errors that are NOT adapter-level failures should NOT
-        // trigger a reconnect.
+        // trigger a reconnect — in particular, bare "org.bluez" namespace
+        // presence alone must not classify an error as adapter loss.
         assert!(!is_adapter_lost_error("connect: AlreadyConnected"));
         assert!(!is_adapter_lost_error("pair: AuthenticationFailed"));
+        assert!(!is_adapter_lost_error(
+            "org.bluez.Error.AuthenticationFailed: Authentication Failed"
+        ));
+        assert!(!is_adapter_lost_error(
+            "org.bluez.Error.AlreadyConnected: Connected"
+        ));
         assert!(!is_adapter_lost_error("invalid mac 'XX:XX:XX:XX:XX:XX'"));
         assert!(!is_adapter_lost_error("list: some random list error"));
     }

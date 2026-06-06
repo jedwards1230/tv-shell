@@ -1,6 +1,6 @@
 //! File-watch actor (Linux-only): watches `~/.config/game-shell/settings.json`
-//! for external modifications and emits a payload-less `config:changed` event
-//! on the broadcast bus.
+//! for external modifications and notifies the input runtime via a dedicated
+//! [`tokio::sync::Notify`] channel (not the global event broadcast bus).
 //!
 //! **Design**: the daemon is the sole writer of `settings.json` (via
 //! `config::set_config` and `config::save_bindings`). Those functions call
@@ -22,9 +22,8 @@
 //! service is absent.
 
 #[cfg(target_os = "linux")]
-pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Event>) {
+pub async fn run(config_changed: std::sync::Arc<tokio::sync::Notify>) {
     use crate::config;
-    use crate::protocol::Event;
     use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, notify::Watcher};
     use std::sync::mpsc as std_mpsc;
     use std::time::Duration;
@@ -144,13 +143,14 @@ pub async fn run(events_tx: tokio::sync::broadcast::Sender<crate::protocol::Even
             continue;
         }
 
-        // External edit confirmed — broadcast config:changed (payload-less).
-        // The input runtime subscribes to this bus and will refresh its caches
-        // on `Event::ConfigChanged` (#163).
+        // External edit confirmed — notify the input runtime via the
+        // dedicated config-changed channel. Using a separate Notify avoids
+        // adding a permanent receiver on the global Event broadcast bus,
+        // which would defeat receiver_count()-based fast-paths (#163).
         tracing::info!(
-            "watch: external settings.json change detected, broadcasting config:changed"
+            "watch: external settings.json change detected, notifying input runtime"
         );
-        let _ = events_tx.send(Event::ConfigChanged);
+        config_changed.notify_waiters();
         // last_seen_gen stays the same (no daemon write happened in this window).
     }
 
