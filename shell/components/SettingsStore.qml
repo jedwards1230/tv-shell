@@ -42,6 +42,8 @@ Item {
     property int overscan: 0                     // safe-area overscan percent (0-10)
     property int sleepTimerMinutes: 0            // 0 = disabled; cycle: 0/5/10/15/30/60
     property bool wakeOnController: true         // declarative preference (no suspend wiring)
+    property bool autoDimEnabled: false          // auto-dim OLED protection (#143)
+    property int autoDimDelayMinutes: 2          // idle minutes before dimming (#143)
     property string defaultSink: ""              // WirePlumber sink node.name (stable across reboots)
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
@@ -90,6 +92,10 @@ Item {
                     store.sleepTimerMinutes = obj.sleepTimerMinutes;
                 if (typeof obj.wakeOnController === "boolean")
                     store.wakeOnController = obj.wakeOnController;
+                if (typeof obj.autoDimEnabled === "boolean")
+                    store.autoDimEnabled = obj.autoDimEnabled;
+                if (typeof obj.autoDimDelayMinutes === "number")
+                    store.autoDimDelayMinutes = obj.autoDimDelayMinutes;
                 if (typeof obj.defaultSink === "string")
                     store.defaultSink = obj.defaultSink;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
@@ -127,6 +133,8 @@ Item {
             "overscan": store.overscan,
             "sleepTimerMinutes": store.sleepTimerMinutes,
             "wakeOnController": store.wakeOnController,
+            "autoDimEnabled": store.autoDimEnabled,
+            "autoDimDelayMinutes": store.autoDimDelayMinutes,
             "defaultSink": store.defaultSink,
             "moonlightViewMode": null
         });
@@ -207,6 +215,18 @@ Item {
         wakeOnController = enabled;
         save();
         settingsChanged("wakeOnController", enabled);
+    }
+
+    function setAutoDimEnabled(enabled) {
+        autoDimEnabled = enabled;
+        save();
+        settingsChanged("autoDimEnabled", enabled);
+    }
+
+    function setAutoDimDelayMinutes(minutes) {
+        autoDimDelayMinutes = minutes;
+        save();
+        settingsChanged("autoDimDelayMinutes", minutes);
     }
 
     function setDefaultSink(name) {
