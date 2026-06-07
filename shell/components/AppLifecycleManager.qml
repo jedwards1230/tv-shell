@@ -50,6 +50,11 @@ Item {
 
     function launchDesktopApp(app) {
         runningAppClass = "";
+        // #193: this is the ONLY true fresh-launch path — show the launch overlay
+        // here, not in checkAndLaunchApp, so resuming an already-running app (the
+        // focus-existing-window path) never flashes the overlay.
+        root._awaitingWindow = true;
+        root.launchStarted(app);
         snapshotClients.running = true;
         appRunner._appName = app.name || "";
         appRunner.command = ["hyprctl", "dispatch", "exec", app.exec || app.name];
@@ -73,11 +78,6 @@ Item {
 
     function checkAndLaunchApp(app) {
         _pendingApp = app;
-        // #193: show the launch overlay from the instant the launch is requested
-        // (covers the focus-existing-window path too — it confirms almost
-        // immediately, so the overlay just flashes).
-        root._awaitingWindow = true;
-        root.launchStarted(app);
         windowQuery.running = true;
     }
 
@@ -254,8 +254,6 @@ Item {
                 focusWindow.windowClass = clients[i]["class"];
                 focusWindow.running = true;
                 appLaunched();
-                // Existing window — it's already mapped, so confirm at once (#193).
-                root._confirmWindow();
                 return;
             }
         }
