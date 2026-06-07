@@ -162,8 +162,15 @@ cargo build --release # Linux only -> target/release/game-shell-input
 these come with the core `dbus`/`base-devel`. `zbus` (network/power) and
 `reqwest`/`rustls-tls` (health) are pure Rust and need nothing; Hyprland IPC uses
 raw Unix sockets (no crate, no system deps). The Phase 4 CEC module (`cec-rs`)
-requires the system libcec C library: `apt-get install libcec-dev libclang-dev`
-(Debian/CI) — on Arch / game-client-1, install `libcec` + `clang`.
+**static-links a bundled libcec** (the `cec` feature forwards `libcec-sys/static`,
+#179): a prebuilt static libcec + p8-platform is fetched from
+[ssalonen/libcec-static-builds](https://github.com/ssalonen/libcec-static-builds)
+and linked into the binary, so there is **no system `libcec`/`libcec-dev`
+dependency at build or runtime** (the host can manage/remove system libcec
+freely). The static path needs no bindgen/cmake/clang — only `libudev-dev` +
+`pkg-config` (for the libudev link hint) and network access at build time to
+fetch the archive: `apt-get install libudev-dev pkg-config` (Debian/CI) — on
+Arch / game-client-1 these come with `systemd` / `base-devel`.
 
 ## Deploy
 
