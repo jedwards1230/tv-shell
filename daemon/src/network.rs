@@ -852,8 +852,8 @@ mod tests {
         assert_eq!(decode_nameserver_u32(0x08080808), "8.8.8.8");
         // 1.1.1.1 big-endian = 0x01010101
         assert_eq!(decode_nameserver_u32(0x01010101), "1.1.1.1");
-        // 192.168.8.1 big-endian = 0xC0A80801
-        assert_eq!(decode_nameserver_u32(0xC0A80801), "192.168.8.1");
+        // 192.0.2.1 big-endian = 0xC0000201 (RFC 5737 documentation address)
+        assert_eq!(decode_nameserver_u32(0xC0000201), "192.0.2.1");
         // 0.0.0.0
         assert_eq!(decode_nameserver_u32(0x00000000), "0.0.0.0");
         // 255.255.255.255
