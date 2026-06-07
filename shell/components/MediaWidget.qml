@@ -215,9 +215,13 @@ FocusScope {
                 }
 
                 // === Progress bar ===
-                // Mpris interpolates position locally, so this advances smoothly
-                // without us polling. Guard against length <= 0 (live streams /
-                // unknown duration) by collapsing the fill to zero.
+                // MprisPlayer.position does NOT advance on its own — reading it
+                // only re-polls the underlying player when `positionChanged`
+                // fires (which Quickshell emits on seek/state changes, e.g.
+                // play/pause). The poll Timer below nudges it once a second
+                // while playing so the fill tracks live. Guard against
+                // length <= 0 (live streams / unknown duration) by collapsing
+                // the fill to zero.
                 Rectangle {
                     id: progressTrack
                     Layout.fillWidth: true
@@ -246,10 +250,27 @@ FocusScope {
                         radius: parent.radius
                         color: Theme.darkMode ? Theme.ember : Theme.navy
 
+                        // Linear glide over the poll interval so the fill
+                        // travels continuously between 1s samples instead of
+                        // stepping. A seek/track-change is just a larger glide.
                         Behavior on width {
                             NumberAnimation {
-                                duration: 200
+                                duration: 1000
+                                easing.type: Easing.Linear
                             }
+                        }
+                    }
+
+                    // Force MprisPlayer.position to re-poll once a second while
+                    // playing — without this the bound _progress only updates
+                    // on play/pause (the only times Mpris re-emits position).
+                    Timer {
+                        interval: 1000
+                        repeat: true
+                        running: root.isPlaying
+                        onTriggered: {
+                            if (root.hasPlayer)
+                                root.player.positionChanged();
                         }
                     }
                 }
