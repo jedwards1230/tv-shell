@@ -353,6 +353,28 @@ Item {
             if (trackedChanged)
                 root._launchedApps = tracked;
 
+            // #193: keep scanning for a freshly-launched window that hasn't mapped
+            // yet. The one-shot detectNewWindow timer fires once at 2s, so an app
+            // slower than that (a cold flatpak launch — Plex HTPC's first start is
+            // ~10-15s — sets up the sandbox/runtime before drawing) is missed and
+            // runningAppClass stays "", leaving the launch overlay to hide on the
+            // fallback timeout before the app actually appears. The poller runs
+            // every 2s while appRunning, so adopt the first new non-prelaunch
+            // window here: set it as the foreground app and confirm the launch, so
+            // the overlay stays up until the window is really on screen.
+            if (root._awaitingWindow && root.runningAppClass === "" && root.shellState === "appRunning") {
+                for (let i = 0; i < clients.length; i++) {
+                    let cls = clients[i]["class"] || "";
+                    if (cls === "" || cls.indexOf("quickshell") >= 0)
+                        continue;
+                    if (root._prelaunchClasses.indexOf(cls) < 0) {
+                        root.runningAppClass = cls;
+                        root._confirmWindow();
+                        break;
+                    }
+                }
+            }
+
             // Only fire appClosed when in appRunning state and foreground app is truly gone
             if (root.shellState === "appRunning" && root.runningAppClass !== "") {
                 let found = false;
