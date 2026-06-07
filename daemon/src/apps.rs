@@ -100,13 +100,24 @@ pub fn dedup_and_sort(mut apps: Vec<App>) -> Vec<App> {
     apps
 }
 
-/// The XDG application directories to scan, in priority order. Mirrors the
-/// Python list `['/usr/share/applications', '~/.local/share/applications']`
-/// exactly (it intentionally does not expand the full `XDG_DATA_DIRS`).
+/// The XDG application directories to scan, in priority order.
+///
+/// Covers system + per-user app dirs **and** the Flatpak export dirs, so
+/// Flatpak-installed apps (e.g. Plex HTPC) land on the home rail without
+/// requiring `XDG_DATA_DIRS` to be set in the daemon's environment. We add the
+/// Flatpak export paths explicitly rather than expanding the full
+/// `XDG_DATA_DIRS` to keep the scanned set small and predictable.
 pub fn app_dirs() -> Vec<PathBuf> {
-    let mut dirs = vec![PathBuf::from("/usr/share/applications")];
+    let mut dirs = vec![
+        PathBuf::from("/usr/share/applications"),
+        // System-wide Flatpak exports (e.g. `flatpak install --system`).
+        PathBuf::from("/var/lib/flatpak/exports/share/applications"),
+    ];
     if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/share/applications"));
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".local/share/applications"));
+        // Per-user Flatpak exports (e.g. `flatpak install --user`).
+        dirs.push(home.join(".local/share/flatpak/exports/share/applications"));
     }
     dirs
 }
@@ -161,6 +172,26 @@ mod tests {
 
     fn entry(name: &str, contents: &str) -> Option<App> {
         parse_entry(name, contents)
+    }
+
+    #[test]
+    fn app_dirs_include_flatpak_export_dirs() {
+        // Flatpak-installed apps export their .desktop into the flatpak
+        // exports dirs; the home rail must scan those, not just the plain
+        // XDG application dirs, or Flatpaks (e.g. Plex HTPC) never appear.
+        let dirs = app_dirs();
+        assert!(
+            dirs.iter()
+                .any(|d| d.ends_with("var/lib/flatpak/exports/share/applications")),
+            "missing system flatpak exports dir: {dirs:?}"
+        );
+        assert!(
+            dirs.iter()
+                .any(|d| d.ends_with(".local/share/flatpak/exports/share/applications")),
+            "missing user flatpak exports dir: {dirs:?}"
+        );
+        // Still scans the plain XDG dirs.
+        assert!(dirs.iter().any(|d| d.ends_with("usr/share/applications")));
     }
 
     #[test]
