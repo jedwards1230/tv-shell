@@ -96,8 +96,12 @@ stays a shell-out: Wi-Fi **join** (`nmcli`), audio (`wpctl`), one-shot composito
 moved into the daemon (`cec-*` IPC via `cec-rs`/libcec, #94/#16): a single
 persistent in-process libcec connection replaces the per-call shell-outs. It is
 **feature-gated** (`cargo build --features cec`) and Linux-only so the default
-build keeps the no-system-C-deps invariant — the libcec-sys C link is exercised
+build keeps the no-system-C-deps invariant — the libcec-sys link is exercised
 only in the dedicated `--features cec` CI leg and on game-client-1 (libcec 7).
+The `cec` feature **static-links a bundled libcec** (`libcec-sys/static`, #179):
+the binary carries its own libcec + p8-platform, so there is no system
+`libcec`/`libcec-dev` dependency at build or runtime (the CI leg asserts this via
+`ldd`). Build needs only `libudev-dev` + `pkg-config` + network for the archive.
 
 ## Development
 
@@ -132,10 +136,14 @@ install -m755 target/release/game-shell-input /opt/game-shell/bin/game-shell-inp
 ```
 
 **HDMI-CEC is an opt-in feature (#94).** A plain `cargo build` is C-free; the
-`cec` feature pulls in `cec-rs`/`libcec-sys`, which links the libcec C library
-(needs `libcec-dev`, `libp8-platform-dev`, `libudev-dev`, `libclang-dev` at
-build time). Build it only on a host with those present (game-client-1 / Fedora
-43 ships libcec 7; the deploy build uses `--features cec`):
+`cec` feature pulls in `cec-rs`/`libcec-sys` and **static-links a bundled libcec**
+(it forwards `libcec-sys/static`, #179) — a prebuilt static libcec + p8-platform
+is fetched from ssalonen/libcec-static-builds and linked into the binary, so the
+daemon needs **no system `libcec`/`libcec-dev`** at build or runtime (a host can
+manage/remove system libcec freely). The static path needs no bindgen/cmake/clang
+— only `libudev-dev` + `pkg-config` (libudev link hint) and network at build time
+to fetch the archive (game-client-1 / Fedora 43; the deploy build uses
+`--features cec`):
 
 ```bash
 cd daemon && cargo build --release --features cec

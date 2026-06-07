@@ -799,6 +799,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "futures",
  "libc",
+ "libcec-sys",
  "notify-debouncer-full",
  "reqwest",
  "serde",
