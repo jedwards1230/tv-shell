@@ -59,6 +59,7 @@ FocusScope {
             activeFocusOnTab: true
 
             KeyNavigation.down: root.webApps.length > 0 ? webAppList : addScope
+            KeyNavigation.left: null
 
             SettingsButton {
                 id: addBtn
