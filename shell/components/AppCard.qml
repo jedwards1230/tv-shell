@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 
 BaseCard {
     id: root
@@ -13,21 +12,17 @@ BaseCard {
     // online/session Accessible.description) rather than via a separate a11y node.
     Accessible.description: root.running ? "Running" : ""
 
-    // Resolve the icon imperatively via Quickshell.iconPath(name, /*check*/ true),
-    // which returns "" when the icon genuinely isn't in the theme (#194). The old
-    // image://icon/<name> path returned a Ready *placeholder* texture for missing
-    // icons (the magenta "broken icon" tile) and could keep a recycled ListView
-    // delegate's previous texture (Plex card rendered the Discord icon) — both
-    // bypass a status-only fallback. Clearing the source first drops any retained
-    // pixmap; an unresolved icon then lands on the letter fallback below, never a
-    // placeholder or a neighbour's logo.
+    // Resolve the icon imperatively (not via a plain binding) so a recycled
+    // ListView delegate can never keep showing the PREVIOUS app's texture — the
+    // reported #194 bug (the Plex card rendered the Discord icon). Clearing the
+    // source the instant `app` changes drops any retained pixmap before the new
+    // icon loads, so a card never shows a neighbour's logo. (Apps whose icon name
+    // isn't in the theme still render the provider's placeholder tile rather than
+    // the letter — a separate, pre-existing cosmetic gap, tracked for follow-up.)
     function _refreshIcon() {
         iconImage.source = "";
-        if (root.app && root.app.icon) {
-            let p = Quickshell.iconPath(root.app.icon, true);
-            if (p)
-                iconImage.source = p;
-        }
+        if (root.app && root.app.icon)
+            iconImage.source = "image://icon/" + root.app.icon;
     }
     onAppChanged: _refreshIcon()
     Component.onCompleted: _refreshIcon()

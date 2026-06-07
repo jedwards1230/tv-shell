@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 
 // LaunchOverlay (#193)
 //
@@ -42,9 +41,7 @@ Item {
             Image {
                 id: iconImage
                 anchors.fill: parent
-                // iconPath(name, true) → "" when not in the theme, so the letter
-                // fallback shows instead of a magenta placeholder (#194 pattern).
-                source: root.appIcon ? Quickshell.iconPath(root.appIcon, true) : ""
+                source: root.appIcon ? "image://icon/" + root.appIcon : ""
                 sourceSize: Qt.size(Units.iconSizeXL, Units.iconSizeXL)
                 fillMode: Image.PreserveAspectFit
                 cache: false
