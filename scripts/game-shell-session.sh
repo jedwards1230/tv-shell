@@ -26,4 +26,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-exec Hyprland -c "$SHELL_DIR/config/hyprland.conf"
+# Hyprland 0.55+ prefers launching via the start-hyprland wrapper (it sets up the
+# --watchdog-fd); launching Hyprland directly prints a startup warning (#198).
+# start-hyprland forwards everything after `--` to Hyprland, so the config path
+# rides through unchanged. Fall back to a direct launch on older Hyprland that
+# ships no wrapper.
+if command -v start-hyprland >/dev/null 2>&1; then
+    exec start-hyprland -- -c "$SHELL_DIR/config/hyprland.conf"
+else
+    exec Hyprland -c "$SHELL_DIR/config/hyprland.conf"
+fi

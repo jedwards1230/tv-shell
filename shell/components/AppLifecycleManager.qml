@@ -24,14 +24,37 @@ Item {
     property var _launchedApps: Object.create(null)
     property int _maxMisses: 3
 
+    // True between a launch being initiated and its window being confirmed
+    // mapped — gates windowConfirmed so it fires exactly once per launch and not
+    // on every subsequent poll (#193).
+    property bool _awaitingWindow: false
+
     signal appLaunched
     signal appClosed
     // Emitted when the launcher process exits non-zero (app failed to start).
     // shell.qml uses this for an error haptic (#99); the failure is also logged.
     signal appLaunchFailed
+    // #193: emitted the moment a local app launch is initiated (carries the app
+    // so the launch overlay can show its name/icon) and once the launched
+    // window is confirmed mapped (so the overlay can hide).
+    signal launchStarted(var app)
+    signal windowConfirmed
+
+    // Fire windowConfirmed exactly once per in-flight launch.
+    function _confirmWindow() {
+        if (root._awaitingWindow) {
+            root._awaitingWindow = false;
+            root.windowConfirmed();
+        }
+    }
 
     function launchDesktopApp(app) {
         runningAppClass = "";
+        // #193: this is the ONLY true fresh-launch path — show the launch overlay
+        // here, not in checkAndLaunchApp, so resuming an already-running app (the
+        // focus-existing-window path) never flashes the overlay.
+        root._awaitingWindow = true;
+        root.launchStarted(app);
         snapshotClients.running = true;
         appRunner._appName = app.name || "";
         appRunner.command = ["hyprctl", "dispatch", "exec", app.exec || app.name];
@@ -175,6 +198,8 @@ Item {
                     }
                     root._launchedApps = tracked;
 
+                    // New window mapped — hide the launch overlay (#193).
+                    root._confirmWindow();
                     break;
                 }
             }
@@ -326,6 +351,28 @@ Item {
             if (trackedChanged)
                 root._launchedApps = tracked;
 
+            // #193: keep scanning for a freshly-launched window that hasn't mapped
+            // yet. The one-shot detectNewWindow timer fires once at 2s, so an app
+            // slower than that (a cold flatpak launch — Plex HTPC's first start is
+            // ~10-15s — sets up the sandbox/runtime before drawing) is missed and
+            // runningAppClass stays "", leaving the launch overlay to hide on the
+            // fallback timeout before the app actually appears. The poller runs
+            // every 2s while appRunning, so adopt the first new non-prelaunch
+            // window here: set it as the foreground app and confirm the launch, so
+            // the overlay stays up until the window is really on screen.
+            if (root._awaitingWindow && root.runningAppClass === "" && root.shellState === "appRunning") {
+                for (let i = 0; i < clients.length; i++) {
+                    let cls = clients[i]["class"] || "";
+                    if (cls === "" || cls.indexOf("quickshell") >= 0)
+                        continue;
+                    if (root._prelaunchClasses.indexOf(cls) < 0) {
+                        root.runningAppClass = cls;
+                        root._confirmWindow();
+                        break;
+                    }
+                }
+            }
+
             // Only fire appClosed when in appRunning state and foreground app is truly gone
             if (root.shellState === "appRunning" && root.runningAppClass !== "") {
                 let found = false;
@@ -335,8 +382,15 @@ Item {
                         break;
                     }
                 }
-                if (!found)
+                if (found) {
+                    // Foreground window is present — confirm the launch (#193).
+                    // This is the reliable path for a freshly-launched window
+                    // that maps after the one-shot detect timer has fired.
+                    root._confirmWindow();
+                } else {
+                    root._awaitingWindow = false;
                     root.appClosed();
+                }
             }
         }
         onErrorOccurred: message => {

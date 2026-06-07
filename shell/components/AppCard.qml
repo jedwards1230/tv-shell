@@ -12,17 +12,34 @@ BaseCard {
     // online/session Accessible.description) rather than via a separate a11y node.
     Accessible.description: root.running ? "Running" : ""
 
+    // Resolve the icon imperatively (not via a plain binding) so a recycled
+    // ListView delegate can never keep showing the PREVIOUS app's texture — the
+    // reported #194 bug (the Plex card rendered the Discord icon). Clearing the
+    // source the instant `app` changes drops any retained pixmap before the new
+    // icon loads, so a card never shows a neighbour's logo. (Apps whose icon name
+    // isn't in the theme still render the provider's placeholder tile rather than
+    // the letter — a separate, pre-existing cosmetic gap, tracked for follow-up.)
+    function _refreshIcon() {
+        iconImage.source = "";
+        if (root.app && root.app.icon)
+            iconImage.source = "image://icon/" + root.app.icon;
+    }
+    onAppChanged: _refreshIcon()
+    Component.onCompleted: _refreshIcon()
+
     Image {
         id: iconImage
         anchors.fill: parent
-        source: root.app.icon ? "image://icon/" + root.app.icon : ""
         sourceSize: Qt.size(Units.iconSizeXL, Units.iconSizeXL)
         fillMode: Image.PreserveAspectFit
-        visible: status === Image.Ready
+        // Don't share/keep cached textures across delegates — a cache hit is how
+        // a stale neighbour icon leaks in when the new name doesn't resolve.
+        cache: false
+        visible: status === Image.Ready && source != ""
     }
 
     Text {
-        visible: iconImage.status !== Image.Ready
+        visible: !iconImage.visible
         anchors.fill: parent
         text: (root.app.name || "?").charAt(0).toUpperCase()
         font.pixelSize: Units.iconSizeLG
