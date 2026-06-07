@@ -137,12 +137,15 @@ ShellRoot {
             shellIdleTimer.restart();
     }
 
-    // #193: never let the launch overlay get stuck if a window never confirms
-    // (launch failed silently, app exited instantly, etc.). Hard cap from the
-    // launchStarted; windowConfirmed stops it early on the happy path.
+    // #193: backstop so the launch overlay can't get stuck if a window never maps
+    // (launch failed silently, app exited instantly, etc.). The window poller hides
+    // it the moment the app actually appears, so on the happy path this never
+    // fires — it's sized longer than a worst-case cold flatpak launch (~15-20s) so
+    // it never pre-empts a slow-but-valid start (which was the 1Password-bleeds-
+    // through-for-15s symptom).
     Timer {
         id: launchOverlayTimeout
-        interval: 8000
+        interval: 30000
         repeat: false
         onTriggered: root._launchOverlayActive = false
     }
