@@ -135,6 +135,11 @@ fn cec_key_action(code: cec_rs::CecUserControlCode) -> Option<&'static str> {
         K::Left => Some("left"),
         K::Right => Some("right"),
         K::Select => Some("select"),
+        // NOTE: on-device testing (2026-06) confirmed Up/Down/Left/Right + Select
+        // via the TV remote. `Exit` is mapped but UNTESTED (the test TV remote had
+        // no Exit key), and an AVR remote produced no CEC user-control codes at all
+        // — so AVR-remote nav is unverified. Revisit if a remote with Exit/known
+        // codes is available.
         K::Exit => Some("back"),
         // RootMenu / media transport / numbers / colour keys: ignored for now.
         _ => None,

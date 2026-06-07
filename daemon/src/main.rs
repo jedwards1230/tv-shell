@@ -85,12 +85,6 @@ fn main() -> anyhow::Result<()> {
         // absent, so spawning them unconditionally is safe.
         let dbus = spawn_dbus_actors(&events_tx, &control_tx);
 
-        // Clone the CEC channel for the graceful-shutdown standby (below) before
-        // `dbus` is moved into `ipc::serve`. Only present under `--features cec`;
-        // the CEC actor no-ops the standby unless GAME_SHELL_CEC_LIFECYCLE is on.
-        #[cfg(feature = "cec")]
-        let shutdown_cec_tx = dbus.cec.clone();
-
         // Spawn the file-watch actor. It inotify-watches settings.json for
         // external edits and signals the input runtime via config_changed.
         // Fire-and-forget like the D-Bus actors — it logs and degrades
@@ -157,44 +151,14 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        let mut reexec_shutdown = false;
         tokio::select! {
             _ = wait_for_signal() => {
                 tracing::info!("signal received, shutting down");
             }
             _ = reexec_notify.notified() => {
                 tracing::info!("re-exec requested, shutting down for restart");
-                reexec_shutdown = true;
             }
         }
-
-        // Session-end standby: on a real shutdown (SIGTERM/SIGINT from the
-        // session wrapper, #94), put the TV + AVR to standby before stopping.
-        // Skipped on a re-exec restart so the AV stays awake across it. The CEC
-        // actor itself no-ops this unless GAME_SHELL_CEC_LIFECYCLE is enabled,
-        // so this is inert on dev/CI. Bounded by a short timeout so a wedged or
-        // absent CEC bus never delays shutdown.
-        #[cfg(feature = "cec")]
-        if !reexec_shutdown {
-            if let Some(cec_tx) = shutdown_cec_tx {
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                if cec_tx
-                    .send(game_shell_input::cec::CecReq::StandbyAll(tx))
-                    .await
-                    .is_ok()
-                {
-                    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
-                        Ok(Ok(resp)) if resp.starts_with("error:") => {
-                            tracing::warn!("shutdown CEC standby failed: {resp}");
-                        }
-                        Err(_) => tracing::warn!("shutdown CEC standby timed out"),
-                        _ => {}
-                    }
-                }
-            }
-        }
-        #[cfg(not(feature = "cec"))]
-        let _ = reexec_shutdown;
 
         let _ = control_tx.send(state::Control::Shutdown).await;
         ipc_task.abort();
