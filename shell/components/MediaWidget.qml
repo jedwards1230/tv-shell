@@ -353,6 +353,11 @@ FocusScope {
 
                     Text {
                         anchors.centerIn: parent
+                        // The play triangle (▶) carries trailing side-bearing in
+                        // its glyph box, so centerIn renders it visually
+                        // left-of-centre; nudge it right. The pause glyph (⏸) is
+                        // symmetric and needs no offset.
+                        anchors.horizontalCenterOffset: root.isPlaying ? 0 : Math.round(font.pixelSize * 0.09)
                         // pause glyph when playing, play glyph when paused/stopped.
                         text: root.isPlaying ? "⏸" : "▶"
                         font.pixelSize: Theme.fontTitle * 1.2
