@@ -1052,6 +1052,55 @@ no `cec` feature, the lifecycle wiring is compiled out entirely.)
 > **Address mapping:** AVR = CEC logical address **5** (Audiosystem), TV = CEC
 > logical address **0** (Tv).
 
+### Network AV ops: AVR Zone-2 off + TV cold-wake / WoL (#186)
+
+CEC alone can't cover two AV transitions, so the daemon also runs **network**
+ops as part of the same lifecycle wake/standby (the `av_net` module — pure-Rust
+UDP/TCP, no libcec):
+
+1. **AVR Zone 2 off.** A Denon/Marantz AVR's Zone 2 is not addressable over CEC.
+   On **standby** the daemon sends a telnet `Z2OFF` to the AVR control port.
+2. **TV cold-wake (Wake-on-LAN).** A fully powered-off LG TV ignores CEC
+   `cec-power-on` / active-source. On **wake** the daemon sends a WoL magic
+   packet to the TV's MAC (sent twice — a cold LG can miss the first), before the
+   CEC power-on steps, so the display has the whole wake window to come up.
+
+Optionally the AVR's **main** power and **input** can also be driven over telnet
+(`PWON` / `SI<input>` on wake, `PWSTANDBY` on standby) for boxes where CEC
+main-zone control is unreliable; this is **off by default** since CEC already
+handles the main zone.
+
+These ops are configured independently of the CEC lifecycle flag and are **off
+by default** — with no config the `av_net` module is fully inert (no socket, no
+packet), so dev/CI hosts are never affected. They run inside the CEC lifecycle
+sequences, so in practice they only fire when `GAME_SHELL_CEC_LIFECYCLE` is also
+enabled and the daemon is built `--features cec`.
+
+| Variable | Purpose |
+|----------|---------|
+| `GAME_SHELL_AVR_HOST` | AVR control host (e.g. `192.0.2.10`). **Enables** the telnet AVR ops (Zone-2 off + optional main power/input). Unset → AVR ops skipped. |
+| `GAME_SHELL_AVR_PORT` | AVR telnet control port. Default `23`. |
+| `GAME_SHELL_AVR_INPUT` | Source to select on wake (`SI<input>`), e.g. `GAME`, `MPLAY`. Unset → no input switch (CEC active-source still claims the path). |
+| `GAME_SHELL_AVR_MAIN_POWER` | When `1`/`true`, also send `PWON` on wake / `PWSTANDBY` on standby. Default off. |
+| `GAME_SHELL_TV_WOL_MAC` | TV MAC for the cold-wake magic packet (`aa:bb:cc:dd:ee:ff`, `:` or `-` separators). **Enables** the WoL op. Unset → no WoL. |
+| `GAME_SHELL_TV_WOL_BROADCAST` | Broadcast `addr:port` for the magic packet. Default `255.255.255.255:9`. |
+
+All network ops are **best-effort**: a missing/unreachable AVR or TV is logged
+and skipped, never blocking the CEC wake/sleep. An invalid MAC / host / broadcast
+value in `daemon.env` logs a warning and disables just that half.
+
+Example `daemon.env` opting a box into the full network-AV lifecycle:
+
+```sh
+# ~/.config/game-shell/daemon.env
+GAME_SHELL_CEC_LIFECYCLE=1
+# AVR telnet (Zone-2 off on sleep; input switch on wake):
+GAME_SHELL_AVR_HOST=192.0.2.10
+GAME_SHELL_AVR_INPUT=GAME
+# TV cold-wake via Wake-on-LAN:
+GAME_SHELL_TV_WOL_MAC=aa:bb:cc:dd:ee:ff
+```
+
 
 ## LAN HTTP Control Bridge (#151)
 

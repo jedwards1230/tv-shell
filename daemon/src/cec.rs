@@ -8,6 +8,13 @@
 //! when devices are discovered/updated and `cec:power:<json>` when power status
 //! changes.
 //!
+//! **Network AV ops (#186).** CEC can't reach two AV transitions — a Denon AVR's
+//! Zone 2 (telnet-only) and a fully-off LG TV's cold-wake (Wake-on-LAN). The
+//! lifecycle wake/standby sequences below call into the pure-Rust
+//! [`crate::av_net`] module for those: WoL magic packet on wake, AVR `Z2OFF`
+//! (and optional main power/input) telnet on wake/standby. Off by default (no
+//! env config => inert), so this is non-breaking on dev/CI.
+//!
 //! **Remote input -> navigation.** When the `GAME_SHELL_CEC_LIFECYCLE` flag is
 //! on, the worker registers a libcec key-press callback. Each TV/AVR remote
 //! button (a `CecUserControlCode`) arriving on the CEC bus is forwarded over a
@@ -262,7 +269,18 @@ fn scan_devices(conn: &cec_rs::CecConnection) -> Vec<String> {
 /// response: `ok` if every step succeeded, otherwise the first `error:*`. Runs
 /// only inside the blocking worker (it issues blocking libcec calls). Emits a
 /// `cec:power` event per successful power-on so subscribers see the change.
-fn wake_sequence(conn: &cec_rs::CecConnection, events_tx: &broadcast::Sender<Event>) -> String {
+fn wake_sequence(
+    conn: &cec_rs::CecConnection,
+    events_tx: &broadcast::Sender<Event>,
+    av_net: Option<&crate::av_net::AvNetConfig>,
+    rt: &tokio::runtime::Handle,
+) -> String {
+    // Network AV wake FIRST (#186): a fully-off TV ignores CEC power-on and must
+    // be cold-started with a Wake-on-LAN magic packet; fire it (and any AVR
+    // main-power/input telnet) before the CEC steps so the display has the whole
+    // wake window to come up. Best-effort + a no-op when AV-net isn't configured.
+    rt.block_on(crate::av_net::wake(av_net));
+
     for addr in [AVR_ADDR, TV_ADDR] {
         let Some(logical) = logical_from_i32(addr) else {
             return protocol::resp_error(&format!("invalid lifecycle address {addr}"));
@@ -288,7 +306,12 @@ fn wake_sequence(conn: &cec_rs::CecConnection, events_tx: &broadcast::Sender<Eve
 /// response: `ok` if both standby commands succeeded, otherwise the first
 /// `error:*`. Runs only inside the blocking worker. Emits a `cec:power` event
 /// per successful standby.
-fn standby_all(conn: &cec_rs::CecConnection, events_tx: &broadcast::Sender<Event>) -> String {
+fn standby_all(
+    conn: &cec_rs::CecConnection,
+    events_tx: &broadcast::Sender<Event>,
+    av_net: Option<&crate::av_net::AvNetConfig>,
+    rt: &tokio::runtime::Handle,
+) -> String {
     for addr in [TV_ADDR, AVR_ADDR] {
         let Some(logical) = logical_from_i32(addr) else {
             return protocol::resp_error(&format!("invalid lifecycle address {addr}"));
@@ -302,6 +325,11 @@ fn standby_all(conn: &cec_rs::CecConnection, events_tx: &broadcast::Sender<Event
             power_status_word(ps),
         )));
     }
+    // Network AV standby (#186): after CEC standby, send the AVR Zone-2 off (and
+    // optional main PWSTANDBY) telnet ops CEC can't reach. Order matches the
+    // legacy living-room-cec flow (CEC first, then telnet) so the AVR input
+    // switch doesn't re-wake a CEC source. No-op when AV-net isn't configured.
+    rt.block_on(crate::av_net::standby(av_net));
     protocol::resp_ok()
 }
 
@@ -401,6 +429,18 @@ fn blocking_worker(
 
     tracing::info!("cec: libcec connection opened");
 
+    // Network AV config (#186): parsed once from the environment. `None` when
+    // no `GAME_SHELL_AVR_HOST`/`GAME_SHELL_TV_WOL_MAC` is set, in which case the
+    // av_net entry points are inert. A captured runtime handle lets this BLOCKING
+    // worker drive the async av_net ops (UDP WoL + TCP telnet) via `block_on`;
+    // the worker runs on tokio's blocking pool, so `Handle::current()` is valid.
+    let av_net = crate::av_net::AvNetConfig::from_env();
+    let rt = tokio::runtime::Handle::current();
+    match &av_net {
+        Some(_) => tracing::info!("cec: network AV ops configured (AVR telnet / TV WoL)"),
+        None => tracing::debug!("cec: no network AV ops configured (AVR/WoL env unset)"),
+    }
+
     // Spawn the remote-input forwarder thread. The blocking worker thread itself
     // is busy in its `rx.recv()` request loop, so a DEDICATED std thread drains
     // the key-press channel: it debounces, maps the CEC code to a nav action,
@@ -453,7 +493,7 @@ fn blocking_worker(
     // `lifecycle_enabled` — so dev/CI never drives the bus from a plain start.
     if lifecycle_enabled() {
         tracing::info!("cec: lifecycle enabled — running wake sequence on open");
-        let resp = wake_sequence(&conn, &events_tx);
+        let resp = wake_sequence(&conn, &events_tx, av_net.as_ref(), &rt);
         if resp.starts_with("error:") {
             tracing::warn!("cec: wake-on-open failed: {resp}");
         }
@@ -523,10 +563,10 @@ fn blocking_worker(
                 let _ = tx.send(resp);
             }
             WorkerReq::WakeSequence(tx) => {
-                let _ = tx.send(wake_sequence(&conn, &events_tx));
+                let _ = tx.send(wake_sequence(&conn, &events_tx, av_net.as_ref(), &rt));
             }
             WorkerReq::StandbyAll(tx) => {
-                let _ = tx.send(standby_all(&conn, &events_tx));
+                let _ = tx.send(standby_all(&conn, &events_tx, av_net.as_ref(), &rt));
             }
             WorkerReq::Shutdown => break,
         }

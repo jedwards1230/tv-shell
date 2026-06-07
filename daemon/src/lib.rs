@@ -25,6 +25,12 @@ pub mod session_env;
 // LAN HTTP control bridge — cross-platform (tokio only; no Linux-only imports).
 pub mod http;
 
+// Network AV control (#186): AVR Zone-2 power (telnet) + TV cold-wake (Wake-on-
+// LAN). Pure Rust (UDP/TCP only — no libcec/C), so it is cross-platform and
+// unit-tests on macOS/CI; the CEC lifecycle sequences call into it for the AV
+// ops CEC physically can't reach. Off by default (no env config => inert).
+pub mod av_net;
+
 // evdev/uinput input runtime — Linux kernel interfaces.
 #[cfg(target_os = "linux")]
 pub mod input;
