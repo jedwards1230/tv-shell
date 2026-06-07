@@ -55,7 +55,7 @@ FocusScope {
         stdout: SplitParser {
             property var collected: []
             onRead: line => {
-                // Lines like: " │      46. Denon AVR-X1700H  [vol: 1.00]"
+                // Lines like: " │      46. <AVR name>  [vol: 1.00]"
                 //             " │  *   86. Radeon HD Audio   [vol: 1.00]"
                 // Strip box-drawing chars and leading whitespace
                 let cleaned = line.replace(/[│├└─┐┘┌┬┴┤┼]/g, " ");
