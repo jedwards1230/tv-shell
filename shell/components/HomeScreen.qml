@@ -51,7 +51,7 @@ FocusScope {
     function _reanchorFocusIfNeeded() {
         if (!root.activeFocus)
             return;
-        if (statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
+        if (mediaWidget.activeFocus || statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
             return;
         for (let i = 0; i < appViewRepeater.count; i++) {
             let item = appViewRepeater.itemAt(i);
@@ -113,7 +113,24 @@ FocusScope {
         return item ? item.navigableRow : null;
     }
 
+    // First visible NavigableRow below the now-playing widget. Used as the
+    // media widget's Down target and as the focus fallback when the media
+    // widget is hidden.
+    function _firstContentRow() {
+        var row = mergedRow;
+        while (row) {
+            if (row.visible)
+                return row;
+            row = (row.nextRow !== undefined) ? row.nextRow : null;
+        }
+        return appsRow;
+    }
+
     function _focusFirstVisibleRow() {
+        if (mediaWidget.visible) {
+            mediaWidget.forceActiveFocus();
+            return;
+        }
         var row = mergedRow;
         while (row) {
             if (row.visible) {
@@ -132,6 +149,13 @@ FocusScope {
     // cannot steal focus back after this function sets it.
     function focusDefaultPosition() {
         Qt.callLater(function () {
+            // Now-playing widget owns the top of the column — it is the
+            // canonical landing position whenever a player is active (#22).
+            if (mediaWidget.visible) {
+                scrollView.contentY = 0;
+                mediaWidget.forceActiveFocus();
+                return;
+            }
             var firstRow = null;
             // Priority order: mergedRow (recents+running) > app-view rows
             // (apps mode) > moonlightRow (servers mode) > appsRow.
@@ -449,6 +473,25 @@ FocusScope {
                 }
             }
 
+            // === Now Playing (MPRIS) ===
+            // Surfaces the active media player (Spotify desktop, browsers,
+            // any MPRIS-compliant player) with cover art, metadata, progress,
+            // and transport controls (#22). Collapses to zero height when no
+            // player is on the session D-Bus bus, so the home layout is
+            // unchanged when nothing is playing.
+            MediaWidget {
+                id: mediaWidget
+                Layout.fillWidth: true
+                // Sits at the top of the content rows: Up returns to the
+                // status-icon row, Down drops into the first content row.
+                previousRow: statusIcons
+                nextRow: root._firstContentRow()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
+            }
+
             // === Merged Recents + Running Row ===
             // Running apps are pinned to the front with an ember dot indicator.
             // Non-running recents follow in recency order. No separate Running row.
@@ -467,7 +510,7 @@ FocusScope {
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
                 focus: visible
-                previousRow: statusIcons
+                previousRow: mediaWidget
                 nextRow: {
                     var _ = appViewRepeater.count;
                     if (!root._streamingActive)
