@@ -11,6 +11,12 @@
 # `cargo build` / `cargo test` (CI default leg, contributor and macOS dev boxes)
 # stays free of the libcec C toolchain. This deploy build is where we opt in.
 #
+# `cec` static-links a bundled libcec (via `libcec-sys/static`, #179), so the
+# binary carries its own libcec + p8-platform and needs NO system
+# `libcec`/`libcec-dev` package at build or runtime (only libudev-dev +
+# pkg-config + network to fetch the prebuilt static archive). A host can then
+# manage/remove system libcec without breaking the daemon.
+#
 # Env overrides:
 #   GAME_SHELL_ROOT      repo root (default: parent of this script's directory)
 #   GAME_SHELL_FEATURES  cargo --features list (default: "cec")

@@ -14,12 +14,25 @@ path = "src/main.rs"
 # HDMI-CEC via cec-rs/libcec (#94). OFF by default so a plain `cargo build`/
 # `cargo test` — including the Linux CI default leg and macOS dev boxes — needs
 # NO system C libraries (preserving the pure-Rust invariant shared by
-# evdev/zbus/bluer). Enable on the deploy host (game-client-1) where libcec is
-# present:
+# evdev/zbus/bluer). Enable on the deploy host (game-client-1):
 #   cargo build --release --features cec
-# Build-host requirement when enabled: libcec-dev + libp8-platform-dev +
-# libudev-dev + libclang-dev (libcec-sys wraps the C lib via bindgen).
-cec = ["dep:cec-rs"]
+#
+# `libcec-sys/static` (#179) forces libcec-sys to STATIC-link a prebuilt libcec
+# (v7.1.1) + p8-platform into the binary instead of dynamically linking the
+# system `libcec.so`. The daemon is then self-contained: no `libcec`/`libcec-dev`
+# system package at build or runtime, so a host can manage/remove system libcec
+# (e.g. the Plasma Bigscreen `pulse8-cec` path in homelab-ansible#79) without
+# breaking the daemon. The `static` branch wins over pkg-config even when system
+# libcec-dev is present, so this is deterministic. Only `libudev`/`libstdc++`
+# remain as (ubiquitous) dynamic deps — not the contested `libcec` package.
+# Build-host requirement when enabled: libudev-dev + pkg-config (for the udev
+# link hint) and network access to fetch the prebuilt static archive from
+# ssalonen/libcec-static-builds. NO libcec-dev / libclang / cmake needed for the
+# static path (no bindgen: libcec-sys ships pre-generated bindings). The prebuilt
+# static libcec.a references glibc ≥2.38 C23 symbols (`__isoc23_sscanf` etc.), so
+# the build/runtime host needs glibc ≥2.38 (game-client-1 / Fedora 43 has 2.41;
+# CI's cec leg runs on Debian Trixie for the same reason — not bookworm/2.36).
+cec = ["dep:cec-rs", "libcec-sys/static"]
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
@@ -85,3 +98,9 @@ notify-debouncer-full = "0.3"
 # plain `cfg(target_os="linux")` dep would still be pulled on every Linux
 # build); only `--features cec` activates it via `dep:cec-rs`.
 cec-rs = { version = "12.0.1", optional = true }
+# Declared directly (optional) ONLY so the `cec` feature can forward
+# `libcec-sys/static` (#179) — static-link a bundled libcec instead of the
+# system `libcec.so`. Version matches cec-rs 12.0.1's transitive pin (`9.0.2`)
+# so Cargo unifies them to one copy; keep it in lockstep if cec-rs bumps it.
+# Stays optional so the default (no-cec) Linux build never compiles it.
+libcec-sys = { version = "9.0.2", optional = true }
