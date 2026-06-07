@@ -60,3 +60,4 @@ SystemSettings 1.0 SystemSettings.qml
 SessionDialog 1.0 SessionDialog.qml
 ScreenshotFlash 1.0 ScreenshotFlash.qml
 LaunchOverlay 1.0 LaunchOverlay.qml
+WebAppsSettings 1.0 WebAppsSettings.qml

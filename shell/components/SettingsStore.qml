@@ -49,6 +49,12 @@ Item {
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
 
+    // === Web apps registry mirror (#187) ===
+    // Read-through list of web apps. The daemon (P1) will own webapps.json +
+    // .desktop generation and serve this via `webapp-list`. Until then the
+    // load is a graceful no-op (unknown command -> empty list).
+    property var webApps: []
+
     // === Change notification ===
     signal settingsChanged(string key, var value)
 
@@ -326,6 +332,27 @@ Item {
     onDefaultSinkChanged: {
         if (defaultSink !== "" && !startupSinkApply.running)
             startupSinkApply.running = true;
+    }
+
+    // --- Web apps registry (#187) ---
+    // Loads the web-app registry over IPC. The daemon does not yet implement
+    // `webapp-list` (P1); SocketClient.onRequestFailed leaves webApps as [] so
+    // the Web Apps settings page shows its empty state without errors.
+    SocketClient {
+        id: webAppsProc
+        onResponseReceived: line => {
+            try {
+                var arr = JSON.parse(line);
+                if (Array.isArray(arr))
+                    store.webApps = arr;
+            } catch (e) {
+                console.log("SettingsStore: failed to parse webapp-list:", e);
+            }
+        }
+    }
+
+    function loadWebApps() {
+        webAppsProc.request("webapp-list");
     }
 
     Component.onCompleted: {

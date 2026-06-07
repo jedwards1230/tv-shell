@@ -64,6 +64,11 @@ Rectangle {
         SystemSettings {}
     }
 
+    Component {
+        id: webappsComp
+        WebAppsSettings {}
+    }
+
     // The streaming section is contributed by the active provider's
     // settingsComponent; with the no-streaming provider it's null and the
     // section is omitted entirely.
@@ -148,6 +153,13 @@ Rectangle {
             iconSource: "icons/system.svg",
             fallback: "\u{1F4BB}",
             component: systemComp
+        });
+        s.push({
+            id: "webapps",
+            name: "Web Apps",
+            iconSource: "icons/webapps.svg",
+            fallback: "\u{1F310}",
+            component: webappsComp
         });
         return s;
     }
