@@ -82,9 +82,16 @@ jobs:
   # builds) instead of dynamically linking the system libcec — the same build
   # the deploy host ships. Keeping it separate preserves the no-system-C-deps
   # invariant for the default build.
+  #
+  # Runs on Debian Trixie (glibc 2.41), NOT bookworm (glibc 2.36): the prebuilt
+  # static libcec.a references the glibc ≥2.38 C23 symbols `__isoc23_sscanf` /
+  # `__isoc23_strtoul`, so linking it on bookworm fails with "undefined symbol".
+  # The deploy host (game-client-1 / Fedora 43) has glibc 2.41, so Trixie matches
+  # the runtime target. The default `build` job stays on bookworm (it never links
+  # libcec).
   cec:
     runs-on: ubuntu-latest
-    container: rust:1-bookworm
+    container: rust:1-trixie
     steps:
       - uses: actions/checkout@v6
 

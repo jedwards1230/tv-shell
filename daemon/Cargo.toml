@@ -28,7 +28,10 @@ path = "src/main.rs"
 # Build-host requirement when enabled: libudev-dev + pkg-config (for the udev
 # link hint) and network access to fetch the prebuilt static archive from
 # ssalonen/libcec-static-builds. NO libcec-dev / libclang / cmake needed for the
-# static path (no bindgen: libcec-sys ships pre-generated bindings).
+# static path (no bindgen: libcec-sys ships pre-generated bindings). The prebuilt
+# static libcec.a references glibc ≥2.38 C23 symbols (`__isoc23_sscanf` etc.), so
+# the build/runtime host needs glibc ≥2.38 (game-client-1 / Fedora 43 has 2.41;
+# CI's cec leg runs on Debian Trixie for the same reason — not bookworm/2.36).
 cec = ["dep:cec-rs", "libcec-sys/static"]
 
 [dependencies]
