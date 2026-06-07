@@ -24,11 +24,29 @@ Item {
     property var _launchedApps: Object.create(null)
     property int _maxMisses: 3
 
+    // True between a launch being initiated and its window being confirmed
+    // mapped — gates windowConfirmed so it fires exactly once per launch and not
+    // on every subsequent poll (#193).
+    property bool _awaitingWindow: false
+
     signal appLaunched
     signal appClosed
     // Emitted when the launcher process exits non-zero (app failed to start).
     // shell.qml uses this for an error haptic (#99); the failure is also logged.
     signal appLaunchFailed
+    // #193: emitted the moment a local app launch is initiated (carries the app
+    // so the launch overlay can show its name/icon) and once the launched
+    // window is confirmed mapped (so the overlay can hide).
+    signal launchStarted(var app)
+    signal windowConfirmed
+
+    // Fire windowConfirmed exactly once per in-flight launch.
+    function _confirmWindow() {
+        if (root._awaitingWindow) {
+            root._awaitingWindow = false;
+            root.windowConfirmed();
+        }
+    }
 
     function launchDesktopApp(app) {
         runningAppClass = "";
@@ -55,6 +73,11 @@ Item {
 
     function checkAndLaunchApp(app) {
         _pendingApp = app;
+        // #193: show the launch overlay from the instant the launch is requested
+        // (covers the focus-existing-window path too — it confirms almost
+        // immediately, so the overlay just flashes).
+        root._awaitingWindow = true;
+        root.launchStarted(app);
         windowQuery.running = true;
     }
 
@@ -175,6 +198,8 @@ Item {
                     }
                     root._launchedApps = tracked;
 
+                    // New window mapped — hide the launch overlay (#193).
+                    root._confirmWindow();
                     break;
                 }
             }
@@ -229,6 +254,8 @@ Item {
                 focusWindow.windowClass = clients[i]["class"];
                 focusWindow.running = true;
                 appLaunched();
+                // Existing window — it's already mapped, so confirm at once (#193).
+                root._confirmWindow();
                 return;
             }
         }
@@ -335,8 +362,15 @@ Item {
                         break;
                     }
                 }
-                if (!found)
+                if (found) {
+                    // Foreground window is present — confirm the launch (#193).
+                    // This is the reliable path for a freshly-launched window
+                    // that maps after the one-shot detect timer has fired.
+                    root._confirmWindow();
+                } else {
+                    root._awaitingWindow = false;
                     root.appClosed();
+                }
             }
         }
         onErrorOccurred: message => {

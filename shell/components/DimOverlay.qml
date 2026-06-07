@@ -20,7 +20,14 @@ import QtQml
 //      just on the home screen.
 //
 // Settings:  SettingsStore.autoDimEnabled / SettingsStore.autoDimDelayMinutes
-// Dim level: 0.85 opacity black overlay — OLED-safe and still readable.
+// Dim level: 0.7 opacity black overlay — OLED-safe and still readable.
+//
+// HDR note (#197): on Hyprland 0.55's mandatory color-management pipeline, a
+// plain opacity-animated surface in `cm,hdr` mode composited as fully-opaque
+// black (and flickered) instead of a translucent dim. dimRect sets
+// `layer.enabled` so Quickshell renders it to an offscreen texture with correct
+// premultiplied alpha BEFORE the HDR pipeline composites it, and the target
+// opacity is capped at 0.7 so even a worst-case blend never reads as pure black.
 
 Item {
     id: root
@@ -44,7 +51,7 @@ Item {
         id: fadeInAnim
         target: dimRect
         property: "opacity"
-        to: 0.85
+        to: 0.7
         duration: 1500
         easing.type: Easing.InQuad
     }
@@ -124,6 +131,9 @@ Item {
         color: "black"
         opacity: 0.0
         z: 200
+        // Composite to an offscreen texture first so the alpha blend is correct
+        // under Hyprland 0.55's HDR color-management pipeline (#197).
+        layer.enabled: true
 
         MouseArea {
             anchors.fill: parent

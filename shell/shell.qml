@@ -13,6 +13,13 @@ ShellRoot {
     property var _applications: []
     property var _layout: null
 
+    // #193 launch-overlay state — drives the dedicated Overlay-layer "Launching…"
+    // window below. Shown from launchStarted until windowConfirmed (or a safety
+    // timeout), so the previous app never bleeds through the launch gap.
+    property bool _launchOverlayActive: false
+    property string _launchAppName: ""
+    property string _launchAppIcon: ""
+
     // Emitted on any user activity (controller, keyboard, mouse) so child
     // components can reset their own inactivity timers without referencing IDs
     // across Variants scope boundaries.
@@ -128,6 +135,16 @@ ShellRoot {
     function _resetIdleTimer() {
         if (Components.SettingsStore.sleepTimerMinutes > 0 && root._canSuspend)
             shellIdleTimer.restart();
+    }
+
+    // #193: never let the launch overlay get stuck if a window never confirms
+    // (launch failed silently, app exited instantly, etc.). Hard cap from the
+    // launchStarted; windowConfirmed stops it early on the happy path.
+    Timer {
+        id: launchOverlayTimeout
+        interval: 8000
+        repeat: false
+        onTriggered: root._launchOverlayActive = false
     }
 
     Component.onCompleted: {
@@ -276,8 +293,22 @@ ShellRoot {
         // App failed to launch (non-zero exit from the launcher process).
         // Stronger double-ish pulse so the failure is felt, not just logged.
         onAppLaunchFailed: {
+            root._launchOverlayActive = false;
+            launchOverlayTimeout.stop();
             if (inputManager)
                 inputManager.rumblePulse(250);
+        }
+        // #193: show the "Launching…" overlay the instant a launch begins, hide
+        // it once the window is confirmed mapped (or the safety timeout fires).
+        onLaunchStarted: app => {
+            root._launchAppName = (app && app.name) ? app.name : "";
+            root._launchAppIcon = (app && app.icon) ? app.icon : "";
+            root._launchOverlayActive = true;
+            launchOverlayTimeout.restart();
+        }
+        onWindowConfirmed: {
+            root._launchOverlayActive = false;
+            launchOverlayTimeout.stop();
         }
     }
 
@@ -343,6 +374,8 @@ ShellRoot {
         appLifecycle.runningAppClass = "";
         root.state = "idle";
         inputManager.grab();
+        root._launchOverlayActive = false;
+        launchOverlayTimeout.stop();
         if (root._layout) {
             root._layout.overlay.hide();
             root._layout.sessionDialog.opened = false;
@@ -358,6 +391,8 @@ ShellRoot {
         root.state = "idle";
         inputManager.grab();
         root._resetIdleTimer();
+        root._launchOverlayActive = false;
+        launchOverlayTimeout.stop();
         if (root._layout) {
             root._layout.overlay.hide();
             root._layout.settingsPanel.visible = false;
@@ -537,6 +572,42 @@ ShellRoot {
                     flashWindow.visible = true;
                     screenshotFlash.flash();
                 }
+            }
+        }
+    }
+
+    // Launching overlay (#193). A dedicated Overlay-layer window, like the
+    // screenshot flash: during a launch the main shell surface is unmapped
+    // (`visible:false` in appRunning), so an opaque "Launching…" surface parented
+    // to it would never render and the previously-open app would bleed through
+    // the ~2s window-detect gap. This window is opaque (covers that app), sits on
+    // the Overlay layer (above even a fullscreen lingering app), and is mapped
+    // only while a launch is in flight. Click-through + no keyboard focus.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            required property var modelData
+            screen: modelData
+            visible: root._launchOverlayActive
+
+            anchors {
+                top: true
+                bottom: true
+                left: true
+                right: true
+            }
+
+            color: "transparent"
+            exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            mask: Region {}
+
+            Components.LaunchOverlay {
+                anchors.fill: parent
+                appName: root._launchAppName
+                appIcon: root._launchAppIcon
             }
         }
     }
