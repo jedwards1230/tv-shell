@@ -382,7 +382,7 @@ Return OS name, kernel version, hostname and uptime as a compact JSON object.
 
 Example:
 ```json
-{"os":"Arch Linux","kernel":"6.9.3-arch1-1","hostname":"game-client-1","uptime":"2d 14h 32m 10s"}
+{"os":"Arch Linux","kernel":"6.9.3-arch1-1","hostname":"my-streaming-box","uptime":"2d 14h 32m 10s"}
 ```
 
 ### `storage-status`
@@ -514,7 +514,7 @@ Current connectivity and primary/active connection state.
 **Response:** A compact single-line JSON **object**:
 
 ```json
-{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.168.8.50","gateway":"192.168.8.1","dns":["192.168.8.1","8.8.8.8"],"activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0","speed":1000}]}
+{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.168.1.50","gateway":"192.168.1.1","dns":["192.168.1.1","8.8.8.8"],"activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0","speed":1000}]}
 ```
 
 | Field | Type | Notes |
@@ -1064,11 +1064,11 @@ curl / scripts can drive the shell without needing a Unix socket client.
 
 | Variable | Purpose |
 |----------|---------|
-| `GAME_SHELL_HTTP_BIND` | `host:port` address to bind (e.g. `192.168.8.50:8731` or `0.0.0.0:8731`). When **unset** (the default), no TCP socket is opened and no control surface is exposed. |
+| `GAME_SHELL_HTTP_BIND` | `host:port` address to bind (e.g. `192.168.1.50:8731` or `0.0.0.0:8731`). When **unset** (the default), no TCP socket is opened and no control surface is exposed. |
 | `GAME_SHELL_HTTP_TOKEN` | Bearer token for auth. When auth is enabled (the default), every request must carry `Authorization: Bearer <token>` (constant-time match); requests without a valid token receive 401. |
 | `GAME_SHELL_HTTP_AUTH_ENABLED` | Auth toggle. Default: **enabled** (unset or any value other than `0`/`false`). Set to `0` to skip auth entirely for local-only dev. When auth is enabled but `GAME_SHELL_HTTP_TOKEN` is not set, **all requests are rejected with 401** (secure by default — you cannot authenticate without a token). |
 
-> **Security note**: bind to a trusted LAN interface (e.g. `192.168.8.x:8731`),
+> **Security note**: bind to a trusted LAN interface (e.g. `192.168.1.x:8731`),
 > not a public one. The bridge is a control surface — a mis-bound listener would
 > expose shell control to the public internet. Pair with `GAME_SHELL_HTTP_TOKEN`
 > for defence-in-depth even on a LAN.
@@ -1090,7 +1090,7 @@ Example file to opt a box into the LAN HTTP bridge:
 ```sh
 # ~/.config/game-shell/daemon.env
 # Bind the HTTP bridge to the LAN interface on this box.
-GAME_SHELL_HTTP_BIND=192.168.8.50:8731
+GAME_SHELL_HTTP_BIND=192.168.1.50:8731
 # Set a bearer token (required when auth is enabled, the default).
 GAME_SHELL_HTTP_TOKEN=mysecret
 # Uncomment to disable auth entirely for local-only dev:
@@ -1131,17 +1131,17 @@ re-validate).
 # configuration.yaml
 rest_command:
   game_shell_intent:
-    url: "http://192.168.8.50:8731/intent/{{ intent }}"
+    url: "http://192.168.1.50:8731/intent/{{ intent }}"
     method: POST
     headers:
       Authorization: "Bearer {{ token }}"
   game_shell_key:
-    url: "http://192.168.8.50:8731/key/{{ key }}"
+    url: "http://192.168.1.50:8731/key/{{ key }}"
     method: POST
     headers:
       Authorization: "Bearer mysecret"
   game_shell_screenshot:
-    url: "http://192.168.8.50:8731/screenshot"
+    url: "http://192.168.1.50:8731/screenshot"
     method: GET
     headers:
       Authorization: "Bearer mysecret"
@@ -1160,24 +1160,24 @@ data:
 
 ```bash
 # Open Bluetooth settings (no auth)
-curl -X POST http://192.168.8.50:8731/intent/settings:bluetooth
+curl -X POST http://192.168.1.50:8731/intent/settings:bluetooth
 
 # Same with bearer token
-curl -X POST http://192.168.8.50:8731/intent/settings:bluetooth \
+curl -X POST http://192.168.1.50:8731/intent/settings:bluetooth \
      -H "Authorization: Bearer mysecret"
 
 # Colon percent-encoded (HA encodes `:` as `%3A`)
-curl -X POST http://192.168.8.50:8731/intent/settings%3Abluetooth
+curl -X POST http://192.168.1.50:8731/intent/settings%3Abluetooth
 
 # Synthesize a key press
-curl -X POST http://192.168.8.50:8731/key/select
+curl -X POST http://192.168.1.50:8731/key/select
 
 # Capture a screenshot (returns image/png)
 curl -H "Authorization: Bearer mysecret" \
-     http://192.168.8.50:8731/screenshot > screenshot.png
+     http://192.168.1.50:8731/screenshot > screenshot.png
 
 # Screenshot without auth (GAME_SHELL_HTTP_AUTH_ENABLED=0)
-curl http://192.168.8.50:8731/screenshot > screenshot.png
+curl http://192.168.1.50:8731/screenshot > screenshot.png
 ```
 
 ### Relation to the Unix socket intent surface
@@ -1340,25 +1340,25 @@ table apply. Additional codes specific to dev routes:
 
 ```bash
 # Check daemon status
-curl -H "Authorization: Bearer mysecret" http://192.168.8.50:8731/dev/status
+curl -H "Authorization: Bearer mysecret" http://192.168.1.50:8731/dev/status
 
 # Tail the last 50 lines of the quickshell log, filtered to errors
-curl -H "Authorization: Bearer mysecret"      "http://192.168.8.50:8731/dev/logs?lines=50&filter=error"
+curl -H "Authorization: Bearer mysecret"      "http://192.168.1.50:8731/dev/logs?lines=50&filter=error"
 
 # Restart quickshell and see initial WARN/ERROR output
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/restart-shell
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/restart-shell
 
 # Build the daemon (~15 s)
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/build
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/build
 
 # Deploy the main branch
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/deploy
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/deploy
 
 # Deploy a specific branch
-curl -X POST -H "Authorization: Bearer mysecret"      "http://192.168.8.50:8731/dev/deploy?ref=feat/my-branch"
+curl -X POST -H "Authorization: Bearer mysecret"      "http://192.168.1.50:8731/dev/deploy?ref=feat/my-branch"
 
 # Hot-swap the binary after a build (daemon re-execs; bridge back in ~3 s)
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.8.50:8731/dev/restart-daemon
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/restart-daemon
 ```
 
 ### Unrecognized Commands
@@ -1540,7 +1540,7 @@ bt:device:{"mac":"AA:BB:CC:DD:EE:FF","name":"Xbox Wireless Controller","paired":
 bt:device-removed:AA:BB:CC:DD:EE:FF
 bt:scanning:off
 net:connectivity:full
-net:wifi:{"connectivity":"full","primaryType":"802-11-wireless","hasWifi":true,"ipv4":"wlan0: 192.168.8.50","activeConnections":[]}
+net:wifi:{"connectivity":"full","primaryType":"802-11-wireless","hasWifi":true,"ipv4":"wlan0: 192.168.1.50","activeConnections":[]}
 net:primary:Wired connection 1
 power:battery:{"present":true,"percentage":74,"state":"discharging","onBattery":true,"icon":"battery-good-symbolic"}
 ```

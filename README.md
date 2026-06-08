@@ -48,7 +48,7 @@ Streaming targets are defined in `targets.yaml`:
 ```yaml
 targets:
   - name: Desktop
-    host: 192.168.8.10
+    host: 192.168.1.10  # host: <your-streaming-host-ip>
     app: Desktop
     resolution: 3840x2160
     fps: 120
