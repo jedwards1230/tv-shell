@@ -201,10 +201,16 @@ fn statvfs_entry(mountpoint: &str) -> Option<MountEntry> {
     // SAFETY: statvfs succeeded, so stat is fully initialised.
     let stat = unsafe { stat.assume_init() };
 
-    let bsize = stat.f_bsize;
-    let size = stat.f_blocks * bsize;
-    let avail = stat.f_bavail * bsize;
-    let used = size.saturating_sub(stat.f_bfree * bsize);
+    // f_bsize/f_blocks/f_bavail/f_bfree are u32 on Linux and u64 on macOS;
+    // cast uniformly to u64 so arithmetic compiles on both platforms.
+    #[allow(clippy::unnecessary_cast)]
+    let bsize = stat.f_bsize as u64;
+    #[allow(clippy::unnecessary_cast)]
+    let size = stat.f_blocks as u64 * bsize;
+    #[allow(clippy::unnecessary_cast)]
+    let avail = stat.f_bavail as u64 * bsize;
+    #[allow(clippy::unnecessary_cast)]
+    let used = size.saturating_sub(stat.f_bfree as u64 * bsize);
     let pct = if size > 0 {
         ((used as f64 / size as f64) * 100.0).round() as u8
     } else {

@@ -8,7 +8,7 @@
 //! poweroff deliberately stay `systemctl` shell-outs in the QML. Idle inhibitors
 //! are deferred (not needed by the current pages).
 //!
-//! No-battery handling: game-client-1 is a desktop. If UPower is unreachable, or
+//! No-battery handling: the deploy host is a desktop. If UPower is unreachable, or
 //! its display device reports `IsPresent=false`, or the device isn't a battery,
 //! `power-battery` returns `{"present":false}` and no `power:battery` events are
 //! emitted. An absent UPower service must never error the daemon.

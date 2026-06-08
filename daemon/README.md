@@ -140,7 +140,7 @@ macOS build and verifiable only on-device. `health.rs` runs everywhere, but its
 live fetch needs a reachable Sunshine host.
 
 **HDMI-CEC now lives in the daemon** (`cec.rs`, cec-rs/libcec, #94) —
-compile-verified only, needs on-device verification on game-client-1.
+compile-verified only, needs on-device verification on the deploy host.
 `AVController.qml` was migrated to use the daemon's `cec-*` IPC over
 `SocketClient` (no more `living-room-cec` shell-out). `AVControlSettings.qml`
 is a separate follow-up (#16).
@@ -158,7 +158,7 @@ cargo build --release # Linux only -> target/release/game-shell-input
 
 **Linux build deps:** the Phase 3 Bluetooth module uses `bluer`, which pulls in
 `libdbus-sys`, so a Linux build needs the D-Bus headers + pkg-config:
-`apt-get install libdbus-1-dev pkg-config` (Debian/CI) — on Arch / game-client-1
+`apt-get install libdbus-1-dev pkg-config` (Debian/CI) — on Arch/CachyOS
 these come with the core `dbus`/`base-devel`. `zbus` (network/power) and
 `reqwest`/`rustls-tls` (health) are pure Rust and need nothing; Hyprland IPC uses
 raw Unix sockets (no crate, no system deps). The Phase 4 CEC module (`cec-rs`)
@@ -170,7 +170,7 @@ dependency at build or runtime** (the host can manage/remove system libcec
 freely). The static path needs no bindgen/cmake/clang — only `libudev-dev` +
 `pkg-config` (for the libudev link hint) and network access at build time to
 fetch the archive: `apt-get install libudev-dev pkg-config` (Debian/CI) — on
-Arch / game-client-1 these come with `systemd` / `base-devel`.
+Arch/CachyOS these come with `systemd` / `base-devel`.
 
 ## Deploy
 
@@ -220,4 +220,4 @@ Phase 3 (zbus/Bluetooth/Wi-Fi-read/power) and Phase 4 (Hyprland + Sunshine
 `hyprland`) don't compile or run on macOS/CI, and `health`'s live fetch needs a
 reachable Sunshine host. **HDMI-CEC now lives in the daemon** (`cec.rs`,
 cec-rs/libcec, #94): compile-verified only — scan/power/active-source behavior
-needs on-device verification on game-client-1 (no CEC hardware on CI).
+needs on-device verification on the deploy host (no CEC hardware on CI).
