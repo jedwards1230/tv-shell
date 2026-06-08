@@ -351,17 +351,63 @@ FocusScope {
                         }
                     }
 
-                    Text {
+                    // Drawn play/pause icon. The Unicode glyphs (▶/⏸) carry
+                    // inconsistent side-bearing and baseline metrics, so no
+                    // amount of centerIn/offset lands them reliably centred.
+                    // Drawing the shapes puts the play triangle's centroid and
+                    // the pause bars exactly at the button centre by construction.
+                    Canvas {
+                        id: playPauseIcon
                         anchors.centerIn: parent
-                        // The play triangle (▶) carries trailing side-bearing in
-                        // its glyph box, so centerIn renders it visually
-                        // left-of-centre; nudge it right. The pause glyph (⏸) is
-                        // symmetric and needs no offset.
-                        anchors.horizontalCenterOffset: root.isPlaying ? 0 : Math.round(font.pixelSize * 0.09)
-                        // pause glyph when playing, play glyph when paused/stopped.
-                        text: root.isPlaying ? "⏸" : "▶"
-                        font.pixelSize: Theme.fontTitle * 1.2
-                        color: parent.focused ? Theme.textOnDark : Theme.textPrimary
+                        width: parent.width * 0.4
+                        height: parent.height * 0.4
+                        antialiasing: true
+                        property color iconColor: parent.focused ? Theme.textOnDark : Theme.textPrimary
+                        property bool playing: root.isPlaying
+                        onIconColorChanged: requestPaint()
+                        onPlayingChanged: requestPaint()
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        onPaint: {
+                            const ctx = getContext("2d");
+                            ctx.reset();
+                            ctx.clearRect(0, 0, width, height);
+                            ctx.fillStyle = iconColor;
+                            const w = width;
+                            const h = height;
+                            if (playing) {
+                                // Two symmetric rounded bars, centred as a group.
+                                const barW = w * 0.30;
+                                const gap = w * 0.16;
+                                const x0 = (w - (barW * 2 + gap)) / 2;
+                                const rad = barW * 0.28;
+                                const bar = function (x) {
+                                    ctx.beginPath();
+                                    ctx.moveTo(x + rad, 0);
+                                    ctx.arcTo(x + barW, 0, x + barW, h, rad);
+                                    ctx.arcTo(x + barW, h, x, h, rad);
+                                    ctx.arcTo(x, h, x, 0, rad);
+                                    ctx.arcTo(x, 0, x + barW, 0, rad);
+                                    ctx.closePath();
+                                    ctx.fill();
+                                };
+                                bar(x0);
+                                bar(x0 + barW + gap);
+                            } else {
+                                // Play triangle positioned so its centroid sits
+                                // at (w/2, h/2): centroid_x = bx + tw/3 = w/2.
+                                const tw = w * 0.9;
+                                const th = h * 0.98;
+                                const bx = w / 2 - tw / 3;
+                                const ty = (h - th) / 2;
+                                ctx.beginPath();
+                                ctx.moveTo(bx, ty);
+                                ctx.lineTo(bx, ty + th);
+                                ctx.lineTo(bx + tw, ty + th / 2);
+                                ctx.closePath();
+                                ctx.fill();
+                            }
+                        }
                     }
 
                     MouseArea {
