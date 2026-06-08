@@ -142,7 +142,7 @@ is fetched from ssalonen/libcec-static-builds and linked into the binary, so the
 daemon needs **no system `libcec`/`libcec-dev`** at build or runtime (a host can
 manage/remove system libcec freely). The static path needs no bindgen/cmake/clang
 — only `libudev-dev` + `pkg-config` (libudev link hint) and network at build time
-to fetch the archive (game-client-1 / Fedora 43; the deploy build uses
+to fetch the archive (game-client-1 / CachyOS; the deploy build uses
 `--features cec`):
 
 ```bash
