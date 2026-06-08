@@ -27,6 +27,8 @@ FocusScope {
     property var nextRow: null
 
     signal escaped
+    // Context action (gamepad X / Tab) — the host opens a quit popover.
+    signal contextRequested
 
     // === Active player selection ===
     // Prefer a player that is currently playing; fall back to the first
@@ -110,6 +112,13 @@ FocusScope {
         case Qt.Key_Enter:
             Theme.exitMouseMode();
             root._activate();
+            event.accepted = true;
+            break;
+        case Qt.Key_Tab:
+            // Context action (gamepad X): ask the host to open the quit popover.
+            Theme.exitMouseMode();
+            if (root.hasPlayer)
+                root.contextRequested();
             event.accepted = true;
             break;
         case Qt.Key_Escape:
