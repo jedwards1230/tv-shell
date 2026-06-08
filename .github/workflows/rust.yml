@@ -86,7 +86,7 @@ jobs:
   # Runs on Debian Trixie (glibc 2.41), NOT bookworm (glibc 2.36): the prebuilt
   # static libcec.a references the glibc ≥2.38 C23 symbols `__isoc23_sscanf` /
   # `__isoc23_strtoul`, so linking it on bookworm fails with "undefined symbol".
-  # The deploy host (game-client-1 / Fedora 43) has glibc 2.41, so Trixie matches
+  # The deploy host (game-client-1 / CachyOS) has glibc 2.43, so Trixie matches
   # the runtime target. The default `build` job stays on bookworm (it never links
   # libcec).
   cec:
