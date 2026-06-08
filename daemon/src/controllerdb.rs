@@ -27,6 +27,7 @@ pub const UPSTREAM_URL: &str =
     "https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt";
 
 /// Maximum download size guard (8 MiB — the file is currently ~1 MiB).
+#[cfg(target_os = "linux")]
 const MAX_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The bundled baseline DB (same file referenced by `device::load_db`).

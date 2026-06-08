@@ -89,7 +89,7 @@ against Sunshine's self-signed `/serverinfo`, replacing the inline HTTP polls in
 `StreamManager.qml`/`StreamCard.qml`). These replace the
 QML shell-outs/HTTP polls that *read* system state. The Linux-only modules
 (D-Bus, Hyprland) are unverifiable on macOS/CI and need on-device verification on
-game-client-1; `sunshine-status` runs cross-platform but its live fetch needs a
+the deploy host; `sunshine-status` runs cross-platform but its live fetch needs a
 reachable host (its response parser is pure and unit-tested). What deliberately
 stays a shell-out: Wi-Fi **join** (`nmcli`), audio (`wpctl`), one-shot compositor
 *actions* (`hyprctl dispatch`), and reboot/poweroff (`systemctl`). **HDMI-CEC**
@@ -97,7 +97,7 @@ moved into the daemon (`cec-*` IPC via `cec-rs`/libcec, #94/#16): a single
 persistent in-process libcec connection replaces the per-call shell-outs. It is
 **feature-gated** (`cargo build --features cec`) and Linux-only so the default
 build keeps the no-system-C-deps invariant — the libcec-sys link is exercised
-only in the dedicated `--features cec` CI leg and on game-client-1 (libcec 7).
+only in the dedicated `--features cec` CI leg and on the deploy host (libcec 7).
 The `cec` feature **static-links a bundled libcec** (`libcec-sys/static`, #179):
 the binary carries its own libcec + p8-platform, so there is no system
 `libcec`/`libcec-dev` dependency at build or runtime (the CI leg asserts this via
@@ -142,7 +142,7 @@ is fetched from ssalonen/libcec-static-builds and linked into the binary, so the
 daemon needs **no system `libcec`/`libcec-dev`** at build or runtime (a host can
 manage/remove system libcec freely). The static path needs no bindgen/cmake/clang
 — only `libudev-dev` + `pkg-config` (libudev link hint) and network at build time
-to fetch the archive (game-client-1 / CachyOS; the deploy build uses
+to fetch the archive (Arch/CachyOS on the deploy host; the deploy build uses
 `--features cec`):
 
 ```bash
