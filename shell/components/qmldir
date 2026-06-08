@@ -30,6 +30,7 @@ FocusFrame 1.0 FocusFrame.qml
 AppCard 1.0 AppCard.qml
 ControllerSettings 1.0 ControllerSettings.qml
 MarqueeText 1.0 MarqueeText.qml
+MediaWidget 1.0 MediaWidget.qml
 DimmedBackdrop 1.0 DimmedBackdrop.qml
 DimOverlay 1.0 DimOverlay.qml
 Drawer 1.0 Drawer.qml
