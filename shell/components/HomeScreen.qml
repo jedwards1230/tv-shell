@@ -490,6 +490,25 @@ FocusScope {
                     root.userActivity();
                     root.focusDefaultPosition();
                 }
+                onContextRequested: {
+                    let p = mediaWidget.player;
+                    if (!p || !p.canQuit)
+                        return;
+                    let pos = mediaWidget.mapToItem(root, mediaWidget.width / 2, mediaWidget.height);
+                    popoverMenu.targetX = pos.x;
+                    popoverMenu.targetY = pos.y;
+                    popoverMenu.actions = [
+                        {
+                            label: "Quit " + (p.identity || "Player"),
+                            action: function () {
+                                if (p.canQuit)
+                                    p.quit();
+                            }
+                        }
+                    ];
+                    popoverMenu.opened = true;
+                    popoverMenu.forceActiveFocus();
+                }
             }
 
             // === Merged Recents + Running Row ===
