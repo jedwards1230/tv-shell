@@ -1,2 +1,4 @@
 aqtinstall.log
 worktrees/
+tmp/
+target/

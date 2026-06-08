@@ -343,7 +343,7 @@ mod tests {
         // all of these so the output round-trips through a JSON parser.
         //
         // This is the regression guard for the bug surfaced in issue #168:
-        // a real /usr/share/applications file on game-client-1 had a name or
+        // a real /usr/share/applications file on the deploy host had a name or
         // comment field with a backslash/quote that broke the IPC response.
         let nasty = App {
             name: "My \"App\" with \\ backslash and \u{65e5}\u{672c}\u{8a9e}".into(),

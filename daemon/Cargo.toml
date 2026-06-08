@@ -14,7 +14,7 @@ path = "src/main.rs"
 # HDMI-CEC via cec-rs/libcec (#94). OFF by default so a plain `cargo build`/
 # `cargo test` — including the Linux CI default leg and macOS dev boxes — needs
 # NO system C libraries (preserving the pure-Rust invariant shared by
-# evdev/zbus/bluer). Enable on the deploy host (game-client-1):
+# evdev/zbus/bluer). Enable on the deploy host:
 #   cargo build --release --features cec
 #
 # `libcec-sys/static` (#179) forces libcec-sys to STATIC-link a prebuilt libcec
@@ -30,7 +30,7 @@ path = "src/main.rs"
 # ssalonen/libcec-static-builds. NO libcec-dev / libclang / cmake needed for the
 # static path (no bindgen: libcec-sys ships pre-generated bindings). The prebuilt
 # static libcec.a references glibc ≥2.38 C23 symbols (`__isoc23_sscanf` etc.), so
-# the build/runtime host needs glibc ≥2.38 (game-client-1 / CachyOS has 2.43;
+# the build/runtime host needs glibc ≥2.38 (CachyOS / glibc 2.43 satisfies this;
 # CI's cec leg runs on Debian Trixie for the same reason — not bookworm/2.36).
 cec = ["dep:cec-rs", "libcec-sys/static"]
 
@@ -91,7 +91,7 @@ notify-debouncer-full = "0.3"
 # HDMI-CEC (#94): cec-rs wraps the system libcec (GPL-2.0) C library — GPL-2.0
 # is compatible under our GPL-3.0 (#88). 12.0.1 / libcec-sys 9.0.3 support
 # libcec 7 (the daemon static-links bundled libcec 7, so no system libcec is
-# needed on game-client-1 / CachyOS; the 8.x/5.x line only
+# needed on the deploy host (Arch/CachyOS); the 8.x/5.x line only
 # supported libcec ≤6 and made the daemon fail to link there — the #94 revert).
 # OPTIONAL + feature-gated (`cec`): unlike evdev/zbus/bluer (pure Rust, no C),
 # libcec-sys links a C library and needs libcec-dev + libclang-dev at build

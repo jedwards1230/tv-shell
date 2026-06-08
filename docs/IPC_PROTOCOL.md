@@ -587,7 +587,7 @@ Suspend the system (logind `Suspend(false)`).
 
 #### `power-battery`
 
-Battery state. game-client-1 is a desktop, so "no battery" is the normal case
+Battery state. The deploy host is typically a desktop, so "no battery" is the normal case
 and is reported gracefully (never an error) whenever UPower / a battery device
 is absent.
 
@@ -1405,7 +1405,7 @@ when the pad lacks the hardware:
   is exposed over IPC — the indicator is driven internally on pad join and the
   result is published as `pad:index:*`. Pads with neither EV_LED nor a usable
   sysfs leds node are a clean no-op: no event is emitted. The Sony lightbar
-  path requires on-device verification on game-client-1 with a DualSense.
+  path requires on-device verification on the deploy host with a DualSense.
 - **Battery (#100):** the daemon polls the pad's `power_supply` sysfs and emits
   `pad:battery:{id,level,charging}` on change (and once at connect). Wired pads
   report no battery → no event.
