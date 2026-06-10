@@ -698,6 +698,10 @@ pub const CEC_FOCUS_ON_STARTUP_DEFAULT: bool = false;
 /// Default for `cecFocusOnWake`: on by default so resume from sleep switches the
 /// TV to our input (the expected behaviour when waking the box).
 pub const CEC_FOCUS_ON_WAKE_DEFAULT: bool = true;
+// Compile-time invariant: the unexpected-steal default is off, the expected
+// wake default is on.
+const _: () = assert!(!CEC_FOCUS_ON_STARTUP_DEFAULT);
+const _: () = assert!(CEC_FOCUS_ON_WAKE_DEFAULT);
 
 /// Read the `cecFocusOnStartup` setting from a parsed settings document. Returns
 /// [`CEC_FOCUS_ON_STARTUP_DEFAULT`] when the key is absent or not a JSON bool.
@@ -1060,9 +1064,6 @@ mod tests {
             cec_focus_on_wake_from(&serde_json::json!({ "cecFocusOnWake": "yes" })),
             CEC_FOCUS_ON_WAKE_DEFAULT
         );
-        // Startup default is off, wake default is on.
-        assert!(!CEC_FOCUS_ON_STARTUP_DEFAULT, "startup focus defaults off");
-        assert!(CEC_FOCUS_ON_WAKE_DEFAULT, "wake focus defaults on");
     }
 
     #[test]
@@ -1108,10 +1109,21 @@ mod tests {
 
     #[test]
     fn should_focus_truth_table() {
-        assert!(!should_focus(false, false));
-        assert!(!should_focus(false, true));
-        assert!(!should_focus(true, false));
-        assert!(should_focus(true, true));
+        // Table-driven so the inputs aren't compile-time constants (a literal
+        // `assert!(should_focus(true, true))` trips clippy's assertions_on_constants).
+        let cases = [
+            (false, false, false),
+            (false, true, false),
+            (true, false, false),
+            (true, true, true),
+        ];
+        for (lifecycle, setting, want) in cases {
+            assert_eq!(
+                should_focus(lifecycle, setting),
+                want,
+                "should_focus({lifecycle}, {setting})"
+            );
+        }
     }
 
     #[test]
