@@ -17,7 +17,8 @@
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
 use game_shell_input::{
-    bluetooth, http, hyprland, input, ipc, network, power, protocol, session_env, state, watch,
+    bluetooth, http, hyprland, input, ipc, network, power, protocol, session, session_env, state,
+    watch,
 };
 
 #[cfg(target_os = "linux")]
@@ -92,6 +93,19 @@ fn main() -> anyhow::Result<()> {
             let watch_config_changed = Arc::clone(&config_changed);
             tokio::spawn(async move {
                 watch::run(watch_config_changed).await;
+            });
+        }
+
+        // logind session watcher: releases the gamepad grab while our session is
+        // backgrounded (VT-switched away) and re-grabs on return. Fire-and-forget
+        // like the D-Bus actors — logs and degrades gracefully if logind is
+        // absent (grab simply stays held, the pre-feature behaviour).
+        {
+            let session_control_tx = control_tx.clone();
+            tokio::spawn(async move {
+                if let Err(e) = session::run(session_control_tx).await {
+                    tracing::warn!("logind session actor exited: {e}");
+                }
             });
         }
 
