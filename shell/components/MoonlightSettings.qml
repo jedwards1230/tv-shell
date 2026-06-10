@@ -17,6 +17,11 @@ FocusScope {
     // Pairing state
     property int pairingServerIndex: -1
     property string pairingPin: ""
+    // Host being paired (kept independently of pairingServerIndex so onExited can
+    // identify it after the modal closes) and a guard so the modal's success-poll
+    // or a user cancel concludes the flow without onExited firing a false toast.
+    property string _pairHost: ""
+    property bool _pairResolved: false
 
     // Form fields
     property string newName: ""
@@ -128,19 +133,63 @@ FocusScope {
             }
         }
         onExited: (exitCode, exitStatus) => {
-            let host = root.pairingServerIndex >= 0 && root.pairingServerIndex < root.servers.length ? root.servers[root.pairingServerIndex].host : "";
-            if (exitCode === 0 && host !== "") {
-                let updated = root.hostStatus;
-                updated[host] = "paired";
-                root.hostStatus = JSON.parse(JSON.stringify(updated));
-                NotificationManager.info("moonlight", "Pairing Successful", host);
+            // The success-poll or a user cancel may have already concluded the
+            // flow; if so, exit quietly (a killed process returns non-zero, which
+            // must NOT surface as a failure toast).
+            if (root._pairResolved) {
+                pairProcess._output = "";
+                return;
+            }
+            if (exitCode === 0 && root._pairHost !== "") {
+                root._markPaired(root._pairHost);
             } else {
                 NotificationManager.warn("moonlight", "Pairing Failed", pairProcess._output.substring(0, 100));
+                root._closePairModal();
             }
             pairProcess._output = "";
-            root.pairingServerIndex = -1;
-            root.pairingPin = "";
-            serverList.forceActiveFocus();
+        }
+    }
+
+    // While the PIN modal is open, poll the host's pair status so the modal can
+    // auto-close the moment Sunshine accepts the PIN — moonlight's `pair` does not
+    // reliably exit on its own when the user completes pairing on the host side.
+    Timer {
+        id: pairPoll
+        interval: 2000
+        repeat: true
+        running: root.pairingServerIndex >= 0 && !root._pairResolved
+        onTriggered: {
+            if (root._pairHost === "" || pairCheck.running)
+                return;
+            pairCheck._output = "";
+            pairCheck.command = ["moonlight", "list", root._pairHost];
+            pairCheck.running = true;
+        }
+    }
+
+    Process {
+        id: pairCheck
+        property string _output: ""
+        stdout: SplitParser {
+            onRead: line => {
+                pairCheck._output += line + "\n";
+            }
+        }
+        stderr: SplitParser {
+            onRead: line => {
+                pairCheck._output += line + "\n";
+            }
+        }
+        onExited: exitCode => {
+            // `moonlight list` exits 0 and omits "not been paired" once the host
+            // is paired (mirrors statusChecker) — that means pairing succeeded.
+            if (root._pairResolved || root.pairingServerIndex < 0) {
+                pairCheck._output = "";
+                return;
+            }
+            if (exitCode === 0 && pairCheck._output.indexOf("not been paired") < 0)
+                root._markPaired(root._pairHost);
+            pairCheck._output = "";
         }
     }
 
@@ -199,6 +248,8 @@ FocusScope {
         if (idx < 0 || idx >= root.servers.length)
             return;
         root.pairingServerIndex = idx;
+        root._pairHost = root.servers[idx].host;
+        root._pairResolved = false;
         // The shell owns the PIN: moonlight-qt's CLI `pair` does not emit one
         // (it expects the PIN as a shared secret via --pin), so generate a random
         // 4-digit PIN, show it immediately, and pass it. The user enters the same
@@ -206,16 +257,39 @@ FocusScope {
         // current Sunshine/Moonlight — the request just timed out.
         root.pairingPin = String(Math.floor(1000 + Math.random() * 9000));
         pairProcess._output = "";
-        pairProcess.command = ["moonlight", "pair", root.servers[idx].host, "--pin", root.pairingPin];
+        pairProcess.command = ["moonlight", "pair", root._pairHost, "--pin", root.pairingPin];
         pairProcess.running = true;
     }
 
-    function cancelPairing() {
+    // Pairing succeeded (detected via poll or a clean process exit): mark the host
+    // paired, notify once, and close the modal. _pairResolved makes the pair
+    // process's own onExited a quiet no-op.
+    function _markPaired(host) {
+        if (root._pairResolved)
+            return;
+        root._pairResolved = true;
+        let updated = root.hostStatus;
+        updated[host] = "paired";
+        root.hostStatus = JSON.parse(JSON.stringify(updated));
+        NotificationManager.info("moonlight", "Pairing Successful", host);
         pairProcess.running = false;
-        pairProcess._output = "";
+        root._closePairModal();
+    }
+
+    function _closePairModal() {
         root.pairingServerIndex = -1;
         root.pairingPin = "";
+        root._pairHost = "";
         serverList.forceActiveFocus();
+    }
+
+    function cancelPairing() {
+        // Mark resolved first so the process's onExited (fired by the kill below)
+        // does not raise a false "Pairing Failed".
+        root._pairResolved = true;
+        pairProcess.running = false;
+        pairProcess._output = "";
+        root._closePairModal();
     }
 
     function persistServers() {
