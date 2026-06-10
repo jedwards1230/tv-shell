@@ -430,6 +430,15 @@ FocusScope {
             model: root.servers
             focus: false
 
+            // Which action in the focused row is selected (Left/Right cycles it).
+            // Slot 0 = Pair when the row is unpaired; the last slot is always
+            // Remove. Reset to the first action whenever the focused row changes.
+            property int actionCol: 0
+            function _actionCount(host) {
+                return root.hostStatus[host] === "unpaired" ? 2 : 1;
+            }
+            onCurrentIndexChanged: actionCol = 0
+
             delegate: Rectangle {
                 required property int index
                 required property var modelData
@@ -526,7 +535,7 @@ FocusScope {
                         SettingsButton {
                             id: pairBtn
                             text: "Pair"
-                            focus: parent.activeFocus
+                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList.actionCol === 0
                             onActivated: root.startPairing(index)
 
                             MouseArea {
@@ -546,7 +555,7 @@ FocusScope {
                         SettingsButton {
                             id: removeBtn
                             text: "Remove"
-                            focus: parent.activeFocus
+                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList.actionCol === serverList._actionCount(modelData.host) - 1
                             onActivated: root.confirmRemoveIndex = index
 
                             MouseArea {
@@ -560,9 +569,27 @@ FocusScope {
                 }
             }
 
-            Keys.onReturnPressed:
-            // no-op: servers are launched from home screen
-            {}
+            // Servers launch from the home screen, not here — Return activates the
+            // selected per-row action (Pair / Remove); Left/Right pick the action.
+            Keys.onReturnPressed: {
+                if (currentIndex < 0 || currentIndex >= root.servers.length)
+                    return;
+                let host = root.servers[currentIndex].host;
+                if (root.hostStatus[host] === "unpaired" && actionCol === 0)
+                    root.startPairing(currentIndex);
+                else if (actionCol === _actionCount(host) - 1)
+                    root.confirmRemoveIndex = currentIndex;
+            }
+
+            Keys.onLeftPressed: {
+                if (actionCol > 0)
+                    actionCol--;
+            }
+
+            Keys.onRightPressed: {
+                if (currentIndex >= 0 && currentIndex < root.servers.length && actionCol < _actionCount(root.servers[currentIndex].host) - 1)
+                    actionCol++;
+            }
 
             Keys.onUpPressed: {
                 if (currentIndex > 0)
