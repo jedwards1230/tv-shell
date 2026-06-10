@@ -14,7 +14,7 @@ The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communic
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query reply `cec-scan`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, `get-notifications`, `record-notification`, `set-notifications`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query reply `cec-scan`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -256,6 +256,72 @@ unparseable file yields `[]`. Returns at most 15 entries.
 ```json
 [{"name":"Firefox","exec":"firefox","comment":"Browse the web","time":1716950400.0}]
 ```
+
+---
+
+## Notification History Commands (#71)
+
+### `get-notifications`
+
+Return the stored notification history, newest first. Stateless. A missing or
+unparseable file yields `[]`. Returns at most 100 entries.
+
+**Response:** A compact single-line JSON **array** of notification objects:
+
+```json
+[{"id":5,"title":"Stream started","message":"","level":"info","source":"stream","icon":"📡","time":1716950400.0}]
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | number | Notification id (monotonically increasing within a session) |
+| `title` | string | Notification title |
+| `message` | string | Body text (may be `""`) |
+| `level` | string | `info` / `warning` / `error` |
+| `source` | string | Source tag (e.g. `system`, `stream`, `controller`, `network`, `av`) |
+| `icon` | string | Icon character or name (may be `""`) |
+| `time` | number | Unix seconds (float) when the notification was created |
+
+### `record-notification <json-object>`
+
+Append a notification to the history file
+(`~/.local/share/game-shell/notifications.json`). The body is a compact
+single-line JSON object `{"id":N,"title":...,"message":...,"level":...,"source":...,"icon":...}`.
+The daemon prepends the entry (newest first), stamps `time` with the current
+wall-clock unix seconds, and caps the file at 100 entries. **No de-duplication**
+— every notification is a distinct log event (unlike `record-launch` which
+deduplicates by name). Stateless. Written single-line compact JSON.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok\n` |
+| Missing body | `error:usage: record-notification <json-object>\n` |
+| Body isn't valid JSON | `error:invalid JSON: <detail>\n` |
+| Write failed | `error:record-notification failed: <detail>\n` |
+
+Example request: `record-notification {"id":5,"title":"Stream started","message":"","level":"info","source":"stream","icon":""}\n`
+
+### `set-notifications <json-array>`
+
+Overwrite the notifications file entirely with the given array. Used by the QML
+`NotificationManager` when the user clears history or removes a single
+notification — the caller sends the full updated in-memory list. Caps at 100
+entries. Stateless. Written single-line compact JSON.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok\n` |
+| Missing body | `error:usage: set-notifications <json-array>\n` |
+| Body isn't valid JSON | `error:invalid JSON: <detail>\n` |
+| Write failed | `error:set-notifications failed: <detail>\n` |
+
+Example request: `set-notifications []\n` (clears history)
+
+---
 
 ## Controller DB Commands (#159)
 
@@ -1556,6 +1622,23 @@ fullscreen transitions.
 |-------|---------|---------|
 | `hypr:activewindow:<class>` | The active window changed | The new active window's class. An empty class is allowed (e.g. `hypr:activewindow:` when no window is focused) |
 | `hypr:fullscreen:<0|1>` | The active window's fullscreen state changed | `1` when fullscreen, `0` otherwise |
+| `hypr:openwindow:<json>` | A new window was mapped (Hyprland `openwindow` event). Payload is a compact JSON object `{"address":"0x..","class":"..","title":"..","workspace":".."}`. Titles may contain commas — JSON encoding avoids comma-splitting issues. Consumed by `AppLifecycleManager.qml` for deterministic launch confirmation (#203) | Compact JSON object |
+| `hypr:closewindow:<address>` | A window was closed (Hyprland `closewindow` event). Payload is the window's Hyprland address. Consumed by `AppLifecycleManager.qml` for immediate `appClosed` detection (#203) | Window address string (e.g. `0x55a1b2c3d4e5`) |
+
+`hypr:openwindow` and `hypr:closewindow` supplement the existing `hypr:activewindow`
+event and the `windowPoller` in `AppLifecycleManager`. The poller remains the source of
+truth for `runningWindows` and app-closed detection; the new events enable deterministic,
+immediate response when a launched window actually maps, without waiting for the next
+2-second poll tick.
+
+`hypr:openwindow` payload fields:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `address` | string | Hyprland window address (e.g. `0x55a1b2c3d4e5`) |
+| `class` | string | Window class |
+| `title` | string | Window title (may contain commas — safe because JSON-encoded) |
+| `workspace` | string | Workspace name where the window was mapped |
 
 Example wire lines:
 
@@ -1564,6 +1647,8 @@ hypr:activewindow:firefox
 hypr:activewindow:
 hypr:fullscreen:1
 hypr:fullscreen:0
+hypr:openwindow:{"address":"0x55a1b2c3d4e5","class":"firefox","title":"Mozilla Firefox","workspace":"1"}
+hypr:closewindow:0x55a1b2c3d4e5
 ```
 
 ### HDMI-CEC Events (#94, #16)

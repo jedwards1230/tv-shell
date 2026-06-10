@@ -13,6 +13,7 @@ pub mod controllerdb;
 pub mod device;
 pub mod health;
 pub mod ipc;
+pub mod notifications;
 pub mod protocol;
 pub mod recents;
 pub mod state;

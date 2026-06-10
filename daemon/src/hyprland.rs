@@ -314,10 +314,42 @@ async fn watch_events(events_tx: broadcast::Sender<Event>) -> Result<()> {
             "fullscreen" => {
                 let _ = events_tx.send(Event::HyprFullscreen(data.trim() == "1"));
             }
+            // `openwindow>>ADDRESS,WORKSPACENAME,CLASS,TITLE` — title is the
+            // remainder and may contain commas. Build compact JSON so commas in
+            // titles can't break QML parsing.
+            "openwindow" => {
+                let json = parse_openwindow(data);
+                let _ = events_tx.send(Event::HyprOpenWindow(json));
+            }
+            // `closewindow>>ADDRESS` — just the window address.
+            "closewindow" => {
+                let _ = events_tx.send(Event::HyprCloseWindow(data.trim().to_string()));
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+/// Parse the `openwindow` event data string into a compact JSON object.
+///
+/// Hyprland emits `openwindow>>ADDRESS,WORKSPACENAME,CLASS,TITLE` where TITLE
+/// is the remainder (may contain commas). Returns a compact JSON object
+/// `{"address":"0x..","class":"..","title":"..","workspace":".."}`.
+fn parse_openwindow(data: &str) -> String {
+    // Split into at most 4 parts: address, workspace, class, title (remainder).
+    let mut parts = data.splitn(4, ',');
+    let address = parts.next().unwrap_or("").trim();
+    let workspace = parts.next().unwrap_or("").trim();
+    let class = parts.next().unwrap_or("").trim();
+    let title = parts.next().unwrap_or("").trim();
+    serde_json::json!({
+        "address": address,
+        "class": class,
+        "title": title,
+        "workspace": workspace,
+    })
+    .to_string()
 }
 
 #[cfg(test)]
@@ -405,5 +437,57 @@ mod tests {
         let arr = v.as_array().unwrap();
         assert_eq!(arr[0].get("hdr").unwrap(), false);
         assert_eq!(arr[0].get("currentFormat").unwrap(), "");
+    }
+
+    #[test]
+    fn parse_openwindow_basic() {
+        let data = "0x12345678,1,steam,Steam Big Picture";
+        let out = parse_openwindow(data);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.get("address").unwrap(), "0x12345678");
+        assert_eq!(v.get("workspace").unwrap(), "1");
+        assert_eq!(v.get("class").unwrap(), "steam");
+        assert_eq!(v.get("title").unwrap(), "Steam Big Picture");
+    }
+
+    #[test]
+    fn parse_openwindow_title_with_commas() {
+        // Title may contain commas — only split into 4 parts max.
+        let data = "0xabcdef,games,firefox,Mozilla Firefox, Web Browser, v120";
+        let out = parse_openwindow(data);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.get("address").unwrap(), "0xabcdef");
+        assert_eq!(v.get("workspace").unwrap(), "games");
+        assert_eq!(v.get("class").unwrap(), "firefox");
+        // Full remainder including commas is preserved.
+        assert_eq!(
+            v.get("title").unwrap(),
+            "Mozilla Firefox, Web Browser, v120"
+        );
+    }
+
+    #[test]
+    fn parse_openwindow_missing_fields_default_to_empty() {
+        // Fewer than 4 comma-separated parts — missing fields become "".
+        let out = parse_openwindow("");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.get("address").unwrap(), "");
+        assert_eq!(v.get("class").unwrap(), "");
+        assert_eq!(v.get("title").unwrap(), "");
+
+        let out2 = parse_openwindow("0x1,workspace");
+        let v2: serde_json::Value = serde_json::from_str(&out2).unwrap();
+        assert_eq!(v2.get("address").unwrap(), "0x1");
+        assert_eq!(v2.get("workspace").unwrap(), "workspace");
+        assert_eq!(v2.get("class").unwrap(), "");
+        assert_eq!(v2.get("title").unwrap(), "");
+    }
+
+    #[test]
+    fn parse_openwindow_output_is_compact_json() {
+        let out = parse_openwindow("0x1,1,cls,title");
+        // No newlines, no `": "` pretty-print spacing.
+        assert!(!out.contains('\n'));
+        assert!(!out.contains(": "));
     }
 }
