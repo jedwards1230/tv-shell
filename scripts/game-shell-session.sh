@@ -5,8 +5,15 @@
 SHELL_DIR="${GAME_SHELL_DIR:-/opt/game-shell}"
 
 export XDG_CURRENT_DESKTOP=Hyprland
-export GAME_SHELL_TARGETS="${GAME_SHELL_TARGETS:-$SHELL_DIR/targets.yaml}"
+# Export the resolved install dir so PATH-based hyprland binds (super-intent.sh)
+# and the daemon (re-exec target) can find the install tree without a literal.
+export GAME_SHELL_DIR="$SHELL_DIR"
+# Streaming targets live under the per-user config dir by default.
+export GAME_SHELL_TARGETS="${GAME_SHELL_TARGETS:-${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json}"
 export GAME_SHELL_SOCK="/run/user/$(id -u)/game-shell-input.sock"
+# Put the install tree's scripts on PATH so hyprland `exec` binds resolve
+# super-intent.sh (and friends) by name regardless of install prefix.
+export PATH="$SHELL_DIR/scripts:$PATH"
 
 # Optional per-machine daemon overrides (HTTP bridge bind, auth toggle, etc.) —
 # not tracked in the repo so a box can opt into the LAN HTTP bridge locally.
@@ -17,7 +24,7 @@ if [ -f "$DAEMON_ENV" ]; then set -a; . "$DAEMON_ENV"; set +a; fi
 # grab/release, settings I/O, app discovery, Bluetooth/network/power, Hyprland
 # reads, and Sunshine pre-flight all flow through it. Build with
 # `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`.
-"$SHELL_DIR/bin/game-shell-input" &
+"${GAME_SHELL_INPUT_BIN:-$SHELL_DIR/bin/game-shell-input}" &
 INPUT_PID=$!
 
 cleanup() {

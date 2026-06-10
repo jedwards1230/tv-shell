@@ -1368,7 +1368,8 @@ started (no WARN/ERROR in first 3s)
 #### `POST /dev/build`
 
 Runs `cargo build --release` inside the `daemon/` subdirectory of the install root
-(default `/opt/game-shell`). On success, installs the built binary to `bin/game-shell-input`
+(resolved via `session_env::install_root()` — from `current_exe` / `$GAME_SHELL_DIR`;
+`/opt/game-shell` is only a last-ditch default). On success, installs the built binary to `bin/game-shell-input`
 with `install -m755`. Returns the last 12 lines of cargo stderr plus `ok` on success,
 or a 500 with the cargo/install error on failure. Typical build time is ~15 s on a
 warm cache; the connection timeout is 180 s to cover cold builds.
