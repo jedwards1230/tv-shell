@@ -254,7 +254,9 @@ Item {
         // command and body are supplied dynamically by _persist*() helpers.
     }
 
-    // Persist a single notification addition.
+    // Persist a single notification addition. Include the creation time so it
+    // round-trips identically to _persistAll(); the daemon falls back to its own
+    // clock only when time is 0.
     function _persistRecord(n) {
         var body = JSON.stringify({
             "id": n.id,
@@ -262,7 +264,8 @@ Item {
             "message": n.message || "",
             "level": n.level || "info",
             "source": n.source || "system",
-            "icon": n.icon || ""
+            "icon": n.icon || "",
+            "time": n.timestamp ? (n.timestamp.getTime() / 1000) : 0
         });
         notificationWriter.request("record-notification", body);
     }

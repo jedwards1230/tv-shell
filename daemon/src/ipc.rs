@@ -209,7 +209,11 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
                 spawn_blocking_string(move || {
                     match serde_json::from_str::<notifications::Notification>(&body) {
                         Ok(mut entry) => {
-                            entry.time = notifications::now_unix_secs();
+                            // Honor a client-supplied creation time; fall back to
+                            // the daemon clock only when none was provided.
+                            if entry.time == 0.0 {
+                                entry.time = notifications::now_unix_secs();
+                            }
                             match notifications::record_notification(
                                 &notifications::notifications_path(),
                                 entry,
