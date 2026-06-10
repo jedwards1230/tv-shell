@@ -124,13 +124,20 @@ Item {
     function focusByAddress(address) {
         if (!address || address === "")
             return;
-        // Track the focused window's class for appClosed detection.
+        // Track the focused window's class for appClosed detection. Only proceed
+        // if the address is a currently-known window — otherwise we'd track a
+        // foreground address with no matching runningAppClass, and a later
+        // closewindow for it would fire appClosed() on the wrong app (#203).
+        var found = false;
         for (let i = 0; i < runningWindows.length; i++) {
             if (runningWindows[i].address === address) {
                 runningAppClass = runningWindows[i].windowClass;
+                found = true;
                 break;
             }
         }
+        if (!found)
+            return;
         // This window is now the foreground app: track ITS address so the fast
         // closewindow path targets it, and a stale prior-launch address can't
         // fire appClosed() here. Not awaiting a new window on a resume (#203).
@@ -506,9 +513,10 @@ Item {
             root.runningAppClass = w.class || root.runningAppClass;
             root._foregroundAddress = addr;
             root._confirmWindow();
-        } catch (e)
-        // Malformed JSON payload — fall through to poll fallback.
-        {}
+        } catch (e) {
+            // Malformed JSON payload — log and fall through to the poll fallback.
+            console.warn("AppLifecycleManager: malformed hypr:openwindow payload:", e);
+        }
         // Kick an extra poll so the runningWindows model and appClosed detection
         // see the new window without waiting for the next timer tick.
         root._onHyprWindowEvent();
