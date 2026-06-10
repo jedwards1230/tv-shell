@@ -114,20 +114,17 @@ FocusScope {
     Process {
         id: pairProcess
         property string _output: ""
+        // moonlight-qt's CLI `pair` does not print a PIN — the GameStream
+        // handshake takes the PIN as a shared secret passed via --pin (set in
+        // startPairing). We only accumulate output here for the failure message.
         stdout: SplitParser {
             onRead: line => {
                 pairProcess._output += line + "\n";
-                let match = line.match(/(\d{4})/);
-                if (match && root.pairingPin === "")
-                    root.pairingPin = match[1];
             }
         }
         stderr: SplitParser {
             onRead: line => {
                 pairProcess._output += line + "\n";
-                let match = line.match(/(\d{4})/);
-                if (match && root.pairingPin === "")
-                    root.pairingPin = match[1];
             }
         }
         onExited: (exitCode, exitStatus) => {
@@ -202,9 +199,14 @@ FocusScope {
         if (idx < 0 || idx >= root.servers.length)
             return;
         root.pairingServerIndex = idx;
-        root.pairingPin = "";
+        // The shell owns the PIN: moonlight-qt's CLI `pair` does not emit one
+        // (it expects the PIN as a shared secret via --pin), so generate a random
+        // 4-digit PIN, show it immediately, and pass it. The user enters the same
+        // PIN in Sunshine's web UI. Scraping stdout for a PIN never worked with
+        // current Sunshine/Moonlight — the request just timed out.
+        root.pairingPin = String(Math.floor(1000 + Math.random() * 9000));
         pairProcess._output = "";
-        pairProcess.command = ["moonlight", "pair", root.servers[idx].host];
+        pairProcess.command = ["moonlight", "pair", root.servers[idx].host, "--pin", root.pairingPin];
         pairProcess.running = true;
     }
 
@@ -966,7 +968,7 @@ FocusScope {
                 }
 
                 Text {
-                    text: root.pairingPin !== "" ? "Enter this PIN in the Sunshine web UI:" : "Waiting for PIN..."
+                    text: "Enter this PIN in the Sunshine web UI:"
                     font.pixelSize: Theme.fontBody
                     color: Theme.textSecondary
                     Layout.alignment: Qt.AlignHCenter
