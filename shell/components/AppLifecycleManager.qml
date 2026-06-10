@@ -495,9 +495,9 @@ Item {
             root.runningAppClass = w.class || root.runningAppClass;
             root._foregroundAddress = addr;
             root._confirmWindow();
-        } catch (e) {
-            // Malformed JSON payload — fall through to poll fallback.
-        }
+        } catch (e)
+        // Malformed JSON payload — fall through to poll fallback.
+        {}
         // Kick an extra poll so the runningWindows model and appClosed detection
         // see the new window without waiting for the next timer tick.
         root._onHyprWindowEvent();

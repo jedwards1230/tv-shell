@@ -243,9 +243,9 @@ Item {
                         maxId = loaded[i].id;
                 }
                 root._nextId = maxId + 1;
-            } catch (e) {
-                // Malformed response — leave history empty.
-            }
+            } catch (e)
+            // Malformed response — leave history empty.
+            {}
         }
     }
 
