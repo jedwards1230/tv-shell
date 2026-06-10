@@ -93,6 +93,18 @@ pub enum Command {
     RecordLaunchUsage,
     /// Return recent launches as a compact JSON array.
     GetRecents,
+    /// Return notification history as a compact JSON array.
+    GetNotifications,
+    /// Record a notification into notifications.json. The body is the raw JSON text
+    /// (a `{id,title,message,level,source,icon}` object) after the command word.
+    RecordNotification(String),
+    /// `record-notification` with a missing/empty body.
+    RecordNotificationUsage,
+    /// Overwrite the notifications list entirely. The body is a compact JSON array
+    /// of notification objects after the command word. Used for clears/removals.
+    SetNotifications(String),
+    /// `set-notifications` with a missing/empty body.
+    SetNotificationsUsage,
 
     // --- Phase 3: Bluetooth (bluer / BlueZ) ---
     /// Adapter power state -> `bt:on` / `bt:off` / `error:*`.
@@ -345,6 +357,7 @@ impl Command {
             "list-apps" => Command::ListApps,
             "get-config" => Command::GetConfig,
             "get-recents" => Command::GetRecents,
+            "get-notifications" => Command::GetNotifications,
             // Phase 3 bare commands (no body).
             "bt-power-status" => Command::BtPowerStatus,
             "bt-power-on" => Command::BtPowerOn,
@@ -387,6 +400,20 @@ impl Command {
                         Command::RecordLaunchUsage
                     } else {
                         Command::RecordLaunch(body.to_string())
+                    };
+                }
+                if let Some(body) = command_body(cmd, "record-notification") {
+                    return if body.is_empty() {
+                        Command::RecordNotificationUsage
+                    } else {
+                        Command::RecordNotification(body.to_string())
+                    };
+                }
+                if let Some(body) = command_body(cmd, "set-notifications") {
+                    return if body.is_empty() {
+                        Command::SetNotificationsUsage
+                    } else {
+                        Command::SetNotifications(body.to_string())
                     };
                 }
                 // `intent <name>`: a single intent-name token (whitespace-
@@ -610,6 +637,13 @@ pub enum Event {
     HyprActiveWindow(String),
     /// Active window fullscreen state changed. Wire: `hypr:fullscreen:<0|1>`.
     HyprFullscreen(bool),
+    /// A new window was mapped. Payload is a compact JSON object
+    /// `{"address":"0x..","class":"..","title":"..","workspace":".."}`.
+    /// Wire: `hypr:openwindow:<json>`.
+    HyprOpenWindow(String),
+    /// A window was closed. Payload is the window's address. Wire:
+    /// `hypr:closewindow:<address>`.
+    HyprCloseWindow(String),
 
     // --- Phase 4 events (HDMI-CEC) ---
     /// A CEC device was discovered or updated; payload is a compact JSON object
@@ -678,6 +712,8 @@ impl fmt::Display for Event {
             Event::PowerBattery(json) => write!(f, "power:battery:{json}"),
             Event::HyprActiveWindow(class) => write!(f, "hypr:activewindow:{class}"),
             Event::HyprFullscreen(fs) => write!(f, "hypr:fullscreen:{}", if *fs { 1 } else { 0 }),
+            Event::HyprOpenWindow(json) => write!(f, "hypr:openwindow:{json}"),
+            Event::HyprCloseWindow(address) => write!(f, "hypr:closewindow:{address}"),
             Event::CecDevice(json) => write!(f, "cec:device:{json}"),
             Event::CecPower(json) => write!(f, "cec:power:{json}"),
             Event::ConfigChanged => f.write_str("config:changed"),
@@ -743,6 +779,14 @@ pub fn resp_set_config_usage() -> String {
 
 pub fn resp_record_launch_usage() -> String {
     "error:usage: record-launch <json-object>".to_string()
+}
+
+pub fn resp_record_notification_usage() -> String {
+    "error:usage: record-notification <json-object>".to_string()
+}
+
+pub fn resp_set_notifications_usage() -> String {
+    "error:usage: set-notifications <json-array>".to_string()
 }
 
 pub fn resp_intent_usage() -> String {
@@ -1140,6 +1184,88 @@ mod tests {
         );
         assert_eq!(Command::parse("record-launch"), Command::RecordLaunchUsage);
         assert_eq!(Command::parse("record-launchX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_notification_bare_command() {
+        assert_eq!(
+            Command::parse("get-notifications"),
+            Command::GetNotifications
+        );
+        assert_eq!(
+            Command::parse("  get-notifications  "),
+            Command::GetNotifications
+        );
+        // Word boundary.
+        assert_eq!(Command::parse("get-notificationsX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_record_notification_body() {
+        assert_eq!(
+            Command::parse(r#"record-notification {"id":1,"title":"Alert","message":"","level":"info","source":"system","icon":""}"#),
+            Command::RecordNotification(r#"{"id":1,"title":"Alert","message":"","level":"info","source":"system","icon":""}"#.into())
+        );
+        // Bare command (no body) -> usage.
+        assert_eq!(
+            Command::parse("record-notification"),
+            Command::RecordNotificationUsage
+        );
+        assert_eq!(
+            Command::parse("record-notification   "),
+            Command::RecordNotificationUsage
+        );
+        // Word boundary.
+        assert_eq!(Command::parse("record-notificationX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_set_notifications_body() {
+        assert_eq!(
+            Command::parse(r#"set-notifications [{"id":1,"title":"A","message":"","level":"info","source":"system","icon":"","time":1.0}]"#),
+            Command::SetNotifications(r#"[{"id":1,"title":"A","message":"","level":"info","source":"system","icon":"","time":1.0}]"#.into())
+        );
+        // Bare command -> usage.
+        assert_eq!(
+            Command::parse("set-notifications"),
+            Command::SetNotificationsUsage
+        );
+        assert_eq!(
+            Command::parse("set-notifications   "),
+            Command::SetNotificationsUsage
+        );
+        // Word boundary.
+        assert_eq!(Command::parse("set-notificationsX"), Command::Unknown);
+    }
+
+    #[test]
+    fn notification_usage_strings() {
+        assert_eq!(
+            resp_record_notification_usage(),
+            "error:usage: record-notification <json-object>"
+        );
+        assert_eq!(
+            resp_set_notifications_usage(),
+            "error:usage: set-notifications <json-array>"
+        );
+    }
+
+    #[test]
+    fn hypr_openwindow_closewindow_event_wire_strings() {
+        let json = r#"{"address":"0x1","class":"steam","title":"Steam","workspace":"1"}"#;
+        assert_eq!(
+            Event::HyprOpenWindow(json.to_string()).to_string(),
+            format!("hypr:openwindow:{json}")
+        );
+        assert_eq!(
+            Event::HyprCloseWindow("0x1".to_string()).to_string(),
+            "hypr:closewindow:0x1"
+        );
+        // Empty address is allowed (degenerate case).
+        assert_eq!(
+            Event::HyprCloseWindow(String::new()).to_string(),
+            "hypr:closewindow:"
+        );
     }
 
     #[test]

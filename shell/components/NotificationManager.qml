@@ -1,4 +1,5 @@
 pragma Singleton
+import Quickshell.Io
 import QtQuick
 
 Item {
@@ -67,6 +68,9 @@ Item {
         root.history = hist;
         root.unreadCount = root.unreadCount + 1;
 
+        // Persist the new notification to the daemon so it survives restart.
+        root._persistRecord(n);
+
         if (!root.shellVisible) {
             var deferred = root._deferredQueue.slice();
             deferred.push(n);
@@ -100,6 +104,8 @@ Item {
     function clearHistory() {
         root.history = [];
         root.unreadCount = 0;
+        // Persist the clear so the empty state survives restart.
+        root._persistAll();
     }
 
     function removeFromHistory(id) {
@@ -108,6 +114,8 @@ Item {
         });
         if (root.unreadCount > 0)
             root.unreadCount = root.unreadCount - 1;
+        // Persist the removal so it survives restart.
+        root._persistAll();
     }
 
     function _iconForSource(source) {
@@ -184,5 +192,98 @@ Item {
                 _enqueue(deferred[i]);
             }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Persistence — daemon IPC over native Quickshell sockets (#71).
+    //
+    // On boot, load the stored history from the daemon (get-notifications) and
+    // re-seed the in-memory state WITHOUT replaying toasts (restored entries are
+    // already read; no new toasts on restart).
+    //
+    // After notify(), clearHistory(), and removeFromHistory() mutate the in-memory
+    // history, the writer socket pushes the change to the daemon so it survives
+    // the next Quickshell restart.
+    //
+    // Do NOT reload after writes — in-memory is already correct and a reload
+    // would race with the write.
+    // -------------------------------------------------------------------------
+
+    SocketClient {
+        id: loadNotifications
+        onResponseReceived: line => {
+            try {
+                var entries = JSON.parse(line);
+                if (!Array.isArray(entries))
+                    return;
+                // Map the stored shape {id,title,message,level,source,icon,time}
+                // to the in-memory notification shape that the rest of the
+                // component expects: add timestamp (Date from unix seconds) and
+                // set read=true (restored items are not new toasts).
+                var loaded = entries.map(function (e) {
+                    var n = Object.create(null);
+                    n.id = e.id || 0;
+                    n.title = e.title || "";
+                    n.message = e.message || "";
+                    n.level = e.level || "info";
+                    n.source = e.source || "system";
+                    n.icon = e.icon || "";
+                    n.duration = root._defaultDuration(n.level);
+                    n.timestamp = new Date((e.time || 0) * 1000);
+                    return n;
+                });
+                root.history = loaded;
+                // Restored notifications are not new — do not increment unreadCount.
+                root.unreadCount = 0;
+                // Re-seed the id counter so new notifications don't collide with
+                // loaded ids.
+                var maxId = 0;
+                for (var i = 0; i < loaded.length; i++) {
+                    if (loaded[i].id > maxId)
+                        maxId = loaded[i].id;
+                }
+                root._nextId = maxId + 1;
+            } catch (e) {
+                // Malformed response — leave history empty.
+            }
+        }
+    }
+
+    SocketClient {
+        id: notificationWriter
+        // command and body are supplied dynamically by _persist*() helpers.
+    }
+
+    // Persist a single notification addition.
+    function _persistRecord(n) {
+        var body = JSON.stringify({
+            "id": n.id,
+            "title": n.title || "",
+            "message": n.message || "",
+            "level": n.level || "info",
+            "source": n.source || "system",
+            "icon": n.icon || ""
+        });
+        notificationWriter.request("record-notification", body);
+    }
+
+    // Persist the full current history (used after clear/remove).
+    function _persistAll() {
+        var arr = root.history.map(function (n) {
+            return {
+                "id": n.id,
+                "title": n.title || "",
+                "message": n.message || "",
+                "level": n.level || "info",
+                "source": n.source || "system",
+                "icon": n.icon || "",
+                "time": n.timestamp ? (n.timestamp.getTime() / 1000) : 0
+            };
+        });
+        notificationWriter.request("set-notifications", JSON.stringify(arr));
+    }
+
+    Component.onCompleted: {
+        loadNotifications.request("get-notifications");
     }
 }

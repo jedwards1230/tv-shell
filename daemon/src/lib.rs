@@ -14,6 +14,7 @@ pub mod device;
 pub mod health;
 pub mod ipc;
 pub mod protocol;
+pub mod notifications;
 pub mod recents;
 pub mod state;
 pub mod system;
