@@ -280,6 +280,9 @@ FocusScope {
         root.pairingServerIndex = -1;
         root.pairingPin = "";
         root._pairHost = "";
+        // The row's action set shrinks (Pair drops once paired) — reset the
+        // column so focus lands on a valid action, not a stale index.
+        serverList.actionCol = 0;
         serverList.forceActiveFocus();
     }
 
@@ -508,8 +511,19 @@ FocusScope {
             // Slot 0 = Pair when the row is unpaired; the last slot is always
             // Remove. Reset to the first action whenever the focused row changes.
             property int actionCol: 0
-            function _actionCount(host) {
-                return root.hostStatus[host] === "unpaired" ? 2 : 1;
+            // Single source of truth for which actions a row exposes, keyed on
+            // status. Pair appears only when the host is reachable-but-unpaired
+            // (an offline/checking host can't be paired — keeps you out of the
+            // blind-launch trap). Remove is always present; it deletes the saved
+            // tile, NOT the host-side pairing (moonlight has no `unpair`, so
+            // un-pairing stays a Sunshine-side action). Drives button visibility,
+            // highlight, and Left/Right/Return navigation so they never diverge.
+            function _rowActions(host) {
+                let actions = [];
+                if (root.hostStatus[host] === "unpaired")
+                    actions.push("pair");
+                actions.push("remove");
+                return actions;
             }
             onCurrentIndexChanged: actionCol = 0
 
@@ -600,16 +614,16 @@ FocusScope {
                         }
                     }
 
-                    // Pair button (visible when unpaired)
+                    // Pair button — only when the host is reachable but unpaired.
                     FocusScope {
                         width: pairBtn.width
                         height: pairBtn.height
-                        visible: root.hostStatus[modelData.host] === "unpaired"
+                        visible: serverList._rowActions(modelData.host).indexOf("pair") >= 0
 
                         SettingsButton {
                             id: pairBtn
                             text: "Pair"
-                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList.actionCol === 0
+                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList._rowActions(modelData.host)[serverList.actionCol] === "pair"
                             onActivated: root.startPairing(index)
 
                             MouseArea {
@@ -629,7 +643,7 @@ FocusScope {
                         SettingsButton {
                             id: removeBtn
                             text: "Remove"
-                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList.actionCol === serverList._actionCount(modelData.host) - 1
+                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList._rowActions(modelData.host)[serverList.actionCol] === "remove"
                             onActivated: root.confirmRemoveIndex = index
 
                             MouseArea {
@@ -648,10 +662,11 @@ FocusScope {
             Keys.onReturnPressed: {
                 if (currentIndex < 0 || currentIndex >= root.servers.length)
                     return;
-                let host = root.servers[currentIndex].host;
-                if (root.hostStatus[host] === "unpaired" && actionCol === 0)
+                let acts = _rowActions(root.servers[currentIndex].host);
+                let a = acts[Math.min(actionCol, acts.length - 1)];
+                if (a === "pair")
                     root.startPairing(currentIndex);
-                else if (actionCol === _actionCount(host) - 1)
+                else if (a === "remove")
                     root.confirmRemoveIndex = currentIndex;
             }
 
@@ -661,7 +676,7 @@ FocusScope {
             }
 
             Keys.onRightPressed: {
-                if (currentIndex >= 0 && currentIndex < root.servers.length && actionCol < _actionCount(root.servers[currentIndex].host) - 1)
+                if (currentIndex >= 0 && currentIndex < root.servers.length && actionCol < _rowActions(root.servers[currentIndex].host).length - 1)
                     actionCol++;
             }
 
