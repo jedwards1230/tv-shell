@@ -20,9 +20,18 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Cap on stored entries.
 pub const MAX_ENTRIES: usize = 100;
+
+/// Serializes the read-modify-write of the notifications file. QML is the
+/// de-facto sole writer, but `SocketClient.request()` is fire-and-forget, so two
+/// `record-notification` commands issued back-to-back are handled by separate
+/// blocking tasks that could otherwise interleave (read, read, write, write) and
+/// lose an update. Holding this lock across read→modify→write makes the cycle
+/// atomic regardless of how the daemon schedules the handlers.
+static FILE_LOCK: Mutex<()> = Mutex::new(());
 
 /// One notification history entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -109,8 +118,10 @@ pub fn load_notifications(path: &Path) -> String {
 }
 
 /// Record a notification: read existing, prepend, cap, and write single-line.
-/// The timestamp is set by the caller (unix seconds).
+/// The timestamp is set by the caller (unix seconds). The read-modify-write is
+/// serialized by [`FILE_LOCK`] so concurrent IPC handlers can't lose updates.
 pub fn record_notification(path: &Path, entry: Notification) -> std::io::Result<()> {
+    let _guard = FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let existing = std::fs::read_to_string(path)
         .ok()
         .map(|t| parse_notifications(&t))
@@ -120,8 +131,10 @@ pub fn record_notification(path: &Path, entry: Notification) -> std::io::Result<
 }
 
 /// Overwrite the notifications file with the given list (capped at
-/// [`MAX_ENTRIES`]). Used for clears and removals.
+/// [`MAX_ENTRIES`]). Used for clears and removals. Serialized by [`FILE_LOCK`]
+/// against concurrent `record_notification` so neither loses the other's write.
 pub fn set_notifications(path: &Path, entries: Vec<Notification>) -> std::io::Result<()> {
+    let _guard = FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let updated = set_all(entries);
     atomic_write(path, &notifications_to_json(&updated))
 }

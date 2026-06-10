@@ -18,6 +18,13 @@ Item {
     property int _nextId: 1
     readonly property int _maxVisible: 3
 
+    // True once the persisted history has loaded (or failed to). notify() calls
+    // before this buffer into _preloadQueue and replay afterwards, so their ids
+    // are assigned after the load re-seeds _nextId (avoids a startup id collision)
+    // and they survive the load replacing history (#71).
+    property bool _historyLoaded: false
+    property var _preloadQueue: []
+
     signal notificationAdded(var notification)
     signal notificationDismissed(int id)
 
@@ -50,6 +57,19 @@ Item {
     }
 
     function notify(title, message, options) {
+        // Until the persisted history has loaded, buffer the call: assigning an id
+        // now would race the load's _nextId re-seed and the load would clobber it
+        // when it replaces history. Replayed in _markHistoryLoaded() (#71).
+        if (!root._historyLoaded) {
+            var pq = root._preloadQueue.slice();
+            pq.push({
+                title: title,
+                message: message,
+                options: options
+            });
+            root._preloadQueue = pq;
+            return -1;
+        }
         var opts = options || Object.create(null);
         var n = Object.create(null);
         n.id = root._nextId++;
@@ -209,43 +229,70 @@ Item {
     // would race with the write.
     // -------------------------------------------------------------------------
 
+    // Mark the persisted history as loaded (success or failure) and replay any
+    // notify() calls that arrived during the async load, so they get post-reseed
+    // ids and land on top of the loaded history.
+    function _markHistoryLoaded() {
+        if (root._historyLoaded)
+            return;
+        root._historyLoaded = true;
+        var pending = root._preloadQueue.slice();
+        root._preloadQueue = [];
+        for (var i = 0; i < pending.length; i++)
+            root.notify(pending[i].title, pending[i].message, pending[i].options);
+    }
+
     SocketClient {
         id: loadNotifications
         onResponseReceived: line => {
             try {
                 var entries = JSON.parse(line);
-                if (!Array.isArray(entries))
-                    return;
-                // Map the stored shape {id,title,message,level,source,icon,time}
-                // to the in-memory notification shape that the rest of the
-                // component expects: add timestamp (Date from unix seconds) and
-                // set read=true (restored items are not new toasts).
-                var loaded = entries.map(function (e) {
-                    var n = Object.create(null);
-                    n.id = e.id || 0;
-                    n.title = e.title || "";
-                    n.message = e.message || "";
-                    n.level = e.level || "info";
-                    n.source = e.source || "system";
-                    n.icon = e.icon || "";
-                    n.duration = root._defaultDuration(n.level);
-                    n.timestamp = new Date((e.time || 0) * 1000);
-                    return n;
-                });
-                root.history = loaded;
-                // Restored notifications are not new — do not increment unreadCount.
-                root.unreadCount = 0;
-                // Re-seed the id counter so new notifications don't collide with
-                // loaded ids.
-                var maxId = 0;
-                for (var i = 0; i < loaded.length; i++) {
-                    if (loaded[i].id > maxId)
-                        maxId = loaded[i].id;
+                if (Array.isArray(entries)) {
+                    // Map the stored shape {id,title,message,level,source,icon,time}
+                    // to the in-memory notification shape, with type guards so a
+                    // malformed field can't poison numeric invariants. Entries with
+                    // an invalid id are dropped (corrupt — can't be addressed by
+                    // dismiss/remove anyway).
+                    var loaded = entries.map(function (e) {
+                        if (typeof e.id !== "number" || !Number.isInteger(e.id) || e.id <= 0) {
+                            console.warn("NotificationManager: dropping persisted notification with invalid id:", e.id);
+                            return null;
+                        }
+                        var n = Object.create(null);
+                        n.id = e.id;
+                        n.title = (typeof e.title === "string") ? e.title : "";
+                        n.message = (typeof e.message === "string") ? e.message : "";
+                        n.level = (typeof e.level === "string") ? e.level : "info";
+                        n.source = (typeof e.source === "string") ? e.source : "system";
+                        n.icon = (typeof e.icon === "string") ? e.icon : "";
+                        n.duration = root._defaultDuration(n.level);
+                        n.timestamp = new Date((typeof e.time === "number" ? e.time : 0) * 1000);
+                        return n;
+                    }).filter(function (n) {
+                        return n !== null;
+                    });
+                    root.history = loaded;
+                    // Restored notifications are not new — do not increment unreadCount.
+                    root.unreadCount = 0;
+                    // Re-seed the id counter above every loaded id (and never below
+                    // its current value) so new ids can't collide with loaded ones.
+                    var maxId = 0;
+                    for (var i = 0; i < loaded.length; i++) {
+                        if (loaded[i].id > maxId)
+                            maxId = loaded[i].id;
+                    }
+                    root._nextId = Math.max(root._nextId, maxId + 1);
                 }
-                root._nextId = maxId + 1;
-            } catch (e)
-            // Malformed response — leave history empty.
-            {}
+            } catch (e) {
+                console.warn("NotificationManager: malformed get-notifications response:", e);
+            }
+            root._markHistoryLoaded();
+        }
+        // Daemon unavailable / socket closed before a reply: degrade to an
+        // in-memory-only history rather than deferring notifications forever.
+        onRequestFailed: {
+            console.warn("NotificationManager: failed to load notification history (daemon unavailable); continuing with empty history");
+            root._markHistoryLoaded();
         }
     }
 
