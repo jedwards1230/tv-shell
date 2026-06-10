@@ -102,6 +102,10 @@ The `cec` feature **static-links a bundled libcec** (`libcec-sys/static`, #179):
 the binary carries its own libcec + p8-platform, so there is no system
 `libcec`/`libcec-dev` dependency at build or runtime (the CI leg asserts this via
 `ldd`). Build needs only `libudev-dev` + `pkg-config` + network for the archive.
+Opening the connection no longer auto-claims the active source
+(`activate_source(false)`); startup and resume focus are gated by
+`cecFocusOnStartup` (default `false`) and `cecFocusOnWake` (default `true`),
+both within the `GAME_SHELL_CEC_LIFECYCLE` master gate.
 
 ## Development
 

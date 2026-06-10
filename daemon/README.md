@@ -145,6 +145,13 @@ compile-verified only, needs on-device verification on the deploy host.
 `SocketClient` (no more `living-room-cec` shell-out). `AVControlSettings.qml`
 is a separate follow-up (#16).
 
+**CEC focus toggles:** opening the libcec connection no longer auto-claims the
+active source (`activate_source(false)` in the builder). Daemon-start focus is
+gated by `cecFocusOnStartup` (default `false`) and resume-from-sleep focus by
+`cecFocusOnWake` (default `true`), both within the `GAME_SHELL_CEC_LIFECYCLE`
+master env gate. The manual `cec-active-source` IPC and standby-on-suspend are
+unaffected.
+
 ## Build & test
 
 The full binary only links on **Linux** (`evdev`/`uinput` are kernel
