@@ -390,7 +390,10 @@ mod tests {
     #[test]
     fn input_bin_resolution() {
         // 1. Override set + non-empty → wins outright.
-        std::env::set_var("GAME_SHELL_INPUT_BIN", "/custom/prefix/bin/game-shell-input");
+        std::env::set_var(
+            "GAME_SHELL_INPUT_BIN",
+            "/custom/prefix/bin/game-shell-input",
+        );
         assert_eq!(
             input_bin(),
             PathBuf::from("/custom/prefix/bin/game-shell-input")

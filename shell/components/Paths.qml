@@ -12,6 +12,9 @@ Item {
     id: paths
 
     // Per-user config dir: $XDG_CONFIG_HOME, else $HOME/.config.
+    // Requires HOME or XDG_CONFIG_HOME to be set. In a normal systemd session, at
+    // least one is guaranteed; if neither is set, this falls back to /.config and
+    // will fail at runtime (the mkdir -p / tee write).
     readonly property string configDir: {
         let xdg = Quickshell.env("XDG_CONFIG_HOME");
         if (xdg && xdg !== "")
