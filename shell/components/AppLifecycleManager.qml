@@ -107,6 +107,12 @@ Item {
 
     function focusApp(windowClass) {
         runningAppClass = windowClass;
+        // Resuming an existing window (not a fresh launch): clear in-flight launch
+        // tracking so a delayed closewindow for a PRIOR launch's address can't
+        // fire appClosed() on this app (#203). No address is known here, so the
+        // poll fallback handles this window's eventual close.
+        root._foregroundAddress = "";
+        root._awaitingWindow = false;
         focusWindow.windowClass = windowClass;
         focusWindow.running = true;
         appLaunched();
@@ -125,6 +131,11 @@ Item {
                 break;
             }
         }
+        // This window is now the foreground app: track ITS address so the fast
+        // closewindow path targets it, and a stale prior-launch address can't
+        // fire appClosed() here. Not awaiting a new window on a resume (#203).
+        root._foregroundAddress = address;
+        root._awaitingWindow = false;
         focusWindowAddr.addr = address;
         focusWindowAddr.running = true;
         appLaunched();
