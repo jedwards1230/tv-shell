@@ -384,7 +384,9 @@ FocusScope {
                     height: focusStartupBtn.height
                     activeFocusOnTab: true
 
-                    KeyNavigation.up: refreshScope
+                    // Refresh is hidden when CEC is unavailable — wrap Up to the
+                    // other (always-visible) toggle so focus can't vanish.
+                    KeyNavigation.up: root.cecAvailable ? refreshScope : focusWakeScope
                     KeyNavigation.down: focusWakeScope
 
                     SettingsButton {
@@ -441,7 +443,10 @@ FocusScope {
                     activeFocusOnTab: true
 
                     KeyNavigation.up: focusStartupScope
-                    KeyNavigation.down: root.cecAvailable ? wakeScope : focusWakeScope
+                    // When CEC is unavailable the action row below is hidden —
+                    // wrap Down back to the first toggle instead of self-looping
+                    // (which would trap focus).
+                    KeyNavigation.down: root.cecAvailable ? wakeScope : focusStartupScope
 
                     SettingsButton {
                         id: focusWakeBtn
