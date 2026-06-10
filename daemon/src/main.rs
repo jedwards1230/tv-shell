@@ -178,7 +178,7 @@ fn main() -> anyhow::Result<()> {
         // `/dev/build` replaces the binary inode, so /proc/self/exe resolves to
         // "…/game-shell-input (deleted)" and exec()ing that path fails ENOENT.
         // The install path always points at the just-built binary.
-        let exe = session_env::install_root().join("bin/game-shell-input");
+        let exe = session_env::input_bin();
         let err = std::process::Command::new(&exe)
             .args(std::env::args_os().skip(1))
             .exec();

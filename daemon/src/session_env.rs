@@ -13,7 +13,8 @@
 //!    `$XDG_RUNTIME_DIR/hypr/` socket directory.
 //! 4. Collect the session variables that should be injected into child
 //!    subprocesses (grim, quickshell, …).
-//! 5. Resolve the installation root (`/opt/game-shell` by default).
+//! 5. Resolve the installation root (resolved from `current_exe` /
+//!    `$GAME_SHELL_DIR`; `/opt/game-shell` is only a last-ditch fallback).
 //!
 //! All functions are intentionally side-effect-free except `load_daemon_env`
 //! (which calls `std::env::set_var`) and `install_root` (which calls
@@ -238,10 +239,9 @@ pub fn session_env_pairs() -> Vec<(String, String)> {
 /// Return the installation root directory.
 ///
 /// Resolution order:
-/// 1. `std::env::current_exe()` → `parent()` (bin/) → `parent()` (install root,
-///    e.g. `/opt/game-shell`).
+/// 1. `std::env::current_exe()` → `parent()` (bin/) → `parent()` (install root).
 /// 2. `GAME_SHELL_DIR` environment variable.
-/// 3. Hard-coded fallback `/opt/game-shell`.
+/// 3. `/opt/game-shell` is only a last-ditch fallback.
 pub fn install_root() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(root) = exe.parent().and_then(|p| p.parent()) {
@@ -254,6 +254,23 @@ pub fn install_root() -> PathBuf {
         }
     }
     PathBuf::from("/opt/game-shell")
+}
+
+/// Return the path to the `game-shell-input` daemon binary.
+///
+/// Resolution order:
+/// 1. `$GAME_SHELL_INPUT_BIN` when set and non-empty (lets a packaged
+///    dev-override point the re-exec target at an arbitrary build).
+/// 2. [`install_root`]`.join("bin/game-shell-input")` (the canonical
+///    install-path binary; `/opt/game-shell` is only a last-ditch fallback via
+///    `install_root`).
+pub fn input_bin() -> PathBuf {
+    if let Ok(p) = std::env::var("GAME_SHELL_INPUT_BIN") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    install_root().join("bin/game-shell-input")
 }
 
 // ---------------------------------------------------------------------------
@@ -364,5 +381,29 @@ mod tests {
         // non-empty and that the function does not panic.
         let root = install_root();
         assert!(!root.as_os_str().is_empty());
+    }
+
+    // ── input_bin resolution ─────────────────────────────────────────────────
+
+    // GAME_SHELL_INPUT_BIN is process-global, so the three cases are exercised in
+    // one test to avoid a set/remove race between parallel test threads.
+    #[test]
+    fn input_bin_resolution() {
+        // 1. Override set + non-empty → wins outright.
+        std::env::set_var("GAME_SHELL_INPUT_BIN", "/custom/prefix/bin/game-shell-input");
+        assert_eq!(
+            input_bin(),
+            PathBuf::from("/custom/prefix/bin/game-shell-input")
+        );
+
+        // 2. Empty override → treated as unset → install_root fallback.
+        std::env::set_var("GAME_SHELL_INPUT_BIN", "");
+        assert_eq!(input_bin(), install_root().join("bin/game-shell-input"));
+
+        // 3. Unset → install_root fallback.
+        std::env::remove_var("GAME_SHELL_INPUT_BIN");
+        let bin = input_bin();
+        assert_eq!(bin, install_root().join("bin/game-shell-input"));
+        assert!(bin.ends_with("bin/game-shell-input"));
     }
 }

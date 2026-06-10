@@ -1,0 +1,27 @@
+# Per-machine display override — copy to ~/.config/game-shell/hyprland-local.conf
+# and edit for YOUR display. The committed config/hyprland.conf `source`s that
+# path (ignored if absent), so a fresh clone boots on the generic
+# `monitor=,preferred,auto,auto` default until you drop a file in.
+#
+# The block below is the maintainer's reference setup (LG C2 OLED + Denon AVR,
+# 4K@120Hz 10-bit HDR over HDMI). Use it as a worked example, not a default.
+
+# 4K@120Hz, 10-bit HDR, VRR via HDMI-connected display and AV receiver.
+#
+# HDR-over-AVR on Hyprland 0.55 REQUIRES quirks:prefer_hdr=1 (below). The 0.51
+# workaround (experimental:xx_color_management_v4=false, disc #11677) was removed
+# when the new color-management pipeline became the mandatory default in 0.52-0.55
+# — and with plain `cm,hdr` the monitor comes up in HDR but the AVR/C2 never locks
+# the signal (black screen). quirks:prefer_hdr=1 makes Hyprland present HDR before
+# clients start, which fixes the lock. render:cm_auto_hdr=0 drives cm,hdr
+# explicitly instead of auto-switching (avoids whitescreen on activation).
+# sdrbrightness=1.2/sdrsaturation=1.05 compensate SDR dimming/washout in HDR mode.
+monitor=HDMI-A-1,3840x2160@120,0x0,2,vrr,1,bitdepth,10,cm,hdr,sdrbrightness,1.2,sdrsaturation,1.05
+
+# HDR-over-AVR fix for Hyprland 0.55 (see monitor comment above).
+quirks {
+    prefer_hdr = 1
+}
+render {
+    cm_auto_hdr = 0
+}

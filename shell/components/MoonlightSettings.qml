@@ -29,9 +29,11 @@ FocusScope {
 
     // --- Processes ---
 
+    // Read/write the SAME resolved targets path (Paths.targetsPath) so the load
+    // here, the write below, and MoonlightProvider's load never drift.
     Process {
         id: loadServers
-        command: ["cat", "/opt/game-shell/targets.json"]
+        command: ["cat", Paths.targetsPath]
         stdout: SplitParser {
             onRead: line => {
                 try {
@@ -44,6 +46,16 @@ FocusScope {
         onExited: root._checkAllStatuses()
     }
 
+    // Ensure the targets file's parent dir exists before the first write — a
+    // fresh install may have no ~/.config/game-shell yet, so `tee` would fail
+    // with no directory. `mkdir -p` is idempotent. The dir literal is a plain
+    // path arg (no shell), so no injection surface.
+    Process {
+        id: ensureTargetsDir
+        command: ["mkdir", "-p", Paths.gameShellConfigDir]
+        onExited: saveServers.running = true
+    }
+
     Process {
         id: saveServers
         property string json: "[]"
@@ -51,9 +63,10 @@ FocusScope {
         // so a server name/host containing ', \", ;, $(...), or newlines is treated
         // as literal JSON and can never break out into a shell command. The JSON is
         // a single line (JSON.stringify, no pretty-printing) so the cat+SplitParser
-        // read path in loadServers / MoonlightProvider still parses it.
+        // read path in loadServers / MoonlightProvider still parses it. Path is the
+        // shared Paths.targetsPath (see loadServers).
         stdinEnabled: true
-        command: ["tee", "/opt/game-shell/targets.json"]
+        command: ["tee", Paths.targetsPath]
         onStarted: {
             write(json);
             stdinEnabled = false; // close stdin -> tee writes the file and exits
@@ -210,7 +223,8 @@ FocusScope {
         // true` is only the initial value). Without this, the 2nd save in a session
         // writes an empty file and wipes the server list.
         saveServers.stdinEnabled = true;
-        saveServers.running = true;
+        // Ensure the config dir exists, then onExited kicks off saveServers.
+        ensureTargetsDir.running = true;
     }
 
     function addServer() {
