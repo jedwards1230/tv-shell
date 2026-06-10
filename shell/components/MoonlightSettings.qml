@@ -968,7 +968,7 @@ FocusScope {
                 }
 
                 Text {
-                    text: root.pairingPin !== "" ? "Enter this PIN in the Sunshine web UI:" : "Waiting for PIN..."
+                    text: "Enter this PIN in the Sunshine web UI:"
                     font.pixelSize: Theme.fontBody
                     color: Theme.textSecondary
                     Layout.alignment: Qt.AlignHCenter
