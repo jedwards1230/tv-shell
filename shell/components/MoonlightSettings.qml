@@ -615,6 +615,11 @@ FocusScope {
                     }
 
                     // Pair button — only when the host is reachable but unpaired.
+                    // The FocusScope is a SIZING wrapper only: serverList holds
+                    // focus (focus:false on the delegate side) and selection is
+                    // driven by the button's external `highlighted` property — the
+                    // scope never receives real focus. Do NOT add focus:true here;
+                    // it would create a focus trap that breaks list navigation.
                     FocusScope {
                         width: pairBtn.width
                         height: pairBtn.height
@@ -635,7 +640,9 @@ FocusScope {
                         }
                     }
 
-                    // Remove button
+                    // Remove button. The FocusScope is a sizing wrapper only (see
+                    // the Pair button above) — focus styling is the `highlighted`
+                    // property, not real focus.
                     FocusScope {
                         width: removeBtn.width
                         height: removeBtn.height
@@ -676,7 +683,10 @@ FocusScope {
             }
 
             Keys.onRightPressed: {
-                if (currentIndex >= 0 && currentIndex < root.servers.length && actionCol < _rowActions(root.servers[currentIndex].host).length - 1)
+                if (currentIndex < 0 || currentIndex >= root.servers.length)
+                    return;
+                let acts = _rowActions(root.servers[currentIndex].host);
+                if (actionCol < acts.length - 1)
                     actionCol++;
             }
 
