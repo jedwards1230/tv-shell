@@ -242,9 +242,9 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
                                 entries,
                             ) {
                                 Ok(()) => protocol::resp_ok(),
-                                Err(e) => protocol::resp_error(&format!(
-                                    "set-notifications failed: {e}"
-                                )),
+                                Err(e) => {
+                                    protocol::resp_error(&format!("set-notifications failed: {e}"))
+                                }
                             }
                         }
                         Err(e) => protocol::resp_error(&format!("invalid JSON: {e}")),

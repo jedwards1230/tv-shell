@@ -252,6 +252,10 @@ Item {
     SocketClient {
         id: notificationWriter
         // command and body are supplied dynamically by _persist*() helpers.
+        // requestFailed carries no args (the socket closed before a reply); a
+        // failed write means the daemon-persisted history will lag the in-memory
+        // history until the next successful write — surface it rather than swallow.
+        onRequestFailed: console.warn("NotificationManager: failed to persist notification history (daemon write failed); persisted state will lag until the next successful write")
     }
 
     // Persist a single notification addition. Include the creation time so it

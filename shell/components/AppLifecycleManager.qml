@@ -483,7 +483,7 @@ Item {
             var tracked = root._launchedApps;
             var matched = false;
             for (var key in tracked) {
-                if (tracked[key].app && WindowMatcher.matchesApp(tracked[key].app, w)) {
+                if (tracked[key] && tracked[key].app && WindowMatcher.matchesApp(tracked[key].app, w)) {
                     tracked[key].windowClass = w.class || "";
                     matched = true;
                     break;

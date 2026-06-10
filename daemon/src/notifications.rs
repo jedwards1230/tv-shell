@@ -196,7 +196,9 @@ mod tests {
         assert_eq!(out.len(), MAX_ENTRIES);
         assert_eq!(out[0].title, "New");
         // The oldest fell off the end.
-        assert!(!out.iter().any(|e| e.title == format!("Notif{}", MAX_ENTRIES - 1)));
+        assert!(!out
+            .iter()
+            .any(|e| e.title == format!("Notif{}", MAX_ENTRIES - 1)));
     }
 
     #[test]
