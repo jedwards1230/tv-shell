@@ -621,8 +621,14 @@ pub async fn run(
             // never drives a CEC bus on dev/CI hosts. When on, forward to the
             // blocking worker which owns libcec.
             CecReq::WakeSequence(reply) => {
-                let focus_on_wake =
-                    crate::config::cec_focus_on_wake(&crate::config::settings_path());
+                // Read the setting OFF the reactor: it does sync file I/O and must
+                // not block the async CEC actor (the startup read at ~462 runs in
+                // the blocking worker; this mirrors that).
+                let focus_on_wake = tokio::task::spawn_blocking(|| {
+                    crate::config::cec_focus_on_wake(&crate::config::settings_path())
+                })
+                .await
+                .unwrap_or(crate::config::CEC_FOCUS_ON_WAKE_DEFAULT);
                 let resp = if crate::config::should_focus(lifecycle_enabled(), focus_on_wake) {
                     forward(&work_tx, WorkerReq::WakeSequence).await
                 } else {
