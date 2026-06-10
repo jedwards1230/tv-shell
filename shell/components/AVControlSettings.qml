@@ -246,13 +246,10 @@ FocusScope {
         }
     }
 
-    // Focus the Wake button when CEC is available, otherwise take scope-level
-    // focus on the root (read-only state) so entry registers and Left/B return.
+    // Focus the first toggle (always present) so the page is navigable even
+    // when CEC is unavailable.
     function focusFirst() {
-        if (root.cecAvailable)
-            wakeScope.forceActiveFocus();
-        else
-            root.forceActiveFocus();
+        focusStartupScope.forceActiveFocus();
     }
 
     function doWake() {
@@ -317,7 +314,7 @@ FocusScope {
                 height: refreshBtn.implicitHeight
                 visible: root.cecAvailable
 
-                KeyNavigation.down: wakeScope
+                KeyNavigation.down: focusStartupScope
 
                 SettingsButton {
                     id: refreshBtn
@@ -338,6 +335,133 @@ FocusScope {
                     onClicked: {
                         refreshScope.forceActiveFocus();
                         refreshBtn.activated();
+                    }
+                }
+            }
+        }
+
+        // Focus preference toggles — always visible (not gated on cecAvailable).
+        // The daemon reads these at CEC startup and resume to decide whether to
+        // claim the active source.
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 16
+
+            Text {
+                text: "Focus Preferences"
+                font.pixelSize: Theme.fontBody
+                font.bold: true
+                color: Theme.textPrimary
+            }
+
+            // Focus TV on startup toggle
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                ColumnLayout {
+                    spacing: 2
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Focus TV on startup"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+
+                    Text {
+                        text: "Switch the TV/AVR to this input when the shell starts (off keeps your current input on restart)."
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+
+                FocusScope {
+                    id: focusStartupScope
+                    width: focusStartupBtn.width
+                    height: focusStartupBtn.height
+                    activeFocusOnTab: true
+
+                    KeyNavigation.up: refreshScope
+                    KeyNavigation.down: focusWakeScope
+
+                    SettingsButton {
+                        id: focusStartupBtn
+                        text: SettingsStore.cecFocusOnStartup ? "On" : "Off"
+                        focus: parent.activeFocus
+                        anchors.fill: parent
+
+                        color: SettingsStore.cecFocusOnStartup ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
+
+                        onActivated: SettingsStore.setCecFocusOnStartup(!SettingsStore.cecFocusOnStartup)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                focusStartupScope.forceActiveFocus();
+                                focusStartupBtn.activated();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Focus TV on wake toggle
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                ColumnLayout {
+                    spacing: 2
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Focus TV on wake from sleep"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+
+                    Text {
+                        text: "Switch to this input when the box wakes from sleep."
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+
+                FocusScope {
+                    id: focusWakeScope
+                    width: focusWakeBtn.width
+                    height: focusWakeBtn.height
+                    activeFocusOnTab: true
+
+                    KeyNavigation.up: focusStartupScope
+                    KeyNavigation.down: root.cecAvailable ? wakeScope : focusWakeScope
+
+                    SettingsButton {
+                        id: focusWakeBtn
+                        text: SettingsStore.cecFocusOnWake ? "On" : "Off"
+                        focus: parent.activeFocus
+                        anchors.fill: parent
+
+                        color: SettingsStore.cecFocusOnWake ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
+
+                        onActivated: SettingsStore.setCecFocusOnWake(!SettingsStore.cecFocusOnWake)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                focusWakeScope.forceActiveFocus();
+                                focusWakeBtn.activated();
+                            }
+                        }
                     }
                 }
             }
@@ -411,7 +535,7 @@ FocusScope {
                     focus: root.cecAvailable
                     activeFocusOnTab: true
 
-                    KeyNavigation.up: refreshScope
+                    KeyNavigation.up: focusWakeScope
                     KeyNavigation.right: sleepScope
                     KeyNavigation.down: deviceListView.count > 0 ? deviceListView : wakeScope
 

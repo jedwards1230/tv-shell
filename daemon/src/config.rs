@@ -692,6 +692,63 @@ pub fn resolve_button_key(
 /// Rumble is tasteful and on by default (#99); the user can disable it.
 pub const RUMBLE_ENABLED_DEFAULT: bool = true;
 
+/// Default for `cecFocusOnStartup`: off by default so a daemon start/restart
+/// never steals the TV input unexpectedly.
+pub const CEC_FOCUS_ON_STARTUP_DEFAULT: bool = false;
+/// Default for `cecFocusOnWake`: on by default so resume from sleep switches the
+/// TV to our input (the expected behaviour when waking the box).
+pub const CEC_FOCUS_ON_WAKE_DEFAULT: bool = true;
+
+/// Read the `cecFocusOnStartup` setting from a parsed settings document. Returns
+/// [`CEC_FOCUS_ON_STARTUP_DEFAULT`] when the key is absent or not a JSON bool.
+/// Pure (no I/O) — unit-testable on any host.
+pub fn cec_focus_on_startup_from(settings: &serde_json::Value) -> bool {
+    settings
+        .get("cecFocusOnStartup")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(CEC_FOCUS_ON_STARTUP_DEFAULT)
+}
+
+/// Read the `cecFocusOnWake` setting from a parsed settings document. Returns
+/// [`CEC_FOCUS_ON_WAKE_DEFAULT`] when the key is absent or not a JSON bool.
+/// Pure (no I/O) — unit-testable on any host.
+pub fn cec_focus_on_wake_from(settings: &serde_json::Value) -> bool {
+    settings
+        .get("cecFocusOnWake")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(CEC_FOCUS_ON_WAKE_DEFAULT)
+}
+
+/// Read the `cecFocusOnStartup` setting from `settings.json` on disk. A missing
+/// or unparseable file (or a non-bool value) yields [`CEC_FOCUS_ON_STARTUP_DEFAULT`].
+pub fn cec_focus_on_startup(path: &Path) -> bool {
+    match std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    {
+        Some(v) => cec_focus_on_startup_from(&v),
+        None => CEC_FOCUS_ON_STARTUP_DEFAULT,
+    }
+}
+
+/// Read the `cecFocusOnWake` setting from `settings.json` on disk. A missing or
+/// unparseable file (or a non-bool value) yields [`CEC_FOCUS_ON_WAKE_DEFAULT`].
+pub fn cec_focus_on_wake(path: &Path) -> bool {
+    match std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    {
+        Some(v) => cec_focus_on_wake_from(&v),
+        None => CEC_FOCUS_ON_WAKE_DEFAULT,
+    }
+}
+
+/// Whether to claim CEC active source: only when the lifecycle master is on AND
+/// the relevant focus setting is enabled.
+pub fn should_focus(lifecycle_enabled: bool, focus_setting: bool) -> bool {
+    lifecycle_enabled && focus_setting
+}
+
 /// Read the `rumbleEnabled` setting from a parsed settings document. Returns
 /// [`RUMBLE_ENABLED_DEFAULT`] when the key is absent or not a JSON bool, so a
 /// stale/garbage value never silently disables rumble. Pure (no I/O) — the
@@ -964,6 +1021,97 @@ mod tests {
         std::fs::write(&path, "not json").unwrap();
         assert_eq!(rumble_enabled(&path), RUMBLE_ENABLED_DEFAULT);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cec_focus_from_reads_bool_with_default() {
+        // cecFocusOnStartup: explicit true/false pass through.
+        assert!(cec_focus_on_startup_from(
+            &serde_json::json!({ "cecFocusOnStartup": true })
+        ));
+        assert!(!cec_focus_on_startup_from(
+            &serde_json::json!({ "cecFocusOnStartup": false })
+        ));
+        // Absent key -> startup default (off).
+        assert_eq!(
+            cec_focus_on_startup_from(&serde_json::json!({ "themeMode": "dark" })),
+            CEC_FOCUS_ON_STARTUP_DEFAULT
+        );
+        // Non-bool -> startup default.
+        assert_eq!(
+            cec_focus_on_startup_from(&serde_json::json!({ "cecFocusOnStartup": "yes" })),
+            CEC_FOCUS_ON_STARTUP_DEFAULT
+        );
+
+        // cecFocusOnWake: explicit true/false pass through.
+        assert!(cec_focus_on_wake_from(
+            &serde_json::json!({ "cecFocusOnWake": true })
+        ));
+        assert!(!cec_focus_on_wake_from(
+            &serde_json::json!({ "cecFocusOnWake": false })
+        ));
+        // Absent key -> wake default (on).
+        assert_eq!(
+            cec_focus_on_wake_from(&serde_json::json!({ "themeMode": "dark" })),
+            CEC_FOCUS_ON_WAKE_DEFAULT
+        );
+        // Non-bool -> wake default.
+        assert_eq!(
+            cec_focus_on_wake_from(&serde_json::json!({ "cecFocusOnWake": "yes" })),
+            CEC_FOCUS_ON_WAKE_DEFAULT
+        );
+        // Startup default is off, wake default is on.
+        assert!(!CEC_FOCUS_ON_STARTUP_DEFAULT, "startup focus defaults off");
+        assert!(CEC_FOCUS_ON_WAKE_DEFAULT, "wake focus defaults on");
+    }
+
+    #[test]
+    fn cec_focus_from_disk_round_trips() {
+        let startup_path = std::env::temp_dir().join(format!(
+            "gs-cec-startup-{}-{:?}.json",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let wake_path = std::env::temp_dir().join(format!(
+            "gs-cec-wake-{}-{:?}.json",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&startup_path);
+        let _ = std::fs::remove_file(&wake_path);
+
+        // Missing file -> defaults.
+        assert_eq!(
+            cec_focus_on_startup(&startup_path),
+            CEC_FOCUS_ON_STARTUP_DEFAULT
+        );
+        assert_eq!(cec_focus_on_wake(&wake_path), CEC_FOCUS_ON_WAKE_DEFAULT);
+
+        // Explicit values honored.
+        std::fs::write(&startup_path, r#"{"cecFocusOnStartup":true}"#).unwrap();
+        assert!(cec_focus_on_startup(&startup_path));
+        std::fs::write(&wake_path, r#"{"cecFocusOnWake":false}"#).unwrap();
+        assert!(!cec_focus_on_wake(&wake_path));
+
+        // Garbage file -> defaults.
+        std::fs::write(&startup_path, "not json").unwrap();
+        assert_eq!(
+            cec_focus_on_startup(&startup_path),
+            CEC_FOCUS_ON_STARTUP_DEFAULT
+        );
+        std::fs::write(&wake_path, "not json").unwrap();
+        assert_eq!(cec_focus_on_wake(&wake_path), CEC_FOCUS_ON_WAKE_DEFAULT);
+
+        let _ = std::fs::remove_file(&startup_path);
+        let _ = std::fs::remove_file(&wake_path);
+    }
+
+    #[test]
+    fn should_focus_truth_table() {
+        assert!(!should_focus(false, false));
+        assert!(!should_focus(false, true));
+        assert!(!should_focus(true, false));
+        assert!(should_focus(true, true));
     }
 
     #[test]

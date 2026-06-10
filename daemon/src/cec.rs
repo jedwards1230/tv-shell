@@ -73,8 +73,10 @@ pub enum CecReq {
     ActiveSource(Reply),
     /// Lifecycle wake (start / resume-from-suspend): power on AVR (addr 5) then
     /// TV (addr 0), then claim active source. Replies `ok` / `error:*`. A no-op
-    /// (still replying `ok`) when the lifecycle flag is off, so callers never
-    /// drive the bus on dev/CI hosts. Not exposed as a manual IPC command.
+    /// (still replying `ok`) when the lifecycle flag is off OR when the
+    /// `cecFocusOnWake` setting is false, so callers never drive the bus on
+    /// dev/CI hosts or when the user has opted out of focus-on-wake. Not
+    /// exposed as a manual IPC command.
     WakeSequence(Reply),
     /// Lifecycle standby (suspend / session-end SIGTERM): send CEC standby to TV
     /// (addr 0) then AVR (addr 5). Replies `ok` / `error:*`. A no-op (`ok`) when
@@ -358,7 +360,12 @@ fn blocking_worker(
         .device_name("game-shell".to_string())
         .device_types(cec_rs::CecDeviceTypeVec::new(
             cec_rs::CecDeviceType::PlaybackDevice,
-        ));
+        ))
+        // Never auto-claim active source on open — claims are explicit only
+        // (wake_sequence + the cec-active-source IPC). Prevents a daemon
+        // start/restart/deploy from stealing the TV input. cec-rs strips the
+        // Option, so the setter takes a bare bool.
+        .activate_source(false);
 
     // Remote-input bridge (gated by the SAME lifecycle flag as wake/standby):
     // register a libcec key-press callback that forwards each CecKeypress over a
@@ -447,12 +454,14 @@ fn blocking_worker(
             .ok();
     }
 
-    // Wake-on-open: when daemon-owned CEC lifecycle is enabled, run the wake
-    // sequence once at startup (power on AVR + TV, claim active source) so the
-    // shell comes up on an awake display. Off by default — see
-    // `lifecycle_enabled` — so dev/CI never drives the bus from a plain start.
-    if lifecycle_enabled() {
-        tracing::info!("cec: lifecycle enabled — running wake sequence on open");
+    // Wake-on-open: when daemon-owned CEC lifecycle is enabled AND
+    // `cecFocusOnStartup` is true, run the wake sequence once at startup
+    // (power on AVR + TV, claim active source). Off by default on both counts
+    // — `lifecycle_enabled` is the master gate, `cecFocusOnStartup` defaults
+    // false — so dev/CI and normal restarts never steal the TV input.
+    let focus_on_startup = crate::config::cec_focus_on_startup(&crate::config::settings_path());
+    if crate::config::should_focus(lifecycle_enabled(), focus_on_startup) {
+        tracing::info!("cec: lifecycle + focus-on-startup enabled — running wake sequence on open");
         let resp = wake_sequence(&conn, &events_tx);
         if resp.starts_with("error:") {
             tracing::warn!("cec: wake-on-open failed: {resp}");
@@ -612,7 +621,9 @@ pub async fn run(
             // never drives a CEC bus on dev/CI hosts. When on, forward to the
             // blocking worker which owns libcec.
             CecReq::WakeSequence(reply) => {
-                let resp = if lifecycle_enabled() {
+                let focus_on_wake =
+                    crate::config::cec_focus_on_wake(&crate::config::settings_path());
+                let resp = if crate::config::should_focus(lifecycle_enabled(), focus_on_wake) {
                     forward(&work_tx, WorkerReq::WakeSequence).await
                 } else {
                     protocol::resp_ok()

@@ -225,6 +225,29 @@ After a successful merge, the daemon refreshes its cached input-runtime settings
 (currently `rumbleEnabled`) so a rumble toggle takes effect immediately without a
 daemon restart.
 
+**QML-owned settings keys** (written by QML via `set-config`, read by the daemon
+at relevant lifecycle points):
+
+| Key | Type | Default | Read by daemon |
+|-----|------|---------|----------------|
+| `themeMode` | string | `"dark"` | No |
+| `streamingViewMode` | string | `"servers"` | No |
+| `controllerDebug` | bool | `false` | No |
+| `rumbleEnabled` | bool | `true` | On every rumble event |
+| `reduceMotion` | bool | `false` | No |
+| `textScale` | number | `1.0` | No |
+| `hdrEnabled` | bool | `true` | No |
+| `nightLightEnabled` | bool | `false` | No |
+| `nightLightTemp` | number | `4500` | No |
+| `overscan` | number | `0` | No |
+| `sleepTimerMinutes` | number | `0` | No |
+| `wakeOnController` | bool | `true` | No |
+| `autoDimEnabled` | bool | `false` | No |
+| `autoDimDelayMinutes` | number | `2` | No |
+| `defaultSink` | string | `""` | No |
+| `cecFocusOnStartup` | bool | `false` | At CEC startup (within `GAME_SHELL_CEC_LIFECYCLE`) |
+| `cecFocusOnWake` | bool | `true` | At CEC resume from sleep (within `GAME_SHELL_CEC_LIFECYCLE`) |
+
 ### `record-launch <json-object>`
 
 Record an app launch into the recents file
