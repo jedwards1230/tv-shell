@@ -8,7 +8,7 @@
 
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
-use crate::{apps, config, controllerdb, health, notifications, recents, system};
+use crate::{apps, config, controllerdb, health, moonlight, notifications, recents, system};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::os::unix::fs::PermissionsExt;
@@ -304,17 +304,15 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             Some(health::handle_sunshine_status(host, port).await)
         }
         Command::SunshineStatusUsage => Some(protocol::resp_sunshine_status_usage()),
-        // Sunshine unpair — like sunshine-status, stateless and cross-platform
-        // (`reqwest` runs everywhere). Lists paired clients via the authenticated
-        // web API and unpairs the single one (or errors if zero/many). Missing
-        // args route to `SunshineUnpairUsage`.
-        Command::SunshineUnpair {
-            host,
-            port,
-            user,
-            pass,
-        } => Some(health::handle_sunshine_unpair(host, port, user, pass).await),
-        Command::SunshineUnpairUsage => Some(protocol::resp_sunshine_unpair_usage()),
+        // Moonlight local-config "forget" — creds-free client-side unpair.
+        // Stateless and cross-platform (just edits Moonlight.conf). Missing host
+        // routes to `MoonlightForgetUsage`. Runs the blocking file edit off the
+        // reactor via spawn_blocking.
+        Command::MoonlightForget(host) => {
+            let host = host.clone();
+            Some(spawn_blocking_string(move || moonlight::handle_forget(&host)).await)
+        }
+        Command::MoonlightForgetUsage => Some(protocol::resp_moonlight_forget_usage()),
 
         // --- #159: controllerdb-status / controllerdb-refresh ---
         Command::ControllerDbStatus => {
@@ -503,8 +501,9 @@ async fn dispatch(
         // Phase 4 Sunshine is stateless (consumed by `dispatch_stateless`).
         | Command::SunshineStatus { .. }
         | Command::SunshineStatusUsage
-        | Command::SunshineUnpair { .. }
-        | Command::SunshineUnpairUsage
+        // Moonlight forget is stateless (consumed by `dispatch_stateless`).
+        | Command::MoonlightForget(_)
+        | Command::MoonlightForgetUsage
         // Controller DB status is stateless (consumed by `dispatch_stateless`).
         // ControllerDbRefresh is handled above with control_tx (hot-swap).
         | Command::ControllerDbStatus

@@ -197,11 +197,11 @@ FocusScope {
         }
     }
 
-    // Unpair request via the daemon's Sunshine web-API command (SocketClient,
-    // #97 pattern — same one StreamManager uses for sunshine-status). Sends
-    // `sunshine-unpair <host> <port> <user> <pass>` as a single verbatim line
-    // (the password may contain spaces, so it must not be split — request(cmd)
-    // sends the whole string as one line).
+    // Unpair request via the daemon's creds-free `moonlight-forget <host>`
+    // command (SocketClient, #97 pattern — same one StreamManager uses for
+    // sunshine-status). The daemon edits Moonlight's local config so the TV
+    // forgets the host; status flips to "unpaired" and Pair returns. No
+    // credentials needed.
     SocketClient {
         id: unpairProc
         onResponseReceived: line => {
@@ -373,23 +373,18 @@ FocusScope {
         root.confirmRemoveIndex = -1;
     }
 
-    // Unpair THIS client from the host's Sunshine via the daemon. Requires the
-    // saved target to carry sunshineUser/sunshinePass (enforced by _rowActions,
-    // so the button is hidden without them). Port defaults to Sunshine's HTTPS
-    // API port (47990) when sunshinePort is unset.
+    // Unpair THIS client from the host via the daemon's creds-free
+    // `moonlight-forget <host>` — the daemon removes the host from Moonlight's
+    // local config so the TV forgets it (no Sunshine credentials needed).
     function unpairServer(idx) {
         root.confirmUnpairIndex = -1;
         if (idx < 0 || idx >= root.servers.length)
             return;
         let s = root.servers[idx];
-        if (!s || !s.sunshineUser || !s.sunshinePass) {
-            NotificationManager.warn("moonlight", "Unpair Failed", "No Sunshine credentials configured");
+        if (!s || !s.host)
             return;
-        }
-        let port = s.sunshinePort || "47990";
         root._unpairingIndex = idx;
-        // Single verbatim line — the password is the tail and may contain spaces.
-        unpairProc.request("sunshine-unpair " + s.host + " " + port + " " + s.sunshineUser + " " + s.sunshinePass);
+        unpairProc.request("moonlight-forget " + s.host);
     }
 
     function resetForm() {
@@ -573,24 +568,19 @@ FocusScope {
             // Single source of truth for which actions a row exposes, keyed on
             // status. Pair appears only when the host is reachable-but-unpaired
             // (an offline/checking host can't be paired — keeps you out of the
-            // blind-launch trap). Unpair appears only when the host is paired AND
-            // the saved target carries both sunshineUser and sunshinePass — it
-            // calls Sunshine's authenticated web API to drop THIS client's
-            // pairing (without creds we can't authenticate, so it's hidden and
-            // un-pairing stays a Sunshine-side action). Remove is always present;
-            // it deletes the saved tile, NOT the host-side pairing. Drives button
+            // blind-launch trap). Unpair appears when the host is paired — it's a
+            // creds-free client-side "forget" (daemon edits Moonlight's local
+            // config), so no Sunshine credentials are needed. Remove is always
+            // present; it deletes the saved tile, NOT the pairing. Drives button
             // visibility, highlight, and Left/Right/Return navigation so they
             // never diverge.
             function _rowActions(host) {
                 let actions = [];
                 let status = root.hostStatus[host];
-                if (status === "unpaired") {
+                if (status === "unpaired")
                     actions.push("pair");
-                } else if (status === "paired") {
-                    let s = root.servers.find(s => s && s.host === host);
-                    if (s && s.sunshineUser && s.sunshinePass)
-                        actions.push("unpair");
-                }
+                else if (status === "paired")
+                    actions.push("unpair");
                 actions.push("remove");
                 return actions;
             }
@@ -1196,7 +1186,7 @@ FocusScope {
                 spacing: 32
 
                 Text {
-                    text: root.confirmUnpairIndex >= 0 && root.confirmUnpairIndex < root.servers.length ? "Unpair from \"" + root.servers[root.confirmUnpairIndex].name + "\"? You'll need to pair again to stream." : ""
+                    text: root.confirmUnpairIndex >= 0 && root.confirmUnpairIndex < root.servers.length ? "Unpair \"" + root.servers[root.confirmUnpairIndex].name + "\"? The TV will forget this server; you can pair again anytime." : ""
                     font.pixelSize: Theme.fontTitle
                     font.bold: true
                     color: Theme.textPrimary

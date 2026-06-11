@@ -171,21 +171,16 @@ pub enum Command {
     },
     /// `sunshine-status` with a missing/incomplete `<host> <port>` body.
     SunshineStatusUsage,
-    /// `sunshine-unpair <host> <port> <user> <pass...>` -> unpair THIS client
-    /// from a Sunshine host via its authenticated web API. `host`/`port`/`user`
-    /// are the first three whitespace tokens; the REST of the line (verbatim,
-    /// including any internal whitespace) is the password — Sunshine passwords
-    /// may contain spaces, so it is NOT split. Stateless (cross-platform,
-    /// `reqwest`). Replies `ok` / `error:*`.
-    SunshineUnpair {
-        host: String,
-        port: String,
-        user: String,
-        pass: String,
-    },
-    /// `sunshine-unpair` with a missing/incomplete `<host> <port> <user> <pass>`
-    /// body.
-    SunshineUnpairUsage,
+
+    // --- Moonlight local-config "forget" (creds-free unpair) ---
+    /// `moonlight-forget <host>` -> remove a host from Moonlight's local config
+    /// (`Moonlight.conf`) so this client is no longer paired with it. `host` is
+    /// the IP/hostname string the shell uses (matched against the conf's
+    /// hostname/localaddress/manualaddress/remoteaddress fields). Stateless
+    /// (cross-platform — it's just file editing). Replies `ok` / `error:*`.
+    MoonlightForget(String),
+    /// `moonlight-forget` with a missing `<host>` body.
+    MoonlightForgetUsage,
 
     // --- Phase 4: HDMI-CEC (cec-rs / libcec) ---
     /// `cec-scan` — return all visible CEC devices as a compact JSON array.
@@ -354,39 +349,6 @@ fn command_body<'a>(cmd: &'a str, word: &str) -> Option<&'a str> {
     }
 }
 
-/// Split `body` into its first three whitespace-separated tokens plus the
-/// remainder (verbatim, with internal whitespace preserved) as a fourth piece.
-///
-/// Used by `sunshine-unpair <host> <port> <user> <pass...>`: the password is the
-/// fourth piece and may contain spaces, so only the first three tokens are
-/// tokenized; the rest is taken raw. Returns `None` unless all four pieces are
-/// non-empty (i.e. there is a host, a port, a user, AND at least one non-space
-/// character of password after the third token).
-fn split_first_three(body: &str) -> Option<(&str, &str, &str, &str)> {
-    let body = body.trim_start();
-    let (tok1, rest) = take_token(body)?;
-    let (tok2, rest) = take_token(rest.trim_start())?;
-    let (tok3, rest) = take_token(rest.trim_start())?;
-    let rest = rest.trim_start();
-    if rest.is_empty() {
-        return None;
-    }
-    Some((tok1, tok2, tok3, rest))
-}
-
-/// Split off the leading non-whitespace token, returning `(token, remainder)`.
-/// `remainder` starts at the first whitespace char after the token (not yet
-/// trimmed). Returns `None` if `s` starts with whitespace or is empty.
-fn take_token(s: &str) -> Option<(&str, &str)> {
-    if s.is_empty() || s.starts_with(char::is_whitespace) {
-        return None;
-    }
-    match s.find(char::is_whitespace) {
-        Some(idx) => Some((&s[..idx], &s[idx..])),
-        None => Some((s, "")),
-    }
-}
-
 impl Command {
     /// Parse one line (the trailing newline is already stripped by the codec).
     /// Surrounding whitespace is trimmed to mirror Python's `data.decode().strip()`.
@@ -541,21 +503,17 @@ impl Command {
                         _ => Command::SunshineStatusUsage,
                     };
                 }
-                // Phase: `sunshine-unpair <host> <port> <user> <pass...>`. The
-                // first THREE whitespace tokens are host/port/user; the REST of
-                // the body (verbatim, with any internal spaces) is the password —
-                // Sunshine passwords may contain spaces, so it is NOT split. A
-                // missing/incomplete body is a usage error.
-                if let Some(body) = command_body(cmd, "sunshine-unpair") {
-                    if let Some((host, port, user, pass)) = split_first_three(body) {
-                        return Command::SunshineUnpair {
-                            host: host.to_string(),
-                            port: port.to_string(),
-                            user: user.to_string(),
-                            pass: pass.to_string(),
-                        };
-                    }
-                    return Command::SunshineUnpairUsage;
+                // `moonlight-forget <host>`: a single host token (the IP/hostname
+                // the shell uses). Removes the host from Moonlight's local config
+                // so this client is no longer paired. A missing body is a usage
+                // error. `command_body` enforces the word boundary so e.g.
+                // `moonlight-forgetX` is not mistaken for the command.
+                if let Some(body) = command_body(cmd, "moonlight-forget") {
+                    return if body.is_empty() {
+                        Command::MoonlightForgetUsage
+                    } else {
+                        Command::MoonlightForget(body.to_string())
+                    };
                 }
                 // Phase 4 CEC address-argument commands: `cec-device <addr>` etc.
                 // The body is a single logical-address token (whitespace-trimmed);
@@ -884,6 +842,20 @@ pub fn resp_error(msg: &str) -> String {
     format!("error:{msg}")
 }
 
+/// Strip control characters (newlines, carriage returns, etc.) from a string
+/// destined for an IPC error reply, replacing each with a space.
+///
+/// The wire protocol is newline-delimited and the QML side reads it line-by-line
+/// (`SplitParser`), so a `\n`/`\r`/other control char embedded in an error body
+/// (e.g. an error Display string, or a file value echoed back) could split one
+/// reply into several lines and desync the client. Keeping the reply on a single
+/// line preserves framing. Pure — unit-tested.
+pub fn sanitize_ipc(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 pub fn resp_timeout() -> String {
     "timeout".to_string()
 }
@@ -956,10 +928,9 @@ pub fn resp_sunshine_status_usage() -> String {
     "error:usage: sunshine-status <host> <port>".to_string()
 }
 
-/// Usage line for `sunshine-unpair` issued without a complete
-/// `<host> <port> <user> <pass>` body.
-pub fn resp_sunshine_unpair_usage() -> String {
-    "error:usage: sunshine-unpair <host> <port> <user> <pass>".to_string()
+/// Usage line for `moonlight-forget` issued without a `<host>` body.
+pub fn resp_moonlight_forget_usage() -> String {
+    "error:usage: moonlight-forget <host>".to_string()
 }
 
 /// `power-can-suspend` reply: `yes` / `no`.
@@ -1613,64 +1584,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_sunshine_unpair_body() {
-        // Simple single-word password.
+    fn parses_moonlight_forget_body() {
         assert_eq!(
-            Command::parse("sunshine-unpair 192.0.2.1 47990 admin hunter2"),
-            Command::SunshineUnpair {
-                host: "192.0.2.1".into(),
-                port: "47990".into(),
-                user: "admin".into(),
-                pass: "hunter2".into(),
-            }
+            Command::parse("moonlight-forget 192.168.8.10"),
+            Command::MoonlightForget("192.168.8.10".into())
         );
-        // Password with internal spaces: only the first three tokens are split;
-        // the rest (including spaces) is the verbatim password.
+        // Surrounding whitespace is trimmed.
         assert_eq!(
-            Command::parse("sunshine-unpair host 47990 user p4ss w0rd with spaces"),
-            Command::SunshineUnpair {
-                host: "host".into(),
-                port: "47990".into(),
-                user: "user".into(),
-                pass: "p4ss w0rd with spaces".into(),
-            }
+            Command::parse("  moonlight-forget   host-1  "),
+            Command::MoonlightForget("host-1".into())
         );
-        // Extra whitespace between the leading tokens collapses, but the password
-        // begins at the first non-space char after the third token.
+        // Missing host -> usage.
         assert_eq!(
-            Command::parse("sunshine-unpair   host   47990   user   secret"),
-            Command::SunshineUnpair {
-                host: "host".into(),
-                port: "47990".into(),
-                user: "user".into(),
-                pass: "secret".into(),
-            }
+            Command::parse("moonlight-forget"),
+            Command::MoonlightForgetUsage
         );
-        // Password preserves internal multiple spaces (only leading run trimmed).
-        assert_eq!(
-            Command::parse("sunshine-unpair host 47990 user a  b"),
-            Command::SunshineUnpair {
-                host: "host".into(),
-                port: "47990".into(),
-                user: "user".into(),
-                pass: "a  b".into(),
-            }
-        );
-        // Missing pieces -> usage.
-        assert_eq!(
-            Command::parse("sunshine-unpair host 47990 user"),
-            Command::SunshineUnpairUsage
-        );
-        assert_eq!(
-            Command::parse("sunshine-unpair host 47990"),
-            Command::SunshineUnpairUsage
-        );
-        assert_eq!(
-            Command::parse("sunshine-unpair"),
-            Command::SunshineUnpairUsage
-        );
-        // Word boundary: `sunshine-unpairX` is NOT sunshine-unpair.
-        assert_eq!(Command::parse("sunshine-unpairX"), Command::Unknown);
+        // Word boundary: `moonlight-forgetX` is NOT moonlight-forget.
+        assert_eq!(Command::parse("moonlight-forgetX"), Command::Unknown);
     }
 
     #[test]
@@ -1698,9 +1628,23 @@ mod tests {
             "error:usage: sunshine-status <host> <port>"
         );
         assert_eq!(
-            resp_sunshine_unpair_usage(),
-            "error:usage: sunshine-unpair <host> <port> <user> <pass>"
+            resp_moonlight_forget_usage(),
+            "error:usage: moonlight-forget <host>"
         );
+    }
+
+    #[test]
+    fn sanitize_ipc_strips_control_chars() {
+        // Newlines / carriage returns / tabs become spaces; no line splitting.
+        assert_eq!(sanitize_ipc("a\nb\r\nc"), "a b  c");
+        assert_eq!(sanitize_ipc("tab\there"), "tab here");
+        // Plain text is untouched.
+        assert_eq!(sanitize_ipc("normal error text"), "normal error text");
+        // The result never contains a newline, carriage return, or any control.
+        let out = sanitize_ipc("multi\nline\rerror\u{0007}bell");
+        assert!(!out.contains('\n'));
+        assert!(!out.contains('\r'));
+        assert!(!out.chars().any(|c| c.is_control()));
     }
 
     #[test]

@@ -947,13 +947,11 @@ An empty result (or any IPC failure) is `[]`. On a non-Linux build:
 
 ### Sunshine session detection (`reqwest`)
 
-> **Security note (TLS):** Both `sunshine-status` and `sunshine-unpair` talk to
-> Sunshine over HTTPS with `danger_accept_invalid_certs` — Sunshine ships a
-> self-signed cert that can't be verified, so the channel is **encrypted but not
-> authenticated** (no protection against an active MITM). `sunshine-unpair`
-> additionally sends `sunshineUser`/`sunshinePass` (HTTP Basic auth) over that
-> non-verified channel. Only use these against hosts on a **trusted LAN** — same
-> risk profile that already applies to `sunshine-status`.
+> **Security note (TLS):** `sunshine-status` talks to Sunshine over HTTPS with
+> `danger_accept_invalid_certs` — Sunshine ships a self-signed cert that can't be
+> verified, so the channel is **encrypted but not authenticated** (no protection
+> against an active MITM). It's a read-only `/serverinfo` probe carrying no
+> credentials, but only use it against hosts on a **trusted LAN**.
 
 #### `sunshine-status <host> <port>`
 
@@ -995,41 +993,42 @@ body degrades to the offline object (the command does not error):
 The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
 
-#### `sunshine-unpair <host> <port> <user> <pass...>`
+### Moonlight local-config "forget" (creds-free unpair)
 
-Unpair THIS client from a Sunshine host via Sunshine's **authenticated** web API
-(used by the Moonlight settings "Unpair" row action). The first three
-whitespace tokens are `<host>`, `<port>`, and `<user>`; the **rest of the line
-(verbatim, including any internal whitespace) is the password** — Sunshine
-passwords may contain spaces, so the password is NOT split. `<port>` is
-Sunshine's HTTPS API port (default `47990`; a host's configured `sunshinePort`
-may differ).
+#### `moonlight-forget <host>`
 
-The daemon:
+Remove a host from Moonlight's local config so THIS client is no longer paired
+with it (the Moonlight settings "Unpair" row action). Unlike a Sunshine-side
+unpair this needs **no credentials** — it only edits a local file the user owns.
+After forgetting, the host's status flips to "not paired" and the **Pair** action
+returns; re-pairing re-establishes it.
 
-1. `GET https://<host>:<port>/api/clients/list` with HTTP Basic auth
-   (`user`/`pass`), accepting the self-signed cert (rustls).
-2. Parses the response's `named_certs` array into the paired-client list.
-3. If **exactly one** client is paired → `POST /api/clients/unpair` with body
-   `{"uuid":"<that uuid>"}` (Basic auth) → `ok`.
-4. If **zero** clients → `error:no paired clients`.
-5. If **more than one** → `error:multiple clients paired; unpair from the
-   Sunshine web UI` (it never guesses which to unpair, to avoid dropping another
-   device's pairing).
+`<host>` is the single host token — the IP/hostname string the shell uses, e.g.
+`192.168.8.10`. The daemon reads Moonlight's config
+(`${XDG_CONFIG_HOME:-$HOME/.config}/Moonlight Game Streaming Project/Moonlight.conf`,
+a QSettings INI) and, within its `[hosts]` array, finds the index whose
+`hostname` / `localaddress` / `manualaddress` / `remoteaddress` equals `<host>`,
+removes that index's lines, **renumbers** the remaining hosts contiguously
+`1..k`, and updates the section `size=k`. All other content (other sections,
+other hosts, the `srvcert` `@ByteArray(...)` blobs) is preserved verbatim — the
+edit is line-based, not a QSettings round-trip.
 
-Stateless and cross-platform — served directly by the daemon's IPC layer (no
-actor round-trip), like `sunshine-status`. The `/api/clients/list` body *parser*
-is a pure, unit-tested function.
+Idempotent: a host that isn't found, or a missing conf, returns `ok` (nothing to
+forget). Stateless and cross-platform — it's just file editing (no actor, no
+feature gate). The core rewrite (`forget_host`) is a pure, unit-tested function;
+the handler does read → `forget_host` → write off the reactor.
+
+> Moonlight is invoked once per command (`moonlight stream/list/pair …`), not held
+> as a persistent process, so editing the conf between invocations is safe — no
+> live process's in-memory QSettings can clobber the edit.
 
 **Response:**
 
 | Condition | Response |
 |-----------|----------|
-| Single paired client unpaired | `ok\n` |
-| No paired clients | `error:no paired clients\n` |
-| Multiple paired clients | `error:multiple clients paired; unpair from the Sunshine web UI\n` |
-| Auth failure / network / HTTP error | `error:<reason>\n` |
-| Missing or incomplete `<host> <port> <user> <pass>` body | `error:usage: sunshine-unpair <host> <port> <user> <pass>\n` |
+| Host removed (or already absent / no conf) | `ok\n` |
+| File read/write error | `error:<reason>\n` |
+| Missing `<host>` body | `error:usage: moonlight-forget <host>\n` |
 
 
 ## HDMI-CEC Commands (#94, #16)

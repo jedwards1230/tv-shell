@@ -13,6 +13,9 @@ pub mod controllerdb;
 pub mod device;
 pub mod health;
 pub mod ipc;
+// Moonlight local-config "forget" (creds-free unpair): line-based edits to
+// Moonlight.conf. Cross-platform — pure file editing, no Linux-only imports.
+pub mod moonlight;
 pub mod notifications;
 pub mod protocol;
 pub mod recents;
