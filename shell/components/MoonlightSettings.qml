@@ -9,6 +9,10 @@ FocusScope {
     property var servers: []
     property bool showAddForm: false
     property int confirmRemoveIndex: -1
+    property int confirmUnpairIndex: -1
+    // Index of the server whose unpair request is in flight (for the reply
+    // handler to know which host to update); -1 when idle.
+    property int _unpairingIndex: -1
 
     // Connection status per host: { "host": "paired" | "unpaired" | "offline" | "checking" }
     property var hostStatus: ({})
@@ -193,6 +197,39 @@ FocusScope {
         }
     }
 
+    // Unpair request via the daemon's Sunshine web-API command (SocketClient,
+    // #97 pattern — same one StreamManager uses for sunshine-status). Sends
+    // `sunshine-unpair <host> <port> <user> <pass>` as a single verbatim line
+    // (the password may contain spaces, so it must not be split — request(cmd)
+    // sends the whole string as one line).
+    SocketClient {
+        id: unpairProc
+        onResponseReceived: line => {
+            let idx = root._unpairingIndex;
+            root._unpairingIndex = -1;
+            if (line === "ok") {
+                if (idx >= 0 && idx < root.servers.length) {
+                    let host = root.servers[idx].host;
+                    let updated = root.hostStatus;
+                    updated[host] = "unpaired";
+                    root.hostStatus = JSON.parse(JSON.stringify(updated));
+                }
+                NotificationManager.info("moonlight", "Unpaired", idx >= 0 && idx < root.servers.length ? root.servers[idx].host : "");
+                // Refresh real status from moonlight so the row settles correctly.
+                root._checkAllStatuses();
+            } else {
+                NotificationManager.warn("moonlight", "Unpair Failed", line);
+            }
+            serverList.actionCol = 0;
+            serverList.forceActiveFocus();
+        }
+        onRequestFailed: {
+            root._unpairingIndex = -1;
+            NotificationManager.warn("moonlight", "Unpair Failed", "Could not reach the input daemon");
+            serverList.forceActiveFocus();
+        }
+    }
+
     function _checkAllStatuses() {
         if (root.servers.length === 0)
             return;
@@ -331,6 +368,25 @@ FocusScope {
         root.servers = list;
         persistServers();
         root.confirmRemoveIndex = -1;
+    }
+
+    // Unpair THIS client from the host's Sunshine via the daemon. Requires the
+    // saved target to carry sunshineUser/sunshinePass (enforced by _rowActions,
+    // so the button is hidden without them). Port defaults to Sunshine's HTTPS
+    // API port (47990) when sunshinePort is unset.
+    function unpairServer(idx) {
+        root.confirmUnpairIndex = -1;
+        if (idx < 0 || idx >= root.servers.length)
+            return;
+        let s = root.servers[idx];
+        if (!s || !s.sunshineUser || !s.sunshinePass) {
+            NotificationManager.warn("moonlight", "Unpair Failed", "No Sunshine credentials configured");
+            return;
+        }
+        let port = s.sunshinePort || "47990";
+        root._unpairingIndex = idx;
+        // Single verbatim line — the password is the tail and may contain spaces.
+        unpairProc.request("sunshine-unpair " + s.host + " " + port + " " + s.sunshineUser + " " + s.sunshinePass);
     }
 
     function resetForm() {
@@ -514,14 +570,24 @@ FocusScope {
             // Single source of truth for which actions a row exposes, keyed on
             // status. Pair appears only when the host is reachable-but-unpaired
             // (an offline/checking host can't be paired — keeps you out of the
-            // blind-launch trap). Remove is always present; it deletes the saved
-            // tile, NOT the host-side pairing (moonlight has no `unpair`, so
-            // un-pairing stays a Sunshine-side action). Drives button visibility,
-            // highlight, and Left/Right/Return navigation so they never diverge.
+            // blind-launch trap). Unpair appears only when the host is paired AND
+            // the saved target carries both sunshineUser and sunshinePass — it
+            // calls Sunshine's authenticated web API to drop THIS client's
+            // pairing (without creds we can't authenticate, so it's hidden and
+            // un-pairing stays a Sunshine-side action). Remove is always present;
+            // it deletes the saved tile, NOT the host-side pairing. Drives button
+            // visibility, highlight, and Left/Right/Return navigation so they
+            // never diverge.
             function _rowActions(host) {
                 let actions = [];
-                if (root.hostStatus[host] === "unpaired")
+                let status = root.hostStatus[host];
+                if (status === "unpaired") {
                     actions.push("pair");
+                } else if (status === "paired") {
+                    let s = root.servers.find(s => s && s.host === host);
+                    if (s && s.sunshineUser && s.sunshinePass)
+                        actions.push("unpair");
+                }
                 actions.push("remove");
                 return actions;
             }
@@ -640,6 +706,31 @@ FocusScope {
                         }
                     }
 
+                    // Unpair button — only when the host is paired AND the saved
+                    // target has Sunshine creds (see _rowActions). Drops THIS
+                    // client's pairing via Sunshine's web API. The FocusScope is a
+                    // sizing wrapper only (see the Pair button above) — focus
+                    // styling is the `highlighted` property, not real focus.
+                    FocusScope {
+                        width: unpairBtn.width
+                        height: unpairBtn.height
+                        visible: serverList._rowActions(modelData.host).indexOf("unpair") >= 0
+
+                        SettingsButton {
+                            id: unpairBtn
+                            text: "Unpair"
+                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList._rowActions(modelData.host)[serverList.actionCol] === "unpair"
+                            onActivated: root.confirmUnpairIndex = index
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: unpairBtn.activated()
+                            }
+                        }
+                    }
+
                     // Remove button. The FocusScope is a sizing wrapper only (see
                     // the Pair button above) — focus styling is the `highlighted`
                     // property, not real focus.
@@ -673,6 +764,8 @@ FocusScope {
                 let a = acts[Math.min(actionCol, acts.length - 1)];
                 if (a === "pair")
                     root.startPairing(currentIndex);
+                else if (a === "unpair")
+                    root.confirmUnpairIndex = currentIndex;
                 else if (a === "remove")
                     root.confirmRemoveIndex = currentIndex;
             }
@@ -1059,6 +1152,102 @@ FocusScope {
 
         Keys.onEscapePressed: {
             root.confirmRemoveIndex = -1;
+        }
+    }
+
+    // Unpair confirmation dialog (clone of the remove dialog above).
+    Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.7)
+        visible: root.confirmUnpairIndex >= 0
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                root.confirmUnpairIndex = -1;
+            }
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 800
+            height: 350
+            radius: 32
+            color: Theme.surface
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                spacing: 32
+
+                Text {
+                    text: root.confirmUnpairIndex >= 0 && root.confirmUnpairIndex < root.servers.length ? "Unpair from \"" + root.servers[root.confirmUnpairIndex].name + "\"? You'll need to pair again to stream." : ""
+                    font.pixelSize: Theme.fontTitle
+                    font.bold: true
+                    color: Theme.textPrimary
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 700
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 32
+
+                    FocusScope {
+                        id: confirmUnpairYes
+                        width: confirmUnpairYesBtn.width
+                        height: confirmUnpairYesBtn.height
+
+                        KeyNavigation.right: confirmUnpairNo
+
+                        SettingsButton {
+                            id: confirmUnpairYesBtn
+                            text: "Unpair"
+                            focus: parent.activeFocus
+                            onActivated: root.unpairServer(root.confirmUnpairIndex)
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: confirmUnpairYesBtn.activated()
+                            }
+                        }
+                    }
+
+                    FocusScope {
+                        id: confirmUnpairNo
+                        width: confirmUnpairNoBtn.width
+                        height: confirmUnpairNoBtn.height
+                        focus: root.confirmUnpairIndex >= 0
+
+                        KeyNavigation.left: confirmUnpairYes
+
+                        SettingsButton {
+                            id: confirmUnpairNoBtn
+                            text: "Cancel"
+                            focus: parent.activeFocus
+                            onActivated: root.confirmUnpairIndex = -1
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: confirmUnpairNoBtn.activated()
+                            }
+                        }
+
+                        Keys.onEscapePressed: {
+                            root.confirmUnpairIndex = -1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Keys.onEscapePressed: {
+            root.confirmUnpairIndex = -1;
         }
     }
 
