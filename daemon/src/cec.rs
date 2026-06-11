@@ -256,6 +256,96 @@ fn scan_devices(conn: &cec_rs::CecConnection) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Stale-bus auto-recovery (cec active-source "TransmitFailed" loop).
+// ---------------------------------------------------------------------------
+
+/// Rebuild and reopen a BASIC libcec connection for recovery, returning the
+/// fresh handle (or `None` if the rebuild/open fails).
+///
+/// When the CEC bus/adapter goes stale, a held connection's transmit ops
+/// (`set_active_source`, power on/off) start returning `Err` ("TransmitFailed")
+/// indefinitely — previously only a daemon restart cleared it. Dropping and
+/// reopening the connection mirrors that restart in-process.
+///
+/// The recovery config is deliberately MINIMAL: same device name / playback
+/// device / `activate_source(false)` as the initial open, but WITHOUT the
+/// key-press callback. The CEC remote-input forwarder (a secondary feature) is
+/// only attached on the initial open in `blocking_worker`; a recovery reopen
+/// does NOT re-attach remote-key input — that resumes on the next daemon
+/// restart. Re-arming the callback would mean threading the (already-consumed)
+/// `control_tx` and a fresh forwarder thread through here, which is out of scope
+/// for a transmit-failure retry.
+fn reopen_connection() -> Option<cec_rs::CecConnection> {
+    tracing::warn!("cec: reopening libcec connection (recovery after transmit failure)");
+    cec_rs::CecConnectionCfgBuilder::default()
+        .device_name("game-shell".to_string())
+        .device_types(cec_rs::CecDeviceTypeVec::new(
+            cec_rs::CecDeviceType::PlaybackDevice,
+        ))
+        .activate_source(false)
+        .build()
+        .ok()?
+        .open()
+        .ok()
+}
+
+/// Minimum spacing between recovery reopens. A stale/wedged adapter can make
+/// EVERY transmit fail; without a cooldown, back-to-back failures would
+/// rapid-fire `open()`/close on the Pulse-Eight adapter and churn it into a
+/// hardware-stuck state (observed live). Once per 30s is enough to recover a
+/// genuinely transient stale bus while never hammering the hardware.
+const REOPEN_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Whether a recovery reopen is allowed now, given the last reopen instant.
+/// True if we've never reopened or the cooldown has elapsed; updates
+/// `last_reopen` to now when it returns true (the caller is about to reopen).
+fn reopen_allowed(last_reopen: &mut Option<std::time::Instant>) -> bool {
+    let ready = match last_reopen {
+        None => true,
+        Some(t) => t.elapsed() >= REOPEN_COOLDOWN,
+    };
+    if ready {
+        *last_reopen = Some(std::time::Instant::now());
+    }
+    ready
+}
+
+/// Run a transmit op against `conn`; on failure, reopen the connection ONCE and
+/// retry the op a single time — but ONLY if the reopen cooldown has elapsed
+/// (`last_reopen`). Bounded two ways: at most one reopen+retry per call (no
+/// infinite loop), AND at most one reopen per [`REOPEN_COOLDOWN`] (no adapter
+/// churn). Within cooldown, the reopen is skipped and the ORIGINAL error is
+/// returned. Reads (`scan`, `device`) deliberately do NOT route through this;
+/// recovery is driven by the transmit ops (active-source / power) that exhibit
+/// the stale-bus "TransmitFailed" behavior.
+fn with_cec_reconnect<T, E: std::fmt::Debug>(
+    conn: &mut cec_rs::CecConnection,
+    last_reopen: &mut Option<std::time::Instant>,
+    label: &str,
+    mut op: impl FnMut(&cec_rs::CecConnection) -> Result<T, E>,
+) -> Result<T, E> {
+    match op(conn) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            if !reopen_allowed(last_reopen) {
+                tracing::warn!(
+                    "cec: {label} failed ({e:?}); reopen on cooldown — skipping recovery"
+                );
+                return Err(e);
+            }
+            tracing::warn!("cec: {label} failed ({e:?}); reopening libcec connection and retrying");
+            match reopen_connection() {
+                Some(fresh) => {
+                    *conn = fresh;
+                    op(conn)
+                }
+                None => Err(e),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle sequences (blocking-worker context only — they touch libcec).
 // ---------------------------------------------------------------------------
 
@@ -395,7 +485,9 @@ fn blocking_worker(
             return;
         }
     };
-    let conn = match cfg.open() {
+    // `mut` so a failing transmit op can drop + reopen the handle for recovery
+    // (`with_cec_reconnect`); the initial open here keeps the key-press callback.
+    let mut conn = match cfg.open() {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(
@@ -468,6 +560,11 @@ fn blocking_worker(
         }
     }
 
+    // Cooldown clock for recovery reopens — gates `with_cec_reconnect` and the
+    // wake/standby retry below so a persistently-failing bus can't churn the
+    // adapter (see `REOPEN_COOLDOWN`). `None` until the first reopen.
+    let mut last_reopen: Option<std::time::Instant> = None;
+
     while let Ok(req) = rx.recv() {
         match req {
             WorkerReq::Scan(tx) => {
@@ -496,46 +593,83 @@ fn blocking_worker(
             }
             WorkerReq::PowerOn { addr, tx } => {
                 let resp = match addr.parse::<i32>().ok().and_then(logical_from_i32) {
-                    Some(logical) => match conn.send_power_on_devices(logical) {
-                        Ok(()) => {
-                            let ps = conn.get_device_power_status(logical);
-                            let payload = protocol::cec_power_json(&addr, power_status_word(ps));
-                            let _ = events_tx.send(Event::CecPower(payload));
-                            protocol::resp_ok()
+                    // Transmit op: reopen + retry once on a stale-bus failure.
+                    Some(logical) => {
+                        match with_cec_reconnect(&mut conn, &mut last_reopen, "power-on", |c| {
+                            c.send_power_on_devices(logical)
+                        }) {
+                            Ok(()) => {
+                                let ps = conn.get_device_power_status(logical);
+                                let payload =
+                                    protocol::cec_power_json(&addr, power_status_word(ps));
+                                let _ = events_tx.send(Event::CecPower(payload));
+                                protocol::resp_ok()
+                            }
+                            Err(e) => protocol::resp_error(&format!("power-on failed: {e:?}")),
                         }
-                        Err(e) => protocol::resp_error(&format!("power-on failed: {e:?}")),
-                    },
+                    }
                     None => protocol::resp_error(&format!("invalid address {addr}")),
                 };
                 let _ = tx.send(resp);
             }
             WorkerReq::PowerOff { addr, tx } => {
                 let resp = match addr.parse::<i32>().ok().and_then(logical_from_i32) {
-                    Some(logical) => match conn.send_standby_devices(logical) {
-                        Ok(()) => {
-                            let ps = conn.get_device_power_status(logical);
-                            let payload = protocol::cec_power_json(&addr, power_status_word(ps));
-                            let _ = events_tx.send(Event::CecPower(payload));
-                            protocol::resp_ok()
+                    // Transmit op: reopen + retry once on a stale-bus failure.
+                    Some(logical) => {
+                        match with_cec_reconnect(&mut conn, &mut last_reopen, "power-off", |c| {
+                            c.send_standby_devices(logical)
+                        }) {
+                            Ok(()) => {
+                                let ps = conn.get_device_power_status(logical);
+                                let payload =
+                                    protocol::cec_power_json(&addr, power_status_word(ps));
+                                let _ = events_tx.send(Event::CecPower(payload));
+                                protocol::resp_ok()
+                            }
+                            Err(e) => protocol::resp_error(&format!("power-off failed: {e:?}")),
                         }
-                        Err(e) => protocol::resp_error(&format!("power-off failed: {e:?}")),
-                    },
+                    }
                     None => protocol::resp_error(&format!("invalid address {addr}")),
                 };
                 let _ = tx.send(resp);
             }
             WorkerReq::ActiveSource(tx) => {
-                let resp = match conn.set_active_source(cec_rs::CecDeviceType::PlaybackDevice) {
-                    Ok(()) => protocol::resp_ok(),
-                    Err(e) => protocol::resp_error(&format!("active-source failed: {e:?}")),
-                };
+                // Transmit op: reopen + retry once on a stale-bus failure (this is
+                // the exact op that loops "TransmitFailed" forever on a stale bus).
+                let resp =
+                    match with_cec_reconnect(&mut conn, &mut last_reopen, "active-source", |c| {
+                        c.set_active_source(cec_rs::CecDeviceType::PlaybackDevice)
+                    }) {
+                        Ok(()) => protocol::resp_ok(),
+                        Err(e) => protocol::resp_error(&format!("active-source failed: {e:?}")),
+                    };
                 let _ = tx.send(resp);
             }
             WorkerReq::WakeSequence(tx) => {
-                let _ = tx.send(wake_sequence(&conn, &events_tx));
+                // The sequence is several transmit ops; it returns a wire string
+                // (`ok` / `error:*`) rather than a Result. On a leading `error:`,
+                // reopen the connection once and retry the whole sequence a single
+                // time — but only if the reopen cooldown has elapsed (bounded: no
+                // loop AND no adapter churn).
+                let mut resp = wake_sequence(&conn, &events_tx);
+                if resp.starts_with("error:") && reopen_allowed(&mut last_reopen) {
+                    if let Some(fresh) = reopen_connection() {
+                        conn = fresh;
+                        resp = wake_sequence(&conn, &events_tx);
+                    }
+                }
+                let _ = tx.send(resp);
             }
             WorkerReq::StandbyAll(tx) => {
-                let _ = tx.send(standby_all(&conn, &events_tx));
+                // Same bounded, cooldown-gated reopen+retry as WakeSequence.
+                let mut resp = standby_all(&conn, &events_tx);
+                if resp.starts_with("error:") && reopen_allowed(&mut last_reopen) {
+                    if let Some(fresh) = reopen_connection() {
+                        conn = fresh;
+                        resp = standby_all(&conn, &events_tx);
+                    }
+                }
+                let _ = tx.send(resp);
             }
             WorkerReq::Shutdown => break,
         }
@@ -548,24 +682,47 @@ fn blocking_worker(
 // Async actor entry point.
 // ---------------------------------------------------------------------------
 
+/// Hard upper bound on a single worker round-trip. Generous enough for a legit
+/// power-on / active-source plus ONE reopen+retry (libcec opens can take a few
+/// seconds), but finite — so a wedged blocking libcec call (an `open()` that
+/// never returns, observed on a hardware-stuck Pulse-Eight adapter) can NEVER
+/// silence the actor. Past this bound the request returns a timeout error and
+/// the actor's loop processes the next request. Paired with the 30s reopen
+/// cooldown in `blocking_worker`, the worst case is "CEC returns timeouts until
+/// a daemon restart" — the actor never wedges and the adapter isn't churned.
+const WORKER_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Forward one request to the blocking worker and await its reply off-thread,
 /// so the libcec round-trip never blocks the reactor and no libcec handle is
 /// held across the `.await`. `make` builds the `WorkerReq` from the per-request
 /// reply sender.
+///
+/// The reply await is wrapped in [`WORKER_REPLY_TIMEOUT`] so a hung worker can
+/// never wedge the async actor — on elapse the caller gets a prompt
+/// `error:cec timeout (adapter busy)` and the request loop moves on. The send is
+/// `try_send` so a full worker queue (64) also fails fast (`error:cec busy`)
+/// instead of blocking the reactor on a `sync_channel` send.
 async fn forward(
     work_tx: &std_mpsc::SyncSender<WorkerReq>,
     make: impl FnOnce(std_mpsc::SyncSender<String>) -> WorkerReq,
 ) -> String {
     let (tx, rx) = std_mpsc::sync_channel::<String>(1);
-    if work_tx.send(make(tx)).is_err() {
-        return protocol::resp_error("cec worker unavailable");
+    match work_tx.try_send(make(tx)) {
+        Ok(()) => {}
+        Err(std_mpsc::TrySendError::Full(_)) => return protocol::resp_error("cec busy"),
+        Err(std_mpsc::TrySendError::Disconnected(_)) => {
+            return protocol::resp_error("cec worker unavailable")
+        }
     }
-    tokio::task::spawn_blocking(move || {
-        rx.recv()
-            .unwrap_or_else(|_| protocol::resp_error("cec worker dropped reply"))
-    })
-    .await
-    .unwrap_or_else(|_| protocol::resp_error("cec worker task failed"))
+    let reply = async move {
+        tokio::task::spawn_blocking(move || {
+            rx.recv()
+                .unwrap_or_else(|_| protocol::resp_error("cec worker dropped reply"))
+        })
+        .await
+        .unwrap_or_else(|_| protocol::resp_error("cec worker task failed"))
+    };
+    protocol::reply_with_timeout(WORKER_REPLY_TIMEOUT, "cec timeout (adapter busy)", reply).await
 }
 
 /// Run the CEC actor until `rx` is closed.

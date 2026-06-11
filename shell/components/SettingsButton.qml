@@ -7,11 +7,15 @@ Rectangle {
     width: implicitWidth
     height: implicitHeight
     radius: 16
-    color: (root.activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode) ? Theme.surfaceHover : Theme.surface
-    border.width: root.activeFocus && !Theme.mouseMode ? 3 : 2
-    border.color: root.activeFocus && !Theme.mouseMode ? Theme.focusBorder : Theme.surfaceBorder
+    color: ((root.activeFocus || root.highlighted) && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode) ? Theme.surfaceHover : Theme.surface
+    border.width: (root.activeFocus || root.highlighted) && !Theme.mouseMode ? 3 : 2
+    border.color: (root.activeFocus || root.highlighted) && !Theme.mouseMode ? Theme.focusBorder : Theme.surfaceBorder
 
     property alias text: label.text
+    // Externally-driven focus styling for call sites that manage selection via a
+    // parent index (e.g. MoonlightSettings server-row actions) rather than real
+    // QML focus. Renders the focused look without holding activeFocus.
+    property bool highlighted: false
 
     // Single activation signal — emitted by mouse click, Return/Enter, and
     // the AT-SPI press action so all three routes converge (mirrors

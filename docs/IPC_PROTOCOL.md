@@ -947,6 +947,12 @@ An empty result (or any IPC failure) is `[]`. On a non-Linux build:
 
 ### Sunshine session detection (`reqwest`)
 
+> **Security note (TLS):** `sunshine-status` talks to Sunshine over HTTPS with
+> `danger_accept_invalid_certs` — Sunshine ships a self-signed cert that can't be
+> verified, so the channel is **encrypted but not authenticated** (no protection
+> against an active MITM). It's a read-only `/serverinfo` probe carrying no
+> credentials, but only use it against hosts on a **trusted LAN**.
+
 #### `sunshine-status <host> <port>`
 
 Pre-flight check the QML shell runs before launching a Moonlight stream: is the
@@ -986,6 +992,43 @@ body degrades to the offline object (the command does not error):
 
 The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
+
+### Moonlight local-config "forget" (creds-free unpair)
+
+#### `moonlight-forget <host>`
+
+Remove a host from Moonlight's local config so THIS client is no longer paired
+with it (the Moonlight settings "Unpair" row action). Unlike a Sunshine-side
+unpair this needs **no credentials** — it only edits a local file the user owns.
+After forgetting, the host's status flips to "not paired" and the **Pair** action
+returns; re-pairing re-establishes it.
+
+`<host>` is the single host token — the IP/hostname string the shell uses, e.g.
+`192.168.8.10`. The daemon reads Moonlight's config
+(`${XDG_CONFIG_HOME:-$HOME/.config}/Moonlight Game Streaming Project/Moonlight.conf`,
+a QSettings INI) and, within its `[hosts]` array, finds the index whose
+`hostname` / `localaddress` / `manualaddress` / `remoteaddress` equals `<host>`,
+removes that index's lines, **renumbers** the remaining hosts contiguously
+`1..k`, and updates the section `size=k`. All other content (other sections,
+other hosts, the `srvcert` `@ByteArray(...)` blobs) is preserved verbatim — the
+edit is line-based, not a QSettings round-trip.
+
+Idempotent: a host that isn't found, or a missing conf, returns `ok` (nothing to
+forget). Stateless and cross-platform — it's just file editing (no actor, no
+feature gate). The core rewrite (`forget_host`) is a pure, unit-tested function;
+the handler does read → `forget_host` → write off the reactor.
+
+> Moonlight is invoked once per command (`moonlight stream/list/pair …`), not held
+> as a persistent process, so editing the conf between invocations is safe — no
+> live process's in-memory QSettings can clobber the edit.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Host removed (or already absent / no conf) | `ok\n` |
+| File read/write error | `error:<reason>\n` |
+| Missing `<host>` body | `error:usage: moonlight-forget <host>\n` |
 
 
 ## HDMI-CEC Commands (#94, #16)
