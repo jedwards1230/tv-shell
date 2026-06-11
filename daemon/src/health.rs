@@ -17,6 +17,20 @@
 use crate::protocol;
 use serde_json::json;
 
+/// Strip control characters (newlines, carriage returns, etc.) from a string
+/// destined for an IPC error reply.
+///
+/// The wire protocol is newline-delimited and the QML side reads it line-by-line
+/// (`SplitParser`), so a `\n`/`\r`/other control char embedded in an error body
+/// (e.g. a `reqwest::Error` Display string, or a server-echoed value) could split
+/// one reply into several lines and desync the client. Replacing control chars
+/// with a space keeps the reply on a single line.
+fn sanitize_ipc(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 /// Parsed view of a Sunshine `/serverinfo` response.
 ///
 /// Fields mirror the compact-JSON object the `sunshine-status` command returns:
@@ -216,6 +230,11 @@ pub fn parse_clients_list(body: &str) -> Vec<PairedClient> {
 /// `<port>` is Sunshine's HTTPS API port (default 47990); the cert is self-signed
 /// so the client accepts invalid certs (rustls).
 pub async fn sunshine_unpair(host: &str, port: &str, user: &str, pass: &str) -> String {
+    // This handler issues two sequential HTTP calls (list, then unpair). It does
+    // NOT block the reactor: it is `async` and every network call is awaited, so
+    // tokio runs other tasks concurrently while this one is in flight. The two
+    // calls only bound THIS request to ~8s worst case (5s + 3s connect timeouts),
+    // the same per-request profile as `sunshine-status`.
     let client = match reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(5))
@@ -223,7 +242,9 @@ pub async fn sunshine_unpair(host: &str, port: &str, user: &str, pass: &str) -> 
         .build()
     {
         Ok(c) => c,
-        Err(e) => return protocol::resp_error(&format!("http client: {e}")),
+        Err(e) => {
+            return protocol::resp_error(&format!("http client: {}", sanitize_ipc(&e.to_string())))
+        }
     };
 
     let base = format!("https://{host}:{port}");
@@ -238,15 +259,24 @@ pub async fn sunshine_unpair(host: &str, port: &str, user: &str, pass: &str) -> 
         .await
     {
         Ok(resp) => resp,
-        Err(e) => return protocol::resp_error(&format!("list clients: {e}")),
+        Err(e) => {
+            return protocol::resp_error(&format!("list clients: {}", sanitize_ipc(&e.to_string())))
+        }
     };
     let list_resp = match list_resp.error_for_status() {
         Ok(resp) => resp,
-        Err(e) => return protocol::resp_error(&format!("list clients: {e}")),
+        Err(e) => {
+            return protocol::resp_error(&format!("list clients: {}", sanitize_ipc(&e.to_string())))
+        }
     };
     let list_body = match list_resp.text().await {
         Ok(body) => body,
-        Err(e) => return protocol::resp_error(&format!("read clients list: {e}")),
+        Err(e) => {
+            return protocol::resp_error(&format!(
+                "read clients list: {}",
+                sanitize_ipc(&e.to_string())
+            ));
+        }
     };
 
     // 2. Parse.
@@ -274,11 +304,13 @@ pub async fn sunshine_unpair(host: &str, port: &str, user: &str, pass: &str) -> 
         .await
     {
         Ok(resp) => resp,
-        Err(e) => return protocol::resp_error(&format!("unpair: {e}")),
+        Err(e) => {
+            return protocol::resp_error(&format!("unpair: {}", sanitize_ipc(&e.to_string())))
+        }
     };
     match unpair_resp.error_for_status() {
         Ok(_) => protocol::resp_ok(),
-        Err(e) => protocol::resp_error(&format!("unpair: {e}")),
+        Err(e) => protocol::resp_error(&format!("unpair: {}", sanitize_ipc(&e.to_string()))),
     }
 }
 
@@ -444,5 +476,19 @@ mod tests {
         assert_eq!(clients[0].name, "");
         // Empty-string uuid is skipped (not a real client).
         assert!(parse_clients_list(r#"{"named_certs":[{"uuid":""}]}"#).is_empty());
+    }
+
+    #[test]
+    fn sanitize_ipc_strips_control_chars() {
+        // Newlines / carriage returns / tabs become spaces; no line splitting.
+        assert_eq!(sanitize_ipc("a\nb\r\nc"), "a b  c");
+        assert_eq!(sanitize_ipc("tab\there"), "tab here");
+        // Plain text is untouched.
+        assert_eq!(sanitize_ipc("normal error text"), "normal error text");
+        // The result never contains a newline or carriage return.
+        let out = sanitize_ipc("multi\nline\rerror\u{0007}bell");
+        assert!(!out.contains('\n'));
+        assert!(!out.contains('\r'));
+        assert!(!out.chars().any(|c| c.is_control()));
     }
 }

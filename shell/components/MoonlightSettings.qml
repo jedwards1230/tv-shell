@@ -226,6 +226,9 @@ FocusScope {
         onRequestFailed: {
             root._unpairingIndex = -1;
             NotificationManager.warn("moonlight", "Unpair Failed", "Could not reach the input daemon");
+            // Reset actionCol — the host status may shrink the action list and
+            // strand actionCol out of bounds (mirrors the success path).
+            serverList.actionCol = 0;
             serverList.forceActiveFocus();
         }
     }
@@ -681,12 +684,10 @@ FocusScope {
                     }
 
                     // Pair button — only when the host is reachable but unpaired.
-                    // The FocusScope is a SIZING wrapper only: serverList holds
-                    // focus (focus:false on the delegate side) and selection is
-                    // driven by the button's external `highlighted` property — the
-                    // scope never receives real focus. Do NOT add focus:true here;
-                    // it would create a focus trap that breaks list navigation.
-                    FocusScope {
+                    // Sizing wrapper only — NOT a focus container. Do NOT add
+                    // focus:true (breaks list d-pad nav). Highlight is driven by
+                    // the external `highlighted` property.
+                    Item {
                         width: pairBtn.width
                         height: pairBtn.height
                         visible: serverList._rowActions(modelData.host).indexOf("pair") >= 0
@@ -694,7 +695,13 @@ FocusScope {
                         SettingsButton {
                             id: pairBtn
                             text: "Pair"
-                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList._rowActions(modelData.host)[serverList.actionCol] === "pair"
+                            // Clamp actionCol to the (possibly-shrunk) action list
+                            // so the highlight never silently vanishes when the
+                            // host status drops an action.
+                            highlighted: {
+                                let acts = serverList._rowActions(modelData.host);
+                                return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "pair";
+                            }
                             onActivated: root.startPairing(index)
 
                             MouseArea {
@@ -708,10 +715,11 @@ FocusScope {
 
                     // Unpair button — only when the host is paired AND the saved
                     // target has Sunshine creds (see _rowActions). Drops THIS
-                    // client's pairing via Sunshine's web API. The FocusScope is a
-                    // sizing wrapper only (see the Pair button above) — focus
-                    // styling is the `highlighted` property, not real focus.
-                    FocusScope {
+                    // client's pairing via Sunshine's web API. Sizing wrapper only
+                    // — NOT a focus container. Do NOT add focus:true (breaks list
+                    // d-pad nav). Highlight is driven by the external `highlighted`
+                    // property.
+                    Item {
                         width: unpairBtn.width
                         height: unpairBtn.height
                         visible: serverList._rowActions(modelData.host).indexOf("unpair") >= 0
@@ -719,7 +727,11 @@ FocusScope {
                         SettingsButton {
                             id: unpairBtn
                             text: "Unpair"
-                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList._rowActions(modelData.host)[serverList.actionCol] === "unpair"
+                            // Clamp actionCol to the action list length (see Pair).
+                            highlighted: {
+                                let acts = serverList._rowActions(modelData.host);
+                                return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "unpair";
+                            }
                             onActivated: root.confirmUnpairIndex = index
 
                             MouseArea {
@@ -731,17 +743,21 @@ FocusScope {
                         }
                     }
 
-                    // Remove button. The FocusScope is a sizing wrapper only (see
-                    // the Pair button above) — focus styling is the `highlighted`
-                    // property, not real focus.
-                    FocusScope {
+                    // Remove button. Sizing wrapper only — NOT a focus container.
+                    // Do NOT add focus:true (breaks list d-pad nav). Highlight is
+                    // driven by the external `highlighted` property.
+                    Item {
                         width: removeBtn.width
                         height: removeBtn.height
 
                         SettingsButton {
                             id: removeBtn
                             text: "Remove"
-                            highlighted: serverList.activeFocus && serverList.currentIndex === index && serverList._rowActions(modelData.host)[serverList.actionCol] === "remove"
+                            // Clamp actionCol to the action list length (see Pair).
+                            highlighted: {
+                                let acts = serverList._rowActions(modelData.host);
+                                return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "remove";
+                            }
                             onActivated: root.confirmRemoveIndex = index
 
                             MouseArea {

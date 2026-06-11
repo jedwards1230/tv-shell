@@ -947,6 +947,14 @@ An empty result (or any IPC failure) is `[]`. On a non-Linux build:
 
 ### Sunshine session detection (`reqwest`)
 
+> **Security note (TLS):** Both `sunshine-status` and `sunshine-unpair` talk to
+> Sunshine over HTTPS with `danger_accept_invalid_certs` — Sunshine ships a
+> self-signed cert that can't be verified, so the channel is **encrypted but not
+> authenticated** (no protection against an active MITM). `sunshine-unpair`
+> additionally sends `sunshineUser`/`sunshinePass` (HTTP Basic auth) over that
+> non-verified channel. Only use these against hosts on a **trusted LAN** — same
+> risk profile that already applies to `sunshine-status`.
+
 #### `sunshine-status <host> <port>`
 
 Pre-flight check the QML shell runs before launching a Moonlight stream: is the
