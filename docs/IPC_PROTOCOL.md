@@ -987,6 +987,42 @@ body degrades to the offline object (the command does not error):
 The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
 
+#### `sunshine-unpair <host> <port> <user> <pass...>`
+
+Unpair THIS client from a Sunshine host via Sunshine's **authenticated** web API
+(used by the Moonlight settings "Unpair" row action). The first three
+whitespace tokens are `<host>`, `<port>`, and `<user>`; the **rest of the line
+(verbatim, including any internal whitespace) is the password** — Sunshine
+passwords may contain spaces, so the password is NOT split. `<port>` is
+Sunshine's HTTPS API port (default `47990`; a host's configured `sunshinePort`
+may differ).
+
+The daemon:
+
+1. `GET https://<host>:<port>/api/clients/list` with HTTP Basic auth
+   (`user`/`pass`), accepting the self-signed cert (rustls).
+2. Parses the response's `named_certs` array into the paired-client list.
+3. If **exactly one** client is paired → `POST /api/clients/unpair` with body
+   `{"uuid":"<that uuid>"}` (Basic auth) → `ok`.
+4. If **zero** clients → `error:no paired clients`.
+5. If **more than one** → `error:multiple clients paired; unpair from the
+   Sunshine web UI` (it never guesses which to unpair, to avoid dropping another
+   device's pairing).
+
+Stateless and cross-platform — served directly by the daemon's IPC layer (no
+actor round-trip), like `sunshine-status`. The `/api/clients/list` body *parser*
+is a pure, unit-tested function.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Single paired client unpaired | `ok\n` |
+| No paired clients | `error:no paired clients\n` |
+| Multiple paired clients | `error:multiple clients paired; unpair from the Sunshine web UI\n` |
+| Auth failure / network / HTTP error | `error:<reason>\n` |
+| Missing or incomplete `<host> <port> <user> <pass>` body | `error:usage: sunshine-unpair <host> <port> <user> <pass>\n` |
+
 
 ## HDMI-CEC Commands (#94, #16)
 

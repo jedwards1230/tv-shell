@@ -153,6 +153,147 @@ pub async fn handle_sunshine_status(host: &str, port: &str) -> String {
     sunshine_status(host, port).await
 }
 
+// ---------------------------------------------------------------------------
+// Sunshine unpair (authenticated web API).
+// ---------------------------------------------------------------------------
+
+/// One paired client from Sunshine's `/api/clients/list` response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairedClient {
+    pub uuid: String,
+    pub name: String,
+}
+
+/// Parse the body of Sunshine's `GET /api/clients/list` into the list of
+/// `(uuid, name)` paired clients.
+///
+/// Pure function (no I/O) so it unit-tests on every platform. Defensive about
+/// the exact shape: Sunshine returns an object with a `named_certs` array, each
+/// element an object carrying at least `uuid` (and usually `name`). We accept:
+///   * the `named_certs` key missing/null/non-array  → empty list
+///   * elements missing `uuid`                        → skipped
+///   * elements missing `name`                        → name defaults to ""
+///
+/// Anything that doesn't parse as JSON yields an empty list (the caller treats
+/// "no clients" distinctly, so an empty list there means nothing to unpair).
+pub fn parse_clients_list(body: &str) -> Vec<PairedClient> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let Some(arr) = value.get("named_certs").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|entry| {
+            let uuid = entry.get("uuid").and_then(|v| v.as_str())?;
+            if uuid.is_empty() {
+                return None;
+            }
+            let name = entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(PairedClient {
+                uuid: uuid.to_string(),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// Unpair THIS client from a Sunshine host via its authenticated web API.
+///
+/// Flow (mirrors the spec):
+///   1. `GET https://<host>:<port>/api/clients/list` (HTTP Basic auth).
+///   2. Parse `named_certs` into the paired-client list.
+///   3. Exactly ONE client paired  → `POST /api/clients/unpair {"uuid":"…"}` → `ok`.
+///   4. ZERO clients               → `error:no paired clients`.
+///   5. MORE THAN ONE              → `error:multiple clients paired; …` (never
+///      guesses — avoids nuking another device's pairing).
+///   6. Auth/network/HTTP error    → `error:<reason>`.
+///
+/// `<port>` is Sunshine's HTTPS API port (default 47990); the cert is self-signed
+/// so the client accepts invalid certs (rustls).
+pub async fn sunshine_unpair(host: &str, port: &str, user: &str, pass: &str) -> String {
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(5))
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return protocol::resp_error(&format!("http client: {e}")),
+    };
+
+    let base = format!("https://{host}:{port}");
+
+    // 1. List paired clients. (reqwest is built without the `json` feature, so
+    // we read the body text and feed our pure parser, and POST a hand-built JSON
+    // string with an explicit content-type — no `.json()` helper available.)
+    let list_resp = match client
+        .get(format!("{base}/api/clients/list"))
+        .basic_auth(user, Some(pass))
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => return protocol::resp_error(&format!("list clients: {e}")),
+    };
+    let list_resp = match list_resp.error_for_status() {
+        Ok(resp) => resp,
+        Err(e) => return protocol::resp_error(&format!("list clients: {e}")),
+    };
+    let list_body = match list_resp.text().await {
+        Ok(body) => body,
+        Err(e) => return protocol::resp_error(&format!("read clients list: {e}")),
+    };
+
+    // 2. Parse.
+    let clients = parse_clients_list(&list_body);
+
+    // 3/4/5. Decide based on count — never guess when ambiguous.
+    let uuid = match clients.as_slice() {
+        [] => return protocol::resp_error("no paired clients"),
+        [only] => only.uuid.clone(),
+        _ => {
+            return protocol::resp_error(
+                "multiple clients paired; unpair from the Sunshine web UI",
+            );
+        }
+    };
+
+    // 3. Unpair the single paired client.
+    let unpair_body = json!({ "uuid": uuid }).to_string();
+    let unpair_resp = match client
+        .post(format!("{base}/api/clients/unpair"))
+        .basic_auth(user, Some(pass))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(unpair_body)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => return protocol::resp_error(&format!("unpair: {e}")),
+    };
+    match unpair_resp.error_for_status() {
+        Ok(_) => protocol::resp_ok(),
+        Err(e) => protocol::resp_error(&format!("unpair: {e}")),
+    }
+}
+
+/// Wrap [`sunshine_unpair`] for the IPC layer. Args come from the parsed
+/// `SunshineUnpair { host, port, user, pass }` command.
+pub async fn handle_sunshine_unpair(host: &str, port: &str, user: &str, pass: &str) -> String {
+    // Defensive: incomplete args shouldn't reach here (the parser routes those
+    // to `SunshineUnpairUsage`), but guard anyway so we never build a bogus URL
+    // or send empty credentials.
+    if host.is_empty() || port.is_empty() || user.is_empty() || pass.is_empty() {
+        return protocol::resp_sunshine_unpair_usage();
+    }
+    sunshine_unpair(host, port, user, pass).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +384,65 @@ mod tests {
             parse_serverinfo(BUSY).to_json(),
             r#"{"online":true,"paired":true,"currentApp":"881448767","httpsPort":47984}"#
         );
+    }
+
+    // ---- /api/clients/list parser ----
+
+    // Sample Sunshine /api/clients/list body (the shape coded against):
+    // an object with a `named_certs` array, each element { name, uuid }.
+    const ONE_CLIENT: &str = r#"{
+      "status": "true",
+      "named_certs": [
+        {"name": "game-client-1", "uuid": "abc123def456"}
+      ]
+    }"#;
+
+    const TWO_CLIENTS: &str = r#"{
+      "status": "true",
+      "named_certs": [
+        {"name": "game-client-1", "uuid": "abc123"},
+        {"name": "laptop", "uuid": "def456"}
+      ]
+    }"#;
+
+    const NO_CLIENTS: &str = r#"{"status": "true", "named_certs": []}"#;
+
+    #[test]
+    fn parse_clients_one() {
+        let clients = parse_clients_list(ONE_CLIENT);
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].uuid, "abc123def456");
+        assert_eq!(clients[0].name, "game-client-1");
+    }
+
+    #[test]
+    fn parse_clients_two() {
+        let clients = parse_clients_list(TWO_CLIENTS);
+        assert_eq!(clients.len(), 2);
+        assert_eq!(clients[0].uuid, "abc123");
+        assert_eq!(clients[1].uuid, "def456");
+    }
+
+    #[test]
+    fn parse_clients_none() {
+        assert!(parse_clients_list(NO_CLIENTS).is_empty());
+    }
+
+    #[test]
+    fn parse_clients_defensive() {
+        // Missing named_certs key, null, and non-array all yield empty.
+        assert!(parse_clients_list(r#"{"status":"true"}"#).is_empty());
+        assert!(parse_clients_list(r#"{"named_certs":null}"#).is_empty());
+        assert!(parse_clients_list(r#"{"named_certs":"nope"}"#).is_empty());
+        // Garbage / empty body → empty.
+        assert!(parse_clients_list("").is_empty());
+        assert!(parse_clients_list("not json").is_empty());
+        // Element missing uuid is skipped; missing name defaults to "".
+        let clients = parse_clients_list(r#"{"named_certs":[{"name":"a"},{"uuid":"keep"}]}"#);
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].uuid, "keep");
+        assert_eq!(clients[0].name, "");
+        // Empty-string uuid is skipped (not a real client).
+        assert!(parse_clients_list(r#"{"named_certs":[{"uuid":""}]}"#).is_empty());
     }
 }

@@ -171,6 +171,21 @@ pub enum Command {
     },
     /// `sunshine-status` with a missing/incomplete `<host> <port>` body.
     SunshineStatusUsage,
+    /// `sunshine-unpair <host> <port> <user> <pass...>` -> unpair THIS client
+    /// from a Sunshine host via its authenticated web API. `host`/`port`/`user`
+    /// are the first three whitespace tokens; the REST of the line (verbatim,
+    /// including any internal whitespace) is the password — Sunshine passwords
+    /// may contain spaces, so it is NOT split. Stateless (cross-platform,
+    /// `reqwest`). Replies `ok` / `error:*`.
+    SunshineUnpair {
+        host: String,
+        port: String,
+        user: String,
+        pass: String,
+    },
+    /// `sunshine-unpair` with a missing/incomplete `<host> <port> <user> <pass>`
+    /// body.
+    SunshineUnpairUsage,
 
     // --- Phase 4: HDMI-CEC (cec-rs / libcec) ---
     /// `cec-scan` — return all visible CEC devices as a compact JSON array.
@@ -339,6 +354,39 @@ fn command_body<'a>(cmd: &'a str, word: &str) -> Option<&'a str> {
     }
 }
 
+/// Split `body` into its first three whitespace-separated tokens plus the
+/// remainder (verbatim, with internal whitespace preserved) as a fourth piece.
+///
+/// Used by `sunshine-unpair <host> <port> <user> <pass...>`: the password is the
+/// fourth piece and may contain spaces, so only the first three tokens are
+/// tokenized; the rest is taken raw. Returns `None` unless all four pieces are
+/// non-empty (i.e. there is a host, a port, a user, AND at least one non-space
+/// character of password after the third token).
+fn split_first_three(body: &str) -> Option<(&str, &str, &str, &str)> {
+    let body = body.trim_start();
+    let (tok1, rest) = take_token(body)?;
+    let (tok2, rest) = take_token(rest.trim_start())?;
+    let (tok3, rest) = take_token(rest.trim_start())?;
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    Some((tok1, tok2, tok3, rest))
+}
+
+/// Split off the leading non-whitespace token, returning `(token, remainder)`.
+/// `remainder` starts at the first whitespace char after the token (not yet
+/// trimmed). Returns `None` if `s` starts with whitespace or is empty.
+fn take_token(s: &str) -> Option<(&str, &str)> {
+    if s.is_empty() || s.starts_with(char::is_whitespace) {
+        return None;
+    }
+    match s.find(char::is_whitespace) {
+        Some(idx) => Some((&s[..idx], &s[idx..])),
+        None => Some((s, "")),
+    }
+}
+
 impl Command {
     /// Parse one line (the trailing newline is already stripped by the codec).
     /// Surrounding whitespace is trimmed to mirror Python's `data.decode().strip()`.
@@ -492,6 +540,22 @@ impl Command {
                         },
                         _ => Command::SunshineStatusUsage,
                     };
+                }
+                // Phase: `sunshine-unpair <host> <port> <user> <pass...>`. The
+                // first THREE whitespace tokens are host/port/user; the REST of
+                // the body (verbatim, with any internal spaces) is the password —
+                // Sunshine passwords may contain spaces, so it is NOT split. A
+                // missing/incomplete body is a usage error.
+                if let Some(body) = command_body(cmd, "sunshine-unpair") {
+                    if let Some((host, port, user, pass)) = split_first_three(body) {
+                        return Command::SunshineUnpair {
+                            host: host.to_string(),
+                            port: port.to_string(),
+                            user: user.to_string(),
+                            pass: pass.to_string(),
+                        };
+                    }
+                    return Command::SunshineUnpairUsage;
                 }
                 // Phase 4 CEC address-argument commands: `cec-device <addr>` etc.
                 // The body is a single logical-address token (whitespace-trimmed);
@@ -890,6 +954,12 @@ pub fn cec_power_json(addr: &str, power_word: &str) -> String {
 /// Usage line for `sunshine-status` issued without a `<host> <port>` body.
 pub fn resp_sunshine_status_usage() -> String {
     "error:usage: sunshine-status <host> <port>".to_string()
+}
+
+/// Usage line for `sunshine-unpair` issued without a complete
+/// `<host> <port> <user> <pass>` body.
+pub fn resp_sunshine_unpair_usage() -> String {
+    "error:usage: sunshine-unpair <host> <port> <user> <pass>".to_string()
 }
 
 /// `power-can-suspend` reply: `yes` / `no`.
@@ -1543,6 +1613,67 @@ mod tests {
     }
 
     #[test]
+    fn parses_sunshine_unpair_body() {
+        // Simple single-word password.
+        assert_eq!(
+            Command::parse("sunshine-unpair 192.0.2.1 47990 admin hunter2"),
+            Command::SunshineUnpair {
+                host: "192.0.2.1".into(),
+                port: "47990".into(),
+                user: "admin".into(),
+                pass: "hunter2".into(),
+            }
+        );
+        // Password with internal spaces: only the first three tokens are split;
+        // the rest (including spaces) is the verbatim password.
+        assert_eq!(
+            Command::parse("sunshine-unpair host 47990 user p4ss w0rd with spaces"),
+            Command::SunshineUnpair {
+                host: "host".into(),
+                port: "47990".into(),
+                user: "user".into(),
+                pass: "p4ss w0rd with spaces".into(),
+            }
+        );
+        // Extra whitespace between the leading tokens collapses, but the password
+        // begins at the first non-space char after the third token.
+        assert_eq!(
+            Command::parse("sunshine-unpair   host   47990   user   secret"),
+            Command::SunshineUnpair {
+                host: "host".into(),
+                port: "47990".into(),
+                user: "user".into(),
+                pass: "secret".into(),
+            }
+        );
+        // Password preserves internal multiple spaces (only leading run trimmed).
+        assert_eq!(
+            Command::parse("sunshine-unpair host 47990 user a  b"),
+            Command::SunshineUnpair {
+                host: "host".into(),
+                port: "47990".into(),
+                user: "user".into(),
+                pass: "a  b".into(),
+            }
+        );
+        // Missing pieces -> usage.
+        assert_eq!(
+            Command::parse("sunshine-unpair host 47990 user"),
+            Command::SunshineUnpairUsage
+        );
+        assert_eq!(
+            Command::parse("sunshine-unpair host 47990"),
+            Command::SunshineUnpairUsage
+        );
+        assert_eq!(
+            Command::parse("sunshine-unpair"),
+            Command::SunshineUnpairUsage
+        );
+        // Word boundary: `sunshine-unpairX` is NOT sunshine-unpair.
+        assert_eq!(Command::parse("sunshine-unpairX"), Command::Unknown);
+    }
+
+    #[test]
     fn phase4_event_wire_strings() {
         assert_eq!(
             Event::HyprActiveWindow("firefox".into()).to_string(),
@@ -1565,6 +1696,10 @@ mod tests {
         assert_eq!(
             resp_sunshine_status_usage(),
             "error:usage: sunshine-status <host> <port>"
+        );
+        assert_eq!(
+            resp_sunshine_unpair_usage(),
+            "error:usage: sunshine-unpair <host> <port> <user> <pass>"
         );
     }
 
