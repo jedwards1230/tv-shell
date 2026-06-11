@@ -856,6 +856,29 @@ pub fn sanitize_ipc(s: &str) -> String {
         .collect()
 }
 
+/// Await a reply-producing future under a hard timeout, returning the future's
+/// `String` on completion or `error:<timeout_msg>` if the bound elapses first.
+///
+/// This is the safety bound for blocking-backend actors that forward a request
+/// to a worker thread and await its reply (e.g. the CEC actor's `forward`): if
+/// the worker wedges (a blocking libcec `open()`/transmit that never returns),
+/// the await would otherwise hang forever and silence the whole actor. Capping
+/// it guarantees the actor's request loop always makes progress — a wedged
+/// worker yields prompt errors instead of silence. `timeout_msg` is the error
+/// body used on elapse (sanitized so a stray control char can't desync the wire).
+/// Generic over the future so it is cross-platform and unit-testable without any
+/// backend (the CEC module is Linux+feature-gated, so its own tests can't run on
+/// macOS/CI).
+pub async fn reply_with_timeout<F>(bound: std::time::Duration, timeout_msg: &str, fut: F) -> String
+where
+    F: std::future::Future<Output = String>,
+{
+    match tokio::time::timeout(bound, fut).await {
+        Ok(reply) => reply,
+        Err(_elapsed) => resp_error(&sanitize_ipc(timeout_msg)),
+    }
+}
+
 pub fn resp_timeout() -> String {
     "timeout".to_string()
 }
@@ -1645,6 +1668,44 @@ mod tests {
         assert!(!out.contains('\n'));
         assert!(!out.contains('\r'));
         assert!(!out.chars().any(|c| c.is_control()));
+    }
+
+    // Pure tokio — no libcec — so this exercises the CEC actor's reply-timeout
+    // safety bound on macOS/CI where the cec module itself can't compile. Uses
+    // short REAL durations (no `start_paused`, which needs tokio `test-util`):
+    // the hang cases resolve in a few ms because the bound itself is tiny.
+    #[tokio::test]
+    async fn reply_with_timeout_returns_reply_when_prompt() {
+        // A future that completes well within the bound yields its reply verbatim.
+        let out = reply_with_timeout(
+            std::time::Duration::from_secs(15),
+            "cec timeout (adapter busy)",
+            async { "ok".to_string() },
+        )
+        .await;
+        assert_eq!(out, "ok");
+    }
+
+    #[tokio::test]
+    async fn reply_with_timeout_errors_when_worker_hangs() {
+        // A future that never completes (a wedged worker) must yield the timeout
+        // error within the bound, not hang. A 20ms bound keeps the test fast.
+        let bound = std::time::Duration::from_millis(20);
+        let start = std::time::Instant::now();
+        let out = reply_with_timeout(
+            bound,
+            "cec timeout (adapter busy)",
+            std::future::pending::<String>(),
+        )
+        .await;
+        assert_eq!(out, "error:cec timeout (adapter busy)");
+        // It returned at/after the bound, not before, and didn't hang.
+        assert!(start.elapsed() >= bound);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        // The timeout message is sanitized so a stray control char can't desync
+        // the wire.
+        let out = reply_with_timeout(bound, "ce\nc busy", std::future::pending::<String>()).await;
+        assert_eq!(out, "error:ce c busy");
     }
 
     #[test]
