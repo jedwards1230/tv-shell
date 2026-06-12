@@ -2112,6 +2112,12 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             let _ = r.send(resp_ok());
         }
         Control::Handoff(r) => {
+            // Replies `ok` unconditionally, mirroring Grab/Release above:
+            // ungrab()/enter_shell() are best-effort and log internally on the
+            // rare failure (the ungrab ioctl can only fail on an already-dead
+            // fd, which on_pad_leave reaps). A stuck grab is self-correcting —
+            // the shell re-emits `grab` on every stream-exit path (see the
+            // handoff section in docs/IPC_PROTOCOL.md).
             handoff_all(sh, fleet);
             let _ = r.send(resp_ok());
         }
