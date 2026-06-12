@@ -22,6 +22,8 @@ FocusScope {
     property alias powerOverlay: powerOverlay
     property alias volumeOverlay: volumeOverlay
     property alias networkOverlay: networkOverlay
+    property alias sessionQam: sessionQam
+    property alias overlayNavDrawer: overlayNavDrawer
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -52,7 +54,7 @@ FocusScope {
     // recentsRow.forceActiveFocus() is called inside focusDefaultPosition().
     function focusDefaultPosition() {
         Qt.callLater(function () {
-            if (!homeScreen.visible || settingsPanel.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened)
+            if (!homeScreen.visible || settingsPanel.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened || sessionQam.opened)
                 return;
             homeScreen.forceActiveFocus();
             homeScreen.focusDefaultPosition();
@@ -182,7 +184,7 @@ FocusScope {
         visible: root.shellState === "idle"
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened
+        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
 
         runningWindows: root.runningWindows
         pads: root.pads
@@ -231,6 +233,8 @@ FocusScope {
     function _returnFocusAfterOverlay() {
         if (navDrawer.opened)
             navDrawer.focusQuickActions();
+        else if (overlayNavDrawer.opened)
+            overlayNavDrawer.focusQuickActions();
         else
             homeFocusTimer.restart();
     }
@@ -239,7 +243,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || settingsPanel.visible)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsPanel.visible)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -350,10 +354,33 @@ FocusScope {
         }
     }
 
+    // === Session QAM (right-edge drawer, #218) ===
+    // z above the nav drawer so it paints over a still-open left drawer.
+    SessionQAM {
+        id: sessionQam
+        z: 70
+        onClosed: {
+            sessionQam.opened = false;
+            // Idle: restore home focus. appRunning: just unmap — the shell
+            // window hides (its `visible` keys off sessionQam.opened) and the
+            // app regains keyboard focus on its own.
+            if (root.shellState === "idle")
+                homeFocusTimer.restart();
+        }
+        onNotificationCenterRequested: {
+            sessionQam.opened = false;
+            notificationCenter.opened = true;
+            notificationCenter.forceActiveFocus();
+        }
+    }
+
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
-        visible: root.shellState === "appRunning" && root.overlayDrawerOpen
+        // Stay visible through the close slide-out: gate on the drawer's
+        // `active` (open || animating), not just overlayDrawerOpen, or the
+        // subtree hides instantly and the drawer vanishes in place over an app.
+        visible: root.shellState === "appRunning" && (root.overlayDrawerOpen || overlayNavDrawer.active)
         z: 50
 
         DimmedBackdrop {
@@ -385,13 +412,14 @@ FocusScope {
                 powerOverlay.forceActiveFocus();
             }
             onNetworkRequested: anchorRect => {
-                root.overlayDrawerClosed();
-                root.returnToShellRequested();
+                // Quick popover over the running app — keep the overlay drawer
+                // open underneath (window stays mapped) and anchor to this
+                // glyph. Do NOT return to the shell (that kicked the user to
+                // Home and stranded the popover). Closing it returns focus to
+                // the drawer via _returnFocusAfterOverlay().
                 networkOverlay.openAt(anchorRect);
             }
             onVolumeRequested: anchorRect => {
-                root.overlayDrawerClosed();
-                root.returnToShellRequested();
                 volumeOverlay.openAt(anchorRect);
             }
             onClosed: {

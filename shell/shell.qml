@@ -246,7 +246,24 @@ ShellRoot {
         }
         onIntentOverlay: target => {
             root.userActivityDetected();
-            if (root.state === "idle" && root._layout) {
+            if (!root._layout)
+                return;
+            // The Session QAM opens on the home screen AND over a running local
+            // app — it rides the shell's overlay surface (the window maps while
+            // it's open, dimming the app via the drawer scrim) and returns to
+            // the app on close. The other overlays stay idle-only for now.
+            if (target === "session") {
+                // Toggle: the View button (and Super+Right) both open and close
+                // the QAM — a second press while it's open closes it.
+                if (root.state === "idle" || root.state === "appRunning") {
+                    if (root._layout.sessionQam.opened)
+                        root._layout.sessionQam.close();
+                    else
+                        root._layout.sessionQam.open();
+                }
+                return;
+            }
+            if (root.state === "idle") {
                 if (target === "volume")
                     root._layout.volumeOverlay.openAt(null);
                 else if (target === "network")
@@ -431,7 +448,12 @@ ShellRoot {
         PanelWindow {
             required property var modelData
             screen: modelData
-            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen
+            // Map the shell surface over an app while a drawer is open OR still
+            // animating, so the close slide-out plays before the window unmaps
+            // (otherwise the drawer vanishes in place over an app). Key off the
+            // drawers' `.active` bool — NOT `.visible`, which Qt couples to
+            // parent-chain visibility and would break this very binding.
+            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen || layout.sessionQam.active || layout.overlayNavDrawer.active
 
             anchors {
                 top: true

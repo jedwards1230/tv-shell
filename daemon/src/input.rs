@@ -614,6 +614,21 @@ impl PadDevice {
                 }
             }
 
+            // View/Select button (single press) opens the right-edge Session
+            // QAM (#218): emit the `overlay:session` deep-link intent the shell
+            // routes to SessionQAM. Shell-only — deliberately NOT mirrored in
+            // `handle_game`, so it never interferes with the in-game force-quit
+            // combo (Back+Home+LB+RB, which also uses BTN_SELECT) or game input.
+            // The shell opens the QAM both on the home screen and over a running
+            // local app (`appRunning` keeps the Shell presenter, so this handler
+            // still runs). Over a Moonlight *stream* the presenter is Game and
+            // `handle_game` runs instead — which does NOT mirror this intercept,
+            // so streams are left untouched. BTN_SELECT has no default key
+            // binding, so nothing else consumes this press.
+            if code == cfg::BTN_SELECT && value == 1 {
+                sh.publish(Event::Intent("overlay:session".into()));
+            }
+
             // LB/RB -> mouse left/right click.
             if code == cfg::BTN_TL {
                 sh.emit_mouse_button(cfg::BTN_LEFT, value);

@@ -302,8 +302,9 @@ pub const INTENT_VOCAB: &[&str] = &["home", "home-tap", "home-hold", "menu", "se
 
 /// The closed set of overlay targets accepted by the `overlay:<target>`
 /// deep-link namespace. Validated here in the daemon (unlike `settings` and
-/// `app` whose registries live in QML).
-pub const INTENT_OVERLAY_TARGETS: &[&str] = &["volume", "network"];
+/// `app` whose registries live in QML). `session` opens the right-edge Session
+/// QAM drawer (#218).
+pub const INTENT_OVERLAY_TARGETS: &[&str] = &["volume", "network", "session"];
 
 /// True if `name` is a known intent — either a coarse vocabulary entry or a
 /// valid deep-link target. The function is pure/side-effect-free and is shared
@@ -1811,6 +1812,7 @@ mod tests {
         assert!(is_known_intent("settings:bluetooth"));
         assert!(is_known_intent("overlay:volume"));
         assert!(is_known_intent("overlay:network"));
+        assert!(is_known_intent("overlay:session"));
         assert!(is_known_intent("app:firefox"));
         // Unknown overlay leaf -> rejected.
         assert!(!is_known_intent("overlay:bogus"));
