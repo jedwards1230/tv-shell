@@ -75,11 +75,10 @@ Drawer {
     }
 
     onOpenedChanged: {
-        if (opened) {
-            getVolume.running = true;
-            listSinks.running = true;
+        // open() owns the state reset + process starts; this only restores focus
+        // as a safety net if `opened` is ever set true without going through it.
+        if (opened)
             Qt.callLater(() => contentRoot.forceActiveFocus());
-        }
     }
 
     function _currentSinkName() {
@@ -208,7 +207,7 @@ Drawer {
                         if (root._sinkCursor < root.sinks.length - 1)
                             root._sinkCursor++;
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        if (root._sinkCursor >= 0 && root._sinkCursor < root.sinks.length) {
+                        if (root._sinkCursor >= 0 && root._sinkCursor < root.sinks.length && !setDefaultSink.running) {
                             setDefaultSink.sinkId = root.sinks[root._sinkCursor].id;
                             setDefaultSink.running = true;
                         }
@@ -488,8 +487,10 @@ Drawer {
                                     onEntered: root._sinkCursor = index
                                     hoverEnabled: true
                                     onClicked: {
-                                        setDefaultSink.sinkId = modelData.id;
-                                        setDefaultSink.running = true;
+                                        if (!setDefaultSink.running) {
+                                            setDefaultSink.sinkId = modelData.id;
+                                            setDefaultSink.running = true;
+                                        }
                                         root._outputExpanded = false;
                                     }
                                 }
@@ -576,11 +577,20 @@ Drawer {
                             duration: 100
                         }
                     }
-                    Text {
+                    RowLayout {
                         anchors.centerIn: parent
-                        text: "Open Notification Center"
-                        font.pixelSize: Theme.fontBody
-                        color: Theme.textPrimary
+                        spacing: Units.spacingSM
+                        Text {
+                            text: "Open Notification Center"
+                            font.pixelSize: Theme.fontBody
+                            color: Theme.textPrimary
+                        }
+                        Text {
+                            visible: parent.parent.rowFocused
+                            text: "A: open"
+                            font.pixelSize: Theme.fontHint
+                            color: Theme.textMuted
+                        }
                     }
                     MouseArea {
                         anchors.fill: parent

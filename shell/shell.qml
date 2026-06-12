@@ -448,7 +448,11 @@ ShellRoot {
         PanelWindow {
             required property var modelData
             screen: modelData
-            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen || layout.sessionQam.opened
+            // Map the shell surface over an app while the QAM is open OR still
+            // animating — keying off `.visible` (opened || _animating), not
+            // `.opened`, so the close slide-out plays before the window unmaps
+            // (otherwise the QAM vanishes in place over an app).
+            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen || layout.sessionQam.visible
 
             anchors {
                 top: true
