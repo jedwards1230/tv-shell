@@ -42,6 +42,11 @@ FocusScope {
 
     // Friendly label for a CEC logical address (no OSD name in cec-rs 12.0.1).
     function nameForAddress(addr) {
+        // Prefer a local name override (#16, set via the config file — a freeform
+        // on-screen editor is deferred to #20). Keyed by the stringified address.
+        var o = SettingsStore.cecDeviceNames[String(addr)];
+        if (o && o.length)
+            return o;
         // CEC logical-address table (HDMI-CEC spec), consistent with the
         // daemon's cec-rs CecLogicalAddress semantics.
         switch (addr) {
@@ -385,8 +390,8 @@ FocusScope {
                     activeFocusOnTab: true
 
                     // Refresh is hidden when CEC is unavailable — wrap Up to the
-                    // other (always-visible) toggle so focus can't vanish.
-                    KeyNavigation.up: root.cecAvailable ? refreshScope : focusWakeScope
+                    // last (always-visible) toggle so focus can't vanish.
+                    KeyNavigation.up: root.cecAvailable ? refreshScope : autoSwitchScope
                     KeyNavigation.down: focusWakeScope
 
                     SettingsButton {
@@ -443,10 +448,7 @@ FocusScope {
                     activeFocusOnTab: true
 
                     KeyNavigation.up: focusStartupScope
-                    // When CEC is unavailable the action row below is hidden —
-                    // wrap Down back to the first toggle instead of self-looping
-                    // (which would trap focus).
-                    KeyNavigation.down: root.cecAvailable ? wakeScope : focusStartupScope
+                    KeyNavigation.down: autoSwitchScope
 
                     SettingsButton {
                         id: focusWakeBtn
@@ -465,6 +467,66 @@ FocusScope {
                             onClicked: {
                                 focusWakeScope.forceActiveFocus();
                                 focusWakeBtn.activated();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Auto-switch input on power-on toggle (persist-only in Phase 1; the
+            // daemon does not act on it yet — behaviour wiring is a follow-up).
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                ColumnLayout {
+                    spacing: 2
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Auto-switch input on power-on"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+
+                    Text {
+                        text: "Switch the TV/AVR to this input automatically when a device powers on."
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+
+                FocusScope {
+                    id: autoSwitchScope
+                    width: autoSwitchBtn.width
+                    height: autoSwitchBtn.height
+                    activeFocusOnTab: true
+
+                    KeyNavigation.up: focusWakeScope
+                    // When CEC is unavailable the action row below is hidden —
+                    // wrap Down back to the first toggle instead of self-looping
+                    // (which would trap focus).
+                    KeyNavigation.down: root.cecAvailable ? wakeScope : focusStartupScope
+
+                    SettingsButton {
+                        id: autoSwitchBtn
+                        text: SettingsStore.cecAutoSwitchOnPowerOn ? "On" : "Off"
+                        focus: parent.activeFocus
+                        anchors.fill: parent
+
+                        color: SettingsStore.cecAutoSwitchOnPowerOn ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
+
+                        onActivated: SettingsStore.setCecAutoSwitchOnPowerOn(!SettingsStore.cecAutoSwitchOnPowerOn)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                autoSwitchScope.forceActiveFocus();
+                                autoSwitchBtn.activated();
                             }
                         }
                     }
@@ -540,7 +602,7 @@ FocusScope {
                     focus: root.cecAvailable
                     activeFocusOnTab: true
 
-                    KeyNavigation.up: focusWakeScope
+                    KeyNavigation.up: autoSwitchScope
                     KeyNavigation.right: sleepScope
                     KeyNavigation.down: deviceListView.count > 0 ? deviceListView : wakeScope
 
@@ -757,6 +819,18 @@ FocusScope {
 
                 KeyNavigation.up: wakeScope
 
+                // Controller path for "Set as default": Return/Enter on the focused
+                // row persists that device as the preferred default input (#16).
+                // Mouse users click the row's "Set as default" button directly.
+                Keys.onReturnPressed: {
+                    if (currentIndex >= 0 && currentIndex < root.devices.length)
+                        SettingsStore.setCecDefaultInput(root.devices[currentIndex].logicalAddress);
+                }
+                Keys.onEnterPressed: {
+                    if (currentIndex >= 0 && currentIndex < root.devices.length)
+                        SettingsStore.setCecDefaultInput(root.devices[currentIndex].logicalAddress);
+                }
+
                 delegate: Rectangle {
                     required property int index
                     required property var modelData
@@ -833,6 +907,25 @@ FocusScope {
                                         }
                                     }
                                 }
+
+                                // Default-input badge — shown when this device is
+                                // the persisted preferred default (#16). Reuses the
+                                // power-badge styling (crimson/sidebarActive tint).
+                                Rectangle {
+                                    visible: modelData.logicalAddress === SettingsStore.cecDefaultInput
+                                    width: defaultLabel.implicitWidth + 24
+                                    height: 40
+                                    radius: 20
+                                    color: Theme.sidebarActive
+
+                                    Text {
+                                        id: defaultLabel
+                                        anchors.centerIn: parent
+                                        text: "Default"
+                                        font.pixelSize: Theme.fontCaption
+                                        color: Theme.textOnDark
+                                    }
+                                }
                             }
 
                             Text {
@@ -840,6 +933,18 @@ FocusScope {
                                 font.pixelSize: Theme.fontSmall
                                 color: Theme.textSecondary
                             }
+                        }
+
+                        // Set-as-default action — persists the preference (Phase 1
+                        // is persist-only; daemon behaviour wiring is a follow-up).
+                        // z lifts it above the row-selection MouseArea so its own
+                        // click handler wins; Return on the focused row (handled on
+                        // the ListView) is the controller path.
+                        SettingsButton {
+                            z: 1
+                            text: modelData.logicalAddress === SettingsStore.cecDefaultInput ? "Default ✓" : "Set as default"
+                            highlighted: modelData.logicalAddress === SettingsStore.cecDefaultInput
+                            onActivated: SettingsStore.setCecDefaultInput(modelData.logicalAddress)
                         }
                     }
 
@@ -858,7 +963,7 @@ FocusScope {
 
         // Hint bar
         Text {
-            text: root.cecAvailable ? "A: Select  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
+            text: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter

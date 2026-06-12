@@ -26,7 +26,8 @@ import QtQuick
 //                    get-config so all keys re-apply live without a restart)
 // QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan,
 //                         sleepTimerMinutes, wakeOnController, defaultSink,
-//                         cecFocusOnStartup, cecFocusOnWake
+//                         cecFocusOnStartup, cecFocusOnWake, cecAutoSwitchOnPowerOn,
+//                         cecDefaultInput, cecDeviceNames
 Item {
     id: store
 
@@ -48,6 +49,9 @@ Item {
     property string defaultSink: ""              // WirePlumber sink node.name (stable across reboots)
     property bool cecFocusOnStartup: false      // claim active source when daemon starts (default off)
     property bool cecFocusOnWake: true          // claim active source on resume from sleep (default on)
+    property bool cecAutoSwitchOnPowerOn: false // switch TV/AVR input when a device powers on (default off, daemon wiring TBD)
+    property int cecDefaultInput: -1            // logical address of the preferred default input (-1 = unset; persist-only in Phase 1)
+    property var cecDeviceNames: ({})           // local label overrides keyed by logical address, e.g. {"0":"Living Room TV"}
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
@@ -105,6 +109,12 @@ Item {
                     store.cecFocusOnStartup = obj.cecFocusOnStartup;
                 if (typeof obj.cecFocusOnWake === "boolean")
                     store.cecFocusOnWake = obj.cecFocusOnWake;
+                if (typeof obj.cecAutoSwitchOnPowerOn === "boolean")
+                    store.cecAutoSwitchOnPowerOn = obj.cecAutoSwitchOnPowerOn;
+                if (typeof obj.cecDefaultInput === "number")
+                    store.cecDefaultInput = obj.cecDefaultInput;
+                if (obj.cecDeviceNames && typeof obj.cecDeviceNames === "object")
+                    store.cecDeviceNames = obj.cecDeviceNames;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
             } catch (e) {
@@ -145,6 +155,9 @@ Item {
             "defaultSink": store.defaultSink,
             "cecFocusOnStartup": store.cecFocusOnStartup,
             "cecFocusOnWake": store.cecFocusOnWake,
+            "cecAutoSwitchOnPowerOn": store.cecAutoSwitchOnPowerOn,
+            "cecDefaultInput": store.cecDefaultInput,
+            "cecDeviceNames": store.cecDeviceNames,
             "moonlightViewMode": null
         });
         saveProc.request("set-config", body);
@@ -254,6 +267,33 @@ Item {
         cecFocusOnWake = enabled;
         save();
         settingsChanged("cecFocusOnWake", enabled);
+    }
+
+    function setCecAutoSwitchOnPowerOn(enabled) {
+        cecAutoSwitchOnPowerOn = enabled;
+        save();
+        settingsChanged("cecAutoSwitchOnPowerOn", enabled);
+    }
+
+    function setCecDefaultInput(addr) {
+        cecDefaultInput = addr;
+        save();
+        settingsChanged("cecDefaultInput", addr);
+    }
+
+    // Set or clear a local name override for a CEC logical address. An empty/blank
+    // name removes the override (falls back to the derived friendly name). The
+    // value is stored keyed by the address stringified, matching the on-disk shape.
+    function setCecDeviceName(addr, name) {
+        var key = String(addr);
+        var copy = Object.assign({}, cecDeviceNames);
+        if (name && name.length > 0)
+            copy[key] = name;
+        else
+            delete copy[key];
+        cecDeviceNames = copy;
+        save();
+        settingsChanged("cecDeviceNames", copy);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===
