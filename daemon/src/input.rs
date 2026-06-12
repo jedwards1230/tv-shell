@@ -614,6 +614,18 @@ impl PadDevice {
                 }
             }
 
+            // View/Select button (single press) opens the right-edge Session
+            // QAM (#218): emit the `overlay:session` deep-link intent the shell
+            // routes to SessionQAM. Shell-only — deliberately NOT mirrored in
+            // `handle_game`, so it never interferes with the in-game force-quit
+            // combo (Back+Home+LB+RB, which also uses BTN_SELECT) or game input.
+            // The shell guards `overlay:session` to the idle state, so this is a
+            // no-op press while a stream/app owns the screen. BTN_SELECT has no
+            // default key binding, so nothing else consumes this press.
+            if code == cfg::BTN_SELECT && value == 1 {
+                sh.publish(Event::Intent("overlay:session".into()));
+            }
+
             // LB/RB -> mouse left/right click.
             if code == cfg::BTN_TL {
                 sh.emit_mouse_button(cfg::BTN_LEFT, value);
