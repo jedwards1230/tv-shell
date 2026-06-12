@@ -42,9 +42,18 @@ Drawer {
     property int _csRow: 0
 
     readonly property var _tabs: [
-        { label: "Now Playing", icon: "♪" },
-        { label: "Quick Settings", icon: "⚙" },
-        { label: "Notifications", icon: "◉" }
+        {
+            label: "Now Playing",
+            icon: "♪"
+        },
+        {
+            label: "Quick Settings",
+            icon: "⚙"
+        },
+        {
+            label: "Notifications",
+            icon: "◉"
+        }
     ]
 
     // Open the QAM at the default (Quick Settings) tab with the tab bar focused.
@@ -282,7 +291,9 @@ Drawer {
                         border.color: barFocused ? Theme.focusBorder : Theme.surfaceBorder
 
                         Behavior on color {
-                            ColorAnimation { duration: 100 }
+                            ColorAnimation {
+                                duration: 100
+                            }
                         }
 
                         ColumnLayout {
@@ -390,7 +401,11 @@ Drawer {
                     border.width: (rowFocused || root._outputExpanded) ? Units.borderMedium : Units.borderThin
                     border.color: (rowFocused || root._outputExpanded) ? Theme.focusBorder : Theme.surfaceBorder
 
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 100
+                        }
+                    }
 
                     ColumnLayout {
                         id: heroCol
@@ -512,7 +527,11 @@ Drawer {
                         height: parent.height
                         radius: parent.radius
                         color: root.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
-                        Behavior on width { NumberAnimation { duration: 80 } }
+                        Behavior on width {
+                            NumberAnimation {
+                                duration: 80
+                            }
+                        }
                     }
                     Text {
                         anchors.centerIn: parent
@@ -546,7 +565,11 @@ Drawer {
                     color: rowFocused ? Theme.surfaceHover : Theme.cardBackground
                     border.width: rowFocused ? Units.borderMedium : Units.borderThin
                     border.color: rowFocused ? Theme.focusBorder : Theme.surfaceBorder
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 100
+                        }
+                    }
                     Text {
                         anchors.centerIn: parent
                         text: "Open Notification Center"
@@ -589,7 +612,9 @@ Drawer {
                         color: Theme.textMuted
                     }
                 }
-                Item { Layout.fillWidth: true }
+                Item {
+                    Layout.fillWidth: true
+                }
                 Text {
                     text: "B: back"
                     font.pixelSize: Theme.fontHint
