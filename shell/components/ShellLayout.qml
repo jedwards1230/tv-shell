@@ -23,6 +23,7 @@ FocusScope {
     property alias volumeOverlay: volumeOverlay
     property alias networkOverlay: networkOverlay
     property alias sessionQam: sessionQam
+    property alias overlayNavDrawer: overlayNavDrawer
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -376,7 +377,10 @@ FocusScope {
     // === Overlay Drawer (appRunning state) ===
     Item {
         anchors.fill: parent
-        visible: root.shellState === "appRunning" && root.overlayDrawerOpen
+        // Stay visible through the close slide-out: gate on the drawer's
+        // `active` (open || animating), not just overlayDrawerOpen, or the
+        // subtree hides instantly and the drawer vanishes in place over an app.
+        visible: root.shellState === "appRunning" && (root.overlayDrawerOpen || overlayNavDrawer.active)
         z: 50
 
         DimmedBackdrop {

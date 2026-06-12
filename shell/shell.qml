@@ -448,11 +448,12 @@ ShellRoot {
         PanelWindow {
             required property var modelData
             screen: modelData
-            // Map the shell surface over an app while the QAM is open OR still
-            // animating — keying off `.visible` (opened || _animating), not
-            // `.opened`, so the close slide-out plays before the window unmaps
-            // (otherwise the QAM vanishes in place over an app).
-            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen || layout.sessionQam.visible
+            // Map the shell surface over an app while a drawer is open OR still
+            // animating, so the close slide-out plays before the window unmaps
+            // (otherwise the drawer vanishes in place over an app). Key off the
+            // drawers' `.active` bool — NOT `.visible`, which Qt couples to
+            // parent-chain visibility and would break this very binding.
+            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen || layout.sessionQam.active || layout.overlayNavDrawer.active
 
             anchors {
                 top: true
