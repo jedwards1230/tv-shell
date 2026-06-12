@@ -32,8 +32,13 @@ FocusScope {
     visible: opened || _animating
     focus: opened
 
-    // Track whether animation is still running so we stay visible during close
+    // Track whether the slide animation is in flight so we stay visible during
+    // close. Set true synchronously the instant `opened` changes (either
+    // direction) — otherwise `visible` re-evaluates to false before the Behavior
+    // starts, hiding the panel in place instead of letting it slide out. Cleared
+    // only when the animation finishes (below), after the slide-out completes.
     property bool _animating: false
+    onOpenedChanged: root._animating = true
 
     // === Scrim (semi-transparent backdrop) ===
     Rectangle {
@@ -86,14 +91,16 @@ FocusScope {
             NumberAnimation {
                 duration: 400
                 easing.type: Easing.OutCubic
-                onRunningChanged: root._animating = running
+                onRunningChanged: if (!running)
+                    root._animating = false
             }
         }
         Behavior on y {
             NumberAnimation {
                 duration: 400
                 easing.type: Easing.OutCubic
-                onRunningChanged: root._animating = running
+                onRunningChanged: if (!running)
+                    root._animating = false
             }
         }
 
