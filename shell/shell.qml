@@ -246,13 +246,22 @@ ShellRoot {
         }
         onIntentOverlay: target => {
             root.userActivityDetected();
-            if (root.state === "idle" && root._layout) {
+            if (!root._layout)
+                return;
+            // The Session QAM opens on the home screen AND over a running local
+            // app — it rides the shell's overlay surface (the window maps while
+            // it's open, dimming the app via the drawer scrim) and returns to
+            // the app on close. The other overlays stay idle-only for now.
+            if (target === "session") {
+                if (root.state === "idle" || root.state === "appRunning")
+                    root._layout.sessionQam.open();
+                return;
+            }
+            if (root.state === "idle") {
                 if (target === "volume")
                     root._layout.volumeOverlay.openAt(null);
                 else if (target === "network")
                     root._layout.networkOverlay.openAt(null);
-                else if (target === "session")
-                    root._layout.sessionQam.open();
                 else
                     console.log("shell: unknown overlay target deep-link:", target);
             }
@@ -433,7 +442,7 @@ ShellRoot {
         PanelWindow {
             required property var modelData
             screen: modelData
-            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen
+            visible: (root.state !== "appRunning" && root.state !== "streaming" && root.state !== "reconnecting" && root.state !== "launching") || root.overlayDrawerOpen || layout.sessionQam.opened
 
             anchors {
                 top: true
