@@ -30,6 +30,16 @@ Release exclusive gamepad access. Resets all stick state (releases held stick ke
 
 **Response:** `ok\n`
 
+### `handoff`
+
+Hand the physical pads to a Moonlight stream (#221). Switches the fleet to the **Handoff** presenter: drops any virtual twin and **releases** the physical `EVIOCGRAB` so SDL/Moonlight reads the real evdev node directly (a true handoff — no virtual pad). The daemon keeps reading events so the session stays active and the gamepad safety combos (force-quit / suspend / end-session) still arm, but it does **not** intercept Home — the Guide button flows straight through to the game (remote Steam sees it).
+
+This is the presenter the shell enters when a stream launches; `grab` is the inverse (re-grab + Shell presenter). Contrast with `release`, which keeps the grab and routes through a virtual twin.
+
+> **Re-grab is the caller's responsibility, and is guaranteed on every exit path.** Between `handoff` and Moonlight actually opening the evdev node the pads are ungrabbed, so a stuck/failed launch would leave them readable by the compositor. The shell bounds this window: `StreamManager.qml` re-emits `grab` on **every** terminal path — clean exit, suspend, force-quit, 5-attempt crash give-up, and a 30 s `launchTimeout` that force-kills a hung launch and re-grabs. During the window itself the daemon is still in the Handoff presenter reading the ungrabbed nodes, so the force-quit safety combo remains armed; and the kiosk Hyprland binds no gamepad input, so leaked events are inert. The 30 s bound is deliberately generous (network stream handshake) rather than tightened to a few seconds, which would false-trip slow launches.
+
+**Response:** `ok\n`
+
 ### `status`
 
 Query current connection and grab state.
@@ -1820,27 +1830,29 @@ LB and RB emit mouse left-click and right-click respectively (both in grabbed an
 
 Left and right triggers (`ABS_Z`, `ABS_RZ`) are treated as digital: held when analog value > 100, released otherwise. They appear in the `buttons:` debug event as `LT`/`RT` but do not emit any keyboard or mouse events.
 
-## Presenters: Shell vs Game
+## Presenters: Shell vs Game vs Handoff
 
-The daemon **keeps the physical `EVIOCGRAB` in both modes** (Phase 5) — no
-controller input ever leaks to the compositor. The `grab` IPC selects the
-**shell presenter**, `release` selects the **game presenter**; the two differ
-only in where the pad's input goes.
+The daemon keeps the physical `EVIOCGRAB` in the **Shell** and **Game** presenters
+(Phase 5) — no controller input leaks to the compositor in those modes. The
+**Handoff** presenter (#221) is the exception: it **releases** the grab so
+SDL/Moonlight reads the real evdev node directly. `grab` selects the shell
+presenter, `release` the game presenter, and `handoff` the handoff presenter; they
+differ in where the pad's input goes and whether the physical grab is held.
 
-| Feature | Shell presenter (`grab`) | Game presenter (`release`) |
-|---------|--------------------------|----------------------------|
-| Physical pad grabbed | Yes | Yes |
-| Per-player clean virtual gamepad | — | One per pad (`game-shell-virtual-pad-<slot>`) |
-| Button-to-keyboard mapping | Active | — (raw buttons forwarded to the virtual pad) |
-| D-pad / left stick → arrow keys | Active | — (forwarded as raw axes) |
-| Right stick → mouse cursor | Active | — (forwarded as raw axis) |
-| LB/RB → mouse clicks | Active | — (forwarded as raw buttons) |
-| Combo detection (end-session, force-quit, suspend) | Active | Active |
-| Home → `intent:home-tap` / `intent:home-hold` | Active (intercepted) | Active (intercepted, never forwarded) |
-| `buttons:` debug events | Active | — |
-| Input mode tracking | Active | — |
-| Capture mode | Active | — |
-| Force-quit `Ctrl+Alt+Shift+Q` emission | No (not needed) | Yes |
+| Feature | Shell presenter (`grab`) | Game presenter (`release`) | Handoff presenter (`handoff`) |
+|---------|--------------------------|----------------------------|-------------------------------|
+| Physical pad grabbed | Yes | Yes | **No** (ungrabbed → SDL reads it directly) |
+| Per-player clean virtual gamepad | — | One per pad (`game-shell-virtual-pad-<slot>`) | — (game reads the real node) |
+| Button-to-keyboard mapping | Active | — (raw buttons forwarded to the virtual pad) | — |
+| D-pad / left stick → arrow keys | Active | — (forwarded as raw axes) | — |
+| Right stick → mouse cursor | Active | — (forwarded as raw axis) | — |
+| LB/RB → mouse clicks | Active | — (forwarded as raw buttons) | — |
+| Combo detection (end-session, force-quit, suspend) | Active | Active | Active |
+| Home → `intent:home-tap` / `intent:home-hold` | Active (intercepted) | Active (intercepted, never forwarded) | **No** (forwarded — remote Steam sees Guide) |
+| `buttons:` debug events | Active | — | — |
+| Input mode tracking | Active | — | — |
+| Capture mode | Active | — | — |
+| Force-quit `Ctrl+Alt+Shift+Q` emission | No (not needed) | Yes | Yes |
 
 On entering the shell presenter: each pad's clean virtual gamepad is torn down;
 held keys/triggers reset and combos cancel on the underlying grab.
@@ -1848,6 +1860,12 @@ On entering the game presenter: each pad gets a clean virtual gamepad mirroring
 its capabilities (keys, axes with calibration, `input_id`). The game reads the
 virtual pad; the daemon still intercepts Home so the shell can come up over a
 running game.
+On entering the handoff presenter: each pad's virtual gamepad is torn down and the
+physical `EVIOCGRAB` is released, so SDL/Moonlight reads the real evdev node. The
+**Home/Guide trade-off**: because the grab is dropped and Home is not intercepted,
+remote Steam (Big Picture) sees the Guide button — but a local Home-tap can no
+longer raise the shell overlay over the stream. The gamepad force-quit combo
+(Back+Home+LB+RB) and the keyboard remain the escape hatches.
 
 ## Settings Persistence
 

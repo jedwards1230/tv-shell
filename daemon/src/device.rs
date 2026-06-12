@@ -477,6 +477,9 @@ mod tests {
         let db = ControllerDb::parse(BUNDLED_DB);
         // Baseline should contain the common Xbox 360 pad.
         assert!(db.is_known(0x045e, 0x028e));
+        // 8BitDo Ultimate 2 Wireless via UM 2 Receiver (#221): vendor 0x2dc8,
+        // product 0x310b (GUID bytes c82d / 0b31).
+        assert!(db.is_known(0x2dc8, 0x310b));
     }
 
     #[test]

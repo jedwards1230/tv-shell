@@ -107,10 +107,20 @@ enum Internal {
 ///   always intercepted into `intent:home-*` so the shell overlay can come up
 ///   over a running game (substrate for #75). The gamepad-only safety combos
 ///   (force-quit / suspend / end-session) still run.
+/// * [`Presenter::Handoff`] — the Moonlight stream presenter (#221). The physical
+///   pad is **UNGRABBED** (EVIOCGRAB released) so SDL/Moonlight reads the real
+///   evdev node directly — a true handoff, no virtual twin. The daemon still
+///   receives events (the session stays active), but watches **only** the gamepad
+///   safety combos (force-quit / suspend / end-session); Home is **not**
+///   intercepted, so remote Steam sees the Guide button. Contrast with
+///   [`Presenter::Game`], which keeps the grab + a virtual twin (the old
+///   `release` path that left SDL seeing a live virtual pad *and* a silently
+///   grabbed physical node).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Presenter {
     Shell,
     Game,
+    Handoff,
 }
 
 /// Resources shared across every pad in the fleet: the virtual output devices,
@@ -563,6 +573,7 @@ impl PadDevice {
         match sh.presenter {
             Presenter::Shell => self.handle_shell(sh, ev),
             Presenter::Game => self.handle_game(sh, ev),
+            Presenter::Handoff => self.handle_handoff(sh, ev),
         }
     }
 
@@ -699,6 +710,35 @@ impl PadDevice {
             // Forward sticks/triggers/d-pad verbatim — the game wants raw axes.
             self.forward_to_virtual_pad(ev);
         }
+    }
+
+    /// Handoff presenter (#221): the physical pad is UNGRABBED, so SDL/Moonlight
+    /// reads the real evdev node directly (true handoff — no virtual twin). The
+    /// daemon still receives every event because we keep the read half of the fd,
+    /// but it only watches the gamepad safety combos off `held_keys`. There is no
+    /// virtual pad, no key mapping, and **no Home interception** — Home flows
+    /// straight through to the game so remote Steam sees the Guide button.
+    fn handle_handoff(&mut self, sh: &mut Shared, ev: InputEvent) {
+        let et = ev.event_type();
+        let code = ev.code();
+        let value = ev.value();
+
+        if et == EventType::KEY {
+            // Watch only the gamepad-only safety combos (force-quit / suspend /
+            // end-session). No virtual-pad forwarding, no key map, no Home
+            // intercept — the ungrabbed node is what the game reads.
+            if value == 1 {
+                self.held_keys.insert(code);
+                self.check_combo_start(sh);
+                self.check_quit_combo(sh);
+                self.check_suspend_combo(sh);
+            } else if value == 0 {
+                self.held_keys.remove(&code);
+                self.cancel_combo(sh);
+            }
+        }
+        // ABS (sticks/triggers/d-pad) are intentionally ignored: the game reads
+        // them off the ungrabbed physical node directly.
     }
 
     /// Emit one event onto this pad's clean virtual gamepad, if it has one.
@@ -976,8 +1016,9 @@ impl PadDevice {
             // the Moonlight force-quit chord on the shared virtual keyboard. The
             // shell presenter has no app to quit. (Pre-Phase-5 this keyed off the
             // grab; the pad now stays grabbed in both modes, so it keys off the
-            // presenter instead.)
-            if sh.presenter == Presenter::Game {
+            // presenter instead.) Handoff (#221) is also a streaming presenter, so
+            // it fires the chord too.
+            if matches!(sh.presenter, Presenter::Game | Presenter::Handoff) {
                 sh.send_moonlight_quit();
             }
             sh.publish(Event::ComboForceQuit);
@@ -2070,6 +2111,16 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             release_all(sh, fleet);
             let _ = r.send(resp_ok());
         }
+        Control::Handoff(r) => {
+            // Replies `ok` unconditionally, mirroring Grab/Release above:
+            // ungrab()/enter_shell() are best-effort and log internally on the
+            // rare failure (the ungrab ioctl can only fail on an already-dead
+            // fd, which on_pad_leave reaps). A stuck grab is self-correcting —
+            // the shell re-emits `grab` on every stream-exit path (see the
+            // handoff section in docs/IPC_PROTOCOL.md).
+            handoff_all(sh, fleet);
+            let _ = r.send(resp_ok());
+        }
         Control::Status(r) => {
             let _ = r.send(fleet.status_string(sh.presenter));
         }
@@ -2262,6 +2313,21 @@ fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
     }
 }
 
+/// Switch the fleet to the **handoff presenter** (the `handoff` IPC, #221). Hand
+/// the physical pads directly to a Moonlight stream: drop any virtual twin and
+/// **release** the physical `EVIOCGRAB` so SDL/Moonlight reads the real evdev
+/// node (true handoff, no virtual pad). The daemon keeps reading events so the
+/// session stays active and the safety combos still arm. Both `enter_shell`
+/// (drop vpad) and `ungrab` are idempotent.
+fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
+    info!(pads = fleet.pads.len(), "presenter -> Handoff (handoff)");
+    sh.presenter = Presenter::Handoff;
+    for pad in fleet.pads.values_mut() {
+        pad.enter_shell(sh); // drop any virtual pad
+        pad.ungrab(sh); // release the physical grab so SDL reads the real node
+    }
+}
+
 fn do_set_binding(sh: &mut Shared, action: &str, button: &str) -> String {
     if !config::is_default_action(action) {
         return resp_unknown_action(action);
@@ -2372,13 +2438,19 @@ fn try_join(sh: &mut Shared, fleet: &mut Fleet) {
         );
         let mut pad = PadDevice::new(fd, stream, wire_id.clone(), name.clone(), path, slot);
         pad.calibrate();
-        // Auto-grab on connect (matches the Python device loop). The grab is held
-        // in both presenters; if the fleet is mid-game (a second player joining a
-        // running stream), give the new pad its clean virtual gamepad too so it
-        // joins the same presenter the rest of the fleet is in (Phase 5).
-        pad.grab(sh);
-        if sh.presenter == Presenter::Game {
-            pad.enter_game(sh);
+        // Match the joining pad to the fleet's current presenter:
+        //   * Shell — grab so its input drives nav (default).
+        //   * Game  — grab + clean virtual gamepad (a 2nd player joining a stream
+        //     that runs through the virtual-pad path).
+        //   * Handoff (#221) — leave it UNGRABBED so SDL/Moonlight reads the real
+        //     evdev node directly, exactly like the pads already handed off.
+        match sh.presenter {
+            Presenter::Shell => pad.grab(sh),
+            Presenter::Game => {
+                pad.grab(sh);
+                pad.enter_game(sh);
+            }
+            Presenter::Handoff => { /* leave ungrabbed — SDL reads it directly */ }
         }
         // Fleet outputs (ride-along, Phase 5.5): light the player LED to match
         // the slot (#101 LED) and read the initial battery (#100). Both no-op on

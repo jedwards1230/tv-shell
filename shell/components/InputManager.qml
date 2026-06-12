@@ -2,7 +2,7 @@ import Quickshell.Io
 import QtQuick
 
 // IPC protocol: see docs/IPC_PROTOCOL.md
-// Commands used: grab, release, subscribe, get-pads, rumble
+// Commands used: grab, release, handoff, subscribe, get-pads, rumble
 // Events handled: combo:force-quit, combo:end-session, combo:suspend-stream,
 //   input-mode:*, controller-wake, controller-disconnected, intent:* (the
 //   control-surface stream — the SOLE shell-intent vocabulary; the legacy
@@ -191,6 +191,9 @@ Item {
     function release() {
         inputRelease.request("release");
     }
+    function handoff() {
+        inputHandoff.request("handoff");
+    }
     function startListening() {
         comboListener.start();
         // Seed the fleet snapshot once the subscriber is up; pad:* deltas keep
@@ -207,6 +210,10 @@ Item {
 
     SocketClient {
         id: inputRelease
+    }
+
+    SocketClient {
+        id: inputHandoff
     }
 
     // Seeds the `pads` model with the current fleet (id,index,name,grabbed) on

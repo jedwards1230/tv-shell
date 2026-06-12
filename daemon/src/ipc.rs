@@ -380,6 +380,7 @@ async fn dispatch(
     match cmd {
         Command::Grab => request(control_tx, Control::Grab).await,
         Command::Release => request(control_tx, Control::Release).await,
+        Command::Handoff => request(control_tx, Control::Handoff).await,
         Command::Status => request(control_tx, Control::Status).await,
         Command::GetBindings => request(control_tx, Control::GetBindings).await,
         Command::SetBinding { action, button } => {
@@ -702,7 +703,10 @@ mod tests {
     async fn fake_runtime(mut rx: mpsc::Receiver<Control>) {
         while let Some(msg) = rx.recv().await {
             match msg {
-                Control::Grab(r) | Control::Release(r) | Control::CaptureCancel(r) => {
+                Control::Grab(r)
+                | Control::Release(r)
+                | Control::Handoff(r)
+                | Control::CaptureCancel(r) => {
                     let _ = r.send(protocol::resp_ok());
                 }
                 Control::Status(r) => {
