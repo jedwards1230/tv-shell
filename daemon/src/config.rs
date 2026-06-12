@@ -703,6 +703,13 @@ pub const CEC_FOCUS_ON_WAKE_DEFAULT: bool = true;
 const _: () = assert!(!CEC_FOCUS_ON_STARTUP_DEFAULT);
 const _: () = assert!(CEC_FOCUS_ON_WAKE_DEFAULT);
 
+/// Default for `cecAutoSwitchOnPowerOn`: off by default so a device powering on
+/// never yanks the TV/AVR input unexpectedly. The daemon does not yet act on this
+/// flag (behaviour wiring is a follow-up); Phase 1 establishes the key + a tested
+/// reader so the setting persists round-trip.
+pub const CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT: bool = false;
+const _: () = assert!(!CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT);
+
 /// Read the `cecFocusOnStartup` setting from a parsed settings document. Returns
 /// [`CEC_FOCUS_ON_STARTUP_DEFAULT`] when the key is absent or not a JSON bool.
 /// Pure (no I/O) — unit-testable on any host.
@@ -744,6 +751,29 @@ pub fn cec_focus_on_wake(path: &Path) -> bool {
     {
         Some(v) => cec_focus_on_wake_from(&v),
         None => CEC_FOCUS_ON_WAKE_DEFAULT,
+    }
+}
+
+/// Read the `cecAutoSwitchOnPowerOn` setting from a parsed settings document.
+/// Returns [`CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT`] when the key is absent or not a
+/// JSON bool. Pure (no I/O) — unit-testable on any host.
+pub fn cec_auto_switch_on_power_on_from(settings: &serde_json::Value) -> bool {
+    settings
+        .get("cecAutoSwitchOnPowerOn")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT)
+}
+
+/// Read the `cecAutoSwitchOnPowerOn` setting from `settings.json` on disk. A
+/// missing or unparseable file (or a non-bool value) yields
+/// [`CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT`].
+pub fn cec_auto_switch_on_power_on(path: &Path) -> bool {
+    match std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    {
+        Some(v) => cec_auto_switch_on_power_on_from(&v),
+        None => CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT,
     }
 }
 
@@ -1105,6 +1135,56 @@ mod tests {
 
         let _ = std::fs::remove_file(&startup_path);
         let _ = std::fs::remove_file(&wake_path);
+    }
+
+    #[test]
+    fn cec_auto_switch_from_reads_bool_with_default() {
+        // Explicit true/false pass through.
+        assert!(cec_auto_switch_on_power_on_from(
+            &serde_json::json!({ "cecAutoSwitchOnPowerOn": true })
+        ));
+        assert!(!cec_auto_switch_on_power_on_from(
+            &serde_json::json!({ "cecAutoSwitchOnPowerOn": false })
+        ));
+        // Absent key -> default (off).
+        assert_eq!(
+            cec_auto_switch_on_power_on_from(&serde_json::json!({ "themeMode": "dark" })),
+            CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT
+        );
+        // Non-bool -> default (off).
+        assert_eq!(
+            cec_auto_switch_on_power_on_from(&serde_json::json!({ "cecAutoSwitchOnPowerOn": "yes" })),
+            CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT
+        );
+    }
+
+    #[test]
+    fn cec_auto_switch_from_disk_round_trips() {
+        let path = std::env::temp_dir().join(format!(
+            "gs-cec-autoswitch-{}-{:?}.json",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Missing file -> default (off).
+        assert_eq!(
+            cec_auto_switch_on_power_on(&path),
+            CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT
+        );
+
+        // Explicit value honored.
+        std::fs::write(&path, r#"{"cecAutoSwitchOnPowerOn":true}"#).unwrap();
+        assert!(cec_auto_switch_on_power_on(&path));
+
+        // Garbage file -> default (off).
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(
+            cec_auto_switch_on_power_on(&path),
+            CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
