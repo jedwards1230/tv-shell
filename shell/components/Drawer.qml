@@ -32,8 +32,21 @@ FocusScope {
     visible: opened || _animating
     focus: opened
 
-    // Track whether animation is still running so we stay visible during close
+    // True while the drawer is open OR still animating (in or out). A plain
+    // bool, NOT the `visible` property — hosts that gate a parent window/Item on
+    // a drawer must key off THIS, never `.visible`: Qt couples `visible` to
+    // parent-chain visibility, which breaks the binding when this drawer is the
+    // only thing mapping that ancestor. Lets ancestors stay mapped through the
+    // close slide-out (e.g. the QAM/nav drawer over a running app).
+    readonly property bool active: opened || _animating
+
+    // Track whether the slide animation is in flight so we stay visible during
+    // close. Set true synchronously the instant `opened` changes (either
+    // direction) — otherwise `visible` re-evaluates to false before the Behavior
+    // starts, hiding the panel in place instead of letting it slide out. Cleared
+    // only when the animation finishes (below), after the slide-out completes.
     property bool _animating: false
+    onOpenedChanged: root._animating = true
 
     // === Scrim (semi-transparent backdrop) ===
     Rectangle {
@@ -86,14 +99,16 @@ FocusScope {
             NumberAnimation {
                 duration: 400
                 easing.type: Easing.OutCubic
-                onRunningChanged: root._animating = running
+                onRunningChanged: if (!running)
+                    root._animating = false
             }
         }
         Behavior on y {
             NumberAnimation {
                 duration: 400
                 easing.type: Easing.OutCubic
-                onRunningChanged: root._animating = running
+                onRunningChanged: if (!running)
+                    root._animating = false
             }
         }
 

@@ -145,6 +145,13 @@ compile-verified only, needs on-device verification on the deploy host.
 `SocketClient` (no more `living-room-cec` shell-out). `AVControlSettings.qml`
 is a separate follow-up (#16).
 
+**CEC focus toggles:** opening the libcec connection no longer auto-claims the
+active source (`activate_source(false)` in the builder). Daemon-start focus is
+gated by `cecFocusOnStartup` (default `false`) and resume-from-sleep focus by
+`cecFocusOnWake` (default `true`), both within the `GAME_SHELL_CEC_LIFECYCLE`
+master env gate. The manual `cec-active-source` IPC and standby-on-suspend are
+unaffected.
+
 ## Build & test
 
 The full binary only links on **Linux** (`evdev`/`uinput` are kernel
@@ -175,13 +182,18 @@ Arch/CachyOS these come with `systemd` / `base-devel`.
 ## Deploy
 
 1. `cargo build --release`
-2. Install `target/release/game-shell-input` to `/opt/game-shell/bin/`
+2. Install `target/release/game-shell-input` to `$GAME_SHELL_DIR/bin/`
+   (the install prefix — `/opt/game-shell` is just a fallback default; the
+   binary resolves its own root from `current_exe`. `GAME_SHELL_INPUT_BIN`
+   overrides the exact binary path for the re-exec / dev-override hook.)
 
 `scripts/game-shell-session.sh` spawns the binary directly — it is the sole
 backend (the Python rollback was retired in #96).
 
-Honors `GAME_SHELL_SOCK`, `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` (exact-pin override),
-and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
+Honors `GAME_SHELL_DIR` (install root; also derived from `current_exe`),
+`GAME_SHELL_INPUT_BIN` (override the binary path used for the `/dev/restart-daemon`
+re-exec), `GAME_SHELL_SOCK`, `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` (exact-pin
+override), and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
 
 ## Logging & debugging
 
@@ -195,7 +207,7 @@ Logs go to stderr via `tracing`, filtered by `RUST_LOG` (default `info`). Tiers:
 
 ```bash
 # Full input pipeline trace for one run (scoped to the input module):
-RUST_LOG=game_shell_input::input=trace /opt/game-shell/bin/game-shell-input
+RUST_LOG=game_shell_input::input=trace "$GAME_SHELL_DIR/bin/game-shell-input"
 # High-level event flow only (intents/combos/pad events), less noise:
 RUST_LOG=game_shell_input::input=debug ...
 ```

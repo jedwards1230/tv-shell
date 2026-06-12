@@ -1,4 +1,5 @@
 module components
+singleton Paths 1.0 Paths.qml
 singleton SettingsStore 1.0 SettingsStore.qml
 singleton AppDiscoveryManager 1.0 AppDiscoveryManager.qml
 singleton RecentsTracker 1.0 RecentsTracker.qml
@@ -56,6 +57,7 @@ PopoverMenu 1.0 PopoverMenu.qml
 PowerOverlay 1.0 PowerOverlay.qml
 VolumeOverlay 1.0 VolumeOverlay.qml
 NetworkOverlay 1.0 NetworkOverlay.qml
+SessionQAM 1.0 SessionQAM.qml
 SystemSettings 1.0 SystemSettings.qml
 SessionDialog 1.0 SessionDialog.qml
 ScreenshotFlash 1.0 ScreenshotFlash.qml

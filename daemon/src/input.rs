@@ -155,6 +155,13 @@ struct Shared {
     /// (`handle_event`) branches on it.
     presenter: Presenter,
 
+    /// Whether our logind session is the foreground (active) one. Maintained by
+    /// `Control::SetSessionActive` (the `session` actor). While `false` the
+    /// physical `EVIOCGRAB` is dropped on every pad and their events are ignored,
+    /// so a VT-switched-to session (Plasma/Bigscreen) owns the controller.
+    /// Orthogonal to `presenter`. Defaults `true`.
+    session_active: bool,
+
     /// Cached `rumbleEnabled` setting (#108) — refreshed on `set-config` via
     /// `Control::ConfigChanged` instead of re-reading settings.json on every
     /// rumble.
@@ -420,6 +427,12 @@ impl PadDevice {
         if self.grabbed {
             return;
         }
+        // Don't take the physical grab while our session is backgrounded — the
+        // foreground DE owns the controller then. Re-grabbed on reactivation via
+        // `Control::SetSessionActive(true)`.
+        if !sh.session_active {
+            return;
+        }
         match self.event_stream.device_mut().grab() {
             Ok(()) => {
                 self.grabbed = true;
@@ -599,6 +612,21 @@ impl PadDevice {
                         sh.publish(Event::Intent("home-tap".into()));
                     }
                 }
+            }
+
+            // View/Select button (single press) opens the right-edge Session
+            // QAM (#218): emit the `overlay:session` deep-link intent the shell
+            // routes to SessionQAM. Shell-only — deliberately NOT mirrored in
+            // `handle_game`, so it never interferes with the in-game force-quit
+            // combo (Back+Home+LB+RB, which also uses BTN_SELECT) or game input.
+            // The shell opens the QAM both on the home screen and over a running
+            // local app (`appRunning` keeps the Shell presenter, so this handler
+            // still runs). Over a Moonlight *stream* the presenter is Game and
+            // `handle_game` runs instead — which does NOT mirror this intercept,
+            // so streams are left untouched. BTN_SELECT has no default key
+            // binding, so nothing else consumes this press.
+            if code == cfg::BTN_SELECT && value == 1 {
+                sh.publish(Event::Intent("overlay:session".into()));
             }
 
             // LB/RB -> mouse left/right click.
@@ -1869,6 +1897,7 @@ pub async fn run(
         capture_gen: 0,
         home_hold_active: false,
         presenter: Presenter::Shell,
+        session_active: true,
         rumble_enabled: config::rumble_enabled(&config::settings_path()),
     };
     let mut fleet = Fleet::new();
@@ -1890,8 +1919,13 @@ pub async fn run(
             Some((fd, res)) = next_fleet_event(&mut fleet), if !fleet.pads.is_empty() => {
                 match res {
                     Ok(ev) => {
-                        if let Some(pad) = fleet.pads.get_mut(&fd) {
-                            pad.handle_event(&mut sh, ev);
+                        // While our session is backgrounded the pad is ungrabbed
+                        // and the foreground compositor also receives this event;
+                        // read-and-drop so nothing is injected via uinput.
+                        if sh.session_active {
+                            if let Some(pad) = fleet.pads.get_mut(&fd) {
+                                pad.handle_event(&mut sh, ev);
+                            }
                         }
                     }
                     Err(_) => on_pad_leave(&mut sh, &mut fleet, fd),
@@ -2172,6 +2206,29 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
             sh.db.merge(&fresh);
             let _ = reply.send(resp_ok());
         }
+        Control::SetSessionActive(active) => {
+            if active != sh.session_active {
+                sh.session_active = active;
+                if active {
+                    info!(
+                        pads = fleet.pads.len(),
+                        "session active -> re-grabbing pads"
+                    );
+                    for pad in fleet.pads.values_mut() {
+                        pad.grab(sh);
+                    }
+                } else {
+                    info!(
+                        pads = fleet.pads.len(),
+                        "session inactive -> releasing pads"
+                    );
+                    for pad in fleet.pads.values_mut() {
+                        pad.ungrab(sh);
+                    }
+                }
+            }
+        }
+
         Control::Shutdown => return false,
     }
     true

@@ -8,7 +8,7 @@
 
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
-use crate::{apps, config, controllerdb, health, recents, system};
+use crate::{apps, config, controllerdb, health, moonlight, notifications, recents, system};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::os::unix::fs::PermissionsExt;
@@ -197,6 +197,63 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         Command::GetRecents => {
             Some(spawn_blocking_string(|| recents::load_recents(&recents::recents_path())).await)
         }
+        Command::GetNotifications => Some(
+            spawn_blocking_string(|| {
+                notifications::load_notifications(&notifications::notifications_path())
+            })
+            .await,
+        ),
+        Command::RecordNotification(body) => {
+            let body = body.clone();
+            Some(
+                spawn_blocking_string(move || {
+                    match serde_json::from_str::<notifications::Notification>(&body) {
+                        Ok(mut entry) => {
+                            // Honor a client-supplied creation time; fall back to
+                            // the daemon clock only when none was provided.
+                            if entry.time == 0.0 {
+                                entry.time = notifications::now_unix_secs();
+                            }
+                            match notifications::record_notification(
+                                &notifications::notifications_path(),
+                                entry,
+                            ) {
+                                Ok(()) => protocol::resp_ok(),
+                                Err(e) => protocol::resp_error(&format!(
+                                    "record-notification failed: {e}"
+                                )),
+                            }
+                        }
+                        Err(e) => protocol::resp_error(&format!("invalid JSON: {e}")),
+                    }
+                })
+                .await,
+            )
+        }
+        Command::RecordNotificationUsage => Some(protocol::resp_record_notification_usage()),
+        Command::SetNotifications(body) => {
+            let body = body.clone();
+            Some(
+                spawn_blocking_string(move || {
+                    match serde_json::from_str::<Vec<notifications::Notification>>(&body) {
+                        Ok(entries) => {
+                            match notifications::set_notifications(
+                                &notifications::notifications_path(),
+                                entries,
+                            ) {
+                                Ok(()) => protocol::resp_ok(),
+                                Err(e) => {
+                                    protocol::resp_error(&format!("set-notifications failed: {e}"))
+                                }
+                            }
+                        }
+                        Err(e) => protocol::resp_error(&format!("invalid JSON: {e}")),
+                    }
+                })
+                .await,
+            )
+        }
+        Command::SetNotificationsUsage => Some(protocol::resp_set_notifications_usage()),
         Command::SetConfig(body) => {
             let body = body.clone();
             Some(
@@ -247,6 +304,15 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             Some(health::handle_sunshine_status(host, port).await)
         }
         Command::SunshineStatusUsage => Some(protocol::resp_sunshine_status_usage()),
+        // Moonlight local-config "forget" — creds-free client-side unpair.
+        // Stateless and cross-platform (just edits Moonlight.conf). Missing host
+        // routes to `MoonlightForgetUsage`. Runs the blocking file edit off the
+        // reactor via spawn_blocking.
+        Command::MoonlightForget(host) => {
+            let host = host.clone();
+            Some(spawn_blocking_string(move || moonlight::handle_forget(&host)).await)
+        }
+        Command::MoonlightForgetUsage => Some(protocol::resp_moonlight_forget_usage()),
 
         // --- #159: controllerdb-status / controllerdb-refresh ---
         Command::ControllerDbStatus => {
@@ -426,9 +492,18 @@ async fn dispatch(
         | Command::RecordLaunch(_)
         | Command::RecordLaunchUsage
         | Command::GetRecents
+        // Notification commands are stateless (consumed by `dispatch_stateless`).
+        | Command::GetNotifications
+        | Command::RecordNotification(_)
+        | Command::RecordNotificationUsage
+        | Command::SetNotifications(_)
+        | Command::SetNotificationsUsage
         // Phase 4 Sunshine is stateless (consumed by `dispatch_stateless`).
         | Command::SunshineStatus { .. }
         | Command::SunshineStatusUsage
+        // Moonlight forget is stateless (consumed by `dispatch_stateless`).
+        | Command::MoonlightForget(_)
+        | Command::MoonlightForgetUsage
         // Controller DB status is stateless (consumed by `dispatch_stateless`).
         // ControllerDbRefresh is handled above with control_tx (hot-swap).
         | Command::ControllerDbStatus
@@ -706,6 +781,8 @@ mod tests {
                 Control::ControllerDbRefreshed { reply } => {
                     let _ = reply.send(protocol::resp_ok());
                 }
+                // No reply, no device in the fake fleet — mirror the runtime no-op.
+                Control::SetSessionActive(_) => {}
                 Control::Shutdown => break,
             }
         }
@@ -791,6 +868,32 @@ mod tests {
                 .unwrap_or(false),
             "get-recents should be a JSON array, got: {recents}"
         );
+        // Notification commands: get-notifications starts empty (or array from any
+        // prior host-state); assert shape only.
+        let notifs = send_line(&mut s, "get-notifications").await;
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&notifs)
+                .map(|v| v.is_array())
+                .unwrap_or(false),
+            "get-notifications should be a JSON array, got: {notifs}"
+        );
+        // record-notification usage error.
+        assert_eq!(
+            send_line(&mut s, "record-notification").await,
+            "error:usage: record-notification <json-object>"
+        );
+        // set-notifications usage error.
+        assert_eq!(
+            send_line(&mut s, "set-notifications").await,
+            "error:usage: set-notifications <json-array>"
+        );
+        // Malformed bodies produce error:invalid JSON.
+        assert!(send_line(&mut s, "record-notification not-json")
+            .await
+            .starts_with("error:invalid JSON"));
+        assert!(send_line(&mut s, "set-notifications not-json")
+            .await
+            .starts_with("error:invalid JSON"));
         // Usage + malformed-body errors are stateless and HOME-independent.
         assert_eq!(
             send_line(&mut s, "set-config").await,

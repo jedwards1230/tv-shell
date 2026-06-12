@@ -17,7 +17,8 @@
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
 use game_shell_input::{
-    bluetooth, http, hyprland, input, ipc, network, power, protocol, session_env, state, watch,
+    bluetooth, http, hyprland, input, ipc, network, power, protocol, session, session_env, state,
+    watch,
 };
 
 #[cfg(target_os = "linux")]
@@ -95,6 +96,19 @@ fn main() -> anyhow::Result<()> {
             });
         }
 
+        // logind session watcher: releases the gamepad grab while our session is
+        // backgrounded (VT-switched away) and re-grabs on return. Fire-and-forget
+        // like the D-Bus actors — logs and degrades gracefully if logind is
+        // absent (grab simply stays held, the pre-feature behaviour).
+        {
+            let session_control_tx = control_tx.clone();
+            tokio::spawn(async move {
+                if let Err(e) = session::run(session_control_tx).await {
+                    tracing::warn!("logind session actor exited: {e}");
+                }
+            });
+        }
+
         // Initialize the controller DB state once at startup. The IPC server
         // shares it across connections (Arc<RwLock<_>>).
         let db_state: SharedControllerDbState =
@@ -164,7 +178,7 @@ fn main() -> anyhow::Result<()> {
         // `/dev/build` replaces the binary inode, so /proc/self/exe resolves to
         // "…/game-shell-input (deleted)" and exec()ing that path fails ENOENT.
         // The install path always points at the just-built binary.
-        let exe = session_env::install_root().join("bin/game-shell-input");
+        let exe = session_env::input_bin();
         let err = std::process::Command::new(&exe)
             .args(std::env::args_os().skip(1))
             .exec();

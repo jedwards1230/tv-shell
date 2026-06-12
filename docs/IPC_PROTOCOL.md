@@ -14,7 +14,7 @@ The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communic
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query reply `cec-scan`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, `get-notifications`, `record-notification`, `set-notifications`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query reply `cec-scan`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -225,6 +225,29 @@ After a successful merge, the daemon refreshes its cached input-runtime settings
 (currently `rumbleEnabled`) so a rumble toggle takes effect immediately without a
 daemon restart.
 
+**QML-owned settings keys** (written by QML via `set-config`, read by the daemon
+at relevant lifecycle points):
+
+| Key | Type | Default | Read by daemon |
+|-----|------|---------|----------------|
+| `themeMode` | string | `"dark"` | No |
+| `streamingViewMode` | string | `"servers"` | No |
+| `controllerDebug` | bool | `false` | No |
+| `rumbleEnabled` | bool | `true` | On every rumble event |
+| `reduceMotion` | bool | `false` | No |
+| `textScale` | number | `1.0` | No |
+| `hdrEnabled` | bool | `true` | No |
+| `nightLightEnabled` | bool | `false` | No |
+| `nightLightTemp` | number | `4500` | No |
+| `overscan` | number | `0` | No |
+| `sleepTimerMinutes` | number | `0` | No |
+| `wakeOnController` | bool | `true` | No |
+| `autoDimEnabled` | bool | `false` | No |
+| `autoDimDelayMinutes` | number | `2` | No |
+| `defaultSink` | string | `""` | No |
+| `cecFocusOnStartup` | bool | `false` | At CEC startup (within `GAME_SHELL_CEC_LIFECYCLE`) |
+| `cecFocusOnWake` | bool | `true` | At CEC resume from sleep (within `GAME_SHELL_CEC_LIFECYCLE`) |
+
 ### `record-launch <json-object>`
 
 Record an app launch into the recents file
@@ -256,6 +279,72 @@ unparseable file yields `[]`. Returns at most 15 entries.
 ```json
 [{"name":"Firefox","exec":"firefox","comment":"Browse the web","time":1716950400.0}]
 ```
+
+---
+
+## Notification History Commands (#71)
+
+### `get-notifications`
+
+Return the stored notification history, newest first. Stateless. A missing or
+unparseable file yields `[]`. Returns at most 100 entries.
+
+**Response:** A compact single-line JSON **array** of notification objects:
+
+```json
+[{"id":5,"title":"Stream started","message":"","level":"info","source":"stream","icon":"📡","time":1716950400.0}]
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | number | Notification id (monotonically increasing within a session) |
+| `title` | string | Notification title |
+| `message` | string | Body text (may be `""`) |
+| `level` | string | `info` / `warning` / `error` |
+| `source` | string | Source tag (e.g. `system`, `stream`, `controller`, `network`, `av`) |
+| `icon` | string | Icon character or name (may be `""`) |
+| `time` | number | Unix seconds (float) when the notification was created |
+
+### `record-notification <json-object>`
+
+Append a notification to the history file
+(`~/.local/share/game-shell/notifications.json`). The body is a compact
+single-line JSON object `{"id":N,"title":...,"message":...,"level":...,"source":...,"icon":...}`.
+The daemon prepends the entry (newest first), stamps `time` with the current
+wall-clock unix seconds, and caps the file at 100 entries. **No de-duplication**
+— every notification is a distinct log event (unlike `record-launch` which
+deduplicates by name). Stateless. Written single-line compact JSON.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok\n` |
+| Missing body | `error:usage: record-notification <json-object>\n` |
+| Body isn't valid JSON | `error:invalid JSON: <detail>\n` |
+| Write failed | `error:record-notification failed: <detail>\n` |
+
+Example request: `record-notification {"id":5,"title":"Stream started","message":"","level":"info","source":"stream","icon":""}\n`
+
+### `set-notifications <json-array>`
+
+Overwrite the notifications file entirely with the given array. Used by the QML
+`NotificationManager` when the user clears history or removes a single
+notification — the caller sends the full updated in-memory list. Caps at 100
+entries. Stateless. Written single-line compact JSON.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Success | `ok\n` |
+| Missing body | `error:usage: set-notifications <json-array>\n` |
+| Body isn't valid JSON | `error:invalid JSON: <detail>\n` |
+| Write failed | `error:set-notifications failed: <detail>\n` |
+
+Example request: `set-notifications []\n` (clears history)
+
+---
 
 ## Controller DB Commands (#159)
 
@@ -858,6 +947,12 @@ An empty result (or any IPC failure) is `[]`. On a non-Linux build:
 
 ### Sunshine session detection (`reqwest`)
 
+> **Security note (TLS):** `sunshine-status` talks to Sunshine over HTTPS with
+> `danger_accept_invalid_certs` — Sunshine ships a self-signed cert that can't be
+> verified, so the channel is **encrypted but not authenticated** (no protection
+> against an active MITM). It's a read-only `/serverinfo` probe carrying no
+> credentials, but only use it against hosts on a **trusted LAN**.
+
 #### `sunshine-status <host> <port>`
 
 Pre-flight check the QML shell runs before launching a Moonlight stream: is the
@@ -897,6 +992,43 @@ body degrades to the offline object (the command does not error):
 
 The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
+
+### Moonlight local-config "forget" (creds-free unpair)
+
+#### `moonlight-forget <host>`
+
+Remove a host from Moonlight's local config so THIS client is no longer paired
+with it (the Moonlight settings "Unpair" row action). Unlike a Sunshine-side
+unpair this needs **no credentials** — it only edits a local file the user owns.
+After forgetting, the host's status flips to "not paired" and the **Pair** action
+returns; re-pairing re-establishes it.
+
+`<host>` is the single host token — the IP/hostname string the shell uses, e.g.
+`192.168.8.10`. The daemon reads Moonlight's config
+(`${XDG_CONFIG_HOME:-$HOME/.config}/Moonlight Game Streaming Project/Moonlight.conf`,
+a QSettings INI) and, within its `[hosts]` array, finds the index whose
+`hostname` / `localaddress` / `manualaddress` / `remoteaddress` equals `<host>`,
+removes that index's lines, **renumbers** the remaining hosts contiguously
+`1..k`, and updates the section `size=k`. All other content (other sections,
+other hosts, the `srvcert` `@ByteArray(...)` blobs) is preserved verbatim — the
+edit is line-based, not a QSettings round-trip.
+
+Idempotent: a host that isn't found, or a missing conf, returns `ok` (nothing to
+forget). Stateless and cross-platform — it's just file editing (no actor, no
+feature gate). The core rewrite (`forget_host`) is a pure, unit-tested function;
+the handler does read → `forget_host` → write off the reactor.
+
+> Moonlight is invoked once per command (`moonlight stream/list/pair …`), not held
+> as a persistent process, so editing the conf between invocations is safe — no
+> live process's in-memory QSettings can clobber the edit.
+
+**Response:**
+
+| Condition | Response |
+|-----------|----------|
+| Host removed (or already absent / no conf) | `ok\n` |
+| File read/write error | `error:<reason>\n` |
+| Missing `<host>` body | `error:usage: moonlight-forget <host>\n` |
 
 
 ## HDMI-CEC Commands (#94, #16)
@@ -1279,7 +1411,8 @@ started (no WARN/ERROR in first 3s)
 #### `POST /dev/build`
 
 Runs `cargo build --release` inside the `daemon/` subdirectory of the install root
-(default `/opt/game-shell`). On success, installs the built binary to `bin/game-shell-input`
+(resolved via `session_env::install_root()` — from `current_exe` / `$GAME_SHELL_DIR`;
+`/opt/game-shell` is only a last-ditch default). On success, installs the built binary to `bin/game-shell-input`
 with `install -m755`. Returns the last 12 lines of cargo stderr plus `ok` on success,
 or a 500 with the cargo/install error on failure. Typical build time is ~15 s on a
 warm cache; the connection timeout is 180 s to cover cold builds.
@@ -1556,6 +1689,23 @@ fullscreen transitions.
 |-------|---------|---------|
 | `hypr:activewindow:<class>` | The active window changed | The new active window's class. An empty class is allowed (e.g. `hypr:activewindow:` when no window is focused) |
 | `hypr:fullscreen:<0|1>` | The active window's fullscreen state changed | `1` when fullscreen, `0` otherwise |
+| `hypr:openwindow:<json>` | A new window was mapped (Hyprland `openwindow` event). Payload is a compact JSON object `{"address":"0x..","class":"..","title":"..","workspace":".."}`. Titles may contain commas — JSON encoding avoids comma-splitting issues. Consumed by `AppLifecycleManager.qml` for deterministic launch confirmation (#203) | Compact JSON object |
+| `hypr:closewindow:<address>` | A window was closed (Hyprland `closewindow` event). Payload is the window's Hyprland address. Consumed by `AppLifecycleManager.qml` for immediate `appClosed` detection (#203) | Window address string (e.g. `0x55a1b2c3d4e5`) |
+
+`hypr:openwindow` and `hypr:closewindow` supplement the existing `hypr:activewindow`
+event and the `windowPoller` in `AppLifecycleManager`. The poller remains the source of
+truth for `runningWindows` and app-closed detection; the new events enable deterministic,
+immediate response when a launched window actually maps, without waiting for the next
+2-second poll tick.
+
+`hypr:openwindow` payload fields:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `address` | string | Hyprland window address (e.g. `0x55a1b2c3d4e5`) |
+| `class` | string | Window class |
+| `title` | string | Window title (may contain commas — safe because JSON-encoded) |
+| `workspace` | string | Workspace name where the window was mapped |
 
 Example wire lines:
 
@@ -1564,6 +1714,8 @@ hypr:activewindow:firefox
 hypr:activewindow:
 hypr:fullscreen:1
 hypr:fullscreen:0
+hypr:openwindow:{"address":"0x55a1b2c3d4e5","class":"firefox","title":"Mozilla Firefox","workspace":"1"}
+hypr:closewindow:0x55a1b2c3d4e5
 ```
 
 ### HDMI-CEC Events (#94, #16)

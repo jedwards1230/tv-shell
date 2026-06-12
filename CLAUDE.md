@@ -45,7 +45,8 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     StreamOverlay.qml        # Reconnecting/error overlay
     qmldir                   # Component registry
 config/
-  hyprland.conf               # Monitor config (resolution, refresh, HDR, VRR)
+  hyprland.conf               # Generic monitor default + `source` hook for a per-machine override
+  hyprland.conf.example       # Machine-specific display example (LG C2/Denon HDR) → ~/.config/game-shell/hyprland-local.conf
   palette.md                  # Color palette documentation
   game-shell.desktop          # SDDM session file
   targets.yaml.example        # Example streaming targets (docs only)
@@ -60,8 +61,9 @@ scripts/
 
 ## Key Data Flows
 
-- **Streaming targets**: Loaded from `/opt/game-shell/targets.json` at startup (single-line JSON — see gotchas). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.
+- **Streaming targets**: Loaded from `~/.config/game-shell/targets.json` at startup (single-line JSON — see gotchas). The path is resolved client-side by the `Paths` QML singleton (`$GAME_SHELL_TARGETS` env → else `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json`); a missing file is a clean no-op (empty target list, no crash). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.
 - **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `streamingViewMode`, `controllerDebug` (QML-owned) and `keyBindings` (daemon-owned). The **daemon is the sole writer** — `SettingsStore` reads via `get-config` and hands QML-owned keys to `set-config` (read-modify-write), so QML never formats config JSON itself. All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore.
+- **Config locations & paths**: The shell is prefix-agnostic (#145). Per-user config lives under `~/.config/game-shell/` (`settings.json`, `targets.json`, optional `daemon.env`, optional `hyprland-local.conf`); system defaults conventionally under `/etc/game-shell/`. The install prefix is resolved at runtime — never hardcode `/opt/game-shell`. Env vars: `GAME_SHELL_DIR` (install root; exported by the session script, also derived from `current_exe`), `GAME_SHELL_INPUT_BIN` (override the daemon binary path for the re-exec/dev-override hook; falls back to `$GAME_SHELL_DIR/bin/game-shell-input`), `GAME_SHELL_TARGETS` (override the streaming-targets file path), `GAME_SHELL_SOCK` (daemon IPC socket). `/opt/game-shell` survives only as a documented last-ditch fallback in `game-shell-session.sh` and the daemon's `install_root()`.
 - **App discovery & recents**: `AppDiscoveryManager` (apps via `list-apps`) and `RecentsTracker` (`get-recents` / `record-launch`) read JSON straight from the daemon, which owns the `.desktop` scanning (`freedesktop-desktop-entry` crate) and recents file. QML no longer parses `.desktop` files. The QML side talks to the daemon over a native `Quickshell.Io` socket via `SocketClient.qml` (#97) — the old per-call `python3 -c` Unix-socket shims were retired.
 - **Input daemon IPC**: See [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) for the full protocol specification. QML sends commands via Unix socket; the daemon streams events to subscribers.
 - **Input & state**: [docs/INPUT_AND_STATE.md](docs/INPUT_AND_STATE.md) is the canonical reference for the shell's state machine (`idle`/`launching`/`streaming`/`reconnecting`/`appRunning`), focus model, the per-context input-semantics matrix, B/Escape back precedence, and the `intent` control surface. Read it before changing any input/focus/nav code.
@@ -102,6 +104,10 @@ The `cec` feature **static-links a bundled libcec** (`libcec-sys/static`, #179):
 the binary carries its own libcec + p8-platform, so there is no system
 `libcec`/`libcec-dev` dependency at build or runtime (the CI leg asserts this via
 `ldd`). Build needs only `libudev-dev` + `pkg-config` + network for the archive.
+Opening the connection no longer auto-claims the active source
+(`activate_source(false)`); startup and resume focus are gated by
+`cecFocusOnStartup` (default `false`) and `cecFocusOnWake` (default `true`),
+both within the `GAME_SHELL_CEC_LIFECYCLE` master gate.
 
 ## Development
 
@@ -113,8 +119,9 @@ No build step — QML is interpreted by Quickshell at runtime. Deploy by syncing
 # 1. Push changes to git
 git push origin <branch>
 
-# 2. Pull on target device
-ssh <device> "cd /opt/game-shell && git pull"
+# 2. Pull on target device (install prefix is resolved from $GAME_SHELL_DIR /
+#    current_exe — $GAME_SHELL_DIR below is just whatever prefix you installed to)
+ssh <device> "cd \$GAME_SHELL_DIR && git pull"
 
 # 3. Restart Quickshell (find Hyprland signature first)
 SIG=$(ls /run/user/1000/hypr/ | tail -1)
@@ -132,7 +139,9 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.pn
 
 ```bash
 cd daemon && cargo build --release
-install -m755 target/release/game-shell-input /opt/game-shell/bin/game-shell-input
+# Install to the daemon binary's resolved location ($GAME_SHELL_DIR/bin by
+# default; $GAME_SHELL_INPUT_BIN overrides the exact path).
+install -m755 target/release/game-shell-input "$GAME_SHELL_DIR/bin/game-shell-input"
 ```
 
 **HDMI-CEC is an opt-in feature (#94).** A plain `cargo build` is C-free; the

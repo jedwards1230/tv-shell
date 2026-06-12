@@ -93,6 +93,18 @@ pub enum Command {
     RecordLaunchUsage,
     /// Return recent launches as a compact JSON array.
     GetRecents,
+    /// Return notification history as a compact JSON array.
+    GetNotifications,
+    /// Record a notification into notifications.json. The body is the raw JSON text
+    /// (a `{id,title,message,level,source,icon}` object) after the command word.
+    RecordNotification(String),
+    /// `record-notification` with a missing/empty body.
+    RecordNotificationUsage,
+    /// Overwrite the notifications list entirely. The body is a compact JSON array
+    /// of notification objects after the command word. Used for clears/removals.
+    SetNotifications(String),
+    /// `set-notifications` with a missing/empty body.
+    SetNotificationsUsage,
 
     // --- Phase 3: Bluetooth (bluer / BlueZ) ---
     /// Adapter power state -> `bt:on` / `bt:off` / `error:*`.
@@ -159,6 +171,16 @@ pub enum Command {
     },
     /// `sunshine-status` with a missing/incomplete `<host> <port>` body.
     SunshineStatusUsage,
+
+    // --- Moonlight local-config "forget" (creds-free unpair) ---
+    /// `moonlight-forget <host>` -> remove a host from Moonlight's local config
+    /// (`Moonlight.conf`) so this client is no longer paired with it. `host` is
+    /// the IP/hostname string the shell uses (matched against the conf's
+    /// hostname/localaddress/manualaddress/remoteaddress fields). Stateless
+    /// (cross-platform — it's just file editing). Replies `ok` / `error:*`.
+    MoonlightForget(String),
+    /// `moonlight-forget` with a missing `<host>` body.
+    MoonlightForgetUsage,
 
     // --- Phase 4: HDMI-CEC (cec-rs / libcec) ---
     /// `cec-scan` — return all visible CEC devices as a compact JSON array.
@@ -280,8 +302,9 @@ pub const INTENT_VOCAB: &[&str] = &["home", "home-tap", "home-hold", "menu", "se
 
 /// The closed set of overlay targets accepted by the `overlay:<target>`
 /// deep-link namespace. Validated here in the daemon (unlike `settings` and
-/// `app` whose registries live in QML).
-pub const INTENT_OVERLAY_TARGETS: &[&str] = &["volume", "network"];
+/// `app` whose registries live in QML). `session` opens the right-edge Session
+/// QAM drawer (#218).
+pub const INTENT_OVERLAY_TARGETS: &[&str] = &["volume", "network", "session"];
 
 /// True if `name` is a known intent — either a coarse vocabulary entry or a
 /// valid deep-link target. The function is pure/side-effect-free and is shared
@@ -345,6 +368,7 @@ impl Command {
             "list-apps" => Command::ListApps,
             "get-config" => Command::GetConfig,
             "get-recents" => Command::GetRecents,
+            "get-notifications" => Command::GetNotifications,
             // Phase 3 bare commands (no body).
             "bt-power-status" => Command::BtPowerStatus,
             "bt-power-on" => Command::BtPowerOn,
@@ -387,6 +411,20 @@ impl Command {
                         Command::RecordLaunchUsage
                     } else {
                         Command::RecordLaunch(body.to_string())
+                    };
+                }
+                if let Some(body) = command_body(cmd, "record-notification") {
+                    return if body.is_empty() {
+                        Command::RecordNotificationUsage
+                    } else {
+                        Command::RecordNotification(body.to_string())
+                    };
+                }
+                if let Some(body) = command_body(cmd, "set-notifications") {
+                    return if body.is_empty() {
+                        Command::SetNotificationsUsage
+                    } else {
+                        Command::SetNotifications(body.to_string())
                     };
                 }
                 // `intent <name>`: a single intent-name token (whitespace-
@@ -464,6 +502,18 @@ impl Command {
                             port: port.to_string(),
                         },
                         _ => Command::SunshineStatusUsage,
+                    };
+                }
+                // `moonlight-forget <host>`: a single host token (the IP/hostname
+                // the shell uses). Removes the host from Moonlight's local config
+                // so this client is no longer paired. A missing body is a usage
+                // error. `command_body` enforces the word boundary so e.g.
+                // `moonlight-forgetX` is not mistaken for the command.
+                if let Some(body) = command_body(cmd, "moonlight-forget") {
+                    return if body.is_empty() {
+                        Command::MoonlightForgetUsage
+                    } else {
+                        Command::MoonlightForget(body.to_string())
                     };
                 }
                 // Phase 4 CEC address-argument commands: `cec-device <addr>` etc.
@@ -610,6 +660,13 @@ pub enum Event {
     HyprActiveWindow(String),
     /// Active window fullscreen state changed. Wire: `hypr:fullscreen:<0|1>`.
     HyprFullscreen(bool),
+    /// A new window was mapped. Payload is a compact JSON object
+    /// `{"address":"0x..","class":"..","title":"..","workspace":".."}`.
+    /// Wire: `hypr:openwindow:<json>`.
+    HyprOpenWindow(String),
+    /// A window was closed. Payload is the window's address. Wire:
+    /// `hypr:closewindow:<address>`.
+    HyprCloseWindow(String),
 
     // --- Phase 4 events (HDMI-CEC) ---
     /// A CEC device was discovered or updated; payload is a compact JSON object
@@ -678,6 +735,8 @@ impl fmt::Display for Event {
             Event::PowerBattery(json) => write!(f, "power:battery:{json}"),
             Event::HyprActiveWindow(class) => write!(f, "hypr:activewindow:{class}"),
             Event::HyprFullscreen(fs) => write!(f, "hypr:fullscreen:{}", if *fs { 1 } else { 0 }),
+            Event::HyprOpenWindow(json) => write!(f, "hypr:openwindow:{json}"),
+            Event::HyprCloseWindow(address) => write!(f, "hypr:closewindow:{address}"),
             Event::CecDevice(json) => write!(f, "cec:device:{json}"),
             Event::CecPower(json) => write!(f, "cec:power:{json}"),
             Event::ConfigChanged => f.write_str("config:changed"),
@@ -745,6 +804,14 @@ pub fn resp_record_launch_usage() -> String {
     "error:usage: record-launch <json-object>".to_string()
 }
 
+pub fn resp_record_notification_usage() -> String {
+    "error:usage: record-notification <json-object>".to_string()
+}
+
+pub fn resp_set_notifications_usage() -> String {
+    "error:usage: set-notifications <json-array>".to_string()
+}
+
 pub fn resp_intent_usage() -> String {
     "error:usage: intent <name>".to_string()
 }
@@ -774,6 +841,43 @@ pub fn resp_unknown_key(name: &str) -> String {
 /// Generic error reply for a malformed config/recents body.
 pub fn resp_error(msg: &str) -> String {
     format!("error:{msg}")
+}
+
+/// Strip control characters (newlines, carriage returns, etc.) from a string
+/// destined for an IPC error reply, replacing each with a space.
+///
+/// The wire protocol is newline-delimited and the QML side reads it line-by-line
+/// (`SplitParser`), so a `\n`/`\r`/other control char embedded in an error body
+/// (e.g. an error Display string, or a file value echoed back) could split one
+/// reply into several lines and desync the client. Keeping the reply on a single
+/// line preserves framing. Pure — unit-tested.
+pub fn sanitize_ipc(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+/// Await a reply-producing future under a hard timeout, returning the future's
+/// `String` on completion or `error:<timeout_msg>` if the bound elapses first.
+///
+/// This is the safety bound for blocking-backend actors that forward a request
+/// to a worker thread and await its reply (e.g. the CEC actor's `forward`): if
+/// the worker wedges (a blocking libcec `open()`/transmit that never returns),
+/// the await would otherwise hang forever and silence the whole actor. Capping
+/// it guarantees the actor's request loop always makes progress — a wedged
+/// worker yields prompt errors instead of silence. `timeout_msg` is the error
+/// body used on elapse (sanitized so a stray control char can't desync the wire).
+/// Generic over the future so it is cross-platform and unit-testable without any
+/// backend (the CEC module is Linux+feature-gated, so its own tests can't run on
+/// macOS/CI).
+pub async fn reply_with_timeout<F>(bound: std::time::Duration, timeout_msg: &str, fut: F) -> String
+where
+    F: std::future::Future<Output = String>,
+{
+    match tokio::time::timeout(bound, fut).await {
+        Ok(reply) => reply,
+        Err(_elapsed) => resp_error(&sanitize_ipc(timeout_msg)),
+    }
 }
 
 pub fn resp_timeout() -> String {
@@ -846,6 +950,11 @@ pub fn cec_power_json(addr: &str, power_word: &str) -> String {
 /// Usage line for `sunshine-status` issued without a `<host> <port>` body.
 pub fn resp_sunshine_status_usage() -> String {
     "error:usage: sunshine-status <host> <port>".to_string()
+}
+
+/// Usage line for `moonlight-forget` issued without a `<host>` body.
+pub fn resp_moonlight_forget_usage() -> String {
+    "error:usage: moonlight-forget <host>".to_string()
 }
 
 /// `power-can-suspend` reply: `yes` / `no`.
@@ -1143,6 +1252,88 @@ mod tests {
     }
 
     #[test]
+    fn parses_notification_bare_command() {
+        assert_eq!(
+            Command::parse("get-notifications"),
+            Command::GetNotifications
+        );
+        assert_eq!(
+            Command::parse("  get-notifications  "),
+            Command::GetNotifications
+        );
+        // Word boundary.
+        assert_eq!(Command::parse("get-notificationsX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_record_notification_body() {
+        assert_eq!(
+            Command::parse(r#"record-notification {"id":1,"title":"Alert","message":"","level":"info","source":"system","icon":""}"#),
+            Command::RecordNotification(r#"{"id":1,"title":"Alert","message":"","level":"info","source":"system","icon":""}"#.into())
+        );
+        // Bare command (no body) -> usage.
+        assert_eq!(
+            Command::parse("record-notification"),
+            Command::RecordNotificationUsage
+        );
+        assert_eq!(
+            Command::parse("record-notification   "),
+            Command::RecordNotificationUsage
+        );
+        // Word boundary.
+        assert_eq!(Command::parse("record-notificationX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_set_notifications_body() {
+        assert_eq!(
+            Command::parse(r#"set-notifications [{"id":1,"title":"A","message":"","level":"info","source":"system","icon":"","time":1.0}]"#),
+            Command::SetNotifications(r#"[{"id":1,"title":"A","message":"","level":"info","source":"system","icon":"","time":1.0}]"#.into())
+        );
+        // Bare command -> usage.
+        assert_eq!(
+            Command::parse("set-notifications"),
+            Command::SetNotificationsUsage
+        );
+        assert_eq!(
+            Command::parse("set-notifications   "),
+            Command::SetNotificationsUsage
+        );
+        // Word boundary.
+        assert_eq!(Command::parse("set-notificationsX"), Command::Unknown);
+    }
+
+    #[test]
+    fn notification_usage_strings() {
+        assert_eq!(
+            resp_record_notification_usage(),
+            "error:usage: record-notification <json-object>"
+        );
+        assert_eq!(
+            resp_set_notifications_usage(),
+            "error:usage: set-notifications <json-array>"
+        );
+    }
+
+    #[test]
+    fn hypr_openwindow_closewindow_event_wire_strings() {
+        let json = r#"{"address":"0x1","class":"steam","title":"Steam","workspace":"1"}"#;
+        assert_eq!(
+            Event::HyprOpenWindow(json.to_string()).to_string(),
+            format!("hypr:openwindow:{json}")
+        );
+        assert_eq!(
+            Event::HyprCloseWindow("0x1".to_string()).to_string(),
+            "hypr:closewindow:0x1"
+        );
+        // Empty address is allowed (degenerate case).
+        assert_eq!(
+            Event::HyprCloseWindow(String::new()).to_string(),
+            "hypr:closewindow:"
+        );
+    }
+
+    #[test]
     fn parses_intent_command() {
         // Valid name token -> Intent (vocabulary is NOT checked at parse time).
         assert_eq!(
@@ -1417,6 +1608,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_moonlight_forget_body() {
+        assert_eq!(
+            Command::parse("moonlight-forget 192.168.8.10"),
+            Command::MoonlightForget("192.168.8.10".into())
+        );
+        // Surrounding whitespace is trimmed.
+        assert_eq!(
+            Command::parse("  moonlight-forget   host-1  "),
+            Command::MoonlightForget("host-1".into())
+        );
+        // Missing host -> usage.
+        assert_eq!(
+            Command::parse("moonlight-forget"),
+            Command::MoonlightForgetUsage
+        );
+        // Word boundary: `moonlight-forgetX` is NOT moonlight-forget.
+        assert_eq!(Command::parse("moonlight-forgetX"), Command::Unknown);
+    }
+
+    #[test]
     fn phase4_event_wire_strings() {
         assert_eq!(
             Event::HyprActiveWindow("firefox".into()).to_string(),
@@ -1440,6 +1651,62 @@ mod tests {
             resp_sunshine_status_usage(),
             "error:usage: sunshine-status <host> <port>"
         );
+        assert_eq!(
+            resp_moonlight_forget_usage(),
+            "error:usage: moonlight-forget <host>"
+        );
+    }
+
+    #[test]
+    fn sanitize_ipc_strips_control_chars() {
+        // Newlines / carriage returns / tabs become spaces; no line splitting.
+        assert_eq!(sanitize_ipc("a\nb\r\nc"), "a b  c");
+        assert_eq!(sanitize_ipc("tab\there"), "tab here");
+        // Plain text is untouched.
+        assert_eq!(sanitize_ipc("normal error text"), "normal error text");
+        // The result never contains a newline, carriage return, or any control.
+        let out = sanitize_ipc("multi\nline\rerror\u{0007}bell");
+        assert!(!out.contains('\n'));
+        assert!(!out.contains('\r'));
+        assert!(!out.chars().any(|c| c.is_control()));
+    }
+
+    // Pure tokio — no libcec — so this exercises the CEC actor's reply-timeout
+    // safety bound on macOS/CI where the cec module itself can't compile. Uses
+    // short REAL durations (no `start_paused`, which needs tokio `test-util`):
+    // the hang cases resolve in a few ms because the bound itself is tiny.
+    #[tokio::test]
+    async fn reply_with_timeout_returns_reply_when_prompt() {
+        // A future that completes well within the bound yields its reply verbatim.
+        let out = reply_with_timeout(
+            std::time::Duration::from_secs(15),
+            "cec timeout (adapter busy)",
+            async { "ok".to_string() },
+        )
+        .await;
+        assert_eq!(out, "ok");
+    }
+
+    #[tokio::test]
+    async fn reply_with_timeout_errors_when_worker_hangs() {
+        // A future that never completes (a wedged worker) must yield the timeout
+        // error within the bound, not hang. A 20ms bound keeps the test fast.
+        let bound = std::time::Duration::from_millis(20);
+        let start = std::time::Instant::now();
+        let out = reply_with_timeout(
+            bound,
+            "cec timeout (adapter busy)",
+            std::future::pending::<String>(),
+        )
+        .await;
+        assert_eq!(out, "error:cec timeout (adapter busy)");
+        // It returned at/after the bound, not before, and didn't hang.
+        assert!(start.elapsed() >= bound);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        // The timeout message is sanitized so a stray control char can't desync
+        // the wire.
+        let out = reply_with_timeout(bound, "ce\nc busy", std::future::pending::<String>()).await;
+        assert_eq!(out, "error:ce c busy");
     }
 
     #[test]
@@ -1545,6 +1812,7 @@ mod tests {
         assert!(is_known_intent("settings:bluetooth"));
         assert!(is_known_intent("overlay:volume"));
         assert!(is_known_intent("overlay:network"));
+        assert!(is_known_intent("overlay:session"));
         assert!(is_known_intent("app:firefox"));
         // Unknown overlay leaf -> rejected.
         assert!(!is_known_intent("overlay:bogus"));

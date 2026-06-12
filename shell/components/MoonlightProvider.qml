@@ -122,11 +122,14 @@ TargetProvider {
         }
     }
 
-    // Streaming targets are loaded from /opt/game-shell/targets.json (single
-    // line — SplitParser reads line-by-line).
+    // Streaming targets are loaded from the resolved targets path (see
+    // Paths.targetsPath — $GAME_SHELL_TARGETS or ~/.config/game-shell/targets.json;
+    // shared with MoonlightSettings' read/write so they can't drift). Single line —
+    // SplitParser reads line-by-line. A missing file yields no lines → targets
+    // stays [] (clean no-op, no crash).
     Process {
         id: loadProc
-        command: ["cat", "/opt/game-shell/targets.json"]
+        command: ["cat", Paths.targetsPath]
         stdout: SplitParser {
             onRead: line => {
                 try {

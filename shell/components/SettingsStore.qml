@@ -25,7 +25,8 @@ import QtQuick
 //                    external writer modifies settings.json; QML re-fetches via
 //                    get-config so all keys re-apply live without a restart)
 // QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan,
-//                         sleepTimerMinutes, wakeOnController, defaultSink
+//                         sleepTimerMinutes, wakeOnController, defaultSink,
+//                         cecFocusOnStartup, cecFocusOnWake
 Item {
     id: store
 
@@ -45,6 +46,8 @@ Item {
     property bool autoDimEnabled: false          // auto-dim OLED protection (#143)
     property int autoDimDelayMinutes: 2          // idle minutes before dimming (#143)
     property string defaultSink: ""              // WirePlumber sink node.name (stable across reboots)
+    property bool cecFocusOnStartup: false      // claim active source when daemon starts (default off)
+    property bool cecFocusOnWake: true          // claim active source on resume from sleep (default on)
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
@@ -104,6 +107,10 @@ Item {
                     store.autoDimDelayMinutes = obj.autoDimDelayMinutes;
                 if (typeof obj.defaultSink === "string")
                     store.defaultSink = obj.defaultSink;
+                if (typeof obj.cecFocusOnStartup === "boolean")
+                    store.cecFocusOnStartup = obj.cecFocusOnStartup;
+                if (typeof obj.cecFocusOnWake === "boolean")
+                    store.cecFocusOnWake = obj.cecFocusOnWake;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
             } catch (e) {
@@ -142,6 +149,8 @@ Item {
             "autoDimEnabled": store.autoDimEnabled,
             "autoDimDelayMinutes": store.autoDimDelayMinutes,
             "defaultSink": store.defaultSink,
+            "cecFocusOnStartup": store.cecFocusOnStartup,
+            "cecFocusOnWake": store.cecFocusOnWake,
             "moonlightViewMode": null
         });
         saveProc.request("set-config", body);
@@ -239,6 +248,18 @@ Item {
         defaultSink = name;
         save();
         settingsChanged("defaultSink", name);
+    }
+
+    function setCecFocusOnStartup(enabled) {
+        cecFocusOnStartup = enabled;
+        save();
+        settingsChanged("cecFocusOnStartup", enabled);
+    }
+
+    function setCecFocusOnWake(enabled) {
+        cecFocusOnWake = enabled;
+        save();
+        settingsChanged("cecFocusOnWake", enabled);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===

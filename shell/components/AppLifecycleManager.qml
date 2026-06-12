@@ -20,9 +20,16 @@ Item {
     property bool activeWindowFullscreen: false
 
     property var _prelaunchClasses: []
+    // Addresses of windows present at snapshot time, used for address-novelty
+    // comparison when an openwindow event arrives (#203).
+    property var _prelaunchAddresses: []
     property var _pendingApp: null
     property var _launchedApps: Object.create(null)
     property int _maxMisses: 3
+    // Address of the window currently tracked as the foreground app; set when an
+    // openwindow event confirms a launch, and cleared on appClosed / return to
+    // shell.  A stale address here must not suppress future launches.
+    property string _foregroundAddress: ""
 
     // True between a launch being initiated and its window being confirmed
     // mapped — gates windowConfirmed so it fires exactly once per launch and not
@@ -50,6 +57,9 @@ Item {
 
     function launchDesktopApp(app) {
         runningAppClass = "";
+        // Clear any stale foreground address from a previous launch so it can't
+        // suppress openwindow matching for this new launch (#203).
+        root._foregroundAddress = "";
         // #193: this is the ONLY true fresh-launch path — show the launch overlay
         // here, not in checkAndLaunchApp, so resuming an already-running app (the
         // focus-existing-window path) never flashes the overlay.
@@ -97,6 +107,12 @@ Item {
 
     function focusApp(windowClass) {
         runningAppClass = windowClass;
+        // Resuming an existing window (not a fresh launch): clear in-flight launch
+        // tracking so a delayed closewindow for a PRIOR launch's address can't
+        // fire appClosed() on this app (#203). No address is known here, so the
+        // poll fallback handles this window's eventual close.
+        root._foregroundAddress = "";
+        root._awaitingWindow = false;
         focusWindow.windowClass = windowClass;
         focusWindow.running = true;
         appLaunched();
@@ -108,13 +124,25 @@ Item {
     function focusByAddress(address) {
         if (!address || address === "")
             return;
-        // Track the focused window's class for appClosed detection.
+        // Track the focused window's class for appClosed detection. Only proceed
+        // if the address is a currently-known window — otherwise we'd track a
+        // foreground address with no matching runningAppClass, and a later
+        // closewindow for it would fire appClosed() on the wrong app (#203).
+        var found = false;
         for (let i = 0; i < runningWindows.length; i++) {
             if (runningWindows[i].address === address) {
                 runningAppClass = runningWindows[i].windowClass;
+                found = true;
                 break;
             }
         }
+        if (!found)
+            return;
+        // This window is now the foreground app: track ITS address so the fast
+        // closewindow path targets it, and a stale prior-launch address can't
+        // fire appClosed() here. Not awaiting a new window on a resume (#203).
+        root._foregroundAddress = address;
+        root._awaitingWindow = false;
         focusWindowAddr.addr = address;
         focusWindowAddr.running = true;
         appLaunched();
@@ -175,9 +203,13 @@ Item {
         id: snapshotClients
         onClientsReceived: clients => {
             root._prelaunchClasses = clients.map(c => c["class"]);
+            // Also snapshot addresses so openwindow events can check novelty by
+            // address rather than by class (#203).
+            root._prelaunchAddresses = clients.map(c => c["address"] || "");
         }
         onErrorOccurred: {
             root._prelaunchClasses = [];
+            root._prelaunchAddresses = [];
         }
     }
 
@@ -429,6 +461,10 @@ Item {
             } else if (line.indexOf("hypr:fullscreen:") === 0) {
                 root.activeWindowFullscreen = line.substring("hypr:fullscreen:".length) === "1";
                 root._onHyprWindowEvent();
+            } else if (line.indexOf("hypr:openwindow:") === 0) {
+                root._onHyprOpenWindow(line.substring("hypr:openwindow:".length));
+            } else if (line.indexOf("hypr:closewindow:") === 0) {
+                root._onHyprCloseWindow(line.substring("hypr:closewindow:".length));
             }
         }
     }
@@ -438,6 +474,71 @@ Item {
         // active state owner; the poller itself guards against re-entry.
         if ((root.shellState === "idle" || root.shellState === "appRunning") && !windowPoller.running)
             windowPoller.running = true;
+    }
+
+    // Handle a hypr:openwindow event — deterministic ADDRESS-based launch
+    // confirmation (#203). Keeps the existing poll/detectNewWindow as fallback.
+    //
+    // Scope note: full child-PID→window-PID correlation needs moving `exec` into
+    // the daemon — out of scope for this PR. This gives deterministic
+    // ADDRESS-based correlation for the common case (one in-flight launch) plus
+    // keeps the poll fallback for the edge cases.
+    //
+    // _confirmWindow() is idempotent (no-ops once _awaitingWindow is false), so
+    // an event-then-poll double fire is safe.
+    function _onHyprOpenWindow(payload) {
+        if (!root._awaitingWindow)
+            return;
+        try {
+            var w = JSON.parse(payload);
+            var addr = w.address || "";
+            // Address-novelty check: only act if this address was not already
+            // present in the pre-launch snapshot.
+            if (addr === "" || root._prelaunchAddresses.indexOf(addr) >= 0)
+                return;
+
+            // Find which tracked app this window satisfies (by WindowMatcher).
+            var tracked = root._launchedApps;
+            var matched = false;
+            for (var key in tracked) {
+                if (tracked[key] && tracked[key].app && WindowMatcher.matchesApp(tracked[key].app, w)) {
+                    tracked[key].windowClass = w.class || "";
+                    matched = true;
+                    break;
+                }
+            }
+            // Accept even if no tracked app matched — the window is genuinely
+            // new and we were awaiting one.
+            root._launchedApps = tracked;
+            root.runningAppClass = w.class || root.runningAppClass;
+            root._foregroundAddress = addr;
+            root._confirmWindow();
+        } catch (e) {
+            // Malformed JSON payload — log and fall through to the poll fallback.
+            console.warn("AppLifecycleManager: malformed hypr:openwindow payload:", e);
+        }
+        // Kick an extra poll so the runningWindows model and appClosed detection
+        // see the new window without waiting for the next timer tick.
+        root._onHyprWindowEvent();
+    }
+
+    // Handle a hypr:closewindow event — immediate appClosed detection (#203).
+    // The poll remains the source of truth for runningWindows; this just fires
+    // appClosed earlier when the closed address is the tracked foreground app.
+    function _onHyprCloseWindow(address) {
+        // Clear a stale foreground address when any window closes so it can't
+        // suppress future openwindow launches.
+        if (root._foregroundAddress === address) {
+            root._foregroundAddress = "";
+            if (root.shellState === "appRunning" && root.runningAppClass !== "") {
+                root._awaitingWindow = false;
+                root.appClosed();
+                return;
+            }
+        }
+        // Still kick a poll so runningWindows and the appClosed path in the
+        // poller remain consistent.
+        root._onHyprWindowEvent();
     }
 
     Component.onCompleted: {

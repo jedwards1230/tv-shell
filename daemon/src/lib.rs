@@ -13,6 +13,10 @@ pub mod controllerdb;
 pub mod device;
 pub mod health;
 pub mod ipc;
+// Moonlight local-config "forget" (creds-free unpair): line-based edits to
+// Moonlight.conf. Cross-platform — pure file editing, no Linux-only imports.
+pub mod moonlight;
+pub mod notifications;
 pub mod protocol;
 pub mod recents;
 pub mod state;
@@ -52,3 +56,9 @@ pub mod cec;
 // broadcasts config:changed. Uses notify-debouncer-full (Linux-only crate).
 #[cfg(target_os = "linux")]
 pub mod watch;
+
+// logind session-active watcher: releases the gamepad grab while our session is
+// backgrounded (e.g. VT-switched away) so the foreground DE gets the controller.
+// zbus + logind; Linux-only.
+#[cfg(target_os = "linux")]
+pub mod session;

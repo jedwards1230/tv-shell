@@ -71,6 +71,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | — | Controllers — pad connected vs none | substate |
 | — | Key Bindings — capture mode ("press a button") | substate |
 | — | AV Control — CEC device info populated | substate — reads `cec-scan` JSON from daemon + subscribes to `cec:device:*`/`cec:power:*` events (#16) |
+| — | AV Control — Focus preference toggles | always-visible "Focus Preferences" section: "Focus TV on startup" (default Off) and "Focus TV on wake from sleep" (default On); render correctly even when CEC is unavailable |
 | — | Moonlight — add/edit server form + servers/apps toggle | substate |
 | — | Display — each theme mode selected (auto/light/dark) | substate in Display page Appearance section |
 | — | Display — live external reload | QA: edit `~/.config/game-shell/settings.json` over SSH (e.g. flip `themeMode` `dark`→`light`) while the shell is open; confirm the theme switches without a Quickshell restart. The daemon broadcasts `config:changed` and `SettingsStore` re-fetches via `get-config`. No new screenshot view — the existing theme substates cover the visual. |

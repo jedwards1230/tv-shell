@@ -99,6 +99,14 @@ pub enum Control {
         reply: Reply,
     },
 
+    /// Our logind session became active/inactive (sent by the `session` actor).
+    /// On `false` the input runtime releases every pad's physical `EVIOCGRAB`
+    /// and stops processing their events, so a foreground session (e.g.
+    /// Plasma/Bigscreen the user VT-switched to) gets the controller; on `true`
+    /// it re-grabs every pad. Orthogonal to the presenter (`Grab`/`Release`),
+    /// which only routes events while we own the grab.
+    SetSessionActive(bool),
+
     Shutdown,
 }
 
