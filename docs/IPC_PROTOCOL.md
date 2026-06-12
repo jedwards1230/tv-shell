@@ -36,6 +36,8 @@ Hand the physical pads to a Moonlight stream (#221). Switches the fleet to the *
 
 This is the presenter the shell enters when a stream launches; `grab` is the inverse (re-grab + Shell presenter). Contrast with `release`, which keeps the grab and routes through a virtual twin.
 
+> **Re-grab is the caller's responsibility, and is guaranteed on every exit path.** Between `handoff` and Moonlight actually opening the evdev node the pads are ungrabbed, so a stuck/failed launch would leave them readable by the compositor. The shell bounds this window: `StreamManager.qml` re-emits `grab` on **every** terminal path — clean exit, suspend, force-quit, 5-attempt crash give-up, and a 30 s `launchTimeout` that force-kills a hung launch and re-grabs. During the window itself the daemon is still in the Handoff presenter reading the ungrabbed nodes, so the force-quit safety combo remains armed; and the kiosk Hyprland binds no gamepad input, so leaked events are inert. The 30 s bound is deliberately generous (network stream handshake) rather than tightened to a few seconds, which would false-trip slow launches.
+
 **Response:** `ok\n`
 
 ### `status`
