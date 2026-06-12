@@ -19,6 +19,9 @@ pub type Reply = oneshot::Sender<String>;
 pub enum Control {
     Grab(Reply),
     Release(Reply),
+    /// `handoff`: ungrab the physical pads so SDL/Moonlight reads them directly
+    /// (#221). Keeps the session active for safety-combo watching.
+    Handoff(Reply),
     Status(Reply),
     GetBindings(Reply),
     SetBinding {

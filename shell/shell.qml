@@ -371,6 +371,7 @@ ShellRoot {
                 root._layout.overlay.hide();
         }
         onRequestInputRelease: inputManager.release()
+        onRequestInputHandoff: inputManager.handoff()
         onRequestInputGrab: inputManager.grab()
         onSessionConflictDetected: (runningApp, hostName) => {
             if (root._layout) {

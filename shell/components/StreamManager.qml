@@ -22,6 +22,7 @@ Item {
     signal requestOverlayShow(string msg)
     signal requestOverlayHide
     signal requestInputRelease
+    signal requestInputHandoff
     signal requestInputGrab
 
     // Emitted when Sunshine reports a different app is already running
@@ -161,7 +162,9 @@ Item {
             return;
         }
         moonlight.command = cmd;
-        requestInputRelease();
+        // #221: hand the physical pads to Moonlight (ungrab) rather than the old
+        // `release` (which kept the grab + a virtual twin → SDL saw a phantom).
+        requestInputHandoff();
         streamStarted();
         launchTimeout.restart();
         moonlight.running = true;

@@ -18,6 +18,7 @@ use std::fmt;
 pub enum Command {
     Grab,
     Release,
+    Handoff,
     Status,
     Subscribe,
     GetBindings,
@@ -358,6 +359,7 @@ impl Command {
         match cmd {
             "grab" => Command::Grab,
             "release" => Command::Release,
+            "handoff" => Command::Handoff,
             "status" => Command::Status,
             "subscribe" => Command::Subscribe,
             "get-bindings" => Command::GetBindings,
@@ -1140,6 +1142,7 @@ mod tests {
     fn parses_simple_commands() {
         assert_eq!(Command::parse("grab"), Command::Grab);
         assert_eq!(Command::parse("release"), Command::Release);
+        assert_eq!(Command::parse("handoff"), Command::Handoff);
         assert_eq!(Command::parse("status"), Command::Status);
         assert_eq!(Command::parse("subscribe"), Command::Subscribe);
         assert_eq!(Command::parse("get-bindings"), Command::GetBindings);
