@@ -39,3 +39,6 @@
 
 # --- 8BitDo ---
 03000000c82d00000660000000000000,8BitDo Pro 2,platform:Linux,
+# 8BitDo Ultimate 2 Wireless via UM 2 Receiver (#221)
+03000000c82d00000b31000000000000,8BitDo Ultimate 2 Wireless,platform:Linux,
+03000000c82d00000931000000000000,8BitDo Ultimate 2 Wireless (idle),platform:Linux,
