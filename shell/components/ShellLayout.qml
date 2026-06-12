@@ -22,6 +22,7 @@ FocusScope {
     property alias powerOverlay: powerOverlay
     property alias volumeOverlay: volumeOverlay
     property alias networkOverlay: networkOverlay
+    property alias sessionQam: sessionQam
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
@@ -52,7 +53,7 @@ FocusScope {
     // recentsRow.forceActiveFocus() is called inside focusDefaultPosition().
     function focusDefaultPosition() {
         Qt.callLater(function () {
-            if (!homeScreen.visible || settingsPanel.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened)
+            if (!homeScreen.visible || settingsPanel.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened || sessionQam.opened)
                 return;
             homeScreen.forceActiveFocus();
             homeScreen.focusDefaultPosition();
@@ -182,7 +183,7 @@ FocusScope {
         visible: root.shellState === "idle"
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened
+        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
 
         runningWindows: root.runningWindows
         pads: root.pads
@@ -239,7 +240,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || settingsPanel.visible)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsPanel.visible)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -347,6 +348,22 @@ FocusScope {
         onOpenedChanged: {
             if (!networkOverlay.opened)
                 root._returnFocusAfterOverlay();
+        }
+    }
+
+    // === Session QAM (right-edge drawer, #218) ===
+    // z above the nav drawer so it paints over a still-open left drawer.
+    SessionQAM {
+        id: sessionQam
+        z: 70
+        onClosed: {
+            sessionQam.opened = false;
+            homeFocusTimer.restart();
+        }
+        onNotificationCenterRequested: {
+            sessionQam.opened = false;
+            notificationCenter.opened = true;
+            notificationCenter.forceActiveFocus();
         }
     }
 

@@ -251,6 +251,8 @@ ShellRoot {
                     root._layout.volumeOverlay.openAt(null);
                 else if (target === "network")
                     root._layout.networkOverlay.openAt(null);
+                else if (target === "session")
+                    root._layout.sessionQam.open();
                 else
                     console.log("shell: unknown overlay target deep-link:", target);
             }
