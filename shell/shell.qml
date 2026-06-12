@@ -253,8 +253,14 @@ ShellRoot {
             // it's open, dimming the app via the drawer scrim) and returns to
             // the app on close. The other overlays stay idle-only for now.
             if (target === "session") {
-                if (root.state === "idle" || root.state === "appRunning")
-                    root._layout.sessionQam.open();
+                // Toggle: the View button (and Super+Right) both open and close
+                // the QAM — a second press while it's open closes it.
+                if (root.state === "idle" || root.state === "appRunning") {
+                    if (root._layout.sessionQam.opened)
+                        root._layout.sessionQam.close();
+                    else
+                        root._layout.sessionQam.open();
+                }
                 return;
             }
             if (root.state === "idle") {

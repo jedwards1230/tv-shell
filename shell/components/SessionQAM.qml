@@ -68,6 +68,12 @@ Drawer {
         Qt.callLater(() => contentRoot.forceActiveFocus());
     }
 
+    // Close via the same path as B/Escape (the host's onClosed unmaps + restores
+    // focus). Lets the trigger intent toggle the QAM shut, not just open it.
+    function close() {
+        root.closed();
+    }
+
     onOpenedChanged: {
         if (opened) {
             getVolume.running = true;
