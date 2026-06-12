@@ -127,15 +127,19 @@ FocusScope {
         id: padEvents
         subscribe: true
         onLineReceived: line => {
-            if (line.startsWith("pad:connected:"))
+            if (line.startsWith("pad:connected:")) {
                 root._handlePadJson(line.substring(14), root._padConnected);
-            else if (line.startsWith("pad:index:"))
+                // Keep "Detected Input Devices" live in lockstep with the
+                // connected fleet above it (don't wait for the 10s timer).
+                root.scanDevices();
+            } else if (line.startsWith("pad:index:"))
                 root._handlePadJson(line.substring(10), root._padIndex);
             else if (line.startsWith("pad:battery:"))
                 root._handlePadJson(line.substring(12), root._padBattery);
-            else if (line.startsWith("pad:disconnected:"))
+            else if (line.startsWith("pad:disconnected:")) {
                 root._padDisconnected(line.substring(17));
-            else if (line === "controller-wake")
+                root.scanDevices();
+            } else if (line === "controller-wake")
                 root.refreshPads();
         }
     }
