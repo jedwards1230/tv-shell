@@ -252,15 +252,40 @@ FocusScope {
         }
     }
 
-    // Shared process for 5.1 channel test tones — single-shot so it exits
-    // promptly and never hangs audio.
-    //
-    // ALSA 6-channel speaker index map (standard 5.1 order):
-    //   FL=1, FR=2, Rear L=3, Rear R=4, Center=5, LFE=6
+    // Label of the channel currently being tested (drives the "Playing" banner).
+    property string testingLabel: ""
+
+    // 5.1 channel test tone (#234). A short, soft sine is generated as a
+    // 6-channel WAV with the tone in ONLY the target channel, then played via
+    // pw-play — so routing is exact (no speaker-test channel-index guessing) and
+    // gentle. PipeWire's 6-channel order is FL,FR,FC,LFE,RL,RR, so:
+    //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5  ("all" = sweep all 6).
+    // The channel index is passed via GS_CH (env) so it can't inject anything.
     Process {
         id: testTone
-        property var pendingCmd: []
-        command: pendingCmd
+        property string channel: "0"
+        environment: ({
+                "GS_CH": channel
+            })
+        command: ["python3", "-c", "import wave,struct,math,os,tempfile,subprocess\n" + "ch=os.environ.get('GS_CH','0')\n" + "sr=48000;dur=0.4;amp=0.4;nch=6;n=int(sr*dur)\n" + "fd,fn=tempfile.mkstemp(suffix='.wav');os.close(fd)\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "chs=list(range(nch)) if ch=='all' else [int(ch)]\n" + "buf=bytearray()\n" + "for c in chs:\n" + " for i in range(n):\n" + "  e=min(1.0,i/(sr*0.02),(n-i)/(sr*0.06))\n" + "  s=int(amp*e*32767*math.sin(2*math.pi*440*i/sr))\n" + "  fr=[0]*nch;fr[c]=s;buf.extend(struct.pack('<%dh'%nch,*fr))\n" + "w.writeframes(bytes(buf));w.close()\n" + "subprocess.run(['pw-play','--volume','0.6',fn])\n" + "os.remove(fn)\n"]
+        onRunningChanged: {
+            if (!running)
+                root.testingLabel = "";
+        }
+    }
+
+    // Stop any in-progress tone and (re)start it on the given channel.
+    function playChannel(ch, label) {
+        if (testTone.running)
+            testTone.running = false;
+        root.testingLabel = label;
+        testTone.channel = ch;
+        testTone.running = true;
+    }
+
+    function stopTone() {
+        testTone.running = false;
+        root.testingLabel = "";
     }
 
     Component.onCompleted: {
@@ -491,12 +516,9 @@ FocusScope {
         }
 
         // ---------------------------------------------------------------
-        // Speaker Test (5.1)
-        //
-        // ALSA 6-channel index map (document for maintenance):
-        //   FL=1 (Front Left), FR=2 (Front Right),
-        //   Rear L=3, Rear R=4, Center=5, LFE=6
-        // single-shot: -l 1 ensures speaker-test exits after one pass.
+        // Speaker Test (5.1) — short, soft tones via pw-play (#234).
+        // PipeWire 6-channel index map (FL,FR,FC,LFE,RL,RR):
+        //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5
         // ---------------------------------------------------------------
         SectionHeader {
             text: "Speaker Test (5.1)"
@@ -506,6 +528,28 @@ FocusScope {
             text: "Sink: " + sinkDropdownScope.displayText
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
+        }
+
+        // "Now playing" banner — clear visual feedback while a tone plays.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 64
+            radius: 16
+            visible: testTone.running
+            color: Theme.darkMode ? Qt.rgba(Theme.ember.r, Theme.ember.g, Theme.ember.b, 0.18) : Qt.rgba(Theme.navy.r, Theme.navy.g, Theme.navy.b, 0.12)
+            border.width: 2
+            border.color: Theme.ember
+
+            Text {
+                anchors.fill: parent
+                anchors.leftMargin: 24
+                verticalAlignment: Text.AlignVCenter
+                text: "♪  Playing " + root.testingLabel + "…   (select Stop to cancel)"
+                font.pixelSize: Theme.fontSmall
+                font.bold: true
+                color: Theme.textPrimary
+                elide: Text.ElideRight
+            }
         }
 
         // Row 1: FL, FR, Center
@@ -528,11 +572,7 @@ FocusScope {
                     text: "Front L"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // FL = channel 1
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "1"];
-                        testTone.running = true;
-                    }
+                    onActivated: root.playChannel("0", "Front L")
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -561,11 +601,7 @@ FocusScope {
                     text: "Front R"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // FR = channel 2
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "2"];
-                        testTone.running = true;
-                    }
+                    onActivated: root.playChannel("1", "Front R")
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -593,11 +629,7 @@ FocusScope {
                     text: "Center"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // Center = channel 5
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "5"];
-                        testTone.running = true;
-                    }
+                    onActivated: root.playChannel("2", "Center")
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -631,11 +663,7 @@ FocusScope {
                     text: "Rear L"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // Rear L = channel 3
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "3"];
-                        testTone.running = true;
-                    }
+                    onActivated: root.playChannel("4", "Rear L")
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -664,11 +692,7 @@ FocusScope {
                     text: "Rear R"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // Rear R = channel 4
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "4"];
-                        testTone.running = true;
-                    }
+                    onActivated: root.playChannel("5", "Rear R")
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -696,11 +720,7 @@ FocusScope {
                     text: "LFE/Sub"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // LFE = channel 6
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "6"];
-                        testTone.running = true;
-                    }
+                    onActivated: root.playChannel("3", "LFE/Sub")
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -722,17 +742,14 @@ FocusScope {
             activeFocusOnTab: true
 
             KeyNavigation.up: testToneRlScope
+            KeyNavigation.down: stopToneScope
 
             SettingsButton {
                 id: testToneAllBtn
                 text: "All channels"
                 focus: parent.activeFocus
                 anchors.fill: parent
-                onActivated: {
-                    // WAV sweep across all 6 channels, single pass
-                    testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "wav", "-l", "1"];
-                    testTone.running = true;
-                }
+                onActivated: root.playChannel("all", "All channels")
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
@@ -740,6 +757,37 @@ FocusScope {
                     onClicked: {
                         testToneAllScope.forceActiveFocus();
                         testToneAllBtn.activated();
+                    }
+                }
+            }
+        }
+
+        // Stop — instantly cancel an in-progress tone. Dimmed when idle.
+        FocusScope {
+            id: stopToneScope
+            width: stopToneBtn.width
+            height: stopToneBtn.height
+            activeFocusOnTab: true
+            opacity: testTone.running ? 1.0 : 0.4
+
+            KeyNavigation.up: testToneAllScope
+
+            SettingsButton {
+                id: stopToneBtn
+                text: "Stop"
+                focus: parent.activeFocus
+                anchors.fill: parent
+                color: testTone.running ? Theme.crimson : (stopToneScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                border.width: stopToneScope.activeFocus ? 2 : 1
+                border.color: stopToneScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                onActivated: root.stopTone()
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        stopToneScope.forceActiveFocus();
+                        stopToneBtn.activated();
                     }
                 }
             }
