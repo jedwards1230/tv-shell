@@ -36,40 +36,16 @@ FocusScope {
         id: a11yMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 48
+        spacing: 32
 
         // === Reduce Motion ===
-        Text {
+        SectionHeader {
             text: "Reduce Motion"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 24
-
-            ColumnLayout {
-                spacing: 4
-                Layout.fillWidth: true
-
-                Text {
-                    text: "Suppress animations and scrolling text"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textPrimary
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-
-                Text {
-                    text: "Focus ring, glow, and fill remain active — only scale/transition animations stop."
-                    font.pixelSize: Theme.fontSmall
-                    color: Theme.textSecondary
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-            }
+        PreferenceRow {
+            label: "Suppress animations and scrolling text"
+            description: "Focus ring, glow, and fill remain active — only scale/transition animations stop."
 
             FocusScope {
                 id: reduceMotionScope
@@ -109,11 +85,8 @@ FocusScope {
         }
 
         // === Text Size ===
-        Text {
+        SectionHeader {
             text: "Text Size"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         SettingsDropdown {

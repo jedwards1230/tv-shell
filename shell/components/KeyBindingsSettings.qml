@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 // Binding IPC is routed through the SettingsStore singleton (which respects
 // GAME_SHELL_SOCK). See docs/IPC_PROTOCOL.md.
@@ -260,7 +261,7 @@ FocusScope {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 16
+        spacing: 32
 
         ListView {
             id: bindingsList
@@ -414,11 +415,8 @@ FocusScope {
             }
         }
 
-        Text {
+        HintBar {
             text: "A: Edit binding  |  B: Back"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 
