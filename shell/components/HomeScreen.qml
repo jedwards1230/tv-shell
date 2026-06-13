@@ -83,6 +83,77 @@ FocusScope {
         RecentsTracker.recordLaunch(app);
     }
 
+    // === Media-widget "Open app" support ===
+    // Normalize for lenient identifier matching (mirrors WindowMatcher).
+    function _mediaNorm(s) {
+        return (s || "").toLowerCase().replace(/[-_.]/g, "");
+    }
+    function _mediaExecBase(exec) {
+        if (!exec)
+            return "";
+        return exec.split(/\s/)[0].split("/").pop().toLowerCase();
+    }
+
+    // True when a merged-row entry corresponds to the MPRIS player the media
+    // widget is already showing — matched by desktop-entry / identity against
+    // the entry's windowClass, exec basename, or name.
+    function _entryIsActivePlayer(entry, desktopEntry, identity) {
+        var de = (desktopEntry || "").toLowerCase();
+        var id = (identity || "").toLowerCase();
+        if (de === "" && id === "")
+            return false;
+        var cls = (entry.windowClass || "").toLowerCase();
+        var execBase = root._mediaExecBase(entry.exec || "");
+        var name = (entry.name || "").toLowerCase();
+        if (de !== "") {
+            if (cls === de || root._mediaNorm(cls) === root._mediaNorm(de))
+                return true;
+            if (execBase === de || root._mediaNorm(execBase) === root._mediaNorm(de))
+                return true;
+            if (root._mediaNorm(name) === root._mediaNorm(de))
+                return true;
+        }
+        if (id !== "" && (root._mediaNorm(name) === root._mediaNorm(id) || root._mediaNorm(cls) === root._mediaNorm(id)))
+            return true;
+        return false;
+    }
+
+    // Resolve the MPRIS player back to a launchable app object so it can be
+    // opened full-screen. Prefer a real discovered desktop app (gives a proper
+    // exec to launch if it isn't already running); otherwise synthesize enough
+    // for WindowMatcher to focus an existing window.
+    function _resolveMediaApp(desktopEntry, identity) {
+        var apps = AppDiscoveryManager.applications || [];
+        var de = (desktopEntry || "").toLowerCase();
+        var id = (identity || "").toLowerCase();
+        for (var i = 0; i < apps.length; i++) {
+            var a = apps[i];
+            if (de !== "") {
+                if (root._mediaExecBase(a.exec || "") === de || root._mediaNorm(a.wmClass || "") === root._mediaNorm(de) || root._mediaNorm(a.name || "") === root._mediaNorm(de))
+                    return a;
+            }
+            if (id !== "" && root._mediaNorm(a.name || "") === root._mediaNorm(id))
+                return a;
+        }
+        if (de === "" && id === "")
+            return null;
+        return {
+            "name": identity || desktopEntry,
+            "exec": desktopEntry || id,
+            "wmClass": identity || desktopEntry,
+            "comment": "",
+            "icon": ""
+        };
+    }
+
+    function openMediaApp(desktopEntry, identity) {
+        var app = root._resolveMediaApp(desktopEntry, identity);
+        if (!app)
+            return;
+        root.userActivity();
+        root.launchApp(app);
+    }
+
     // Moonlight app discovery lives in MoonlightProvider now; HomeScreen only
     // decides WHEN to (re)discover based on the active view mode.
     Timer {
@@ -311,6 +382,17 @@ FocusScope {
             });
         }
 
+        // Hide the app the media widget is already representing — its card is
+        // redundant while the now-playing widget (with its own "Open" action)
+        // is on screen. Matched by the player's desktop-entry / identity.
+        if (mediaWidget.visible && (mediaWidget.playerDesktopEntry !== "" || mediaWidget.playerIdentity !== "")) {
+            let de = mediaWidget.playerDesktopEntry;
+            let id = mediaWidget.playerIdentity;
+            result = result.filter(function (e) {
+                return !root._entryIsActivePlayer(e, de, id);
+            });
+        }
+
         return result;
     }
 
@@ -490,6 +572,7 @@ FocusScope {
                     root.userActivity();
                     root.focusDefaultPosition();
                 }
+                onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
                 onContextRequested: {
                     let p = mediaWidget.player;
                     if (!p || !p.canQuit)

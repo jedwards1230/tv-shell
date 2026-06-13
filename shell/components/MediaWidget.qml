@@ -29,6 +29,10 @@ FocusScope {
     signal escaped
     // Context action (gamepad X / Tab) — the host opens a quit popover.
     signal contextRequested
+    // Open the player's desktop app full-screen. The host resolves the
+    // identifiers to a launchable app and routes through the normal launch/
+    // focus path (focuses the running window, or launches it if not open).
+    signal openAppRequested(string desktopEntry, string identity)
 
     // === Active player selection ===
     // Prefer a player that is currently playing; fall back to the first
@@ -49,13 +53,24 @@ FocusScope {
     readonly property bool hasPlayer: player !== null
     readonly property bool isPlaying: hasPlayer && player.isPlaying
 
-    // Transport focus index: 0 = Prev, 1 = Play/Pause, 2 = Next.
-    property int _btn: 1
+    // Identifiers used to resolve the player back to its desktop app so we can
+    // open it full-screen (and so the host can hide it from the recents row,
+    // since the widget already represents it). desktopEntry is the .desktop
+    // basename (e.g. "spotify"); identity is the human name (e.g. "Spotify").
+    readonly property string playerDesktopEntry: hasPlayer && player.desktopEntry ? player.desktopEntry : ""
+    readonly property string playerIdentity: hasPlayer && player.identity ? player.identity : ""
+
+    // Focus index: 0 = Open app, 1 = Prev, 2 = Play/Pause, 3 = Next.
+    property int _btn: 2
 
     // Capability guards — a player may not advertise every control.
     readonly property bool _canPrev: hasPlayer && player.canGoPrevious
     readonly property bool _canNext: hasPlayer && player.canGoNext
     readonly property bool _canToggle: hasPlayer && (player.canTogglePlaying || player.canPlay || player.canPause)
+    // Always offer "Open app" when a player is present — even players that
+    // don't advertise MPRIS Raise can still be resolved + focused/launched by
+    // the host via the desktop entry / identity.
+    readonly property bool _canOpen: hasPlayer && (playerDesktopEntry !== "" || playerIdentity !== "")
 
     implicitHeight: hasPlayer ? card.implicitHeight : 0
     visible: hasPlayer
@@ -66,14 +81,18 @@ FocusScope {
             return;
         switch (root._btn) {
         case 0:
+            if (root._canOpen)
+                root.openAppRequested(root.playerDesktopEntry, root.playerIdentity);
+            break;
+        case 1:
             if (root._canPrev)
                 root.player.previous();
             break;
-        case 1:
+        case 2:
             if (root._canToggle)
                 root.player.togglePlaying();
             break;
-        case 2:
+        case 3:
             if (root._canNext)
                 root.player.next();
             break;
@@ -90,7 +109,7 @@ FocusScope {
             break;
         case Qt.Key_Right:
             Theme.exitMouseMode();
-            if (root._btn < 2)
+            if (root._btn < 3)
                 root._btn++;
             event.accepted = true;
             break;
@@ -290,12 +309,74 @@ FocusScope {
                 Layout.alignment: Qt.AlignVCenter
                 spacing: Units.spacingMD
 
-                // Prev (index 0)
+                // Open app (index 0). A labeled pill — visually distinct from the
+                // circular transport buttons — that opens the player's desktop
+                // app full-screen via the host's launch/focus path.
+                Rectangle {
+                    id: openButton
+                    Layout.preferredHeight: Units.gridUnit * 2.2
+                    Layout.preferredWidth: openRow.implicitWidth + Units.spacingLG * 2
+                    Layout.alignment: Qt.AlignVCenter
+                    radius: height / 2
+                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 0
+                    color: focused ? Theme.crimson : Theme.surface
+                    opacity: root._canOpen ? 1.0 : 0.35
+                    border.width: focused ? Units.borderMedium : Units.borderThin
+                    border.color: focused ? Theme.focusBorder : Theme.surfaceBorder
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Open " + (root.playerIdentity || "app")
+                    Accessible.focusable: true
+                    Accessible.onPressAction: {
+                        if (root._canOpen)
+                            root.openAppRequested(root.playerDesktopEntry, root.playerIdentity);
+                    }
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
+
+                    RowLayout {
+                        id: openRow
+                        anchors.centerIn: parent
+                        spacing: Units.spacingSM
+
+                        Text {
+                            text: "⛶" // open-fullscreen glyph
+                            font.pixelSize: Theme.fontTitle
+                            color: openButton.focused ? Theme.textOnDark : Theme.textPrimary
+                        }
+                        Text {
+                            text: "Open"
+                            font.pixelSize: Theme.fontBody
+                            font.bold: true
+                            color: openButton.focused ? Theme.textOnDark : Theme.textPrimary
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onPositionChanged: mouse => {
+                            let p = mapToItem(null, mouse.x, mouse.y);
+                            Theme.pointerMoved(p.x, p.y);
+                        }
+                        onClicked: {
+                            Theme.enterMouseMode();
+                            root._btn = 0;
+                            if (root._canOpen)
+                                root.openAppRequested(root.playerDesktopEntry, root.playerIdentity);
+                        }
+                    }
+                }
+
+                // Prev (index 1)
                 Rectangle {
                     Layout.preferredWidth: Units.gridUnit * 2.2
                     Layout.preferredHeight: Units.gridUnit * 2.2
                     radius: width / 2
-                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 0
+                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 1
                     color: focused ? Theme.surfaceHover : "transparent"
                     opacity: root._canPrev ? 1.0 : 0.35
                     border.width: focused ? Units.borderMedium : 0
@@ -330,19 +411,19 @@ FocusScope {
                         }
                         onClicked: {
                             Theme.enterMouseMode();
-                            root._btn = 0;
+                            root._btn = 1;
                             if (root._canPrev)
                                 root.player.previous();
                         }
                     }
                 }
 
-                // Play / Pause (index 1)
+                // Play / Pause (index 2)
                 Rectangle {
                     Layout.preferredWidth: Units.gridUnit * 2.8
                     Layout.preferredHeight: Units.gridUnit * 2.8
                     radius: width / 2
-                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 1
+                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 2
                     color: focused ? Theme.crimson : Theme.surface
                     opacity: root._canToggle ? 1.0 : 0.35
                     border.width: focused ? Units.borderMedium : Units.borderThin
@@ -429,19 +510,19 @@ FocusScope {
                         }
                         onClicked: {
                             Theme.enterMouseMode();
-                            root._btn = 1;
+                            root._btn = 2;
                             if (root._canToggle)
                                 root.player.togglePlaying();
                         }
                     }
                 }
 
-                // Next (index 2)
+                // Next (index 3)
                 Rectangle {
                     Layout.preferredWidth: Units.gridUnit * 2.2
                     Layout.preferredHeight: Units.gridUnit * 2.2
                     radius: width / 2
-                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 2
+                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 3
                     color: focused ? Theme.surfaceHover : "transparent"
                     opacity: root._canNext ? 1.0 : 0.35
                     border.width: focused ? Units.borderMedium : 0
@@ -476,7 +557,7 @@ FocusScope {
                         }
                         onClicked: {
                             Theme.enterMouseMode();
-                            root._btn = 2;
+                            root._btn = 3;
                             if (root._canNext)
                                 root.player.next();
                         }
