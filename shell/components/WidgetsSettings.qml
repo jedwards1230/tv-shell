@@ -39,7 +39,7 @@ FocusScope {
                 text: Theme.widgetSpotifyEnabled ? "Enabled" : "Disabled"
                 fillActive: Theme.widgetSpotifyEnabled
                 fillColor: Theme.sidebarActive
-                onActivated: Theme.setWidgetSpotifyEnabled(!Theme.widgetSpotifyEnabled)
+                onActivated: SettingsStore.setWidgetSpotifyEnabled(!Theme.widgetSpotifyEnabled)
             }
         }
 
@@ -65,7 +65,7 @@ FocusScope {
                 text: Theme.widgetPlexEnabled ? "Enabled" : "Disabled"
                 fillActive: Theme.widgetPlexEnabled
                 fillColor: Theme.sidebarActive
-                onActivated: Theme.setWidgetPlexEnabled(!Theme.widgetPlexEnabled)
+                onActivated: SettingsStore.setWidgetPlexEnabled(!Theme.widgetPlexEnabled)
             }
         }
 

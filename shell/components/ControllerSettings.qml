@@ -789,7 +789,7 @@ FocusScope {
 
                     color: Theme.controllerDebug ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
 
-                    onActivated: Theme.setControllerDebug(!Theme.controllerDebug)
+                    onActivated: SettingsStore.setControllerDebug(!SettingsStore.controllerDebug)
 
                     MouseArea {
                         anchors.fill: parent

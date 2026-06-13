@@ -117,11 +117,11 @@ FocusScope {
             break;
         case 2:
             if (Theme.themeMode === "auto")
-                Theme.setThemeMode("light");
+                SettingsStore.setThemeMode("light");
             else if (Theme.themeMode === "light")
-                Theme.setThemeMode("dark");
+                SettingsStore.setThemeMode("dark");
             else
-                Theme.setThemeMode("auto");
+                SettingsStore.setThemeMode("auto");
             break;
         case 3:
             root.networkRequested(root._glyphRect(netGlyph));
@@ -243,11 +243,11 @@ FocusScope {
                 a11yName: root._labels[2]
                 onActivated: {
                     if (Theme.themeMode === "auto")
-                        Theme.setThemeMode("light");
+                        SettingsStore.setThemeMode("light");
                     else if (Theme.themeMode === "light")
-                        Theme.setThemeMode("dark");
+                        SettingsStore.setThemeMode("dark");
                     else
-                        Theme.setThemeMode("auto");
+                        SettingsStore.setThemeMode("auto");
                 }
             }
 

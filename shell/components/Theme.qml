@@ -92,37 +92,6 @@ Item {
         return _hourIsDark(_currentHour, autoDarkStart, autoLightStart);
     }
 
-    // === Settings Persistence ===
-    // All settings I/O is centralized in SettingsStore; Theme delegates to it
-    // and exposes the values via the read-through properties above.
-    function setThemeMode(mode) {
-        SettingsStore.setThemeMode(mode);
-    }
-
-    function setStreamingViewMode(mode) {
-        SettingsStore.setStreamingViewMode(mode);
-    }
-
-    function setControllerDebug(enabled) {
-        SettingsStore.setControllerDebug(enabled);
-    }
-
-    function setReduceMotion(enabled) {
-        SettingsStore.setReduceMotion(enabled);
-    }
-
-    function setWidgetSpotifyEnabled(enabled) {
-        SettingsStore.setWidgetSpotifyEnabled(enabled);
-    }
-
-    function setWidgetPlexEnabled(enabled) {
-        SettingsStore.setWidgetPlexEnabled(enabled);
-    }
-
-    function setTextScale(scale) {
-        SettingsStore.setTextScale(scale);
-    }
-
     // Re-evaluate auto mode every 60 seconds
     Timer {
         id: autoTimer
