@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import "lib"
 
 // System/About page (#128): displays OS, kernel, hostname, and uptime, plus a
 // storage free-space readout (folded in from the former standalone Storage
@@ -76,13 +77,10 @@ FocusScope {
         id: contentColumn
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 48
+        spacing: 32
 
-        Text {
+        SectionHeader {
             text: "About This System"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         ColumnLayout {
@@ -139,8 +137,6 @@ FocusScope {
             focus: true
             activeFocusOnTab: true
 
-            KeyNavigation.down: storageRefreshScope
-
             SettingsButton {
                 id: sysRefreshBtn
                 text: "Refresh"
@@ -150,6 +146,9 @@ FocusScope {
                 onActivated: {
                     root.loading = true;
                     getSysStatus.request("sys-status");
+                    root.storageLoading = true;
+                    root.storageMounts = [];
+                    getStorageStatus.request("storage-status");
                 }
 
                 MouseArea {
@@ -165,11 +164,8 @@ FocusScope {
         }
 
         // Storage — free-space readout
-        Text {
+        SectionHeader {
             text: "Storage"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         SettingsList {
@@ -254,36 +250,8 @@ FocusScope {
             }
         }
 
-        FocusScope {
-            id: storageRefreshScope
-            width: storageRefreshBtn.width
-            height: storageRefreshBtn.height
-            activeFocusOnTab: true
-
-            KeyNavigation.up: sysRefreshScope
-
-            SettingsButton {
-                id: storageRefreshBtn
-                text: "Refresh"
-                focus: parent.activeFocus
-                anchors.fill: parent
-
-                onActivated: {
-                    root.storageLoading = true;
-                    root.storageMounts = [];
-                    getStorageStatus.request("storage-status");
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        storageRefreshScope.forceActiveFocus();
-                        storageRefreshBtn.activated();
-                    }
-                }
-            }
+        HintBar {
+            text: "Refresh reads system info and storage mounts"
         }
     }
 }
