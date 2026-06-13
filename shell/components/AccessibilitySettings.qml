@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 // Accessibility settings page (#109, #110).
 // Controller-first: A/Return toggles Reduce Motion; A/Return on the Text Size
@@ -115,204 +116,37 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        FocusScope {
+        SettingsDropdown {
             id: textSizeScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: _dropOpen ? Math.min(root.textSizeOptions.length * 80 + 88, 400) : 88
-
-            property bool _dropOpen: false
-            property string currentLabel: {
+            model: root.textSizeOptions
+            displayText: {
                 for (var i = 0; i < root.textSizeOptions.length; i++) {
                     if (Math.abs(root.textSizeOptions[i].id - Theme.textScale) < 0.01)
                         return root.textSizeOptions[i].label;
                 }
                 return "Default";
             }
+            headerHeight: 88
+            rowHeight: 76
+            isCurrentItem: function (item) {
+                return Math.abs(item.id - Theme.textScale) < 0.01;
+            }
+            itemLabel: function (item) {
+                return item.label;
+            }
+            onItemSelected: function (item) {
+                Theme.setTextScale(item.id);
+            }
 
             KeyNavigation.up: reduceMotionScope
-
-            Behavior on Layout.preferredHeight {
-                NumberAnimation {
-                    duration: Theme.reduceMotion ? 0 : 200
-                    easing.type: Easing.OutCubic
-                }
-            }
-
-            // Dropdown header
-            Rectangle {
-                id: textSizeHeader
-                width: parent.width
-                height: 88
-                radius: 16
-                color: textSizeScope.activeFocus && !textSizeScope._dropOpen ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: textSizeScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: Theme.reduceMotion ? 0 : 150
-                    }
-                }
-                Behavior on border.color {
-                    ColorAnimation {
-                        duration: Theme.reduceMotion ? 0 : 150
-                    }
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 24
-                    anchors.rightMargin: 24
-                    spacing: 16
-
-                    Text {
-                        text: textSizeScope.currentLabel
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textPrimary
-                        Layout.fillWidth: true
-                    }
-
-                    Text {
-                        text: "(current)"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textMuted
-                    }
-
-                    Text {
-                        text: textSizeScope._dropOpen ? "▲" : "▼"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        textSizeScope.forceActiveFocus();
-                        textSizeScope._dropOpen = !textSizeScope._dropOpen;
-                    }
-                }
-            }
-
-            // Dropdown list
-            ListView {
-                id: textSizeList
-                anchors.top: textSizeHeader.bottom
-                anchors.topMargin: 8
-                width: parent.width
-                height: parent.height - textSizeHeader.height - 8
-                spacing: 4
-                clip: true
-                visible: textSizeScope._dropOpen
-                model: root.textSizeOptions
-                keyNavigationEnabled: true
-                highlightFollowsCurrentItem: true
-                highlightMoveDuration: Theme.reduceMotion ? 0 : 100
-
-                delegate: Rectangle {
-                    required property int index
-                    required property var modelData
-                    width: textSizeList.width
-                    height: 76
-                    radius: 12
-
-                    property bool isCurrent: Math.abs(modelData.id - Theme.textScale) < 0.01
-
-                    color: {
-                        if (isCurrent)
-                            return Theme.sidebarActive;
-                        if (textSizeList.currentIndex === index && textSizeList.activeFocus)
-                            return Theme.surfaceHover;
-                        return Theme.cardBackground;
-                    }
-                    border.width: isCurrent ? 2 : 1
-                    border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: Theme.reduceMotion ? 0 : 150
-                        }
-                    }
-
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: 2
-
-                        Text {
-                            text: modelData.label + (isCurrent ? "  ✓" : "")
-                            font.pixelSize: Theme.fontSmall
-                            font.bold: isCurrent
-                            color: isCurrent ? Theme.textOnDark : Theme.textPrimary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-
-                        Text {
-                            text: modelData.desc
-                            font.pixelSize: Theme.fontHint
-                            color: isCurrent ? Theme.textOnDarkMuted : Theme.textSecondary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            textSizeList.currentIndex = index;
-                            textSizeList.forceActiveFocus();
-                            Theme.setTextScale(modelData.id);
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    if (currentIndex >= 0 && currentIndex < root.textSizeOptions.length) {
-                        Theme.setTextScale(root.textSizeOptions[currentIndex].id);
-                        textSizeScope._dropOpen = false;
-                        textSizeScope.forceActiveFocus();
-                    }
-                }
-
-                Keys.onEscapePressed: {
-                    textSizeScope._dropOpen = false;
-                    textSizeScope.forceActiveFocus();
-                }
-            }
-
-            // Open-on-A only (never on a directional key)
-            Keys.onReturnPressed: {
-                if (!_dropOpen) {
-                    _dropOpen = true;
-                    // pre-select the current scale in the list
-                    for (var i = 0; i < root.textSizeOptions.length; i++) {
-                        if (Math.abs(root.textSizeOptions[i].id - Theme.textScale) < 0.01) {
-                            textSizeList.currentIndex = i;
-                            break;
-                        }
-                    }
-                    textSizeList.forceActiveFocus();
-                }
-            }
-
-            Keys.onEscapePressed: {
-                if (_dropOpen) {
-                    _dropOpen = false;
-                } else {
-                    event.accepted = false;
-                }
-            }
         }
 
         Item {
             Layout.fillHeight: true
         }
 
-        Text {
+        HintBar {
             text: "Text Scale: " + (Theme.textScale === 1.0 ? "Default" : Theme.textScale === 1.15 ? "Large" : "Larger")
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }

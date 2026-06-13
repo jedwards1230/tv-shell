@@ -43,6 +43,11 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     Drawer.qml               # Reusable slide-in drawer (any edge)
     NavigationDrawer.qml     # Left nav drawer (Home, Settings)
     StreamOverlay.qml        # Reconnecting/error overlay
+    lib/                     # Shared reusable component library (own qmldir module)
+      SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)
+      SettingsButtonGroup.qml#   Horizontal chip selector (D-pad)
+      HintBar.qml            #   Bottom-of-page hint text
+      qmldir                 #   lib registry — `module components.lib`
     qmldir                   # Component registry
 config/
   hyprland.conf               # Generic monitor default + `source` hook for a per-machine override
@@ -58,6 +63,36 @@ scripts/
   game-shell-session.sh       # Session wrapper launched by SDDM
   super-intent.sh             # Hyprland Super binds -> intents (Super=menu/drawer, +Escape=home, +Backspace=reset)
 ```
+
+### Shared Component Library (`lib/`)
+
+Reusable, page-agnostic UI components live in **`shell/components/lib/`** — a
+separate Quickshell module (`module components.lib`) with its own `qmldir`.
+**Prefer extracting a shared component over copy-pasting a UI pattern.** If you
+hand-roll the same structure on a second page (a dropdown, a chip selector, a
+status pill, a modal/overlay shell), promote it to `lib/` instead.
+
+Import convention (verified on-device):
+
+- **A `lib/` component reaches parent singletons** (`Theme`, `Units`,
+  `SettingsStore`) and sibling atoms (`SettingsButton`) via an **unnamed relative
+  import** at the top of the file: `import "../"` — those names then resolve bare,
+  exactly as in the flat `components/` module.
+- **A page consumes the library** with `import "lib"` — `lib/` types
+  (`SettingsDropdown`, `SettingsButtonGroup`, `HintBar`, …) then resolve bare.
+- Every new `lib/` type must be added to `shell/components/lib/qmldir`.
+
+Constraints carried over from the flat module:
+
+- Selectable/interactive `lib/` components must remain **`FocusScope`s** so
+  `SettingsPanel`'s outer Flickable scroll-follow (which tracks `activeFocusItem`)
+  keeps working — never wrap controls in a `fillHeight` self-scrolling `ListView`.
+- Pages own their `KeyNavigation` chains; a `lib/` component should expose
+  `KeyNavigation.up`/`.down` (or equivalent aliases) so callers keep wiring focus.
+
+Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
+`FocusFrame`, `NavigableRow`, `Drawer`, `SettingsButton`/`List`/`EmptyState`,
+`DimmedBackdrop`) are migrated into `lib/` opportunistically, not all at once.
 
 ## Key Data Flows
 
@@ -179,7 +214,7 @@ Catalog of views/overlays/states to capture for visual QA (and how to reach each
 - **SplitParser reads line-by-line**: Any JSON loaded via `cat` + `SplitParser` must be single-line. Never pretty-print `targets.json` or `settings.json`.
 - **Theme.qml is an Item, not QtObject**: Quickshell 0.3.0 can't host Process/Timer children inside QtObject. The singleton uses Item as its root type.
 - **`image://icon/` for Freedesktop icons**: Use `Image { source: "image://icon/" + iconName }` to load icons from the system theme. Falls back to nothing if the icon doesn't exist — provide a letter-initial fallback.
-- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`.
+- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`. There are **two** registries — flat components go in `components/qmldir`; shared library components go in `components/lib/qmldir` (`module components.lib`). A `lib/` file uses `import "../"` to see parent singletons; a page uses `import "lib"` to see library types (see [Shared Component Library](#shared-component-library-lib)).
 - **WAYLAND_DISPLAY may vary**: Usually `wayland-1` but try `wayland-0` if grim/hyprctl fails.
 - **Hyprland instance signature**: Multiple instances may exist in `/run/user/1000/hypr/`; use `tail -1` for the latest.
 - **Theme property renames cascade**: `Theme.text` → `Theme.textPrimary` will also hit `Theme.textDim` producing `Theme.textPrimaryDim`. Replace longest matches first.

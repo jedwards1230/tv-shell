@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 FocusScope {
     id: root
@@ -359,95 +360,48 @@ FocusScope {
             visible: root.monitors.length > 0
         }
 
-        FocusScope {
+        SettingsButtonGroup {
             id: scaleRow
-            Layout.fillWidth: true
-            Layout.preferredHeight: 96
             visible: root.monitors.length > 0
-
-            KeyNavigation.up: hdrToggleScope
-            KeyNavigation.down: modeDropdownScope
-
-            property var scales: [0.5, 1.0, 1.25, 1.5, 1.75, 2.0]
-            property int selectedScale: {
-                if (root.monitors.length <= root.selectedMonitor)
-                    return 1;
-                let s = root.monitors[root.selectedMonitor].scale;
-                for (let i = 0; i < scales.length; i++) {
-                    if (Math.abs(scales[i] - s) < 0.05)
-                        return i;
+            options: [
+                {
+                    label: "0.5x",
+                    value: 0.5
+                },
+                {
+                    label: "1x",
+                    value: 1.0
+                },
+                {
+                    label: "1.25x",
+                    value: 1.25
+                },
+                {
+                    label: "1.5x",
+                    value: 1.5
+                },
+                {
+                    label: "1.75x",
+                    value: 1.75
+                },
+                {
+                    label: "2x",
+                    value: 2.0
                 }
-                return 1;
+            ]
+            isCurrentOption: function (opt) {
+                return root.monitors.length > root.selectedMonitor && Math.abs(root.monitors[root.selectedMonitor].scale - opt.value) < 0.05;
             }
-            property int focusedIndex: selectedScale
-
-            Keys.onLeftPressed: {
-                if (focusedIndex > 0)
-                    focusedIndex--;
-            }
-            Keys.onRightPressed: {
-                if (focusedIndex < scales.length - 1)
-                    focusedIndex++;
-            }
-            Keys.onReturnPressed: {
+            onValueSelected: function (opt) {
                 if (root.monitors.length > root.selectedMonitor) {
                     setScale.monName = root.monitors[root.selectedMonitor].name;
-                    setScale.scaleVal = scales[focusedIndex];
+                    setScale.scaleVal = opt.value;
                     setScale.running = true;
                 }
             }
 
-            RowLayout {
-                anchors.fill: parent
-                spacing: 16
-
-                Repeater {
-                    model: scaleRow.scales
-
-                    FocusScope {
-                        id: scaleScope
-                        required property var modelData
-                        required property int index
-                        width: scaleBtn.width
-                        height: scaleBtn.height
-
-                        SettingsButton {
-                            id: scaleBtn
-                            text: parent.modelData + "x"
-                            anchors.fill: parent
-
-                            property bool isCurrent: root.monitors.length > root.selectedMonitor && Math.abs(root.monitors[root.selectedMonitor].scale - parent.modelData) < 0.05
-                            property bool isFocused: scaleRow.activeFocus && scaleRow.focusedIndex === scaleScope.index
-
-                            color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
-                            border.width: isFocused ? 2 : 1
-                            border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
-
-                            // Applies this card's own scale — covers AT-SPI press and
-                            // mouse click. Directional focus + Return is owned by
-                            // scaleRow (focusedIndex), which drives the keyboard path.
-                            onActivated: {
-                                if (root.monitors.length > root.selectedMonitor) {
-                                    setScale.monName = root.monitors[root.selectedMonitor].name;
-                                    setScale.scaleVal = scaleScope.modelData;
-                                    setScale.running = true;
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    scaleRow.forceActiveFocus();
-                                    scaleRow.focusedIndex = scaleScope.index;
-                                    scaleBtn.activated();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            KeyNavigation.up: hdrToggleScope
+            KeyNavigation.down: modeDropdownScope
         }
 
         // Resolution / Mode dropdown
@@ -459,16 +413,12 @@ FocusScope {
             visible: root.monitors.length > 0
         }
 
-        FocusScope {
+        SettingsDropdown {
             id: modeDropdownScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: modeDropdownOpen ? Math.min(modeDropdownList.count * 72 + 80, 600) : 80
             visible: root.monitors.length > 0
-            focus: false
+            maxHeight: 600
 
-            property bool modeDropdownOpen: false
             property var allModes: root.monitors.length > root.selectedMonitor ? root.monitors[root.selectedMonitor].availableModes : []
-            // Resolution dropdown shows all unique resolutions (WxH part)
             property var modes: {
                 let seen = {};
                 let result = [];
@@ -496,169 +446,28 @@ FocusScope {
                 return res + (hz ? "  @  " + hz : "");
             }
 
+            model: modes
+            displayText: formatMode(currentMode)
+            isCurrentItem: function (item) {
+                if (root.monitors.length <= root.selectedMonitor)
+                    return false;
+                let mon = root.monitors[root.selectedMonitor];
+                let res = item.split("@")[0];
+                return res === (mon.width + "x" + mon.height);
+            }
+            itemLabel: function (item) {
+                return formatMode(item);
+            }
+            onItemSelected: function (item) {
+                if (root.monitors.length > root.selectedMonitor) {
+                    setMode.monName = root.monitors[root.selectedMonitor].name;
+                    setMode.mode = item;
+                    setMode.running = true;
+                }
+            }
+
             KeyNavigation.up: scaleRow
             KeyNavigation.down: refreshDropdownScope
-
-            Behavior on Layout.preferredHeight {
-                NumberAnimation {
-                    duration: 200
-                    easing.type: Easing.OutCubic
-                }
-            }
-
-            Rectangle {
-                id: modeDropdownHeader
-                width: parent.width
-                height: 80
-                radius: 16
-                color: modeDropdownScope.activeFocus && !modeDropdownScope.modeDropdownOpen ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 24
-                    anchors.rightMargin: 24
-                    spacing: 16
-
-                    Text {
-                        text: modeDropdownScope.formatMode(modeDropdownScope.currentMode)
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textPrimary
-                        Layout.fillWidth: true
-                    }
-
-                    Text {
-                        text: "(current)"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textMuted
-                    }
-
-                    Text {
-                        text: modeDropdownScope.modeDropdownOpen ? "▲" : "▼"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        modeDropdownScope.forceActiveFocus();
-                        modeDropdownScope.modeDropdownOpen = !modeDropdownScope.modeDropdownOpen;
-                    }
-                }
-            }
-
-            ListView {
-                id: modeDropdownList
-                anchors.top: modeDropdownHeader.bottom
-                anchors.topMargin: 8
-                width: parent.width
-                height: parent.height - modeDropdownHeader.height - 8
-                spacing: 4
-                clip: true
-                visible: modeDropdownScope.modeDropdownOpen
-                model: modeDropdownScope.modes
-                keyNavigationEnabled: true
-                highlightFollowsCurrentItem: true
-                highlightMoveDuration: 100
-
-                delegate: Rectangle {
-                    required property int index
-                    required property var modelData
-                    width: modeDropdownList.width
-                    height: 68
-                    radius: 12
-
-                    property bool isCurrent: {
-                        if (root.monitors.length <= root.selectedMonitor)
-                            return false;
-                        let mon = root.monitors[root.selectedMonitor];
-                        let res = modelData.split("@")[0];
-                        return res === (mon.width + "x" + mon.height);
-                    }
-
-                    color: {
-                        if (isCurrent)
-                            return Theme.sidebarActive;
-                        if (modeDropdownList.currentIndex === index && modeDropdownList.activeFocus)
-                            return Theme.surfaceHover;
-                        return Theme.cardBackground;
-                    }
-                    border.width: isCurrent ? 2 : 1
-                    border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: modeDropdownScope.formatMode(modelData) + (isCurrent ? "  (current)" : "")
-                        font.pixelSize: Theme.fontSmall
-                        color: isCurrent ? Theme.textOnDark : Theme.textPrimary
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            modeDropdownList.currentIndex = index;
-                            modeDropdownList.forceActiveFocus();
-                        }
-                        onDoubleClicked: {
-                            if (root.monitors.length > root.selectedMonitor) {
-                                setMode.monName = root.monitors[root.selectedMonitor].name;
-                                setMode.mode = modelData;
-                                setMode.running = true;
-                                modeDropdownScope.modeDropdownOpen = false;
-                            }
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    if (currentIndex >= 0 && root.monitors.length > root.selectedMonitor) {
-                        let modes = modeDropdownScope.modes;
-                        if (currentIndex < modes.length) {
-                            setMode.monName = root.monitors[root.selectedMonitor].name;
-                            setMode.mode = modes[currentIndex];
-                            setMode.running = true;
-                            modeDropdownScope.modeDropdownOpen = false;
-                        }
-                    }
-                }
-
-                Keys.onEscapePressed: {
-                    modeDropdownScope.modeDropdownOpen = false;
-                    modeDropdownScope.forceActiveFocus();
-                }
-            }
-
-            Keys.onReturnPressed: {
-                if (!modeDropdownOpen) {
-                    modeDropdownOpen = true;
-                    modeDropdownList.forceActiveFocus();
-                }
-            }
-
-            Keys.onEscapePressed: {
-                if (modeDropdownOpen) {
-                    modeDropdownOpen = false;
-                } else {
-                    event.accepted = false;
-                }
-            }
         }
 
         // Refresh Rate dropdown (separate from resolution)
@@ -670,15 +479,10 @@ FocusScope {
             visible: root.monitors.length > 0
         }
 
-        FocusScope {
+        SettingsDropdown {
             id: refreshDropdownScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: refreshDropdownOpen ? Math.min(refreshDropdownList.count * 72 + 80, 400) : 80
             visible: root.monitors.length > 0
-            focus: false
 
-            property bool refreshDropdownOpen: false
-            // Filter availableModes to those matching current resolution (WxH)
             property var refreshRates: {
                 if (root.monitors.length <= root.selectedMonitor)
                     return [];
@@ -707,157 +511,20 @@ FocusScope {
             }
             property real currentHz: root.monitors.length > root.selectedMonitor ? root.monitors[root.selectedMonitor].refreshRate : 0
 
+            model: refreshRates
+            displayText: currentHz.toFixed(2) + " Hz"
+            isCurrentItem: function (item) {
+                return Math.abs(parseFloat(item.hz) - currentHz) < 0.5;
+            }
+            itemLabel: function (item) {
+                return item.hz + " Hz";
+            }
+            onItemSelected: function (item) {
+                root.applyRefreshRate(item.hz);
+            }
+
             KeyNavigation.up: modeDropdownScope
             KeyNavigation.down: nightLightToggleScope
-
-            Behavior on Layout.preferredHeight {
-                NumberAnimation {
-                    duration: 200
-                    easing.type: Easing.OutCubic
-                }
-            }
-
-            Rectangle {
-                id: refreshDropdownHeader
-                width: parent.width
-                height: 80
-                radius: 16
-                color: refreshDropdownScope.activeFocus && !refreshDropdownScope.refreshDropdownOpen ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 24
-                    anchors.rightMargin: 24
-                    spacing: 16
-
-                    Text {
-                        text: refreshDropdownScope.currentHz.toFixed(2) + " Hz"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textPrimary
-                        Layout.fillWidth: true
-                    }
-
-                    Text {
-                        text: "(current)"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textMuted
-                    }
-
-                    Text {
-                        text: refreshDropdownScope.refreshDropdownOpen ? "▲" : "▼"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        refreshDropdownScope.forceActiveFocus();
-                        refreshDropdownScope.refreshDropdownOpen = !refreshDropdownScope.refreshDropdownOpen;
-                    }
-                }
-            }
-
-            ListView {
-                id: refreshDropdownList
-                anchors.top: refreshDropdownHeader.bottom
-                anchors.topMargin: 8
-                width: parent.width
-                height: parent.height - refreshDropdownHeader.height - 8
-                spacing: 4
-                clip: true
-                visible: refreshDropdownScope.refreshDropdownOpen
-                model: refreshDropdownScope.refreshRates
-                keyNavigationEnabled: true
-                highlightFollowsCurrentItem: true
-                highlightMoveDuration: 100
-
-                delegate: Rectangle {
-                    required property int index
-                    required property var modelData
-                    width: refreshDropdownList.width
-                    height: 68
-                    radius: 12
-
-                    property bool isCurrent: Math.abs(parseFloat(modelData.hz) - refreshDropdownScope.currentHz) < 0.5
-
-                    color: {
-                        if (isCurrent)
-                            return Theme.sidebarActive;
-                        if (refreshDropdownList.currentIndex === index && refreshDropdownList.activeFocus)
-                            return Theme.surfaceHover;
-                        return Theme.cardBackground;
-                    }
-                    border.width: isCurrent ? 2 : 1
-                    border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: modelData.hz + " Hz" + (isCurrent ? "  (current)" : "")
-                        font.pixelSize: Theme.fontSmall
-                        color: isCurrent ? Theme.textOnDark : Theme.textPrimary
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            refreshDropdownList.currentIndex = index;
-                            refreshDropdownList.forceActiveFocus();
-                        }
-                        onDoubleClicked: {
-                            root.applyRefreshRate(modelData.hz);
-                            refreshDropdownScope.refreshDropdownOpen = false;
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    if (currentIndex >= 0) {
-                        let rates = refreshDropdownScope.refreshRates;
-                        if (currentIndex < rates.length) {
-                            root.applyRefreshRate(rates[currentIndex].hz);
-                            refreshDropdownScope.refreshDropdownOpen = false;
-                        }
-                    }
-                }
-
-                Keys.onEscapePressed: {
-                    refreshDropdownScope.refreshDropdownOpen = false;
-                    refreshDropdownScope.forceActiveFocus();
-                }
-            }
-
-            Keys.onReturnPressed: {
-                if (!refreshDropdownOpen) {
-                    refreshDropdownOpen = true;
-                    refreshDropdownList.forceActiveFocus();
-                }
-            }
-
-            Keys.onEscapePressed: {
-                if (refreshDropdownOpen) {
-                    refreshDropdownOpen = false;
-                } else {
-                    event.accepted = false;
-                }
-            }
         }
 
         // Night-light / Color temperature
@@ -908,12 +575,9 @@ FocusScope {
         }
 
         // Night-light color temperature dropdown
-        FocusScope {
+        SettingsDropdown {
             id: nightLightTempScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: nightLightTempOpen ? Math.min(nightLightTempList.count * 72 + 80, 400) : 80
 
-            property bool nightLightTempOpen: false
             property var tempPresets: [
                 {
                     label: "Off (disable)",
@@ -941,173 +605,34 @@ FocusScope {
                 }
             ]
 
+            model: tempPresets
+            displayText: {
+                let t = SettingsStore.nightLightTemp;
+                for (let i = 0; i < tempPresets.length; i++) {
+                    if (tempPresets[i].value === t)
+                        return tempPresets[i].label;
+                }
+                return t + "K";
+            }
+            isCurrentItem: function (item) {
+                return item.value === SettingsStore.nightLightTemp;
+            }
+            itemLabel: function (item) {
+                return item.label;
+            }
+            onItemSelected: function (item) {
+                if (item.value === 0) {
+                    SettingsStore.setNightLightEnabled(false);
+                    root.applyNightLightSetting(false, SettingsStore.nightLightTemp);
+                } else {
+                    SettingsStore.setNightLightTemp(item.value);
+                    if (SettingsStore.nightLightEnabled)
+                        root.applyNightLightSetting(true, item.value);
+                }
+            }
+
             KeyNavigation.up: nightLightToggleScope
             KeyNavigation.down: overscanScope
-
-            Behavior on Layout.preferredHeight {
-                NumberAnimation {
-                    duration: 200
-                    easing.type: Easing.OutCubic
-                }
-            }
-
-            Rectangle {
-                id: nightLightTempHeader
-                width: parent.width
-                height: 80
-                radius: 16
-                color: nightLightTempScope.activeFocus && !nightLightTempScope.nightLightTempOpen ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 24
-                    anchors.rightMargin: 24
-                    spacing: 16
-
-                    Text {
-                        text: {
-                            let t = SettingsStore.nightLightTemp;
-                            for (let i = 0; i < nightLightTempScope.tempPresets.length; i++) {
-                                if (nightLightTempScope.tempPresets[i].value === t)
-                                    return nightLightTempScope.tempPresets[i].label;
-                            }
-                            return t + "K";
-                        }
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textPrimary
-                        Layout.fillWidth: true
-                    }
-
-                    Text {
-                        text: nightLightTempScope.nightLightTempOpen ? "▲" : "▼"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        nightLightTempScope.forceActiveFocus();
-                        nightLightTempScope.nightLightTempOpen = !nightLightTempScope.nightLightTempOpen;
-                    }
-                }
-            }
-
-            ListView {
-                id: nightLightTempList
-                anchors.top: nightLightTempHeader.bottom
-                anchors.topMargin: 8
-                width: parent.width
-                height: parent.height - nightLightTempHeader.height - 8
-                spacing: 4
-                clip: true
-                visible: nightLightTempScope.nightLightTempOpen
-                model: nightLightTempScope.tempPresets
-                keyNavigationEnabled: true
-                highlightFollowsCurrentItem: true
-                highlightMoveDuration: 100
-
-                delegate: Rectangle {
-                    required property int index
-                    required property var modelData
-                    width: nightLightTempList.width
-                    height: 68
-                    radius: 12
-
-                    property bool isCurrent: modelData.value === SettingsStore.nightLightTemp
-
-                    color: {
-                        if (isCurrent)
-                            return Theme.sidebarActive;
-                        if (nightLightTempList.currentIndex === index && nightLightTempList.activeFocus)
-                            return Theme.surfaceHover;
-                        return Theme.cardBackground;
-                    }
-                    border.width: isCurrent ? 2 : 1
-                    border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: modelData.label + (isCurrent ? "  (current)" : "")
-                        font.pixelSize: Theme.fontSmall
-                        color: isCurrent ? Theme.textOnDark : Theme.textPrimary
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            nightLightTempList.currentIndex = index;
-                            nightLightTempList.forceActiveFocus();
-                        }
-                        onDoubleClicked: {
-                            if (modelData.value === 0) {
-                                SettingsStore.setNightLightEnabled(false);
-                                root.applyNightLightSetting(false, SettingsStore.nightLightTemp);
-                            } else {
-                                SettingsStore.setNightLightTemp(modelData.value);
-                                if (SettingsStore.nightLightEnabled)
-                                    root.applyNightLightSetting(true, modelData.value);
-                            }
-                            nightLightTempScope.nightLightTempOpen = false;
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    if (currentIndex >= 0) {
-                        let presets = nightLightTempScope.tempPresets;
-                        if (currentIndex < presets.length) {
-                            let preset = presets[currentIndex];
-                            if (preset.value === 0) {
-                                SettingsStore.setNightLightEnabled(false);
-                                root.applyNightLightSetting(false, SettingsStore.nightLightTemp);
-                            } else {
-                                SettingsStore.setNightLightTemp(preset.value);
-                                if (SettingsStore.nightLightEnabled)
-                                    root.applyNightLightSetting(true, preset.value);
-                            }
-                            nightLightTempScope.nightLightTempOpen = false;
-                        }
-                    }
-                }
-
-                Keys.onEscapePressed: {
-                    nightLightTempScope.nightLightTempOpen = false;
-                    nightLightTempScope.forceActiveFocus();
-                }
-            }
-
-            Keys.onReturnPressed: {
-                if (!nightLightTempOpen) {
-                    nightLightTempOpen = true;
-                    nightLightTempList.forceActiveFocus();
-                }
-            }
-
-            Keys.onEscapePressed: {
-                if (nightLightTempOpen) {
-                    nightLightTempOpen = false;
-                } else {
-                    event.accepted = false;
-                }
-            }
         }
 
         Text {
@@ -1124,83 +649,43 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        FocusScope {
+        SettingsButtonGroup {
             id: overscanScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: 96
+            options: [
+                {
+                    label: "0%",
+                    value: 0
+                },
+                {
+                    label: "2%",
+                    value: 2
+                },
+                {
+                    label: "4%",
+                    value: 4
+                },
+                {
+                    label: "6%",
+                    value: 6
+                },
+                {
+                    label: "8%",
+                    value: 8
+                },
+                {
+                    label: "10%",
+                    value: 10
+                }
+            ]
+            isCurrentOption: function (opt) {
+                return SettingsStore.overscan === opt.value;
+            }
+            onValueSelected: function (opt) {
+                SettingsStore.setOverscan(opt.value);
+            }
 
             KeyNavigation.up: nightLightTempScope
             KeyNavigation.down: autoDimToggleScope
-
-            property var overscanOptions: [0, 2, 4, 6, 8, 10]
-            property int selectedIndex: {
-                let v = SettingsStore.overscan;
-                for (let i = 0; i < overscanOptions.length; i++) {
-                    if (overscanOptions[i] === v)
-                        return i;
-                }
-                return 0;
-            }
-            property int focusedIndex: selectedIndex
-
-            Keys.onLeftPressed: {
-                if (focusedIndex > 0)
-                    focusedIndex--;
-            }
-            Keys.onRightPressed: {
-                if (focusedIndex < overscanOptions.length - 1)
-                    focusedIndex++;
-            }
-            Keys.onReturnPressed: {
-                SettingsStore.setOverscan(overscanOptions[focusedIndex]);
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                spacing: 16
-
-                Repeater {
-                    model: overscanScope.overscanOptions
-
-                    FocusScope {
-                        id: overscanOptScope
-                        required property var modelData
-                        required property int index
-                        // Intrinsic size avoids a parent.width -> overscanBtn.width
-                        // -> parent.width binding loop (same fix as the dim-delay row).
-                        width: overscanBtn.implicitWidth
-                        height: overscanBtn.implicitHeight
-
-                        SettingsButton {
-                            id: overscanBtn
-                            text: parent.modelData + "%"
-                            anchors.fill: parent
-
-                            property bool isCurrent: SettingsStore.overscan === parent.modelData
-                            property bool isFocused: overscanScope.activeFocus && overscanScope.focusedIndex === overscanOptScope.index
-
-                            color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
-                            border.width: isFocused ? 2 : 1
-                            border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
-
-                            onActivated: {
-                                SettingsStore.setOverscan(overscanOptScope.modelData);
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    overscanScope.forceActiveFocus();
-                                    overscanScope.focusedIndex = overscanOptScope.index;
-                                    overscanBtn.activated();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         Text {
@@ -1263,90 +748,39 @@ FocusScope {
             opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
         }
 
-        FocusScope {
+        SettingsButtonGroup {
             id: autoDimDelayScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: 96
-            opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
             // #143: exclude from nav chain when disabled so D-pad focus cannot enter
             activeFocusOnTab: SettingsStore.autoDimEnabled
-            // When disabled, up from modeList should land on autoDimToggleScope, not here.
-            // We handle this on the modeList side; here just wire up the enabled case.
+            enabled: SettingsStore.autoDimEnabled
+            options: [
+                {
+                    label: "1 min",
+                    value: 1
+                },
+                {
+                    label: "2 min",
+                    value: 2
+                },
+                {
+                    label: "5 min",
+                    value: 5
+                },
+                {
+                    label: "10 min",
+                    value: 10
+                }
+            ]
+            isCurrentOption: function (opt) {
+                return SettingsStore.autoDimDelayMinutes === opt.value;
+            }
+            onValueSelected: function (opt) {
+                if (SettingsStore.autoDimEnabled)
+                    SettingsStore.setAutoDimDelayMinutes(opt.value);
+            }
+
             KeyNavigation.up: autoDimToggleScope
             KeyNavigation.down: modeList
-
-            property var delayOptions: [1, 2, 5, 10]
-            property int selectedIndex: {
-                let v = SettingsStore.autoDimDelayMinutes;
-                for (let i = 0; i < delayOptions.length; i++) {
-                    if (delayOptions[i] === v)
-                        return i;
-                }
-                return 1; // default 2 min
-            }
-            property int focusedIndex: selectedIndex
-
-            Keys.onLeftPressed: {
-                if (focusedIndex > 0)
-                    focusedIndex--;
-            }
-            Keys.onRightPressed: {
-                if (focusedIndex < delayOptions.length - 1)
-                    focusedIndex++;
-            }
-            Keys.onReturnPressed: {
-                if (SettingsStore.autoDimEnabled)
-                    SettingsStore.setAutoDimDelayMinutes(delayOptions[focusedIndex]);
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                spacing: 16
-
-                Repeater {
-                    model: autoDimDelayScope.delayOptions
-
-                    FocusScope {
-                        id: delayOptScope
-                        required property var modelData
-                        required property int index
-                        // Size from the button's intrinsic size (not its actual
-                        // width/height) to avoid a parent.width -> delayBtn.width
-                        // -> parent.width binding loop while it anchors.fill: parent.
-                        width: delayBtn.implicitWidth
-                        height: delayBtn.implicitHeight
-
-                        SettingsButton {
-                            id: delayBtn
-                            text: parent.modelData + " min"
-                            anchors.fill: parent
-
-                            property bool isCurrent: SettingsStore.autoDimDelayMinutes === parent.modelData
-                            property bool isFocused: autoDimDelayScope.activeFocus && autoDimDelayScope.focusedIndex === delayOptScope.index
-
-                            color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
-                            border.width: isFocused ? 2 : 1
-                            border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
-
-                            onActivated: {
-                                if (SettingsStore.autoDimEnabled)
-                                    SettingsStore.setAutoDimDelayMinutes(delayOptScope.modelData);
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    autoDimDelayScope.forceActiveFocus();
-                                    autoDimDelayScope.focusedIndex = delayOptScope.index;
-                                    delayBtn.activated();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         Text {

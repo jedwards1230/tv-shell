@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 FocusScope {
     id: root
@@ -377,169 +378,25 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        FocusScope {
+        SettingsDropdown {
             id: sinkDropdownScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: sinkDropdownOpen ? Math.min(sinkDropdownList.count * 72 + 80, 500) : 80
-
-            property bool sinkDropdownOpen: false
-            property string currentSinkName: {
-                if (root.defaultSinkIndex >= 0 && root.defaultSinkIndex < root.sinks.length)
-                    return root.sinks[root.defaultSinkIndex].name;
-                return "No output device";
+            model: root.sinks
+            displayText: root.defaultSinkIndex >= 0 && root.defaultSinkIndex < root.sinks.length ? root.sinks[root.defaultSinkIndex].name : "No output device"
+            maxHeight: 500
+            rowHeight: 72
+            isCurrentItem: function (item) {
+                return item.isDefault;
+            }
+            itemLabel: function (item) {
+                return item.name;
+            }
+            onItemSelected: function (item) {
+                setDefaultSink.sinkId = item.id;
+                setDefaultSink.running = true;
             }
 
             KeyNavigation.up: muteScope
             KeyNavigation.down: testToneFlScope
-
-            Behavior on Layout.preferredHeight {
-                NumberAnimation {
-                    duration: 200
-                    easing.type: Easing.OutCubic
-                }
-            }
-
-            Rectangle {
-                id: sinkDropdownHeader
-                width: parent.width
-                height: 80
-                radius: 16
-                color: sinkDropdownScope.activeFocus && !sinkDropdownScope.sinkDropdownOpen ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 24
-                    anchors.rightMargin: 24
-                    spacing: 16
-
-                    Text {
-                        text: sinkDropdownScope.currentSinkName
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textPrimary
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
-
-                    Text {
-                        text: "(current)"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textMuted
-                    }
-
-                    Text {
-                        text: sinkDropdownScope.sinkDropdownOpen ? "▲" : "▼"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        sinkDropdownScope.forceActiveFocus();
-                        sinkDropdownScope.sinkDropdownOpen = !sinkDropdownScope.sinkDropdownOpen;
-                    }
-                }
-            }
-
-            ListView {
-                id: sinkDropdownList
-                anchors.top: sinkDropdownHeader.bottom
-                anchors.topMargin: 8
-                width: parent.width
-                height: parent.height - sinkDropdownHeader.height - 8
-                spacing: 4
-                clip: true
-                visible: sinkDropdownScope.sinkDropdownOpen
-                model: root.sinks
-                keyNavigationEnabled: true
-                highlightFollowsCurrentItem: true
-                highlightMoveDuration: 100
-
-                delegate: Rectangle {
-                    required property int index
-                    required property var modelData
-                    width: sinkDropdownList.width
-                    height: 68
-                    radius: 12
-
-                    property bool isCurrent: modelData.isDefault
-
-                    color: {
-                        if (isCurrent)
-                            return Theme.sidebarActive;
-                        if (sinkDropdownList.currentIndex === index && sinkDropdownList.activeFocus)
-                            return Theme.surfaceHover;
-                        return Theme.cardBackground;
-                    }
-                    border.width: isCurrent ? 2 : 1
-                    border.color: isCurrent ? Theme.focusBorder : Theme.surfaceBorder
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: modelData.name + (isCurrent ? "  (current)" : "")
-                        font.pixelSize: Theme.fontSmall
-                        color: isCurrent ? Theme.textOnDark : Theme.textPrimary
-                        elide: Text.ElideRight
-                        width: parent.width - 48
-                        horizontalAlignment: Text.AlignHCenter
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            sinkDropdownList.currentIndex = index;
-                            sinkDropdownList.forceActiveFocus();
-                            setDefaultSink.sinkId = modelData.id;
-                            setDefaultSink.running = true;
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    if (currentIndex >= 0 && currentIndex < root.sinks.length) {
-                        setDefaultSink.sinkId = root.sinks[currentIndex].id;
-                        setDefaultSink.running = true;
-                    }
-                }
-
-                Keys.onEscapePressed: {
-                    sinkDropdownScope.sinkDropdownOpen = false;
-                    sinkDropdownScope.forceActiveFocus();
-                }
-            }
-
-            Keys.onReturnPressed: {
-                if (!sinkDropdownOpen) {
-                    sinkDropdownOpen = true;
-                    sinkDropdownList.currentIndex = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
-                    sinkDropdownList.forceActiveFocus();
-                }
-            }
-
-            Keys.onEscapePressed: {
-                if (sinkDropdownOpen) {
-                    sinkDropdownOpen = false;
-                } else {
-                    event.accepted = false;
-                }
-            }
         }
 
         // ---------------------------------------------------------------
@@ -558,7 +415,7 @@ FocusScope {
         }
 
         Text {
-            text: "Sink: " + (sinkDropdownScope.currentSinkName)
+            text: "Sink: " + sinkDropdownScope.displayText
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
         }
