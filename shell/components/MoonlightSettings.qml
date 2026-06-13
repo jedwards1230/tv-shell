@@ -874,7 +874,9 @@ FocusScope {
                     text: root.newName
                     onTextChanged: text => root.newName = text
                     Component.onCompleted: {
-                        nameRow.inputField.KeyNavigation.down = Qt.binding(function () { return hostRow.inputField; });
+                        nameRow.inputField.KeyNavigation.down = Qt.binding(function () {
+                            return hostRow.inputField;
+                        });
                         nameRow.inputField.Keys.onEscapePressed = function (event) {
                             root.resetForm();
                             serverList.forceActiveFocus();
@@ -889,8 +891,12 @@ FocusScope {
                     text: root.newHost
                     onTextChanged: text => root.newHost = text
                     Component.onCompleted: {
-                        hostRow.inputField.KeyNavigation.up = Qt.binding(function () { return nameRow.inputField; });
-                        hostRow.inputField.KeyNavigation.down = Qt.binding(function () { return appRow.inputField; });
+                        hostRow.inputField.KeyNavigation.up = Qt.binding(function () {
+                            return nameRow.inputField;
+                        });
+                        hostRow.inputField.KeyNavigation.down = Qt.binding(function () {
+                            return appRow.inputField;
+                        });
                         hostRow.inputField.Keys.onEscapePressed = function (event) {
                             root.resetForm();
                             serverList.forceActiveFocus();
@@ -905,7 +911,9 @@ FocusScope {
                     text: root.newApp
                     onTextChanged: text => root.newApp = text
                     Component.onCompleted: {
-                        appRow.inputField.KeyNavigation.up = Qt.binding(function () { return hostRow.inputField; });
+                        appRow.inputField.KeyNavigation.up = Qt.binding(function () {
+                            return hostRow.inputField;
+                        });
                         appRow.inputField.Keys.onEscapePressed = function (event) {
                             root.resetForm();
                             serverList.forceActiveFocus();
