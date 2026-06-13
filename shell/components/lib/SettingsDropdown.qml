@@ -144,6 +144,12 @@ FocusScope {
         spacing: 4
         clip: true
         visible: root._open
+        // Disabled while collapsed so the FocusScope cannot re-delegate active
+        // focus back into this (invisible) list after an open/close cycle — that
+        // left the Up/Down clamp handlers below eating nav keys, trapping focus on
+        // a closed dropdown. Disabled => not focusable => root scope holds focus
+        // and its KeyNavigation.up/down work normally.
+        enabled: root._open
         model: root.model
         keyNavigationEnabled: true
         highlightFollowsCurrentItem: true

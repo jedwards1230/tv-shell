@@ -134,10 +134,11 @@ FocusScope {
     // Read-only page: focus the WiFi list when an adapter exists; otherwise
     // focus the Test button so D-pad entry still registers on a wired-only host.
     function focusFirst() {
-        if (root.hasWifi)
-            wifiList.forceActiveFocus();
-        else
-            testButtonScope.forceActiveFocus();
+        // Land on the Test connection button — it's the only actionable control
+        // on this otherwise read-only page, and it sits ABOVE the WiFi list. The
+        // WiFi list is a ListView that traps Up internally, so defaulting into it
+        // made the Test button unreachable. From Test, Down enters the list.
+        testButtonScope.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -300,7 +301,8 @@ FocusScope {
                 width: testButton.implicitWidth
                 height: testButton.implicitHeight
 
-                KeyNavigation.up: wifiList
+                // Test sits above the WiFi list — Down enters the list (when present).
+                KeyNavigation.down: root.hasWifi ? wifiList : null
 
                 SettingsButton {
                     id: testButton
@@ -332,7 +334,7 @@ FocusScope {
 
         SettingsList {
             id: wifiList
-            KeyNavigation.down: testButtonScope
+            KeyNavigation.up: testButtonScope
             // rowStride = delegate 96 + spacing 8 (#123/#139 row-count sizing).
             rowStride: 104
             maxHeight: 400
