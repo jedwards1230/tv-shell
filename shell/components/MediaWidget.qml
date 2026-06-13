@@ -76,6 +76,40 @@ FocusScope {
     visible: hasPlayer
     height: implicitHeight
 
+    // Draw a skip-track icon (two triangles + a bar) centred by construction.
+    // The Unicode ⏮/⏭ glyphs carry inconsistent side-bearing so anchors.centerIn
+    // never lands them centred (same reason play/pause is Canvas-drawn). dir = 1 →
+    // forward (triangles point right, bar on right); dir = -1 → back (mirrored).
+    function _paintSkip(ctx, w, h, color, dir) {
+        ctx.reset();
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = color;
+        if (dir < 0) {
+            ctx.translate(w, 0);
+            ctx.scale(-1, 1);
+        }
+        const triW = w * 0.36;
+        const triH = h * 0.78;
+        const barW = w * 0.13;
+        const gap = w * 0.04;
+        const totalW = triW * 2 + gap * 2 + barW;
+        let x = (w - totalW) / 2;
+        const ty = (h - triH) / 2;
+        const tri = function (tx) {
+            ctx.beginPath();
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(tx, ty + triH);
+            ctx.lineTo(tx + triW, ty + triH / 2);
+            ctx.closePath();
+            ctx.fill();
+        };
+        tri(x);
+        x += triW + gap;
+        tri(x);
+        x += triW + gap;
+        ctx.fillRect(x, ty, barW, triH);
+    }
+
     function _activate() {
         if (!root.hasPlayer)
             return;
@@ -394,11 +428,16 @@ FocusScope {
                         }
                     }
 
-                    Text {
+                    Canvas {
                         anchors.centerIn: parent
-                        text: "⏮" // prev-track glyph
-                        font.pixelSize: Theme.fontTitle
-                        color: Theme.textPrimary
+                        width: parent.width * 0.4
+                        height: parent.height * 0.4
+                        antialiasing: true
+                        property color iconColor: Theme.textPrimary
+                        onIconColorChanged: requestPaint()
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        onPaint: root._paintSkip(getContext("2d"), width, height, iconColor, -1)
                     }
 
                     MouseArea {
@@ -540,11 +579,16 @@ FocusScope {
                         }
                     }
 
-                    Text {
+                    Canvas {
                         anchors.centerIn: parent
-                        text: "⏭" // next-track glyph
-                        font.pixelSize: Theme.fontTitle
-                        color: Theme.textPrimary
+                        width: parent.width * 0.4
+                        height: parent.height * 0.4
+                        antialiasing: true
+                        property color iconColor: Theme.textPrimary
+                        onIconColorChanged: requestPaint()
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        onPaint: root._paintSkip(getContext("2d"), width, height, iconColor, 1)
                     }
 
                     MouseArea {

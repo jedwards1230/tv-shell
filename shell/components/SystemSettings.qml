@@ -84,7 +84,7 @@ FocusScope {
         }
 
         ColumnLayout {
-            spacing: 24
+            spacing: 14
             Layout.fillWidth: true
 
             Repeater {
@@ -116,7 +116,10 @@ FocusScope {
                         text: modelData.label
                         font.pixelSize: Theme.fontBody
                         color: Theme.textSecondary
-                        Layout.preferredWidth: 300
+                        // minimumWidth guarantees the label column never shrinks
+                        // into the value (was colliding: "Operating SystemCachyOS").
+                        Layout.preferredWidth: 320
+                        Layout.minimumWidth: 320
                     }
 
                     Text {

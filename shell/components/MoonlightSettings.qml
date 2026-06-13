@@ -668,14 +668,23 @@ FocusScope {
                         }
                     }
 
-                    // Pair button — only when the host is reachable but unpaired.
-                    // Sizing wrapper only — NOT a focus container. Do NOT add
-                    // focus:true (breaks list d-pad nav). Highlight is driven by
-                    // the external `highlighted` property.
-                    Item {
-                        width: pairBtn.width
-                        height: pairBtn.height
-                        visible: serverList._rowActions(modelData.host).indexOf("pair") >= 0
+                    // Action buttons grouped tight on the right. Without an
+                    // explicit Layout size the bare Items distributed across the
+                    // row, leaving Unpair stranded mid-row away from Remove.
+                    RowLayout {
+                        spacing: 16
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+
+                        // Pair button — only when the host is reachable but unpaired.
+                        // Sizing wrapper only — NOT a focus container. Do NOT add
+                        // focus:true (breaks list d-pad nav). Highlight is driven by
+                        // the external `highlighted` property.
+                        Item {
+                            Layout.preferredWidth: pairBtn.implicitWidth
+                            Layout.preferredHeight: pairBtn.implicitHeight
+                            width: pairBtn.width
+                            height: pairBtn.height
+                            visible: serverList._rowActions(modelData.host).indexOf("pair") >= 0
 
                         SettingsButton {
                             id: pairBtn
@@ -705,6 +714,8 @@ FocusScope {
                     // d-pad nav). Highlight is driven by the external `highlighted`
                     // property.
                     Item {
+                        Layout.preferredWidth: unpairBtn.implicitWidth
+                        Layout.preferredHeight: unpairBtn.implicitHeight
                         width: unpairBtn.width
                         height: unpairBtn.height
                         visible: serverList._rowActions(modelData.host).indexOf("unpair") >= 0
@@ -733,6 +744,8 @@ FocusScope {
                     // Do NOT add focus:true (breaks list d-pad nav). Highlight is
                     // driven by the external `highlighted` property.
                     Item {
+                        Layout.preferredWidth: removeBtn.implicitWidth
+                        Layout.preferredHeight: removeBtn.implicitHeight
                         width: removeBtn.width
                         height: removeBtn.height
 
@@ -764,6 +777,7 @@ FocusScope {
                                 onClicked: removeBtn.activated()
                             }
                         }
+                    }
                     }
                 }
             }
