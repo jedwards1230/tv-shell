@@ -390,8 +390,8 @@ FocusScope {
         }
 
         // --- Hint bar ---
-        Text {
-            Layout.alignment: Qt.AlignHCenter
+        HintBar {
+            muted: true
             text: {
                 if (root._outputExpanded)
                     return "▲▼ Select    A: Switch    B: Back";
@@ -399,8 +399,6 @@ FocusScope {
                     return "A: Open output    ▲ Back    B: Close";
                 return "◀▶ Volume    A: Mute    ▼ Output    B: Close";
             }
-            font.pixelSize: Theme.fontHint
-            color: Theme.textMuted
         }
     }
 }

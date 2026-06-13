@@ -536,11 +536,9 @@ FocusScope {
         }
 
         // --- Hint bar ---
-        Text {
-            Layout.alignment: Qt.AlignHCenter
+        HintBar {
+            muted: true
             text: root._confirmStep === 1 ? "▲▼ Navigate    A: Confirm    B: Cancel" : "A: Toggle    B: Close"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textMuted
         }
     }
 }

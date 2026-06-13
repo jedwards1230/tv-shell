@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 // KDE-style full-screen power chooser. Modal overlay following the
 // NotificationCenter pattern (FocusScope + DimmedBackdrop + modal key
@@ -206,12 +207,11 @@ FocusScope {
     }
 
     // Bottom hint bar
-    Text {
+    HintBar {
+        muted: true
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: Units.gridUnit * 2
         text: "D-pad: Navigate    A: Select    B: Cancel"
-        font.pixelSize: Theme.fontHint
-        color: Theme.textMuted
     }
 }
