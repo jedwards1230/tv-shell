@@ -293,11 +293,12 @@ FocusScope {
         tonePlayer.mask = mask.join(",");
         if (mask.length === 0)
             tonePlayer.running = false;
-            // onExited won't restart (none active)
-        else if (tonePlayer.running)
-            tonePlayer.running = false;
-            // onExited restarts with the new mask
         else
+        // onExited won't restart (none active)
+        if (tonePlayer.running)
+            tonePlayer.running = false;
+        else
+            // onExited restarts with the new mask
             tonePlayer.running = true;      // start fresh
     }
 
