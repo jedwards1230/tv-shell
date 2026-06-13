@@ -1153,7 +1153,9 @@ mod tests {
         );
         // Non-bool -> default (off).
         assert_eq!(
-            cec_auto_switch_on_power_on_from(&serde_json::json!({ "cecAutoSwitchOnPowerOn": "yes" })),
+            cec_auto_switch_on_power_on_from(
+                &serde_json::json!({ "cecAutoSwitchOnPowerOn": "yes" })
+            ),
             CEC_AUTO_SWITCH_ON_POWER_ON_DEFAULT
         );
     }
