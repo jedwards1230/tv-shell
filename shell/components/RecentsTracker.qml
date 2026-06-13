@@ -39,9 +39,6 @@ Item {
         reloadTimer.start();
     }
 
-    // Daemon IPC over a native Quickshell socket (SocketClient, #97) — the
-    // python3 socket shims were retired in Phase 8.
-
     SocketClient {
         id: loadRecents
         onResponseReceived: line => {

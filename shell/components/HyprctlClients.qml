@@ -15,9 +15,6 @@ Item {
     signal clientsReceived(var clients)
     signal errorOccurred(string message)
 
-    // One-shot daemon IPC over a native Quickshell socket (SocketClient, #97).
-    // The `hypr-clients` reply is a single JSON line; the python3 socket shim
-    // was retired in Phase 8.
     SocketClient {
         id: sock
         onResponseReceived: line => {

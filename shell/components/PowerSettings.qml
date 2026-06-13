@@ -15,9 +15,6 @@ FocusScope {
     // Suspend is routed through the input daemon's logind-over-zbus backbone
     // (Phase 3). Reboot/poweroff remain one-shot `systemctl` actions — they are
     // not system-state reads and have no daemon equivalent in scope.
-    //
-    // Suspend/CanSuspend go through the daemon over a native Quickshell socket
-    // (SocketClient, #97) — the python3 socket shim was retired in Phase 8.
 
     Process {
         id: powerOff
