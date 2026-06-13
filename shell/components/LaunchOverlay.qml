@@ -1,4 +1,5 @@
 import QtQuick
+import "lib"
 
 // LaunchOverlay (#193)
 //
@@ -33,30 +34,10 @@ Item {
 
         // App icon (matches AppCard's resolve-or-letter approach; no icon theme
         // on some targets, so the letter fallback is the common case).
-        Item {
-            width: Units.iconSizeXL
-            height: Units.iconSizeXL
+        AppIcon {
             anchors.horizontalCenter: parent.horizontalCenter
-
-            Image {
-                id: iconImage
-                anchors.fill: parent
-                source: root.appIcon ? "image://icon/" + root.appIcon : ""
-                sourceSize: Qt.size(Units.iconSizeXL, Units.iconSizeXL)
-                fillMode: Image.PreserveAspectFit
-                cache: false
-                visible: status === Image.Ready && source != ""
-            }
-            Text {
-                visible: !iconImage.visible
-                anchors.fill: parent
-                text: (root.appName || "?").charAt(0).toUpperCase()
-                font.pixelSize: Units.iconSizeLG
-                font.bold: true
-                color: Theme.textSecondary
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
+            iconSource: root.appIcon
+            fallbackText: root.appName
         }
 
         Text {

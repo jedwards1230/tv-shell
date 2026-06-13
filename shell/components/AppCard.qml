@@ -1,4 +1,5 @@
 import QtQuick
+import "lib"
 
 BaseCard {
     id: root
@@ -19,33 +20,21 @@ BaseCard {
     // icon loads, so a card never shows a neighbour's logo. (Apps whose icon name
     // isn't in the theme still render the provider's placeholder tile rather than
     // the letter — a separate, pre-existing cosmetic gap, tracked for follow-up.)
+    //
+    // NOTE: AppIcon is used here for the shared icon+fallback rendering, but the
+    // imperative _refreshIcon() clears iconWidget.iconSource before re-assigning
+    // it — same stale-texture fix applied via the component's property.
     function _refreshIcon() {
-        iconImage.source = "";
+        iconWidget.iconSource = "";
         if (root.app && root.app.icon)
-            iconImage.source = "image://icon/" + root.app.icon;
+            iconWidget.iconSource = root.app.icon;
     }
     onAppChanged: _refreshIcon()
     Component.onCompleted: _refreshIcon()
 
-    Image {
-        id: iconImage
+    AppIcon {
+        id: iconWidget
         anchors.fill: parent
-        sourceSize: Qt.size(Units.iconSizeXL, Units.iconSizeXL)
-        fillMode: Image.PreserveAspectFit
-        // Don't share/keep cached textures across delegates — a cache hit is how
-        // a stale neighbour icon leaks in when the new name doesn't resolve.
-        cache: false
-        visible: status === Image.Ready && source != ""
-    }
-
-    Text {
-        visible: !iconImage.visible
-        anchors.fill: parent
-        text: (root.app.name || "?").charAt(0).toUpperCase()
-        font.pixelSize: Units.iconSizeLG
-        font.bold: true
-        color: Theme.textSecondary
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
+        fallbackText: root.app ? root.app.name : ""
     }
 }
