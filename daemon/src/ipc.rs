@@ -509,9 +509,10 @@ async fn dispatch(
         // Controller DB status is stateless (consumed by `dispatch_stateless`).
         // ControllerDbRefresh is handled above with control_tx (hot-swap).
         | Command::ControllerDbStatus
-        // System/storage status commands are stateless (#164).
+        // System/storage status commands are stateless (#164, #235).
         | Command::SysStatus
-        | Command::StorageStatus => return protocol::resp_unknown(),
+        | Command::StorageStatus
+        | Command::SysMetrics => return protocol::resp_unknown(),
         // Phase 3 D-Bus commands are consumed by `dispatch_dbus` above (which
         // returns early); they never reach this match. The MAC-usage variant is
         // a stateless error reply handled there too.
