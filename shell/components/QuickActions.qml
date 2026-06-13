@@ -1,4 +1,5 @@
 import QtQuick
+import "lib"
 
 // Horizontal row of quick-action icons, navigable left-to-right. Reused in
 // the top-right status strip (HomeScreen) and the navigation drawer. Icons
@@ -222,24 +223,12 @@ FocusScope {
                 }
 
                 // Badge
-                Rectangle {
-                    visible: NotificationManager.unreadCount > 0
-                    width: 20
-                    height: 20
-                    radius: 10
-                    color: Theme.crimson
+                CountBadge {
+                    count: NotificationManager.unreadCount
                     anchors.top: parent.top
                     anchors.right: parent.right
                     anchors.topMargin: 6
                     anchors.rightMargin: 6
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: NotificationManager.unreadCount > 9 ? "9+" : NotificationManager.unreadCount.toString()
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: Theme.textOnDark
-                    }
                 }
 
                 MouseArea {
