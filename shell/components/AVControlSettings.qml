@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 // AV Control settings — rewritten (#16) to consume the daemon's `cec-*` IPC
 // instead of shelling out to cec-ctl / cec-client / living-room-cec. The daemon
@@ -286,30 +287,9 @@ FocusScope {
             }
 
             // Status indicator
-            Rectangle {
-                width: statusRow.implicitWidth + 32
-                height: 56
-                radius: 28
-                color: root.cecAvailable ? Qt.rgba(0.176, 0.541, 0.306, 0.2) : Theme.surfaceHover
-
-                RowLayout {
-                    id: statusRow
-                    anchors.centerIn: parent
-                    spacing: 12
-
-                    Rectangle {
-                        width: 16
-                        height: 16
-                        radius: 8
-                        color: root.cecAvailable ? Theme.online : Theme.textMuted
-                    }
-
-                    Text {
-                        text: root.statusText
-                        font.pixelSize: Theme.fontSmall
-                        color: root.cecAvailable ? Theme.online : Theme.textSecondary
-                    }
-                }
+            StatusPill {
+                state: root.cecAvailable ? "good" : "neutral"
+                text: root.statusText
             }
 
             // Refresh button
@@ -352,36 +332,14 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 16
 
-            Text {
+            SectionHeader {
                 text: "Focus Preferences"
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
             }
 
             // Focus TV on startup toggle
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 24
-
-                ColumnLayout {
-                    spacing: 2
-                    Layout.fillWidth: true
-
-                    Text {
-                        text: "Focus TV on startup"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-
-                    Text {
-                        text: "Switch the TV/AVR to this input when the shell starts (off keeps your current input on restart)."
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textSecondary
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-                }
+            PreferenceRow {
+                label: "Focus TV on startup"
+                description: "Switch the TV/AVR to this input when the shell starts (off keeps your current input on restart)."
 
                 FocusScope {
                     id: focusStartupScope
@@ -418,28 +376,9 @@ FocusScope {
             }
 
             // Focus TV on wake toggle
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 24
-
-                ColumnLayout {
-                    spacing: 2
-                    Layout.fillWidth: true
-
-                    Text {
-                        text: "Focus TV on wake from sleep"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-
-                    Text {
-                        text: "Switch to this input when the box wakes from sleep."
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textSecondary
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-                }
+            PreferenceRow {
+                label: "Focus TV on wake from sleep"
+                description: "Switch to this input when the box wakes from sleep."
 
                 FocusScope {
                     id: focusWakeScope
@@ -475,28 +414,9 @@ FocusScope {
 
             // Auto-switch input on power-on toggle (persist-only in Phase 1; the
             // daemon does not act on it yet — behaviour wiring is a follow-up).
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 24
-
-                ColumnLayout {
-                    spacing: 2
-                    Layout.fillWidth: true
-
-                    Text {
-                        text: "Auto-switch input on power-on"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-
-                    Text {
-                        text: "Switch the TV/AVR to this input automatically when a device powers on."
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textSecondary
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-                }
+            PreferenceRow {
+                label: "Auto-switch input on power-on"
+                description: "Switch the TV/AVR to this input automatically when a device powers on."
 
                 FocusScope {
                     id: autoSwitchScope
@@ -571,11 +491,8 @@ FocusScope {
             spacing: 16
             visible: root.cecAvailable
 
-            Text {
+            SectionHeader {
                 text: "Quick Actions"
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
             }
 
             // Feedback text
@@ -782,11 +699,8 @@ FocusScope {
             spacing: 16
             visible: root.cecAvailable
 
-            Text {
+            SectionHeader {
                 text: "Detected Devices"
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
             }
 
             // No devices placeholder
@@ -991,11 +905,8 @@ FocusScope {
         }
 
         // Hint bar
-        Text {
+        HintBar {
             text: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }
