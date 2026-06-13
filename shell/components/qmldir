@@ -12,6 +12,7 @@ singleton Units 1.0 Units.qml
 singleton WindowMatcher 1.0 WindowMatcher.qml
 StreamCard 1.0 StreamCard.qml
 QuickActions 1.0 QuickActions.qml
+QuickActionButton 1.0 QuickActionButton.qml
 StreamOverlay 1.0 StreamOverlay.qml
 SettingsPanel 1.0 SettingsPanel.qml
 SettingsButton 1.0 SettingsButton.qml
@@ -40,6 +41,7 @@ NavigationDrawer 1.0 NavigationDrawer.qml
 KeyBindingsSettings 1.0 KeyBindingsSettings.qml
 HyprctlClients 1.0 HyprctlClients.qml
 AVController 1.0 AVController.qml
+AudioController 1.0 AudioController.qml
 SocketClient 1.0 SocketClient.qml
 InputManager 1.0 InputManager.qml
 AppLifecycleManager 1.0 AppLifecycleManager.qml
@@ -59,6 +61,7 @@ VolumeOverlay 1.0 VolumeOverlay.qml
 NetworkOverlay 1.0 NetworkOverlay.qml
 SessionQAM 1.0 SessionQAM.qml
 SystemSettings 1.0 SystemSettings.qml
+ConfirmDialog 1.0 ConfirmDialog.qml
 SessionDialog 1.0 SessionDialog.qml
 ScreenshotFlash 1.0 ScreenshotFlash.qml
 LaunchOverlay 1.0 LaunchOverlay.qml

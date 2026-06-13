@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 // KDE-style full-screen power chooser. Modal overlay following the
 // NotificationCenter pattern (FocusScope + DimmedBackdrop + modal key
@@ -13,6 +14,9 @@ FocusScope {
     property bool opened: false
     // Default to the last index (Cancel) for safety.
     property int _selectedIndex: 4
+    // Destructive actions (restart/shutdown/logout) route through a confirm
+    // dialog first; "" means no pending confirmation. Sleep/Cancel stay instant.
+    property string _pendingAction: ""
 
     signal cancelled
 
@@ -79,16 +83,17 @@ FocusScope {
     function _activate(index) {
         switch (index) {
         case 0:
+            // Sleep is benign and trivially reversible — no confirmation.
             suspendCmd.request("power-suspend");
             break;
         case 1:
-            rebootCmd.running = true;
+            root._pendingAction = "restart";
             break;
         case 2:
-            powerOffCmd.running = true;
+            root._pendingAction = "shutdown";
             break;
         case 3:
-            logoutCmd.running = true;
+            root._pendingAction = "logout";
             break;
         case 4:
         default:
@@ -97,14 +102,37 @@ FocusScope {
         }
     }
 
+    // Run the action the user just confirmed in the dialog.
+    function _runPending() {
+        switch (root._pendingAction) {
+        case "restart":
+            rebootCmd.running = true;
+            break;
+        case "shutdown":
+            powerOffCmd.running = true;
+            break;
+        case "logout":
+            logoutCmd.running = true;
+            break;
+        }
+        root._pendingAction = "";
+    }
+
     onOpenedChanged: {
         if (opened) {
             _selectedIndex = 4;
+            _pendingAction = "";
             root.forceActiveFocus();
         }
     }
 
     Keys.onPressed: event => {
+        // While the confirm dialog is up, it owns input — don't move the
+        // selection behind it.
+        if (root._pendingAction !== "") {
+            event.accepted = true;
+            return;
+        }
         if (event.key === Qt.Key_Left) {
             if (_selectedIndex > 0)
                 _selectedIndex--;
@@ -206,12 +234,60 @@ FocusScope {
     }
 
     // Bottom hint bar
-    Text {
+    HintBar {
+        muted: true
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: Units.gridUnit * 2
         text: "D-pad: Navigate    A: Select    B: Cancel"
-        font.pixelSize: Theme.fontHint
-        color: Theme.textMuted
+    }
+
+    // Confirmation gate for destructive actions (restart / shutdown / logout).
+    // Default focus lands on Cancel so an accidental A never confirms.
+    ConfirmDialog {
+        opened: root._pendingAction !== ""
+        cardWidth: 700
+        cardHeight: 350
+        onDismissed: root._pendingAction = ""
+
+        Text {
+            text: {
+                switch (root._pendingAction) {
+                case "restart":
+                    return "Restart this system?";
+                case "shutdown":
+                    return "Shut down this system?";
+                case "logout":
+                    return "Log out of this session?";
+                default:
+                    return "";
+                }
+            }
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+            Layout.alignment: Qt.AlignHCenter
+        }
+
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 32
+
+            FocusButton {
+                id: powerConfirmYes
+                KeyNavigation.right: powerConfirmNo
+                text: "Yes"
+                onActivated: root._runPending()
+            }
+
+            FocusButton {
+                id: powerConfirmNo
+                focus: root._pendingAction !== ""
+                KeyNavigation.left: powerConfirmYes
+                text: "Cancel"
+                onActivated: root._pendingAction = ""
+                Keys.onEscapePressed: root._pendingAction = ""
+            }
+        }
     }
 }

@@ -1,4 +1,5 @@
 import QtQuick
+import "lib"
 
 // Horizontal row of quick-action icons, navigable left-to-right. Reused in
 // the top-right status strip (HomeScreen) and the navigation drawer. Icons
@@ -19,8 +20,8 @@ FocusScope {
     signal focusUpRequested
 
     property int currentIndex: 0
-    property int iconSize: 100
-    property int imgSize: 62
+    property int iconSize: 76
+    property int imgSize: 46
     readonly property int _spacing: 12
     // Cap the visible width to enable the scroll carousel. Defaults to
     // effectively unbounded (top-right has room for all icons).
@@ -139,22 +140,22 @@ FocusScope {
         function onMouseModeChanged() {
             if (Theme.mouseMode)
                 return;
-            if (notifMA.containsMouse) {
+            if (notifGlyph.hovered) {
                 root.currentIndex = 0;
                 root.forceActiveFocus();
-            } else if (settingsMA.containsMouse) {
+            } else if (settingsGlyph.hovered) {
                 root.currentIndex = 1;
                 root.forceActiveFocus();
-            } else if (themeMA.containsMouse) {
+            } else if (themeGlyph.hovered) {
                 root.currentIndex = 2;
                 root.forceActiveFocus();
-            } else if (networkMA.containsMouse) {
+            } else if (netGlyph.hovered) {
                 root.currentIndex = 3;
                 root.forceActiveFocus();
-            } else if (volumeMA.containsMouse) {
+            } else if (volGlyph.hovered) {
                 root.currentIndex = 4;
                 root.forceActiveFocus();
-            } else if (powerMA.containsMouse) {
+            } else if (powerGlyph.hovered) {
                 root.currentIndex = 5;
                 root.forceActiveFocus();
             }
@@ -186,342 +187,119 @@ FocusScope {
             spacing: root._spacing
 
             // Notifications (index 0)
-            Rectangle {
-                width: root.iconSize
-                height: root.iconSize
-                radius: root.iconSize / 2
-                color: notifMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-                border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 0 ? 3 : 0
-                border.color: Theme.focusBorder
-                Accessible.role: Accessible.Button
-                Accessible.name: root._labels[0]
-                Accessible.focusable: true
-                Accessible.onPressAction: root._activate(0)
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
+            QuickActionButton {
+                id: notifGlyph
+                index: 0
+                currentIndex: root.currentIndex
+                rowActiveFocus: root.activeFocus
+                iconSize: root.iconSize
+                imgSize: root.imgSize
+                iconPath: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/" + (NotificationManager.unreadCount > 0 ? "notification-active.svg" : "notification-inactive.svg") : ""
+                fallbackGlyph: "\u{1F514}"
+                fallbackColor: notifGlyph.hovered && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                a11yName: root._labels[0]
+                onActivated: root.notificationCenterRequested()
 
-                Image {
-                    id: notifIcon
-                    anchors.centerIn: parent
-                    source: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/" + (NotificationManager.unreadCount > 0 ? "notification-active.svg" : "notification-inactive.svg") : ""
-                    sourceSize: Qt.size(root.imgSize, root.imgSize)
-                    width: root.imgSize
-                    height: root.imgSize
-                    fillMode: Image.PreserveAspectFit
-                    visible: status === Image.Ready
-                }
-                Text {
-                    anchors.centerIn: parent
-                    text: "\u{1F514}"
-                    font.pixelSize: root.imgSize
-                    color: notifMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
-                    visible: notifIcon.status !== Image.Ready
-                }
-
-                // Badge
-                Rectangle {
-                    visible: NotificationManager.unreadCount > 0
-                    width: 20
-                    height: 20
-                    radius: 10
-                    color: Theme.crimson
+                CountBadge {
+                    count: NotificationManager.unreadCount
                     anchors.top: parent.top
                     anchors.right: parent.right
                     anchors.topMargin: 6
                     anchors.rightMargin: 6
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: NotificationManager.unreadCount > 9 ? "9+" : NotificationManager.unreadCount.toString()
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: Theme.textOnDark
-                    }
-                }
-
-                MouseArea {
-                    id: notifMA
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    // Hover flips to mouse-mode only on a GENUINE pointer move,
-                    // filtered by Theme.pointerMoved (global-coords delta). No
-                    // onEntered: content-scroll under a stationary cursor would
-                    // hijack controller-nav focus (#45). mapToItem(null,...) maps
-                    // to the scene root (used elsewhere here, vs mapToGlobal).
-                    cursorShape: Qt.PointingHandCursor
-                    onPositionChanged: mouse => {
-                        let p = mapToItem(null, mouse.x, mouse.y);
-                        Theme.pointerMoved(p.x, p.y);
-                    }
-                    onClicked: root.notificationCenterRequested()
                 }
             }
 
             // Settings (index 1)
-            Rectangle {
-                width: root.iconSize
-                height: root.iconSize
-                radius: root.iconSize / 2
-                color: settingsMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-                border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 1 ? 3 : 0
-                border.color: Theme.focusBorder
-                Accessible.role: Accessible.Button
-                Accessible.name: root._labels[1]
-                Accessible.focusable: true
-                Accessible.onPressAction: root._activate(1)
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                Image {
-                    id: settingsIcon
-                    anchors.centerIn: parent
-                    source: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/configure.svg" : ""
-                    sourceSize: Qt.size(root.imgSize, root.imgSize)
-                    width: root.imgSize
-                    height: root.imgSize
-                    fillMode: Image.PreserveAspectFit
-                    visible: status === Image.Ready
-                }
-                Text {
-                    anchors.centerIn: parent
-                    text: "⚙"
-                    font.pixelSize: root.imgSize
-                    color: settingsMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
-                    visible: settingsIcon.status !== Image.Ready
-                }
-                MouseArea {
-                    id: settingsMA
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    // Genuine-move-only mouse-mode via Theme.pointerMoved; no
-                    // onEntered (content-scroll false trigger, #45). Scene-root
-                    // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
-                    cursorShape: Qt.PointingHandCursor
-                    onPositionChanged: mouse => {
-                        let p = mapToItem(null, mouse.x, mouse.y);
-                        Theme.pointerMoved(p.x, p.y);
-                    }
-                    onClicked: root.settingsRequested()
-                }
+            QuickActionButton {
+                id: settingsGlyph
+                index: 1
+                currentIndex: root.currentIndex
+                rowActiveFocus: root.activeFocus
+                iconSize: root.iconSize
+                imgSize: root.imgSize
+                iconPath: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/configure.svg" : ""
+                fallbackGlyph: "⚙"
+                fallbackColor: settingsGlyph.hovered && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                a11yName: root._labels[1]
+                onActivated: root.settingsRequested()
             }
 
             // Theme toggle (index 2)
-            Rectangle {
-                width: root.iconSize
-                height: root.iconSize
-                radius: root.iconSize / 2
-                color: themeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-                border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 2 ? 3 : 0
-                border.color: Theme.focusBorder
-                Accessible.role: Accessible.Button
-                Accessible.name: root._labels[2]
-                Accessible.focusable: true
-                Accessible.onPressAction: root._activate(2)
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                // Simple monochrome glyph — intentionally colorless so it
-                // reads the same in light and dark themes (no colored
-                // weather artwork). Adapts to the theme text color.
-                Text {
-                    anchors.centerIn: parent
-                    text: Theme.themeMode === "dark" ? "☾" : Theme.themeMode === "light" ? "☀" : "◐"
-                    font.pixelSize: root.imgSize
-                    color: Theme.textPrimary
-                }
-                MouseArea {
-                    id: themeMA
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    // Genuine-move-only mouse-mode via Theme.pointerMoved; no
-                    // onEntered (content-scroll false trigger, #45). Scene-root
-                    // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
-                    cursorShape: Qt.PointingHandCursor
-                    onPositionChanged: mouse => {
-                        let p = mapToItem(null, mouse.x, mouse.y);
-                        Theme.pointerMoved(p.x, p.y);
-                    }
-                    onClicked: {
-                        if (Theme.themeMode === "auto")
-                            Theme.setThemeMode("light");
-                        else if (Theme.themeMode === "light")
-                            Theme.setThemeMode("dark");
-                        else
-                            Theme.setThemeMode("auto");
-                    }
+            // Simple monochrome glyph — intentionally colorless so it
+            // reads the same in light and dark themes (no colored
+            // weather artwork). Adapts to the theme text color.
+            QuickActionButton {
+                id: themeGlyph
+                index: 2
+                currentIndex: root.currentIndex
+                rowActiveFocus: root.activeFocus
+                iconSize: root.iconSize
+                imgSize: root.imgSize
+                iconPath: ""
+                fallbackGlyph: Theme.themeMode === "dark" ? "☾" : Theme.themeMode === "light" ? "☀" : "◐"
+                fallbackColor: Theme.textPrimary
+                // These glyphs sit low in the font box vs the others — nudge up.
+                glyphOffsetY: -Math.round(root.imgSize * 0.08)
+                a11yName: root._labels[2]
+                onActivated: {
+                    if (Theme.themeMode === "auto")
+                        Theme.setThemeMode("light");
+                    else if (Theme.themeMode === "light")
+                        Theme.setThemeMode("dark");
+                    else
+                        Theme.setThemeMode("auto");
                 }
             }
 
             // Network (index 3)
-            Rectangle {
+            QuickActionButton {
                 id: netGlyph
-                width: root.iconSize
-                height: root.iconSize
-                radius: root.iconSize / 2
-                color: networkMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-                border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 3 ? 3 : 0
-                border.color: Theme.focusBorder
-                Accessible.role: Accessible.Button
-                Accessible.name: root._labels[3]
-                Accessible.focusable: true
-                Accessible.onPressAction: root._activate(3)
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                property string _netIconPath: {
+                index: 3
+                currentIndex: root.currentIndex
+                rowActiveFocus: root.activeFocus
+                iconSize: root.iconSize
+                imgSize: root.imgSize
+                iconPath: {
                     if (!IconTheme.base)
                         return "";
                     if (NetworkManager.connected)
                         return "file://" + IconTheme.base + "/status/22/network-wired.svg";
                     return "file://" + IconTheme.base + "/actions/22/network-disconnect.svg";
                 }
-
-                Image {
-                    id: netIcon
-                    anchors.centerIn: parent
-                    source: parent._netIconPath
-                    sourceSize: Qt.size(root.imgSize, root.imgSize)
-                    width: root.imgSize
-                    height: root.imgSize
-                    fillMode: Image.PreserveAspectFit
-                    visible: status === Image.Ready
-                }
-                Text {
-                    anchors.centerIn: parent
-                    text: NetworkManager.connected ? "⇅" : "⚠"
-                    font.pixelSize: root.imgSize
-                    color: NetworkManager.connected ? Theme.textMuted : Theme.warning
-                    visible: netIcon.status !== Image.Ready
-                }
-                MouseArea {
-                    id: networkMA
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    // Genuine-move-only mouse-mode via Theme.pointerMoved; no
-                    // onEntered (content-scroll false trigger, #45). Scene-root
-                    // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
-                    cursorShape: Qt.PointingHandCursor
-                    onPositionChanged: mouse => {
-                        let p = mapToItem(null, mouse.x, mouse.y);
-                        Theme.pointerMoved(p.x, p.y);
-                    }
-                    onClicked: root.networkRequested(root._glyphRect(netGlyph))
-                }
+                fallbackGlyph: NetworkManager.connected ? "⇅" : "⚠"
+                fallbackColor: NetworkManager.connected ? Theme.textMuted : Theme.warning
+                a11yName: root._labels[3]
+                onActivated: root.networkRequested(root._glyphRect(netGlyph))
             }
 
             // Volume (index 4)
-            Rectangle {
+            QuickActionButton {
                 id: volGlyph
-                width: root.iconSize
-                height: root.iconSize
-                radius: root.iconSize / 2
-                color: volumeMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-                border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 4 ? 3 : 0
-                border.color: Theme.focusBorder
-                Accessible.role: Accessible.Button
-                Accessible.name: root._labels[4]
-                Accessible.focusable: true
-                Accessible.onPressAction: root._activate(4)
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                Image {
-                    id: volIcon
-                    anchors.centerIn: parent
-                    source: IconTheme.base ? "file://" + IconTheme.base + "/status/22/audio-volume-high.svg" : ""
-                    sourceSize: Qt.size(root.imgSize, root.imgSize)
-                    width: root.imgSize
-                    height: root.imgSize
-                    fillMode: Image.PreserveAspectFit
-                    visible: status === Image.Ready
-                }
-                Text {
-                    anchors.centerIn: parent
-                    text: "♫"
-                    font.pixelSize: root.imgSize
-                    color: Theme.textMuted
-                    visible: volIcon.status !== Image.Ready
-                }
-                MouseArea {
-                    id: volumeMA
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    // Genuine-move-only mouse-mode via Theme.pointerMoved; no
-                    // onEntered (content-scroll false trigger, #45). Scene-root
-                    // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
-                    cursorShape: Qt.PointingHandCursor
-                    onPositionChanged: mouse => {
-                        let p = mapToItem(null, mouse.x, mouse.y);
-                        Theme.pointerMoved(p.x, p.y);
-                    }
-                    onClicked: root.volumeRequested(root._glyphRect(volGlyph))
-                }
+                index: 4
+                currentIndex: root.currentIndex
+                rowActiveFocus: root.activeFocus
+                iconSize: root.iconSize
+                imgSize: root.imgSize
+                iconPath: IconTheme.base ? "file://" + IconTheme.base + "/status/22/audio-volume-high.svg" : ""
+                fallbackGlyph: "♫"
+                fallbackColor: Theme.textMuted
+                a11yName: root._labels[4]
+                onActivated: root.volumeRequested(root._glyphRect(volGlyph))
             }
 
             // Power (index 5)
-            Rectangle {
-                width: root.iconSize
-                height: root.iconSize
-                radius: root.iconSize / 2
-                color: powerMA.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-                border.width: root.activeFocus && !Theme.mouseMode && root.currentIndex === 5 ? 3 : 0
-                border.color: Theme.focusBorder
-                Accessible.role: Accessible.Button
-                Accessible.name: root._labels[5]
-                Accessible.focusable: true
-                Accessible.onPressAction: root._activate(5)
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                Image {
-                    id: powerIcon
-                    anchors.centerIn: parent
-                    source: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/system-shutdown.svg" : ""
-                    sourceSize: Qt.size(root.imgSize, root.imgSize)
-                    width: root.imgSize
-                    height: root.imgSize
-                    fillMode: Image.PreserveAspectFit
-                    visible: status === Image.Ready
-                }
-                Text {
-                    anchors.centerIn: parent
-                    text: "⏻"
-                    font.pixelSize: root.imgSize
-                    color: powerMA.containsMouse && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
-                    visible: powerIcon.status !== Image.Ready
-                }
-                MouseArea {
-                    id: powerMA
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    // Genuine-move-only mouse-mode via Theme.pointerMoved; no
-                    // onEntered (content-scroll false trigger, #45). Scene-root
-                    // mapToItem(null,...) (used elsewhere, vs mapToGlobal).
-                    cursorShape: Qt.PointingHandCursor
-                    onPositionChanged: mouse => {
-                        let p = mapToItem(null, mouse.x, mouse.y);
-                        Theme.pointerMoved(p.x, p.y);
-                    }
-                    onClicked: root.powerRequested()
-                }
+            QuickActionButton {
+                id: powerGlyph
+                index: 5
+                currentIndex: root.currentIndex
+                rowActiveFocus: root.activeFocus
+                iconSize: root.iconSize
+                imgSize: root.imgSize
+                iconPath: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/system-shutdown.svg" : ""
+                fallbackGlyph: "⏻"
+                fallbackColor: powerGlyph.hovered && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                a11yName: root._labels[5]
+                onActivated: root.powerRequested()
             }
         }
     }
@@ -533,17 +311,17 @@ FocusScope {
         anchors.horizontalCenter: parent.horizontalCenter
         text: {
             if (Theme.mouseMode) {
-                if (notifMA.containsMouse)
+                if (notifGlyph.hovered)
                     return root._labels[0];
-                if (settingsMA.containsMouse)
+                if (settingsGlyph.hovered)
                     return root._labels[1];
-                if (themeMA.containsMouse)
+                if (themeGlyph.hovered)
                     return root._labels[2];
-                if (networkMA.containsMouse)
+                if (netGlyph.hovered)
                     return root._labels[3];
-                if (volumeMA.containsMouse)
+                if (volGlyph.hovered)
                     return root._labels[4];
-                if (powerMA.containsMouse)
+                if (powerGlyph.hovered)
                     return root._labels[5];
                 return "";
             }

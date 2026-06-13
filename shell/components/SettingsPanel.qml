@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 import Qt5Compat.GraphicalEffects
+import "lib"
 
 Rectangle {
     id: root
@@ -232,14 +233,8 @@ Rectangle {
                         }
 
                         // Left accent bar on focused item
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 4
-                            height: parent.height - 16
-                            radius: 2
-                            color: Theme.focusBorder
-                            visible: (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode) || (sidebarMA.containsMouse && Theme.mouseMode)
+                        FocusAccentBar {
+                            active: (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode) || (sidebarMA.containsMouse && Theme.mouseMode)
                         }
 
                         RowLayout {

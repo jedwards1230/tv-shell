@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 Drawer {
     id: root
@@ -125,14 +126,8 @@ Drawer {
                     }
                 }
 
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 4
-                    height: parent.height - 16
-                    radius: 2
-                    color: Theme.focusBorder
-                    visible: navList.currentIndex === index && navList.activeFocus
+                FocusAccentBar {
+                    active: navList.currentIndex === index && navList.activeFocus
                 }
 
                 RowLayout {

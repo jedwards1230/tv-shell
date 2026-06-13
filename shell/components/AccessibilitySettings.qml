@@ -47,33 +47,13 @@ FocusScope {
             label: "Suppress animations and scrolling text"
             description: "Focus ring, glow, and fill remain active — only scale/transition animations stop."
 
-            FocusScope {
+            FocusButton {
                 id: reduceMotionScope
-                width: reduceMotionBtn.width
-                height: reduceMotionBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.down: textSizeScope
-
-                SettingsButton {
-                    id: reduceMotionBtn
-                    text: Theme.reduceMotion ? "Enabled" : "Disabled"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: Theme.reduceMotion ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
-
-                    onActivated: Theme.setReduceMotion(!Theme.reduceMotion)
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            reduceMotionScope.forceActiveFocus();
-                            reduceMotionBtn.activated();
-                        }
-                    }
-                }
+                text: Theme.reduceMotion ? "Enabled" : "Disabled"
+                fillActive: Theme.reduceMotion
+                fillColor: Theme.sidebarActive
+                onActivated: Theme.setReduceMotion(!Theme.reduceMotion)
             }
         }
 

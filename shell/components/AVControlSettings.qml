@@ -293,34 +293,14 @@ FocusScope {
             }
 
             // Refresh button
-            FocusScope {
+            FocusButton {
                 id: refreshScope
-                width: refreshBtn.implicitWidth
-                height: refreshBtn.implicitHeight
                 visible: root.cecAvailable
-
                 KeyNavigation.down: focusStartupScope
-
-                SettingsButton {
-                    id: refreshBtn
-                    text: "Refresh"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-
-                    onActivated: {
-                        root.statusText = "Scanning...";
-                        scanClient.request("cec-scan");
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        refreshScope.forceActiveFocus();
-                        refreshBtn.activated();
-                    }
+                text: "Refresh"
+                onActivated: {
+                    root.statusText = "Scanning...";
+                    scanClient.request("cec-scan");
                 }
             }
         }
@@ -341,37 +321,16 @@ FocusScope {
                 label: "Focus TV on startup"
                 description: "Switch the TV/AVR to this input when the shell starts (off keeps your current input on restart)."
 
-                FocusScope {
+                FocusButton {
                     id: focusStartupScope
-                    width: focusStartupBtn.width
-                    height: focusStartupBtn.height
-                    activeFocusOnTab: true
-
                     // Refresh is hidden when CEC is unavailable — wrap Up to the
                     // last (always-visible) toggle so focus can't vanish.
                     KeyNavigation.up: root.cecAvailable ? refreshScope : autoSwitchScope
                     KeyNavigation.down: focusWakeScope
-
-                    SettingsButton {
-                        id: focusStartupBtn
-                        text: SettingsStore.cecFocusOnStartup ? "On" : "Off"
-                        focus: parent.activeFocus
-                        anchors.fill: parent
-
-                        color: SettingsStore.cecFocusOnStartup ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
-
-                        onActivated: SettingsStore.setCecFocusOnStartup(!SettingsStore.cecFocusOnStartup)
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                focusStartupScope.forceActiveFocus();
-                                focusStartupBtn.activated();
-                            }
-                        }
-                    }
+                    text: SettingsStore.cecFocusOnStartup ? "On" : "Off"
+                    fillActive: SettingsStore.cecFocusOnStartup
+                    fillColor: Theme.sidebarActive
+                    onActivated: SettingsStore.setCecFocusOnStartup(!SettingsStore.cecFocusOnStartup)
                 }
             }
 
@@ -380,35 +339,14 @@ FocusScope {
                 label: "Focus TV on wake from sleep"
                 description: "Switch to this input when the box wakes from sleep."
 
-                FocusScope {
+                FocusButton {
                     id: focusWakeScope
-                    width: focusWakeBtn.width
-                    height: focusWakeBtn.height
-                    activeFocusOnTab: true
-
                     KeyNavigation.up: focusStartupScope
                     KeyNavigation.down: autoSwitchScope
-
-                    SettingsButton {
-                        id: focusWakeBtn
-                        text: SettingsStore.cecFocusOnWake ? "On" : "Off"
-                        focus: parent.activeFocus
-                        anchors.fill: parent
-
-                        color: SettingsStore.cecFocusOnWake ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
-
-                        onActivated: SettingsStore.setCecFocusOnWake(!SettingsStore.cecFocusOnWake)
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                focusWakeScope.forceActiveFocus();
-                                focusWakeBtn.activated();
-                            }
-                        }
-                    }
+                    text: SettingsStore.cecFocusOnWake ? "On" : "Off"
+                    fillActive: SettingsStore.cecFocusOnWake
+                    fillColor: Theme.sidebarActive
+                    onActivated: SettingsStore.setCecFocusOnWake(!SettingsStore.cecFocusOnWake)
                 }
             }
 
@@ -418,38 +356,17 @@ FocusScope {
                 label: "Auto-switch input on power-on"
                 description: "Switch the TV/AVR to this input automatically when a device powers on."
 
-                FocusScope {
+                FocusButton {
                     id: autoSwitchScope
-                    width: autoSwitchBtn.width
-                    height: autoSwitchBtn.height
-                    activeFocusOnTab: true
-
                     KeyNavigation.up: focusWakeScope
                     // When CEC is unavailable the action row below is hidden —
                     // wrap Down back to the first toggle instead of self-looping
                     // (which would trap focus).
                     KeyNavigation.down: root.cecAvailable ? wakeScope : focusStartupScope
-
-                    SettingsButton {
-                        id: autoSwitchBtn
-                        text: SettingsStore.cecAutoSwitchOnPowerOn ? "On" : "Off"
-                        focus: parent.activeFocus
-                        anchors.fill: parent
-
-                        color: SettingsStore.cecAutoSwitchOnPowerOn ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
-
-                        onActivated: SettingsStore.setCecAutoSwitchOnPowerOn(!SettingsStore.cecAutoSwitchOnPowerOn)
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                autoSwitchScope.forceActiveFocus();
-                                autoSwitchBtn.activated();
-                            }
-                        }
-                    }
+                    text: SettingsStore.cecAutoSwitchOnPowerOn ? "On" : "Off"
+                    fillActive: SettingsStore.cecAutoSwitchOnPowerOn
+                    fillColor: Theme.sidebarActive
+                    onActivated: SettingsStore.setCecAutoSwitchOnPowerOn(!SettingsStore.cecAutoSwitchOnPowerOn)
                 }
             }
         }
@@ -707,7 +624,7 @@ FocusScope {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 120
-                radius: 16
+                radius: Units.radiusMD
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -776,7 +693,7 @@ FocusScope {
 
                         Rectangle {
                             anchors.fill: parent
-                            radius: 16
+                            radius: Units.radiusMD
                             color: deviceRow.activeFocus ? Theme.surfaceHover : Theme.surface
                             border.width: 2
                             border.color: Theme.surfaceBorder

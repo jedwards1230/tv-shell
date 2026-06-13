@@ -543,7 +543,7 @@ FocusScope {
             anchors.bottomMargin: 48
             width: comboText.implicitWidth + 64
             height: comboText.implicitHeight + 32
-            radius: 16
+            radius: Units.radiusMD
             color: Qt.rgba(0, 0, 0, 0.8)
             border.width: 2
             border.color: Theme.ember

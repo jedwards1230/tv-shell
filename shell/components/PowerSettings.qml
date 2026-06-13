@@ -89,36 +89,15 @@ FocusScope {
                     Layout.fillWidth: true
                 }
 
-                FocusScope {
+                FocusButton {
                     id: sleepTimerScope
-                    width: sleepTimerBtn.width
-                    height: sleepTimerBtn.height
-                    activeFocusOnTab: true
-
                     KeyNavigation.down: wakeOnControllerScope
-
-                    SettingsButton {
-                        id: sleepTimerBtn
-                        text: SettingsStore.sleepTimerMinutes === 0 ? "Off" : SettingsStore.sleepTimerMinutes + " min"
-                        focus: parent.activeFocus
-                        anchors.fill: parent
-
-                        onActivated: {
-                            var steps = [0, 5, 10, 15, 30, 60];
-                            var idx = steps.indexOf(SettingsStore.sleepTimerMinutes);
-                            var next = steps[(idx + 1) % steps.length];
-                            SettingsStore.setSleepTimerMinutes(next);
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                sleepTimerScope.forceActiveFocus();
-                                sleepTimerBtn.activated();
-                            }
-                        }
+                    text: SettingsStore.sleepTimerMinutes === 0 ? "Off" : SettingsStore.sleepTimerMinutes + " min"
+                    onActivated: {
+                        var steps = [0, 5, 10, 15, 30, 60];
+                        var idx = steps.indexOf(SettingsStore.sleepTimerMinutes);
+                        var next = steps[(idx + 1) % steps.length];
+                        SettingsStore.setSleepTimerMinutes(next);
                     }
                 }
             }
@@ -142,35 +121,14 @@ FocusScope {
                     Layout.fillWidth: true
                 }
 
-                FocusScope {
+                FocusButton {
                     id: wakeOnControllerScope
-                    width: wakeOnControllerBtn.width
-                    height: wakeOnControllerBtn.height
-                    activeFocusOnTab: true
-
                     KeyNavigation.up: sleepTimerScope
                     KeyNavigation.down: endSessionScope
-
-                    SettingsButton {
-                        id: wakeOnControllerBtn
-                        text: SettingsStore.wakeOnController ? "On" : "Off"
-                        focus: parent.activeFocus
-                        anchors.fill: parent
-
-                        color: SettingsStore.wakeOnController ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
-
-                        onActivated: SettingsStore.setWakeOnController(!SettingsStore.wakeOnController)
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                wakeOnControllerScope.forceActiveFocus();
-                                wakeOnControllerBtn.activated();
-                            }
-                        }
-                    }
+                    text: SettingsStore.wakeOnController ? "On" : "Off"
+                    fillActive: SettingsStore.wakeOnController
+                    fillColor: Theme.sidebarActive
+                    onActivated: SettingsStore.setWakeOnController(!SettingsStore.wakeOnController)
                 }
             }
 
@@ -196,33 +154,12 @@ FocusScope {
                     }
                 }
 
-                FocusScope {
+                FocusButton {
                     id: endSessionScope
-                    width: endSessionBtn.width
-                    height: endSessionBtn.height
-                    activeFocusOnTab: true
-
                     KeyNavigation.up: wakeOnControllerScope
                     KeyNavigation.down: suspendScope
-
-                    SettingsButton {
-                        id: endSessionBtn
-                        text: "End"
-                        focus: parent.activeFocus
-                        anchors.fill: parent
-
-                        onActivated: endSessionCmd.request("intent home")
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                endSessionScope.forceActiveFocus();
-                                endSessionBtn.activated();
-                            }
-                        }
-                    }
+                    text: "End"
+                    onActivated: endSessionCmd.request("intent home")
                 }
             }
         }
@@ -430,118 +367,50 @@ FocusScope {
     }
 
     // Confirmation dialog
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.7)
-        visible: root.confirmAction !== ""
+    ConfirmDialog {
+        opened: root.confirmAction !== ""
+        cardWidth: 700
+        cardHeight: 350
+        onDismissed: root.confirmAction = ""
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {
-                root.confirmAction = "";
-            }
-        }
-
-        Rectangle {
-            anchors.centerIn: parent
-            width: 700
-            height: 350
-            radius: 32
-            color: Theme.surface
-
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 32
-
-                Text {
-                    text: {
-                        switch (root.confirmAction) {
-                        case "suspend":
-                            return "Sleep this system?";
-                        case "restart":
-                            return "Restart this system?";
-                        case "shutdown":
-                            return "Shut down this system?";
-                        default:
-                            return "";
-                        }
-                    }
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignHCenter
-                }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: 32
-
-                    FocusScope {
-                        id: confirmYesScope
-                        Layout.preferredWidth: confirmYesBtn.implicitWidth
-                        Layout.preferredHeight: confirmYesBtn.implicitHeight
-                        activeFocusOnTab: true
-
-                        KeyNavigation.right: confirmNoScope
-
-                        SettingsButton {
-                            id: confirmYesBtn
-                            text: "Yes"
-                            focus: parent.activeFocus
-                            anchors.fill: parent
-
-                            onActivated: executeAction()
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    confirmYesScope.forceActiveFocus();
-                                    confirmYesBtn.activated();
-                                }
-                            }
-                        }
-                    }
-
-                    FocusScope {
-                        id: confirmNoScope
-                        Layout.preferredWidth: confirmNoBtn.implicitWidth
-                        Layout.preferredHeight: confirmNoBtn.implicitHeight
-                        focus: root.confirmAction !== ""
-                        activeFocusOnTab: true
-
-                        KeyNavigation.left: confirmYesScope
-
-                        SettingsButton {
-                            id: confirmNoBtn
-                            text: "Cancel"
-                            focus: parent.activeFocus
-                            anchors.fill: parent
-
-                            onActivated: root.confirmAction = ""
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    confirmNoScope.forceActiveFocus();
-                                    confirmNoBtn.activated();
-                                }
-                            }
-                        }
-
-                        Keys.onEscapePressed: {
-                            root.confirmAction = "";
-                        }
-                    }
+        Text {
+            text: {
+                switch (root.confirmAction) {
+                case "suspend":
+                    return "Sleep this system?";
+                case "restart":
+                    return "Restart this system?";
+                case "shutdown":
+                    return "Shut down this system?";
+                default:
+                    return "";
                 }
             }
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+            Layout.alignment: Qt.AlignHCenter
         }
 
-        Keys.onEscapePressed: {
-            root.confirmAction = "";
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 32
+
+            FocusButton {
+                id: confirmYesScope
+                KeyNavigation.right: confirmNoScope
+                text: "Yes"
+                onActivated: executeAction()
+            }
+
+            FocusButton {
+                id: confirmNoScope
+                focus: root.confirmAction !== ""
+                KeyNavigation.left: confirmYesScope
+                text: "Cancel"
+                onActivated: root.confirmAction = ""
+                Keys.onEscapePressed: root.confirmAction = ""
+            }
         }
     }
 

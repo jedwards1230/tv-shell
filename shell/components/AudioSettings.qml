@@ -24,90 +24,29 @@ FocusScope {
     // Guard: re-apply persisted default only once per page-load
     property bool _reapplied: false
 
-    // --- Processes ---
+    // --- Shared audio controller ---
 
-    Process {
-        id: getVolume
-        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
-        stdout: SplitParser {
-            onRead: line => {
-                // Output: "Volume: 0.50" or "Volume: 0.50 [MUTED]"
-                let parts = line.trim().split(" ");
-                if (parts.length >= 2) {
-                    root.volume = Math.round(parseFloat(parts[1]) * 100);
-                }
-                root.muted = line.indexOf("[MUTED]") >= 0;
-            }
-        }
-    }
-
-    Process {
-        id: setVolume
-        property string level: "50%"
-        command: ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", level]
-        onExited: {
-            getVolume.running = true;
-        }
-    }
-
-    Process {
-        id: toggleMute
-        command: ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
-        onExited: {
-            getVolume.running = true;
-        }
-    }
-
-    Process {
-        id: listSinks
-        command: ["bash", "-c", "wpctl status | sed -n '/Audio/,/Video/p' | sed -n '/Sinks:/,/Sources:/p' | grep -v 'Sinks:\\|Sources:\\|^$'"]
-        stdout: SplitParser {
-            property var collected: []
-            onRead: line => {
-                // Lines like: " │      46. <AVR name>  [vol: 1.00]"
-                //             " │  *   86. Radeon HD Audio   [vol: 1.00]"
-                // Strip box-drawing chars and leading whitespace
-                let cleaned = line.replace(/[│├└─┐┘┌┬┴┤┼]/g, " ");
-                let isDefault = cleaned.indexOf("*") >= 0;
-                // Extract id and name from "  *   86. Some Name  [vol: 1.00]"
-                let match = cleaned.match(/\*?\s*(\d+)\.\s+(.+?)(?:\s+\[vol:.+\])?\s*$/);
-                if (match) {
-                    let entry = {
-                        id: parseInt(match[1]),
-                        name: match[2].trim(),
-                        isDefault: isDefault
-                    };
-                    collected.push(entry);
-                    if (isDefault)
-                        root.defaultSinkIndex = collected.length - 1;
-                }
-            }
-        }
-        onExited: {
-            root.sinks = listSinks.stdout.collected;
-            listSinks.stdout.collected = [];
-            // Re-apply persisted default once on first populate
+    AudioController {
+        id: audioCtl
+        onSinksChanged: {
+            // Mirror sinks/defaultSinkIndex onto root for the UI.
+            root.sinks = audioCtl.sinks;
+            root.defaultSinkIndex = audioCtl.defaultSinkIndex;
+            // Re-apply persisted default once on first populate.
             if (!root._reapplied && SettingsStore.defaultSink !== "") {
                 root._reapplied = true;
                 reapplySink.wantName = SettingsStore.defaultSink;
                 reapplySink.running = true;
             }
-            // Refresh format info after sink list updates
+            // Refresh format info after sink list updates.
             getFormat.running = true;
         }
-    }
-
-    // Live-switch the default sink by numeric id (volatile — changes across reboots)
-    Process {
-        id: setDefaultSink
-        property int sinkId: 0
-        command: ["wpctl", "set-default", String(sinkId)]
-        onExited: {
-            // After switching, read the node.name of the new default to persist it
+        onVolumeChanged: root.volume = audioCtl.volume
+        onMutedChanged: root.muted = audioCtl.muted
+        onSinkSwitched: sinkId => {
+            // After switching, read the node.name to persist it.
             readNodeName.pendingSinkId = sinkId;
             readNodeName.running = true;
-            listSinks.running = true;
-            refreshTimer.start();
         }
     }
 
@@ -142,16 +81,7 @@ FocusScope {
         command: ["bash", "-c", "[ -z \"$GAME_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$GAME_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$GAME_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
         onExited: {
             // Refresh the list so UI reflects the re-applied default
-            listSinks.running = true;
-        }
-    }
-
-    Timer {
-        id: refreshTimer
-        interval: 500
-        onTriggered: {
-            getVolume.running = true;
-            getFormat.running = true;
+            audioCtl.refresh();
         }
     }
 
@@ -245,10 +175,9 @@ FocusScope {
         command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
         onExited: {
             // Refresh everything: new default sink, format, and active profile.
-            listSinks.running = true;
+            audioCtl.refresh();
             getFormat.running = true;
             listProfiles.running = true;
-            refreshTimer.start();
         }
     }
 
@@ -323,8 +252,7 @@ FocusScope {
     }
 
     Component.onCompleted: {
-        getVolume.running = true;
-        listSinks.running = true;
+        audioCtl.refresh();
         getFormat.running = true;
         listProfiles.running = true;
     }
@@ -335,8 +263,7 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             root._reapplied = false;
-            getVolume.running = true;
-            listSinks.running = true;
+            audioCtl.refresh();
             getFormat.running = true;
             listProfiles.running = true;
         } else if (root.anyChannelActive) {
@@ -367,37 +294,12 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 24
 
-            FocusScope {
+            FocusButton {
                 id: volDownScope
-                width: volDownBtn.width
-                height: volDownBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.right: volUpScope
                 KeyNavigation.down: muteScope
-
-                SettingsButton {
-                    id: volDownBtn
-                    text: "  -  "
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-
-                    onActivated: {
-                        root.volume = Math.max(0, root.volume - 5);
-                        setVolume.level = root.volume + "%";
-                        setVolume.running = true;
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            volDownScope.forceActiveFocus();
-                            volDownBtn.activated();
-                        }
-                    }
-                }
+                text: "  -  "
+                onActivated: audioCtl.setVolumeLevel(audioCtl.volume - 5)
             }
 
             // Volume bar
@@ -429,67 +331,21 @@ FocusScope {
                 }
             }
 
-            FocusScope {
+            FocusButton {
                 id: volUpScope
-                width: volUpBtn.width
-                height: volUpBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.left: volDownScope
                 KeyNavigation.down: muteScope
-
-                SettingsButton {
-                    id: volUpBtn
-                    text: "  +  "
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-
-                    onActivated: {
-                        root.volume = Math.min(100, root.volume + 5);
-                        setVolume.level = root.volume + "%";
-                        setVolume.running = true;
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            volUpScope.forceActiveFocus();
-                            volUpBtn.activated();
-                        }
-                    }
-                }
+                text: "  +  "
+                onActivated: audioCtl.setVolumeLevel(audioCtl.volume + 5)
             }
         }
 
-        FocusScope {
+        FocusButton {
             id: muteScope
-            width: muteBtn.width
-            height: muteBtn.height
-            activeFocusOnTab: true
-
             KeyNavigation.up: volDownScope
             KeyNavigation.down: sinkDropdownScope
-
-            SettingsButton {
-                id: muteBtn
-                text: root.muted ? "Unmute" : "Mute"
-                focus: parent.activeFocus
-                anchors.fill: parent
-
-                onActivated: toggleMute.running = true
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        muteScope.forceActiveFocus();
-                        muteBtn.activated();
-                    }
-                }
-            }
+            text: root.muted ? "Unmute" : "Mute"
+            onActivated: audioCtl.toggleMuteState()
         }
 
         // Output device dropdown
@@ -510,8 +366,7 @@ FocusScope {
                 return item.name;
             }
             onItemSelected: function (item) {
-                setDefaultSink.sinkId = item.id;
-                setDefaultSink.running = true;
+                audioCtl.setDefaultSinkById(item.id);
             }
 
             KeyNavigation.up: muteScope
@@ -540,6 +395,9 @@ FocusScope {
                 setCardProfile.cardName = item.card;
                 setCardProfile.profileName = item.profile;
                 setCardProfile.running = true;
+                // Persist so the surround profile is re-applied on next boot
+                // (PipeWire otherwise falls back to the stereo default).
+                SettingsStore.setAudioCardProfile(item.card + "|" + item.profile);
             }
 
             KeyNavigation.up: sinkDropdownScope
@@ -572,98 +430,38 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 16
 
-            FocusScope {
+            FocusButton {
                 id: testToneFlScope
-                width: testToneFlBtn.width
-                height: testToneFlBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.up: profileDropdownScope
                 KeyNavigation.right: testToneCScope
                 KeyNavigation.down: testToneRlScope
-
-                SettingsButton {
-                    id: testToneFlBtn
-                    text: "Front L"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[0] ? Theme.sidebarActive : (testToneFlScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneFlScope.activeFocus ? 2 : 1
-                    border.color: testToneFlScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(0)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneFlScope.forceActiveFocus();
-                            testToneFlBtn.activated();
-                        }
-                    }
-                }
+                text: "Front L"
+                fillActive: root.channelActive[0]
+                fillColor: Theme.sidebarActive
+                onActivated: root.toggleChannel(0)
             }
 
-            FocusScope {
+            FocusButton {
                 id: testToneCScope
-                width: testToneCBtn.width
-                height: testToneCBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.up: profileDropdownScope
                 KeyNavigation.left: testToneFlScope
                 KeyNavigation.right: testToneFrScope
                 KeyNavigation.down: testToneLfeScope
-
-                SettingsButton {
-                    id: testToneCBtn
-                    text: "Center"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[2] ? Theme.sidebarActive : (testToneCScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneCScope.activeFocus ? 2 : 1
-                    border.color: testToneCScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(2)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneCScope.forceActiveFocus();
-                            testToneCBtn.activated();
-                        }
-                    }
-                }
+                text: "Center"
+                fillActive: root.channelActive[2]
+                fillColor: Theme.sidebarActive
+                onActivated: root.toggleChannel(2)
             }
 
-            FocusScope {
+            FocusButton {
                 id: testToneFrScope
-                width: testToneFrBtn.width
-                height: testToneFrBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.up: profileDropdownScope
                 KeyNavigation.left: testToneCScope
                 KeyNavigation.down: testToneRrScope
-
-                SettingsButton {
-                    id: testToneFrBtn
-                    text: "Front R"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[1] ? Theme.sidebarActive : (testToneFrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneFrScope.activeFocus ? 2 : 1
-                    border.color: testToneFrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(1)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneFrScope.forceActiveFocus();
-                            testToneFrBtn.activated();
-                        }
-                    }
-                }
+                text: "Front R"
+                fillActive: root.channelActive[1]
+                fillColor: Theme.sidebarActive
+                onActivated: root.toggleChannel(1)
             }
         }
 
@@ -672,129 +470,49 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 16
 
-            FocusScope {
+            FocusButton {
                 id: testToneRlScope
-                width: testToneRlBtn.width
-                height: testToneRlBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.up: testToneFlScope
                 KeyNavigation.right: testToneLfeScope
                 KeyNavigation.down: testToneAllScope
-
-                SettingsButton {
-                    id: testToneRlBtn
-                    text: "Rear L"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[4] ? Theme.sidebarActive : (testToneRlScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneRlScope.activeFocus ? 2 : 1
-                    border.color: testToneRlScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(4)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneRlScope.forceActiveFocus();
-                            testToneRlBtn.activated();
-                        }
-                    }
-                }
+                text: "Rear L"
+                fillActive: root.channelActive[4]
+                fillColor: Theme.sidebarActive
+                onActivated: root.toggleChannel(4)
             }
 
-            FocusScope {
+            FocusButton {
                 id: testToneLfeScope
-                width: testToneLfeBtn.width
-                height: testToneLfeBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.up: testToneCScope
                 KeyNavigation.left: testToneRlScope
                 KeyNavigation.right: testToneRrScope
                 KeyNavigation.down: testToneAllScope
-
-                SettingsButton {
-                    id: testToneLfeBtn
-                    text: "LFE/Sub"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[3] ? Theme.sidebarActive : (testToneLfeScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneLfeScope.activeFocus ? 2 : 1
-                    border.color: testToneLfeScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(3)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneLfeScope.forceActiveFocus();
-                            testToneLfeBtn.activated();
-                        }
-                    }
-                }
+                text: "LFE/Sub"
+                fillActive: root.channelActive[3]
+                fillColor: Theme.sidebarActive
+                onActivated: root.toggleChannel(3)
             }
 
-            FocusScope {
+            FocusButton {
                 id: testToneRrScope
-                width: testToneRrBtn.width
-                height: testToneRrBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.up: testToneFrScope
                 KeyNavigation.left: testToneLfeScope
                 KeyNavigation.down: testToneAllScope
-
-                SettingsButton {
-                    id: testToneRrBtn
-                    text: "Rear R"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[5] ? Theme.sidebarActive : (testToneRrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneRrScope.activeFocus ? 2 : 1
-                    border.color: testToneRrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(5)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneRrScope.forceActiveFocus();
-                            testToneRrBtn.activated();
-                        }
-                    }
-                }
+                text: "Rear R"
+                fillActive: root.channelActive[5]
+                fillColor: Theme.sidebarActive
+                onActivated: root.toggleChannel(5)
             }
         }
 
         // Row 3: All channels
-        FocusScope {
+        FocusButton {
             id: testToneAllScope
-            width: testToneAllBtn.width
-            height: testToneAllBtn.height
-            activeFocusOnTab: true
-
             KeyNavigation.up: testToneLfeScope
-
-            SettingsButton {
-                id: testToneAllBtn
-                text: "All channels"
-                focus: parent.activeFocus
-                anchors.fill: parent
-                color: root.allChannelsActive ? Theme.sidebarActive : (testToneAllScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                border.width: testToneAllScope.activeFocus ? 2 : 1
-                border.color: testToneAllScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                onActivated: root.setAllChannels(!root.allChannelsActive)
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        testToneAllScope.forceActiveFocus();
-                        testToneAllBtn.activated();
-                    }
-                }
-            }
+            text: "All channels"
+            fillActive: root.allChannelsActive
+            fillColor: Theme.sidebarActive
+            onActivated: root.setAllChannels(!root.allChannelsActive)
         }
 
         // Conditional "now playing" popup — appears below the grid only while a
