@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 FocusScope {
     id: root
@@ -62,65 +63,26 @@ FocusScope {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: 32
 
-                FocusScope {
+                FocusButton {
                     id: resumeBtn
-                    width: resumeBtnInner.width
-                    height: resumeBtnInner.height
                     KeyNavigation.right: quitBtn
-
-                    SettingsButton {
-                        id: resumeBtnInner
-                        text: "Resume"
-                        focus: parent.activeFocus
-                        onActivated: root.resumeRequested()
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: resumeBtnInner.activated()
-                        }
-                    }
+                    text: "Resume"
+                    onActivated: root.resumeRequested()
                 }
 
-                FocusScope {
+                FocusButton {
                     id: quitBtn
-                    width: quitBtnInner.width
-                    height: quitBtnInner.height
                     KeyNavigation.left: resumeBtn
                     KeyNavigation.right: cancelBtn
-
-                    SettingsButton {
-                        id: quitBtnInner
-                        text: "Quit & Relaunch"
-                        focus: parent.activeFocus
-                        onActivated: root.quitRequested()
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: quitBtnInner.activated()
-                        }
-                    }
+                    text: "Quit & Relaunch"
+                    onActivated: root.quitRequested()
                 }
 
-                FocusScope {
+                FocusButton {
                     id: cancelBtn
-                    width: cancelBtnInner.width
-                    height: cancelBtnInner.height
                     KeyNavigation.left: quitBtn
-
-                    SettingsButton {
-                        id: cancelBtnInner
-                        text: "Cancel"
-                        focus: parent.activeFocus
-                        onActivated: root.cancelled()
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: cancelBtnInner.activated()
-                        }
-                    }
+                    text: "Cancel"
+                    onActivated: root.cancelled()
                     Keys.onEscapePressed: root.cancelled()
                 }
             }

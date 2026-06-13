@@ -2,6 +2,7 @@ module components.lib
 AnchoredPopover 1.0 AnchoredPopover.qml
 CountBadge 1.0 CountBadge.qml
 FocusAccentBar 1.0 FocusAccentBar.qml
+FocusButton 1.0 FocusButton.qml
 HintBar 1.0 HintBar.qml
 PreferenceRow 1.0 PreferenceRow.qml
 SectionHeader 1.0 SectionHeader.qml

@@ -341,43 +341,21 @@ FocusScope {
             visible: root.monitors.length > 0
         }
 
-        FocusScope {
+        FocusButton {
             id: hdrToggleScope
             Layout.fillWidth: true
             Layout.preferredHeight: 80
             visible: root.monitors.length > 0
-
+            buttonWidth: 160
+            buttonHeight: 72
             KeyNavigation.up: monitorList
             KeyNavigation.down: scaleRow
-
-            Keys.onReturnPressed: {
+            text: SettingsStore.hdrEnabled ? "On" : "Off"
+            fillActive: SettingsStore.hdrEnabled
+            fillColor: Theme.sidebarActive
+            onActivated: {
                 SettingsStore.setHdrEnabled(!SettingsStore.hdrEnabled);
                 root.applyHdr(SettingsStore.hdrEnabled);
-            }
-
-            SettingsButton {
-                id: hdrBtn
-                width: 160
-                height: 72
-                text: SettingsStore.hdrEnabled ? "On" : "Off"
-                color: SettingsStore.hdrEnabled ? Theme.sidebarActive : (hdrToggleScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                border.width: hdrToggleScope.activeFocus ? 2 : 1
-                border.color: hdrToggleScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-
-                onActivated: {
-                    SettingsStore.setHdrEnabled(!SettingsStore.hdrEnabled);
-                    root.applyHdr(SettingsStore.hdrEnabled);
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        hdrToggleScope.forceActiveFocus();
-                        hdrBtn.activated();
-                    }
-                }
             }
         }
 
@@ -549,42 +527,20 @@ FocusScope {
             text: "Night Light"
         }
 
-        FocusScope {
+        FocusButton {
             id: nightLightToggleScope
             Layout.fillWidth: true
             Layout.preferredHeight: 80
-
+            buttonWidth: 160
+            buttonHeight: 72
             KeyNavigation.up: refreshDropdownScope
             KeyNavigation.down: nightLightTempScope
-
-            Keys.onReturnPressed: {
+            text: SettingsStore.nightLightEnabled ? "On" : "Off"
+            fillActive: SettingsStore.nightLightEnabled
+            fillColor: Theme.sidebarActive
+            onActivated: {
                 SettingsStore.setNightLightEnabled(!SettingsStore.nightLightEnabled);
                 root.applyNightLightSetting(SettingsStore.nightLightEnabled, SettingsStore.nightLightTemp);
-            }
-
-            SettingsButton {
-                id: nightLightBtn
-                width: 160
-                height: 72
-                text: SettingsStore.nightLightEnabled ? "On" : "Off"
-                color: SettingsStore.nightLightEnabled ? Theme.sidebarActive : (nightLightToggleScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                border.width: nightLightToggleScope.activeFocus ? 2 : 1
-                border.color: nightLightToggleScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-
-                onActivated: {
-                    SettingsStore.setNightLightEnabled(!SettingsStore.nightLightEnabled);
-                    root.applyNightLightSetting(SettingsStore.nightLightEnabled, SettingsStore.nightLightTemp);
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        nightLightToggleScope.forceActiveFocus();
-                        nightLightBtn.activated();
-                    }
-                }
             }
         }
 

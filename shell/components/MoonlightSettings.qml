@@ -831,34 +831,14 @@ FocusScope {
         }
 
         // Add server button
-        FocusScope {
+        FocusButton {
             id: addBtnScope
-            width: addBtn.width
-            height: addBtn.height
             visible: !root.showAddForm
-            activeFocusOnTab: true
-
             KeyNavigation.up: serverList
-
-            SettingsButton {
-                id: addBtn
-                text: "Add Server"
-                focus: parent.activeFocus
-
-                onActivated: {
-                    root.showAddForm = true;
-                    nameInput.forceActiveFocus();
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        addBtnScope.forceActiveFocus();
-                        addBtn.activated();
-                    }
-                }
+            text: "Add Server"
+            onActivated: {
+                root.showAddForm = true;
+                nameInput.forceActiveFocus();
             }
         }
 
@@ -1016,55 +996,23 @@ FocusScope {
                     Layout.alignment: Qt.AlignRight
                     spacing: 16
 
-                    FocusScope {
+                    FocusButton {
                         id: cancelScope
-                        width: cancelBtn.width
-                        height: cancelBtn.height
-
                         KeyNavigation.right: saveScope
-
-                        SettingsButton {
-                            id: cancelBtn
-                            text: "Cancel"
-                            focus: parent.activeFocus
-
-                            onActivated: {
-                                root.resetForm();
-                                serverList.forceActiveFocus();
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: cancelBtn.activated()
-                            }
+                        text: "Cancel"
+                        onActivated: {
+                            root.resetForm();
+                            serverList.forceActiveFocus();
                         }
                     }
 
-                    FocusScope {
+                    FocusButton {
                         id: saveScope
-                        width: saveBtn.width
-                        height: saveBtn.height
-
                         KeyNavigation.left: cancelScope
-
-                        SettingsButton {
-                            id: saveBtn
-                            text: "Save"
-                            focus: parent.activeFocus
-
-                            onActivated: {
-                                root.addServer();
-                                serverList.forceActiveFocus();
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: saveBtn.activated()
-                            }
+                        text: "Save"
+                        onActivated: {
+                            root.addServer();
+                            serverList.forceActiveFocus();
                         }
                     }
                 }
@@ -1118,53 +1066,20 @@ FocusScope {
                     Layout.alignment: Qt.AlignHCenter
                     spacing: 32
 
-                    FocusScope {
+                    FocusButton {
                         id: confirmRemoveYes
-                        width: confirmRemoveYesBtn.width
-                        height: confirmRemoveYesBtn.height
-
                         KeyNavigation.right: confirmRemoveNo
-
-                        SettingsButton {
-                            id: confirmRemoveYesBtn
-                            text: "Remove"
-                            focus: parent.activeFocus
-                            onActivated: root.removeServer(root.confirmRemoveIndex)
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: confirmRemoveYesBtn.activated()
-                            }
-                        }
+                        text: "Remove"
+                        onActivated: root.removeServer(root.confirmRemoveIndex)
                     }
 
-                    FocusScope {
+                    FocusButton {
                         id: confirmRemoveNo
-                        width: confirmRemoveNoBtn.width
-                        height: confirmRemoveNoBtn.height
                         focus: root.confirmRemoveIndex >= 0
-
                         KeyNavigation.left: confirmRemoveYes
-
-                        SettingsButton {
-                            id: confirmRemoveNoBtn
-                            text: "Cancel"
-                            focus: parent.activeFocus
-                            onActivated: root.confirmRemoveIndex = -1
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: confirmRemoveNoBtn.activated()
-                            }
-                        }
-
-                        Keys.onEscapePressed: {
-                            root.confirmRemoveIndex = -1;
-                        }
+                        text: "Cancel"
+                        onActivated: root.confirmRemoveIndex = -1
+                        Keys.onEscapePressed: root.confirmRemoveIndex = -1
                     }
                 }
             }
@@ -1214,53 +1129,20 @@ FocusScope {
                     Layout.alignment: Qt.AlignHCenter
                     spacing: 32
 
-                    FocusScope {
+                    FocusButton {
                         id: confirmUnpairYes
-                        width: confirmUnpairYesBtn.width
-                        height: confirmUnpairYesBtn.height
-
                         KeyNavigation.right: confirmUnpairNo
-
-                        SettingsButton {
-                            id: confirmUnpairYesBtn
-                            text: "Unpair"
-                            focus: parent.activeFocus
-                            onActivated: root.unpairServer(root.confirmUnpairIndex)
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: confirmUnpairYesBtn.activated()
-                            }
-                        }
+                        text: "Unpair"
+                        onActivated: root.unpairServer(root.confirmUnpairIndex)
                     }
 
-                    FocusScope {
+                    FocusButton {
                         id: confirmUnpairNo
-                        width: confirmUnpairNoBtn.width
-                        height: confirmUnpairNoBtn.height
                         focus: root.confirmUnpairIndex >= 0
-
                         KeyNavigation.left: confirmUnpairYes
-
-                        SettingsButton {
-                            id: confirmUnpairNoBtn
-                            text: "Cancel"
-                            focus: parent.activeFocus
-                            onActivated: root.confirmUnpairIndex = -1
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: confirmUnpairNoBtn.activated()
-                            }
-                        }
-
-                        Keys.onEscapePressed: {
-                            root.confirmUnpairIndex = -1;
-                        }
+                        text: "Cancel"
+                        onActivated: root.confirmUnpairIndex = -1
+                        Keys.onEscapePressed: root.confirmUnpairIndex = -1
                     }
                 }
             }
@@ -1326,27 +1208,12 @@ FocusScope {
                     Layout.alignment: Qt.AlignHCenter
                 }
 
-                FocusScope {
+                FocusButton {
                     id: pairCancelScope
-                    width: pairCancelBtn.width
-                    height: pairCancelBtn.height
                     Layout.alignment: Qt.AlignHCenter
                     focus: root.pairingServerIndex >= 0
-
-                    SettingsButton {
-                        id: pairCancelBtn
-                        text: "Cancel"
-                        focus: parent.activeFocus
-                        onActivated: root.cancelPairing()
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: pairCancelBtn.activated()
-                        }
-                    }
-
+                    text: "Cancel"
+                    onActivated: root.cancelPairing()
                     Keys.onEscapePressed: root.cancelPairing()
                 }
             }

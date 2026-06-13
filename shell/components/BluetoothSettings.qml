@@ -316,39 +316,19 @@ FocusScope {
         PreferenceRow {
             label: "Bluetooth Power"
 
-            FocusScope {
+            FocusButton {
                 id: powerToggleScope
-                implicitWidth: powerToggleBtn.implicitWidth
-                implicitHeight: powerToggleBtn.implicitHeight
                 focus: true
-                activeFocusOnTab: true
-
                 KeyNavigation.down: scanScope
                 KeyNavigation.right: scanScope
-
-                SettingsButton {
-                    id: powerToggleBtn
-                    text: root.powered ? "On" : "Off"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.powered ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
-
-                    onActivated: {
-                        if (root.powered)
-                            btPowerOff.request("bt-power-off");
-                        else
-                            btPowerOn.request("bt-power-on");
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            powerToggleScope.forceActiveFocus();
-                            powerToggleBtn.activated();
-                        }
-                    }
+                text: root.powered ? "On" : "Off"
+                fillActive: root.powered
+                fillColor: Theme.sidebarActive
+                onActivated: {
+                    if (root.powered)
+                        btPowerOff.request("bt-power-off");
+                    else
+                        btPowerOn.request("bt-power-on");
                 }
             }
         }
@@ -359,36 +339,15 @@ FocusScope {
             spacing: 24
             visible: root.powered
 
-            FocusScope {
+            FocusButton {
                 id: scanScope
-                implicitWidth: scanBtn.implicitWidth
-                implicitHeight: scanBtn.implicitHeight
-                activeFocusOnTab: true
                 visible: root.powered
-
                 KeyNavigation.left: powerToggleScope
                 KeyNavigation.down: pairedList.count > 0 ? pairedList : availList
-
-                SettingsButton {
-                    id: scanBtn
-                    text: root.scanning ? "Scanning..." : "Scan"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-
-                    onActivated: {
-                        if (!root.scanning)
-                            btScanOn.request("bt-scan-on");
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            scanScope.forceActiveFocus();
-                            scanBtn.activated();
-                        }
-                    }
+                text: root.scanning ? "Scanning..." : "Scan"
+                onActivated: {
+                    if (!root.scanning)
+                        btScanOn.request("bt-scan-on");
                 }
             }
 
