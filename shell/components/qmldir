@@ -59,6 +59,7 @@ VolumeOverlay 1.0 VolumeOverlay.qml
 NetworkOverlay 1.0 NetworkOverlay.qml
 SessionQAM 1.0 SessionQAM.qml
 SystemSettings 1.0 SystemSettings.qml
+ConfirmDialog 1.0 ConfirmDialog.qml
 SessionDialog 1.0 SessionDialog.qml
 ScreenshotFlash 1.0 ScreenshotFlash.qml
 LaunchOverlay 1.0 LaunchOverlay.qml

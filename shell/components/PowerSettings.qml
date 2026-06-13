@@ -367,73 +367,50 @@ FocusScope {
     }
 
     // Confirmation dialog
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.7)
-        visible: root.confirmAction !== ""
+    ConfirmDialog {
+        opened: root.confirmAction !== ""
+        cardWidth: 700
+        cardHeight: 350
+        onDismissed: root.confirmAction = ""
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {
-                root.confirmAction = "";
-            }
-        }
-
-        Rectangle {
-            anchors.centerIn: parent
-            width: 700
-            height: 350
-            radius: Units.radiusXL
-            color: Theme.surface
-
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 32
-
-                Text {
-                    text: {
-                        switch (root.confirmAction) {
-                        case "suspend":
-                            return "Sleep this system?";
-                        case "restart":
-                            return "Restart this system?";
-                        case "shutdown":
-                            return "Shut down this system?";
-                        default:
-                            return "";
-                        }
-                    }
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignHCenter
-                }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: 32
-
-                    FocusButton {
-                        id: confirmYesScope
-                        KeyNavigation.right: confirmNoScope
-                        text: "Yes"
-                        onActivated: executeAction()
-                    }
-
-                    FocusButton {
-                        id: confirmNoScope
-                        focus: root.confirmAction !== ""
-                        KeyNavigation.left: confirmYesScope
-                        text: "Cancel"
-                        onActivated: root.confirmAction = ""
-                        Keys.onEscapePressed: root.confirmAction = ""
-                    }
+        Text {
+            text: {
+                switch (root.confirmAction) {
+                case "suspend":
+                    return "Sleep this system?";
+                case "restart":
+                    return "Restart this system?";
+                case "shutdown":
+                    return "Shut down this system?";
+                default:
+                    return "";
                 }
             }
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+            Layout.alignment: Qt.AlignHCenter
         }
 
-        Keys.onEscapePressed: {
-            root.confirmAction = "";
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 32
+
+            FocusButton {
+                id: confirmYesScope
+                KeyNavigation.right: confirmNoScope
+                text: "Yes"
+                onActivated: executeAction()
+            }
+
+            FocusButton {
+                id: confirmNoScope
+                focus: root.confirmAction !== ""
+                KeyNavigation.left: confirmYesScope
+                text: "Cancel"
+                onActivated: root.confirmAction = ""
+                Keys.onEscapePressed: root.confirmAction = ""
+            }
         }
     }
 

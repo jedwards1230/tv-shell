@@ -1031,194 +1031,129 @@ FocusScope {
     }
 
     // Remove confirmation dialog
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.7)
-        visible: root.confirmRemoveIndex >= 0
+    ConfirmDialog {
+        opened: root.confirmRemoveIndex >= 0
+        cardWidth: 800
+        cardHeight: 350
+        onDismissed: root.confirmRemoveIndex = -1
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {
-                root.confirmRemoveIndex = -1;
-            }
+        Text {
+            text: root.confirmRemoveIndex >= 0 && root.confirmRemoveIndex < root.servers.length ? "Remove \"" + root.servers[root.confirmRemoveIndex].name + "\"?" : ""
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+            Layout.alignment: Qt.AlignHCenter
         }
 
-        Rectangle {
-            anchors.centerIn: parent
-            width: 800
-            height: 350
-            radius: Units.radiusXL
-            color: Theme.surface
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 32
 
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 32
-
-                Text {
-                    text: root.confirmRemoveIndex >= 0 && root.confirmRemoveIndex < root.servers.length ? "Remove \"" + root.servers[root.confirmRemoveIndex].name + "\"?" : ""
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignHCenter
-                }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: 32
-
-                    FocusButton {
-                        id: confirmRemoveYes
-                        KeyNavigation.right: confirmRemoveNo
-                        text: "Remove"
-                        onActivated: root.removeServer(root.confirmRemoveIndex)
-                    }
-
-                    FocusButton {
-                        id: confirmRemoveNo
-                        focus: root.confirmRemoveIndex >= 0
-                        KeyNavigation.left: confirmRemoveYes
-                        text: "Cancel"
-                        onActivated: root.confirmRemoveIndex = -1
-                        Keys.onEscapePressed: root.confirmRemoveIndex = -1
-                    }
-                }
+            FocusButton {
+                id: confirmRemoveYes
+                KeyNavigation.right: confirmRemoveNo
+                text: "Remove"
+                onActivated: root.removeServer(root.confirmRemoveIndex)
             }
-        }
 
-        Keys.onEscapePressed: {
-            root.confirmRemoveIndex = -1;
+            FocusButton {
+                id: confirmRemoveNo
+                focus: root.confirmRemoveIndex >= 0
+                KeyNavigation.left: confirmRemoveYes
+                text: "Cancel"
+                onActivated: root.confirmRemoveIndex = -1
+                Keys.onEscapePressed: root.confirmRemoveIndex = -1
+            }
         }
     }
 
-    // Unpair confirmation dialog (clone of the remove dialog above).
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.7)
-        visible: root.confirmUnpairIndex >= 0
+    // Unpair confirmation dialog
+    ConfirmDialog {
+        opened: root.confirmUnpairIndex >= 0
+        cardWidth: 800
+        cardHeight: 350
+        onDismissed: root.confirmUnpairIndex = -1
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {
-                root.confirmUnpairIndex = -1;
-            }
+        Text {
+            text: root.confirmUnpairIndex >= 0 && root.confirmUnpairIndex < root.servers.length ? "Unpair \"" + root.servers[root.confirmUnpairIndex].name + "\"? The TV will forget this server; you can pair again anytime." : ""
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredWidth: 700
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
         }
 
-        Rectangle {
-            anchors.centerIn: parent
-            width: 800
-            height: 350
-            radius: Units.radiusXL
-            color: Theme.surface
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 32
 
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 32
-
-                Text {
-                    text: root.confirmUnpairIndex >= 0 && root.confirmUnpairIndex < root.servers.length ? "Unpair \"" + root.servers[root.confirmUnpairIndex].name + "\"? The TV will forget this server; you can pair again anytime." : ""
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 700
-                    wrapMode: Text.WordWrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: 32
-
-                    FocusButton {
-                        id: confirmUnpairYes
-                        KeyNavigation.right: confirmUnpairNo
-                        text: "Unpair"
-                        onActivated: root.unpairServer(root.confirmUnpairIndex)
-                    }
-
-                    FocusButton {
-                        id: confirmUnpairNo
-                        focus: root.confirmUnpairIndex >= 0
-                        KeyNavigation.left: confirmUnpairYes
-                        text: "Cancel"
-                        onActivated: root.confirmUnpairIndex = -1
-                        Keys.onEscapePressed: root.confirmUnpairIndex = -1
-                    }
-                }
+            FocusButton {
+                id: confirmUnpairYes
+                KeyNavigation.right: confirmUnpairNo
+                text: "Unpair"
+                onActivated: root.unpairServer(root.confirmUnpairIndex)
             }
-        }
 
-        Keys.onEscapePressed: {
-            root.confirmUnpairIndex = -1;
+            FocusButton {
+                id: confirmUnpairNo
+                focus: root.confirmUnpairIndex >= 0
+                KeyNavigation.left: confirmUnpairYes
+                text: "Cancel"
+                onActivated: root.confirmUnpairIndex = -1
+                Keys.onEscapePressed: root.confirmUnpairIndex = -1
+            }
         }
     }
 
-    // Pairing dialog
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.7)
-        visible: root.pairingServerIndex >= 0
-        z: 55
+    // Pairing dialog — click-outside is intentionally suppressed (no-op onDismissed).
+    // The user must explicitly Cancel or wait for pairing to complete.
+    ConfirmDialog {
+        opened: root.pairingServerIndex >= 0
+        cardWidth: 900
+        cardHeight: 420
+        onDismissed: {}
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {}
+        Text {
+            text: "Pairing with " + (root.pairingServerIndex >= 0 && root.pairingServerIndex < root.servers.length ? root.servers[root.pairingServerIndex].name : "")
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
+            Layout.alignment: Qt.AlignHCenter
         }
 
-        Rectangle {
-            anchors.centerIn: parent
-            width: 900
-            height: 420
-            radius: Units.radiusXL
-            color: Theme.surface
-
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 32
-
-                Text {
-                    text: "Pairing with " + (root.pairingServerIndex >= 0 && root.pairingServerIndex < root.servers.length ? root.servers[root.pairingServerIndex].name : "")
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignHCenter
-                }
-
-                Text {
-                    text: "Enter this PIN in the Sunshine web UI:"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textSecondary
-                    Layout.alignment: Qt.AlignHCenter
-                }
-
-                Text {
-                    visible: root.pairingPin !== ""
-                    text: root.pairingPin
-                    font.pixelSize: Theme.fontHero
-                    font.bold: true
-                    color: Theme.ember
-                    Layout.alignment: Qt.AlignHCenter
-                }
-
-                Text {
-                    visible: root.pairingPin !== ""
-                    text: root.pairingServerIndex >= 0 && root.pairingServerIndex < root.servers.length ? "https://" + root.servers[root.pairingServerIndex].host + ":47990" : ""
-                    font.pixelSize: Theme.fontSmall
-                    color: Theme.textMuted
-                    Layout.alignment: Qt.AlignHCenter
-                }
-
-                FocusButton {
-                    id: pairCancelScope
-                    Layout.alignment: Qt.AlignHCenter
-                    focus: root.pairingServerIndex >= 0
-                    text: "Cancel"
-                    onActivated: root.cancelPairing()
-                    Keys.onEscapePressed: root.cancelPairing()
-                }
-            }
+        Text {
+            text: "Enter this PIN in the Sunshine web UI:"
+            font.pixelSize: Theme.fontBody
+            color: Theme.textSecondary
+            Layout.alignment: Qt.AlignHCenter
         }
 
-        Keys.onEscapePressed: root.cancelPairing()
+        Text {
+            visible: root.pairingPin !== ""
+            text: root.pairingPin
+            font.pixelSize: Theme.fontHero
+            font.bold: true
+            color: Theme.ember
+            Layout.alignment: Qt.AlignHCenter
+        }
+
+        Text {
+            visible: root.pairingPin !== ""
+            text: root.pairingServerIndex >= 0 && root.pairingServerIndex < root.servers.length ? "https://" + root.servers[root.pairingServerIndex].host + ":47990" : ""
+            font.pixelSize: Theme.fontSmall
+            color: Theme.textMuted
+            Layout.alignment: Qt.AlignHCenter
+        }
+
+        FocusButton {
+            id: pairCancelScope
+            Layout.alignment: Qt.AlignHCenter
+            focus: root.pairingServerIndex >= 0
+            text: "Cancel"
+            onActivated: root.cancelPairing()
+            Keys.onEscapePressed: root.cancelPairing()
+        }
     }
 }
