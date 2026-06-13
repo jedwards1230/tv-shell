@@ -4,17 +4,17 @@ Item {
     id: root
 
     property bool focused: false
-    property int focusBorderWidth: 6
+    property int focusBorderWidth: 3
     property int restBorderWidth: 2
-    property color focusBorderColor: Theme.focusBorder
+    property color focusBorderColor: Theme.cardFocusBorder
     property color restBorderColor: Theme.surfaceBorder
     property bool scaleEnabled: true
     property real focusScale: 1.06
     property real restScale: 1.0
     property color backgroundColor: Theme.cardBackground
     property color focusBackgroundColor: Theme.surfaceHover
-    property color glowColor: Theme.focusGlow
-    property int glowSize: Math.round(root.focusBorderWidth * 1.6)
+    property color glowColor: Theme.cardFocusGlow
+    property int glowSize: 14
     property real radius: Theme.cardRadius
     property int scaleDuration: 180
     property int borderDuration: 180

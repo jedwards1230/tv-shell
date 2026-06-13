@@ -144,6 +144,10 @@ Item {
             cardBackground: "#2e3139",
             focusBorder: String(crimson),
             focusGlow: String(crimson) + "55",
+            // Card focus (#237 follow-up): neutral, shadow-like cue instead of a
+            // loud crimson ring — a thin cool-grey edge + soft cool-grey halo.
+            cardFocusBorder: "#aab2c0",
+            cardFocusGlow: "#5b6373" + "73",
             barBackground: "#111215",
             sidebarActive: "#424650"
         })
@@ -159,6 +163,9 @@ Item {
             cardBackground: "#ffffff",
             focusBorder: String(crimson),
             focusGlow: String(crimson) + "55",
+            // Card focus (#237 follow-up): a natural dark drop-shadow on light bg.
+            cardFocusBorder: "#9aa0ac",
+            cardFocusGlow: "#3a414f" + "59",
             barBackground: String(navy),
             sidebarActive: String(navy)
         })
@@ -189,6 +196,8 @@ Item {
     // Interactive
     property color focusBorder: palette.focusBorder
     property color focusGlow: palette.focusGlow
+    property color cardFocusBorder: palette.cardFocusBorder
+    property color cardFocusGlow: palette.cardFocusGlow
     property color barBackground: palette.barBackground
     property color sidebarActive: palette.sidebarActive
     property color sidebarText: "#e6e4e0"
