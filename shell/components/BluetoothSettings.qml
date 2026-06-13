@@ -312,16 +312,9 @@ FocusScope {
             text: "Bluetooth"
         }
 
-        // Power toggle row
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 24
-
-            StatusPill {
-                pillState: root.powered ? "good" : "neutral"
-                text: root.powered ? "ON" : "OFF"
-                showDot: false
-            }
+        // Power toggle row — PreferenceRow with On/Off state-pill button (plan §1c)
+        PreferenceRow {
+            label: "Bluetooth Power"
 
             FocusScope {
                 id: powerToggleScope
@@ -335,9 +328,10 @@ FocusScope {
 
                 SettingsButton {
                     id: powerToggleBtn
-                    text: root.powered ? "Turn Off" : "Turn On"
+                    text: root.powered ? "On" : "Off"
                     focus: parent.activeFocus
                     anchors.fill: parent
+                    color: root.powered ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
 
                     onActivated: {
                         if (root.powered)
@@ -357,6 +351,13 @@ FocusScope {
                     }
                 }
             }
+        }
+
+        // Scan row (only when powered)
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 24
+            visible: root.powered
 
             FocusScope {
                 id: scanScope
