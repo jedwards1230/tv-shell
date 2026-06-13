@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 // Network settings — rewired (Phase 3) to read system network state from the
 // input daemon's NetworkManager-over-zbus backbone instead of shelling out to
@@ -146,11 +147,8 @@ FocusScope {
         spacing: 32
 
         // Connection status
-        Text {
+        SectionHeader {
             text: "Active Connections"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         SettingsList {
@@ -225,11 +223,8 @@ FocusScope {
         }
 
         // IP Address
-        Text {
+        SectionHeader {
             text: "IP Addresses"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         Rectangle {
@@ -251,11 +246,8 @@ FocusScope {
         }
 
         // Gateway / DNS — read-only card mirroring the IP Addresses card.
-        Text {
+        SectionHeader {
             text: "Gateway / DNS"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.gateway !== "" || root.dnsServers.length > 0
         }
 
@@ -293,6 +285,11 @@ FocusScope {
             }
         }
 
+        // Diagnostics
+        SectionHeader {
+            text: "Diagnostics"
+        }
+
         // Test connection action — bounded one-shot ping.
         RowLayout {
             Layout.fillWidth: true
@@ -302,6 +299,8 @@ FocusScope {
                 id: testButtonScope
                 width: testButton.implicitWidth
                 height: testButton.implicitHeight
+
+                KeyNavigation.up: wifiList
 
                 SettingsButton {
                     id: testButton
@@ -326,16 +325,14 @@ FocusScope {
         }
 
         // WiFi networks
-        Text {
+        SectionHeader {
             text: "WiFi Networks"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.hasWifi
         }
 
         SettingsList {
             id: wifiList
+            KeyNavigation.down: testButtonScope
             // rowStride = delegate 96 + spacing 8 (#123/#139 row-count sizing).
             rowStride: 104
             maxHeight: 400
@@ -397,7 +394,7 @@ FocusScope {
                                     let active = modelData.signal >= threshold;
                                     if (modelData.inUse)
                                         return active ? Theme.textOnDark : Theme.textOnDarkMuted;
-                                    return active ? Theme.focusBorder : Theme.surfaceHover;
+                                    return active ? Theme.online : Theme.textSecondary;
                                 }
                                 anchors.bottom: parent.bottom
                             }
@@ -450,12 +447,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        // Info hint
-        Text {
+        HintBar {
             text: "Network configuration is read-only"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }
