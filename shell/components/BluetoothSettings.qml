@@ -473,8 +473,6 @@ FocusScope {
                     onClicked: {
                         pairedList.currentIndex = index;
                         pairedList.forceActiveFocus();
-                    }
-                    onClicked: {
                         if (modelData.connected) {
                             btDisconnect.disconnect(modelData.mac);
                         } else {
@@ -566,8 +564,6 @@ FocusScope {
                     onClicked: {
                         availList.currentIndex = index;
                         availList.forceActiveFocus();
-                    }
-                    onClicked: {
                         btPair.pair(modelData.mac);
                     }
                 }
