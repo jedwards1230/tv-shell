@@ -8,7 +8,9 @@
 
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
-use crate::{apps, config, controllerdb, health, moonlight, notifications, recents, system};
+use crate::{
+    apps, config, controllerdb, health, moonlight, notifications, plex, recents, system,
+};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::os::unix::fs::PermissionsExt;
@@ -304,6 +306,11 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             Some(health::handle_sunshine_status(host, port).await)
         }
         Command::SunshineStatusUsage => Some(protocol::resp_sunshine_status_usage()),
+        // Plex hubs (On Deck + Recently Added) for the home-screen widget.
+        // Stateless + cross-platform like `sunshine-status`; the server URL and
+        // token come from the daemon env. Unconfigured/unreachable degrades to
+        // `{"enabled":false,…}` / empty hubs.
+        Command::PlexHubs => Some(plex::handle_plex_hubs().await),
         // Moonlight local-config "forget" — creds-free client-side unpair.
         // Stateless and cross-platform (just edits Moonlight.conf). Missing host
         // routes to `MoonlightForgetUsage`. Runs the blocking file edit off the
@@ -503,6 +510,8 @@ async fn dispatch(
         // Phase 4 Sunshine is stateless (consumed by `dispatch_stateless`).
         | Command::SunshineStatus { .. }
         | Command::SunshineStatusUsage
+        // Plex hubs is stateless (consumed by `dispatch_stateless`).
+        | Command::PlexHubs
         // Moonlight forget is stateless (consumed by `dispatch_stateless`).
         | Command::MoonlightForget(_)
         | Command::MoonlightForgetUsage

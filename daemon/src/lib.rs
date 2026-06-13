@@ -17,6 +17,9 @@ pub mod ipc;
 // Moonlight.conf. Cross-platform — pure file editing, no Linux-only imports.
 pub mod moonlight;
 pub mod notifications;
+// Plex hubs fetch (On Deck + Recently Added) for the home-screen Plex widget.
+// Cross-platform: stateless reqwest + JSON, like `health` (Sunshine).
+pub mod plex;
 pub mod protocol;
 pub mod recents;
 pub mod state;
