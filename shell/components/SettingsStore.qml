@@ -39,6 +39,11 @@ Item {
     property bool controllerDebug: false
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
     property bool reduceMotion: false             // suppress animations (#109)
+    // Home-screen widget toggles — hide a widget's UI without affecting any
+    // background/prewarm behaviour. Spotify off ⇒ the player falls back to the
+    // running row (the merged-model filter keys on the widget being visible).
+    property bool widgetSpotifyEnabled: true      // Now Playing (MPRIS) widget
+    property bool widgetPlexEnabled: true         // Plex (On Deck / Recently Added) widget
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
     property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
     property bool nightLightEnabled: false       // drives hyprsunset
@@ -97,6 +102,10 @@ Item {
                     store.rumbleEnabled = obj.rumbleEnabled;
                 if (typeof obj.reduceMotion === "boolean")
                     store.reduceMotion = obj.reduceMotion;
+                if (typeof obj.widgetSpotifyEnabled === "boolean")
+                    store.widgetSpotifyEnabled = obj.widgetSpotifyEnabled;
+                if (typeof obj.widgetPlexEnabled === "boolean")
+                    store.widgetPlexEnabled = obj.widgetPlexEnabled;
                 if (typeof obj.textScale === "number")
                     store.textScale = obj.textScale;
                 if (typeof obj.hdrEnabled === "boolean")
@@ -160,6 +169,8 @@ Item {
             "controllerDebug": store.controllerDebug,
             "rumbleEnabled": store.rumbleEnabled,
             "reduceMotion": store.reduceMotion,
+            "widgetSpotifyEnabled": store.widgetSpotifyEnabled,
+            "widgetPlexEnabled": store.widgetPlexEnabled,
             "textScale": store.textScale,
             "hdrEnabled": store.hdrEnabled,
             "nightLightEnabled": store.nightLightEnabled,
@@ -229,6 +240,18 @@ Item {
         reduceMotion = enabled;
         save();
         settingsChanged("reduceMotion", enabled);
+    }
+
+    function setWidgetSpotifyEnabled(enabled) {
+        widgetSpotifyEnabled = enabled;
+        save();
+        settingsChanged("widgetSpotifyEnabled", enabled);
+    }
+
+    function setWidgetPlexEnabled(enabled) {
+        widgetPlexEnabled = enabled;
+        save();
+        settingsChanged("widgetPlexEnabled", enabled);
     }
 
     function setTextScale(scale) {

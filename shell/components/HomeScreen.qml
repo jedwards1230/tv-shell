@@ -51,7 +51,7 @@ FocusScope {
     function _reanchorFocusIfNeeded() {
         if (!root.activeFocus)
             return;
-        if (mediaWidget.activeFocus || statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
+        if (mediaWidget.activeFocus || plexWidget.rowFocused || statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
             return;
         for (let i = 0; i < appViewRepeater.count; i++) {
             let item = appViewRepeater.itemAt(i);
@@ -154,6 +154,23 @@ FocusScope {
         root.launchApp(app);
     }
 
+    // Open the local Plex app (e.g. Plex HTPC) when a Plex widget card is
+    // activated. Resolves the first discovered app whose name/wmClass/exec
+    // mentions "plex"; a no-op (with a log line) if none is installed.
+    function openPlexApp() {
+        var apps = AppDiscoveryManager.applications || [];
+        for (var i = 0; i < apps.length; i++) {
+            var a = apps[i];
+            var hay = ((a.name || "") + " " + (a.wmClass || "") + " " + (a.exec || "")).toLowerCase();
+            if (hay.indexOf("plex") !== -1) {
+                root.userActivity();
+                root.launchApp(a);
+                return;
+            }
+        }
+        console.log("PlexWidget: no Plex app found to launch");
+    }
+
     // Moonlight app discovery lives in MoonlightProvider now; HomeScreen only
     // decides WHEN to (re)discover based on the active view mode.
     Timer {
@@ -202,6 +219,10 @@ FocusScope {
             mediaWidget.forceActiveFocus();
             return;
         }
+        if (plexWidget.visible) {
+            plexWidget.firstRow.forceActiveFocus();
+            return;
+        }
         var row = mergedRow;
         while (row) {
             if (row.visible) {
@@ -225,6 +246,12 @@ FocusScope {
             if (mediaWidget.visible) {
                 scrollView.contentY = 0;
                 mediaWidget.forceActiveFocus();
+                return;
+            }
+            // Plex widget is the next landing priority when nothing is playing.
+            if (plexWidget.visible) {
+                scrollView.contentY = 0;
+                plexWidget.firstRow.forceActiveFocus();
                 return;
             }
             var firstRow = null;
@@ -564,10 +591,11 @@ FocusScope {
             MediaWidget {
                 id: mediaWidget
                 Layout.fillWidth: true
+                widgetEnabled: Theme.widgetSpotifyEnabled
                 // Sits at the top of the content rows: Up returns to the
                 // status-icon row, Down drops into the first content row.
                 previousRow: statusIcons
-                nextRow: root._firstContentRow()
+                nextRow: plexWidget.visible ? plexWidget.firstRow : root._firstContentRow()
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
@@ -594,6 +622,25 @@ FocusScope {
                 }
             }
 
+            // === Plex (On Deck + Recently Added) ===
+            // Surfaces the Plex server's continue-watching and newest titles as
+            // two poster rows (fed by the daemon's `plex-hubs` IPC). Sits just
+            // below Now Playing and collapses to zero height when Plex is
+            // unconfigured or both hubs are empty.
+            PlexWidget {
+                id: plexWidget
+                Layout.fillWidth: true
+                widgetEnabled: Theme.widgetPlexEnabled
+                previousRow: mediaWidget.visible ? mediaWidget : statusIcons
+                nextRow: root._firstContentRow()
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
+                onOpenPlexRequested: root.openPlexApp()
+                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
+            }
+
             // === Merged Recents + Running Row ===
             // Running apps are pinned to the front with an ember dot indicator.
             // Non-running recents follow in recency order. No separate Running row.
@@ -612,7 +659,7 @@ FocusScope {
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
                 focus: visible
-                previousRow: mediaWidget
+                previousRow: plexWidget.visible ? plexWidget.lastRow : mediaWidget
                 nextRow: {
                     var _ = appViewRepeater.count;
                     if (!root._streamingActive)

@@ -173,6 +173,14 @@ pub enum Command {
     /// `sunshine-status` with a missing/incomplete `<host> <port>` body.
     SunshineStatusUsage,
 
+    /// `plex-hubs` -> compact JSON `{enabled,onDeck:[…],recentlyAdded:[…]}` for
+    /// the home-screen Plex widget. Bare command (no body); the server URL +
+    /// token come from the daemon environment (`GAME_SHELL_PLEX_URL` /
+    /// `GAME_SHELL_PLEX_TOKEN`). Stateless + cross-platform (`reqwest`), served
+    /// like `sunshine-status`. Unconfigured/unreachable degrades to
+    /// `{"enabled":false,…}` / empty hubs rather than erroring.
+    PlexHubs,
+
     // --- Moonlight local-config "forget" (creds-free unpair) ---
     /// `moonlight-forget <host>` -> remove a host from Moonlight's local config
     /// (`Moonlight.conf`) so this client is no longer paired with it. `host` is
@@ -387,6 +395,7 @@ impl Command {
             "power-can-suspend" => Command::PowerCanSuspend,
             "power-suspend" => Command::PowerSuspend,
             "power-battery" => Command::PowerBattery,
+            "plex-hubs" => Command::PlexHubs,
             // Phase 4 bare commands (no body).
             "hypr-active" => Command::HyprActive,
             "hypr-clients" => Command::HyprClients,
