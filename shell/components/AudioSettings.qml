@@ -252,40 +252,71 @@ FocusScope {
         }
     }
 
-    // Label of the channel currently being tested (drives the "Playing" banner).
-    property string testingLabel: ""
+    // 5.1 channel toggles (#234). Each channel is an independent on/off toggle:
+    // press A to start a sustained tone on that speaker, press again to stop.
+    // Multiple channels can be on at once; "All channels" mirrors the whole set
+    // (and shows active when every channel is on). The active set is rendered as
+    // a 6-channel WAV — a steady 480 Hz tone in each active channel — and looped
+    // via pw-play. PipeWire's 6-channel order is FL,FR,FC,LFE,RL,RR →
+    //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5.
+    property var channelActive: [false, false, false, false, false, false]
+    readonly property var channelLabels: ["Front L", "Front R", "Center", "LFE/Sub", "Rear L", "Rear R"]
+    readonly property bool anyChannelActive: channelActive.indexOf(true) >= 0
+    readonly property bool allChannelsActive: channelActive.indexOf(false) < 0
+    readonly property string activeLabels: {
+        var names = [];
+        for (var i = 0; i < 6; i++)
+            if (channelActive[i])
+                names.push(channelLabels[i]);
+        return names.join(", ");
+    }
 
-    // 5.1 channel test tone (#234). A short, soft sine is generated as a
-    // 6-channel WAV with the tone in ONLY the target channel, then played via
-    // pw-play — so routing is exact (no speaker-test channel-index guessing) and
-    // gentle. PipeWire's 6-channel order is FL,FR,FC,LFE,RL,RR, so:
-    //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5  ("all" = sweep all 6).
-    // The channel index is passed via GS_CH (env) so it can't inject anything.
+    function toggleChannel(c) {
+        var arr = channelActive.slice();
+        arr[c] = !arr[c];
+        channelActive = arr;
+        applyTones();
+    }
+
+    function setAllChannels(on) {
+        channelActive = [on, on, on, on, on, on];
+        applyTones();
+    }
+
+    // Push the active set to the tone player. Empty set → stop; otherwise
+    // (re)start so the regenerated multi-channel WAV reflects the current set.
+    function applyTones() {
+        var mask = [];
+        for (var i = 0; i < 6; i++)
+            if (channelActive[i])
+                mask.push(i);
+        tonePlayer.mask = mask.join(",");
+        if (mask.length === 0)
+            tonePlayer.running = false;     // onExited won't restart (none active)
+        else if (tonePlayer.running)
+            tonePlayer.running = false;     // onExited restarts with the new mask
+        else
+            tonePlayer.running = true;      // start fresh
+    }
+
+    // Loops a ~20s steady-tone WAV containing exactly the active channels;
+    // restarts on exit while any channel stays active (continuous play, and a
+    // mask change reloads via a stop→onExited→start). 480 Hz × a 24000-sample
+    // block tiles seamlessly (100 samples/cycle). Mask passed via env (no inject).
     Process {
-        id: testTone
-        property string channel: "0"
+        id: tonePlayer
+        property string mask: "0"
         environment: ({
-                "GS_CH": channel
+                "GS_MASK": mask
             })
-        command: ["python3", "-c", "import wave,struct,math,os,tempfile,subprocess\n" + "ch=os.environ.get('GS_CH','0')\n" + "sr=48000;dur=0.4;amp=0.4;nch=6;n=int(sr*dur)\n" + "fd,fn=tempfile.mkstemp(suffix='.wav');os.close(fd)\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "chs=list(range(nch)) if ch=='all' else [int(ch)]\n" + "buf=bytearray()\n" + "for c in chs:\n" + " for i in range(n):\n" + "  e=min(1.0,i/(sr*0.02),(n-i)/(sr*0.06))\n" + "  s=int(amp*e*32767*math.sin(2*math.pi*440*i/sr))\n" + "  fr=[0]*nch;fr[c]=s;buf.extend(struct.pack('<%dh'%nch,*fr))\n" + "w.writeframes(bytes(buf));w.close()\n" + "subprocess.run(['pw-play','--volume','0.6',fn])\n" + "os.remove(fn)\n"]
-        onRunningChanged: {
-            if (!running)
-                root.testingLabel = "";
+        // python generates the WAV then `exec`s into pw-play (same PID), so when
+        // Quickshell kills this Process to change the set, pw-play dies with it —
+        // no orphaned child left playing. Fixed temp path → no file accumulation.
+        command: ["python3", "-c", "import wave,struct,math,os\n" + "mask=[int(x) for x in os.environ.get('GS_MASK','0').split(',') if x!='']\n" + "sr=48000;nch=6;freq=480;amp=0.5;blk=24000\n" + "block=bytearray()\n" + "for i in range(blk):\n" + " s=int(amp*32767*math.sin(2*math.pi*freq*i/sr))\n" + " fr=[0]*nch\n" + " for c in mask: fr[c]=s\n" + " block+=struct.pack('<%dh'%nch,*fr)\n" + "data=bytes(block)*40\n" + "fn=os.path.join(os.environ.get('XDG_RUNTIME_DIR','/tmp'),'game-shell-tone.wav')\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "w.writeframes(data);w.close()\n" + "os.execvp('pw-play',['pw-play','--volume','0.85',fn])\n"]
+        onExited: {
+            if (root.anyChannelActive)
+                running = true;
         }
-    }
-
-    // Stop any in-progress tone and (re)start it on the given channel.
-    function playChannel(ch, label) {
-        if (testTone.running)
-            testTone.running = false;
-        root.testingLabel = label;
-        testTone.channel = ch;
-        testTone.running = true;
-    }
-
-    function stopTone() {
-        testTone.running = false;
-        root.testingLabel = "";
     }
 
     Component.onCompleted: {
@@ -305,6 +336,9 @@ FocusScope {
             listSinks.running = true;
             getFormat.running = true;
             listProfiles.running = true;
+        } else if (root.anyChannelActive) {
+            // Don't leave tones playing after navigating away from Audio.
+            root.setAllChannels(false);
         }
     }
 
@@ -530,12 +564,12 @@ FocusScope {
             color: Theme.textSecondary
         }
 
-        // "Now playing" banner — clear visual feedback while a tone plays.
+        // "Now playing" banner — lists the active channels while any tone plays.
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 64
             radius: 16
-            visible: testTone.running
+            visible: root.anyChannelActive
             color: Theme.darkMode ? Qt.rgba(Theme.ember.r, Theme.ember.g, Theme.ember.b, 0.18) : Qt.rgba(Theme.navy.r, Theme.navy.g, Theme.navy.b, 0.12)
             border.width: 2
             border.color: Theme.ember
@@ -543,8 +577,9 @@ FocusScope {
             Text {
                 anchors.fill: parent
                 anchors.leftMargin: 24
+                anchors.rightMargin: 24
                 verticalAlignment: Text.AlignVCenter
-                text: "♪  Playing " + root.testingLabel + "…   (select Stop to cancel)"
+                text: "♪  Playing: " + root.activeLabels + "   (press a speaker again to stop it)"
                 font.pixelSize: Theme.fontSmall
                 font.bold: true
                 color: Theme.textPrimary
@@ -572,7 +607,10 @@ FocusScope {
                     text: "Front L"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: root.playChannel("0", "Front L")
+                    color: root.channelActive[0] ? Theme.sidebarActive : (testToneFlScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneFlScope.activeFocus ? 2 : 1
+                    border.color: testToneFlScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(0)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -601,7 +639,10 @@ FocusScope {
                     text: "Front R"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: root.playChannel("1", "Front R")
+                    color: root.channelActive[1] ? Theme.sidebarActive : (testToneFrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneFrScope.activeFocus ? 2 : 1
+                    border.color: testToneFrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(1)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -629,7 +670,10 @@ FocusScope {
                     text: "Center"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: root.playChannel("2", "Center")
+                    color: root.channelActive[2] ? Theme.sidebarActive : (testToneCScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneCScope.activeFocus ? 2 : 1
+                    border.color: testToneCScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(2)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -663,7 +707,10 @@ FocusScope {
                     text: "Rear L"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: root.playChannel("4", "Rear L")
+                    color: root.channelActive[4] ? Theme.sidebarActive : (testToneRlScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneRlScope.activeFocus ? 2 : 1
+                    border.color: testToneRlScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(4)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -692,7 +739,10 @@ FocusScope {
                     text: "Rear R"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: root.playChannel("5", "Rear R")
+                    color: root.channelActive[5] ? Theme.sidebarActive : (testToneRrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneRrScope.activeFocus ? 2 : 1
+                    border.color: testToneRrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(5)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -720,7 +770,10 @@ FocusScope {
                     text: "LFE/Sub"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: root.playChannel("3", "LFE/Sub")
+                    color: root.channelActive[3] ? Theme.sidebarActive : (testToneLfeScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneLfeScope.activeFocus ? 2 : 1
+                    border.color: testToneLfeScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(3)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -742,14 +795,16 @@ FocusScope {
             activeFocusOnTab: true
 
             KeyNavigation.up: testToneRlScope
-            KeyNavigation.down: stopToneScope
 
             SettingsButton {
                 id: testToneAllBtn
                 text: "All channels"
                 focus: parent.activeFocus
                 anchors.fill: parent
-                onActivated: root.playChannel("all", "All channels")
+                color: root.allChannelsActive ? Theme.sidebarActive : (testToneAllScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                border.width: testToneAllScope.activeFocus ? 2 : 1
+                border.color: testToneAllScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                onActivated: root.setAllChannels(!root.allChannelsActive)
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
@@ -757,37 +812,6 @@ FocusScope {
                     onClicked: {
                         testToneAllScope.forceActiveFocus();
                         testToneAllBtn.activated();
-                    }
-                }
-            }
-        }
-
-        // Stop — instantly cancel an in-progress tone. Dimmed when idle.
-        FocusScope {
-            id: stopToneScope
-            width: stopToneBtn.width
-            height: stopToneBtn.height
-            activeFocusOnTab: true
-            opacity: testTone.running ? 1.0 : 0.4
-
-            KeyNavigation.up: testToneAllScope
-
-            SettingsButton {
-                id: stopToneBtn
-                text: "Stop"
-                focus: parent.activeFocus
-                anchors.fill: parent
-                color: testTone.running ? Theme.crimson : (stopToneScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                border.width: stopToneScope.activeFocus ? 2 : 1
-                border.color: stopToneScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                onActivated: root.stopTone()
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        stopToneScope.forceActiveFocus();
-                        stopToneBtn.activated();
                     }
                 }
             }
