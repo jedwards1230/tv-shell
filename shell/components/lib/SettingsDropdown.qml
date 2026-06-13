@@ -212,6 +212,19 @@ FocusScope {
             root._open = false;
             root.forceActiveFocus();
         }
+
+        // Clamp Up/Down at the ends so focus cannot escape the open list.
+        Keys.onUpPressed: event => {
+            if (currentIndex > 0)
+                currentIndex--;
+            event.accepted = true;
+        }
+
+        Keys.onDownPressed: event => {
+            if (currentIndex < root.model.length - 1)
+                currentIndex++;
+            event.accepted = true;
+        }
     }
 
     // Header key handling — open on A, close on Escape
