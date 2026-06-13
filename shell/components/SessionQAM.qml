@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 // SessionQAM — right-edge "Quick Access Menu" drawer (#218, epic #133 Phase 2).
 //
@@ -440,33 +441,12 @@ Drawer {
                     font.bold: true
                     color: Theme.textSecondary
                 }
-                Rectangle {
+                VolumeBar {
                     Layout.fillWidth: true
-                    height: Units.gridUnit * 1.6
-                    radius: height / 2
-                    color: Theme.surfaceHover
-                    readonly property bool rowFocused: root._focusRow === 1 && root._csRow === 0 && !root._outputExpanded
-                    border.width: rowFocused ? Units.borderMedium : 0
-                    border.color: Theme.focusBorder
-
-                    Rectangle {
-                        width: parent.width * (audioCtl.volume / 100)
-                        height: parent.height
-                        radius: parent.radius
-                        color: audioCtl.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
-                        Behavior on width {
-                            NumberAnimation {
-                                duration: 80
-                            }
-                        }
-                    }
-                    Text {
-                        anchors.centerIn: parent
-                        text: audioCtl.muted ? "MUTED" : audioCtl.volume + "%"
-                        font.pixelSize: Theme.fontHint
-                        font.bold: true
-                        color: audioCtl.volume > 40 && !audioCtl.muted ? Theme.textOnDark : Theme.textPrimary
-                    }
+                    volume: audioCtl.volume
+                    muted: audioCtl.muted
+                    trackHeight: Units.gridUnit * 1.6
+                    showFocusBorder: root._focusRow === 1 && root._csRow === 0 && !root._outputExpanded
                 }
             }
 
