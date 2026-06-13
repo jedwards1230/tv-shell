@@ -24,7 +24,9 @@ FocusScope {
     property bool storageLoading: false
 
     function focusFirst() {
-        sysRefreshScope.forceActiveFocus();
+        // No interactive controls — the page auto-refreshes. Focus the page root
+        // so B/Back still returns to the sidebar.
+        root.forceActiveFocus();
     }
 
     // Daemon IPC — sys-status (#164)
@@ -71,6 +73,19 @@ FocusScope {
         getSysStatus.request("sys-status");
         root.storageLoading = true;
         getStorageStatus.request("storage-status");
+    }
+
+    // Live refresh — re-poll every second while visible so uptime ticks and
+    // everything else stays current. No loading flag on the periodic poll, so
+    // values update in place without flashing "Loading…".
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.visible
+        onTriggered: {
+            getSysStatus.request("sys-status");
+            getStorageStatus.request("storage-status");
+        }
     }
 
     ColumnLayout {
@@ -128,39 +143,6 @@ FocusScope {
                         color: Theme.textPrimary
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                    }
-                }
-            }
-        }
-
-        FocusScope {
-            id: sysRefreshScope
-            width: sysRefreshBtn.width
-            height: sysRefreshBtn.height
-            focus: true
-            activeFocusOnTab: true
-
-            SettingsButton {
-                id: sysRefreshBtn
-                text: "Refresh"
-                focus: parent.activeFocus
-                anchors.fill: parent
-
-                onActivated: {
-                    root.loading = true;
-                    getSysStatus.request("sys-status");
-                    root.storageLoading = true;
-                    root.storageMounts = [];
-                    getStorageStatus.request("storage-status");
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        sysRefreshScope.forceActiveFocus();
-                        sysRefreshBtn.activated();
                     }
                 }
             }
@@ -254,7 +236,7 @@ FocusScope {
         }
 
         HintBar {
-            text: "Refresh reads system info and storage mounts"
+            text: "Updates automatically"
         }
     }
 }
