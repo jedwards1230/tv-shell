@@ -521,7 +521,10 @@ mod tests {
     fn friendly_temp_label_maps_known_chips() {
         assert_eq!(friendly_temp_label("k10temp", Some("Tctl")), "CPU Tctl");
         assert_eq!(friendly_temp_label("amdgpu", Some("edge")), "GPU edge");
-        assert_eq!(friendly_temp_label("nvme", Some("Composite")), "NVMe Composite");
+        assert_eq!(
+            friendly_temp_label("nvme", Some("Composite")),
+            "NVMe Composite"
+        );
         // No sub-label → bare base name (no trailing space).
         assert_eq!(friendly_temp_label("coretemp", None), "CPU");
         // A sub-label equal to the base is not duplicated.
