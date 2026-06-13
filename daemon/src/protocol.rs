@@ -249,6 +249,9 @@ pub enum Command {
     /// `storage-status` — return a JSON array of real filesystem mounts with
     /// raw-byte sizes `[{mount, size, used, avail, pct}, …]`.
     StorageStatus,
+    /// `sys-metrics` — return live hardware telemetry as a compact JSON object
+    /// `{cpuPct, memUsed, memTotal, memPct, load1, temps:[{label, celsius}]}` (#235).
+    SysMetrics,
 
     /// Anything unrecognized -> the daemon replies `unknown`.
     Unknown,
@@ -395,6 +398,7 @@ impl Command {
             "controllerdb-refresh" => Command::ControllerDbRefresh,
             "sys-status" => Command::SysStatus,
             "storage-status" => Command::StorageStatus,
+            "sys-metrics" => Command::SysMetrics,
             _ => {
                 // `set-config <json>` / `record-launch <json>`: the rest of the
                 // line is a compact single-line JSON body. The command word must

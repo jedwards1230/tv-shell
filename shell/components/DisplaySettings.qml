@@ -57,11 +57,14 @@ FocusScope {
         }
     }
 
+    // Apply a full monitor mode line (resolution + refresh). #233: always built
+    // from an EXACT entry in availableModes + the monitor's current scale/position,
+    // so resolution and refresh changes never lose scale and never form an invalid
+    // resolution@refresh pair.
     Process {
         id: setMode
-        property string monName: ""
-        property string mode: ""
-        command: ["hyprctl", "keyword", "monitor", monName + "," + mode + ",auto,1"]
+        property string monKeyword: ""
+        command: ["hyprctl", "keyword", "monitor", monKeyword]
         onExited: {
             getMonitors.request("hypr-monitors");
         }
@@ -71,16 +74,6 @@ FocusScope {
     // Apply HDR off: standard mode line only
     Process {
         id: setHdr
-        property string monKeyword: ""
-        command: ["hyprctl", "keyword", "monitor", monKeyword]
-        onExited: {
-            getMonitors.request("hypr-monitors");
-        }
-    }
-
-    // Apply a specific refresh rate (keeps current resolution + position)
-    Process {
-        id: setRefresh
         property string monKeyword: ""
         command: ["hyprctl", "keyword", "monitor", monKeyword]
         onExited: {
@@ -116,19 +109,46 @@ FocusScope {
         setHdr.running = true;
     }
 
-    function applyRefreshRate(hz) {
+    // #233: apply an EXACT availableModes entry ("WxH@refresh") while preserving
+    // the monitor's current scale and position. Single funnel for both the
+    // resolution and refresh-rate dropdowns so combos are always valid.
+    function applyMode(modeStr) {
         if (root.monitors.length <= root.selectedMonitor)
             return;
         let mon = root.monitors[root.selectedMonitor];
-        let name = mon.name;
-        let w = mon.width;
-        let h = mon.height;
-        let x = mon.x;
-        let y = mon.y;
         let scale = mon.scale.toFixed(1);
-        let keyword = name + "," + w + "x" + h + "@" + hz + "," + x + "x" + y + "," + scale;
-        setRefresh.monKeyword = keyword;
-        setRefresh.running = true;
+        let keyword = mon.name + "," + modeStr + "," + mon.x + "x" + mon.y + "," + scale;
+        setMode.monKeyword = keyword;
+        setMode.running = true;
+    }
+
+    // #233: switch resolution. Picks a valid refresh for the target resolution —
+    // keeps the current rate if that resolution supports it, otherwise the
+    // highest available — and applies the exact mode string for that pair.
+    function applyResolution(resStr) {
+        if (root.monitors.length <= root.selectedMonitor)
+            return;
+        let mon = root.monitors[root.selectedMonitor];
+        let best = null;
+        let bestHz = -1;
+        let exactCurrent = null;
+        for (let i = 0; i < mon.availableModes.length; i++) {
+            let m = mon.availableModes[i];
+            let p = m.split("@");
+            if (p.length < 2 || p[0] !== resStr)
+                continue;
+            let hz = parseFloat(p[1]);
+            if (hz > bestHz) {
+                bestHz = hz;
+                best = m;
+            }
+            if (Math.abs(hz - mon.refreshRate) < 0.5)
+                exactCurrent = m;
+        }
+        // Guard: reject a resolution with no known mode (invalid pair).
+        if (!best)
+            return;
+        root.applyMode(exactCurrent || best);
     }
 
     function applyNightLightSetting(enabled, temp) {
@@ -152,6 +172,22 @@ FocusScope {
 
     function focusFirst() {
         monitorList.forceActiveFocus();
+    }
+
+    // #231: hours 0..23 for the auto-theme schedule dropdowns, plus a 12-hour
+    // "7:00 AM" / "8:00 PM" formatter for couch readability.
+    property var hoursOfDay: {
+        let a = [];
+        for (let i = 0; i < 24; i++)
+            a.push(i);
+        return a;
+    }
+    function formatHour(h) {
+        let ampm = h < 12 ? "AM" : "PM";
+        let hr = h % 12;
+        if (hr === 0)
+            hr = 12;
+        return hr + ":00 " + ampm;
     }
 
     ColumnLayout {
@@ -406,52 +442,46 @@ FocusScope {
             visible: root.monitors.length > 0
             maxHeight: 600
 
-            property var allModes: root.monitors.length > root.selectedMonitor ? root.monitors[root.selectedMonitor].availableModes : []
-            property var modes: {
+            // #233: resolutions only (deduped, "WxH") — no refresh rate here. The
+            // separate Refresh Rate dropdown below owns the rate for the current
+            // resolution.
+            property var resolutions: {
+                if (root.monitors.length <= root.selectedMonitor)
+                    return [];
+                let allModes = root.monitors[root.selectedMonitor].availableModes;
                 let seen = {};
                 let result = [];
                 for (let i = 0; i < allModes.length; i++) {
-                    let m = allModes[i];
-                    let res = m.split("@")[0];
-                    if (!seen[res]) {
+                    let res = allModes[i].split("@")[0];
+                    if (res && !seen[res]) {
                         seen[res] = true;
-                        result.push(m);
+                        result.push(res);
                     }
                 }
                 return result;
             }
-            property string currentMode: {
+            property string currentRes: {
                 if (root.monitors.length <= root.selectedMonitor)
                     return "";
                 let mon = root.monitors[root.selectedMonitor];
-                return mon.width + "x" + mon.height + "@" + mon.refreshRate.toFixed(6);
+                return mon.width + "x" + mon.height;
             }
 
-            function formatMode(mode) {
-                let parts = mode.split("@");
-                let res = parts[0] || mode;
-                let hz = parts.length > 1 ? parseFloat(parts[1]).toFixed(2) + " Hz" : "";
-                return res + (hz ? "  @  " + hz : "");
+            // Present "3840x2160" as "3840 × 2160" for couch readability.
+            function formatRes(res) {
+                return res.replace("x", " × ");
             }
 
-            model: modes
-            displayText: formatMode(currentMode)
+            model: resolutions
+            displayText: formatRes(currentRes)
             isCurrentItem: function (item) {
-                if (root.monitors.length <= root.selectedMonitor)
-                    return false;
-                let mon = root.monitors[root.selectedMonitor];
-                let res = item.split("@")[0];
-                return res === (mon.width + "x" + mon.height);
+                return item === currentRes;
             }
             itemLabel: function (item) {
-                return formatMode(item);
+                return formatRes(item);
             }
             onItemSelected: function (item) {
-                if (root.monitors.length > root.selectedMonitor) {
-                    setMode.monName = root.monitors[root.selectedMonitor].name;
-                    setMode.mode = item;
-                    setMode.running = true;
-                }
+                root.applyResolution(item);
             }
 
             KeyNavigation.up: scaleRow
@@ -505,7 +535,9 @@ FocusScope {
                 return item.hz + " Hz";
             }
             onItemSelected: function (item) {
-                root.applyRefreshRate(item.hz);
+                // #233: apply the exact availableModes string for this rate at the
+                // current resolution — guaranteed-valid pair.
+                root.applyMode(item.mode);
             }
 
             KeyNavigation.up: modeDropdownScope
@@ -664,7 +696,7 @@ FocusScope {
             }
 
             KeyNavigation.up: nightLightTempScope
-            KeyNavigation.down: autoDimToggleScope
+            KeyNavigation.down: autoDimScope
         }
 
         Text {
@@ -673,60 +705,19 @@ FocusScope {
             color: Theme.textMuted
         }
 
-        // Auto-Dim (OLED burn-in protection, #143)
+        // Auto-Dim (OLED burn-in protection, #143). #232: one combined row —
+        // `Off` disables auto-dim; any time enables it at that delay.
         SectionHeader {
             text: "Auto-Dim"
         }
 
-        // Enable / disable toggle
-        FocusScope {
-            id: autoDimToggleScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: 80
-
-            KeyNavigation.up: overscanScope
-            // #143: skip the disabled delay row — jump straight to modeList when auto-dim is off
-            KeyNavigation.down: SettingsStore.autoDimEnabled ? autoDimDelayScope : modeList
-
-            Keys.onReturnPressed: {
-                SettingsStore.setAutoDimEnabled(!SettingsStore.autoDimEnabled);
-            }
-
-            SettingsButton {
-                id: autoDimBtn
-                width: 160
-                height: 72
-                text: SettingsStore.autoDimEnabled ? "On" : "Off"
-                color: SettingsStore.autoDimEnabled ? Theme.sidebarActive : (autoDimToggleScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                border.width: autoDimToggleScope.activeFocus ? 2 : 1
-                border.color: autoDimToggleScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-
-                onActivated: SettingsStore.setAutoDimEnabled(!SettingsStore.autoDimEnabled)
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        autoDimToggleScope.forceActiveFocus();
-                        autoDimBtn.activated();
-                    }
-                }
-            }
-        }
-
-        // Delay selector — 1 / 2 / 5 / 10 minutes
-        SectionHeader {
-            text: "Dim Delay"
-            opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
-        }
-
         SettingsButtonGroup {
-            id: autoDimDelayScope
-            // #143: exclude from nav chain when disabled so D-pad focus cannot enter
-            activeFocusOnTab: SettingsStore.autoDimEnabled
-            enabled: SettingsStore.autoDimEnabled
+            id: autoDimScope
             options: [
+                {
+                    label: "Off",
+                    value: 0
+                },
                 {
                     label: "1 min",
                     value: 1
@@ -745,14 +736,21 @@ FocusScope {
                 }
             ]
             isCurrentOption: function (opt) {
-                return SettingsStore.autoDimDelayMinutes === opt.value;
+                // `Off` is current when disabled; otherwise the matching delay.
+                if (opt.value === 0)
+                    return !SettingsStore.autoDimEnabled;
+                return SettingsStore.autoDimEnabled && SettingsStore.autoDimDelayMinutes === opt.value;
             }
             onValueSelected: function (opt) {
-                if (SettingsStore.autoDimEnabled)
+                if (opt.value === 0) {
+                    SettingsStore.setAutoDimEnabled(false);
+                } else {
                     SettingsStore.setAutoDimDelayMinutes(opt.value);
+                    SettingsStore.setAutoDimEnabled(true);
+                }
             }
 
-            KeyNavigation.up: autoDimToggleScope
+            KeyNavigation.up: overscanScope
             KeyNavigation.down: modeList
         }
 
@@ -818,11 +816,14 @@ FocusScope {
                 Theme.setThemeMode(modeList.modes[focusIndex].id);
             }
             Keys.onUpPressed: {
-                // #143: skip the disabled delay row — land on toggle when auto-dim is off
-                if (SettingsStore.autoDimEnabled)
-                    autoDimDelayScope.forceActiveFocus();
+                autoDimScope.forceActiveFocus();
+            }
+            // #231: drop into the auto-theme schedule when in Auto mode.
+            Keys.onDownPressed: event => {
+                if (Theme.themeMode === "auto")
+                    lightStartScope.forceActiveFocus();
                 else
-                    autoDimToggleScope.forceActiveFocus();
+                    event.accepted = false;
             }
 
             Repeater {
@@ -909,6 +910,58 @@ FocusScope {
                     }
                 }
             }
+        }
+
+        // Auto-theme schedule (#231) — only relevant in Auto mode.
+        SectionHeader {
+            text: "Auto Schedule"
+            visible: Theme.themeMode === "auto"
+        }
+
+        Text {
+            visible: Theme.themeMode === "auto"
+            text: "When Auto mode switches to light and dark each day."
+            font.pixelSize: Theme.fontHint
+            color: Theme.textMuted
+        }
+
+        SettingsDropdown {
+            id: lightStartScope
+            visible: Theme.themeMode === "auto"
+            maxHeight: 600
+            model: root.hoursOfDay
+            displayText: "Light starts:  " + root.formatHour(SettingsStore.autoThemeLightStart)
+            isCurrentItem: function (item) {
+                return item === SettingsStore.autoThemeLightStart;
+            }
+            itemLabel: function (item) {
+                return root.formatHour(item);
+            }
+            onItemSelected: function (item) {
+                SettingsStore.setAutoThemeLightStart(item);
+            }
+
+            KeyNavigation.up: modeList
+            KeyNavigation.down: darkStartScope
+        }
+
+        SettingsDropdown {
+            id: darkStartScope
+            visible: Theme.themeMode === "auto"
+            maxHeight: 600
+            model: root.hoursOfDay
+            displayText: "Dark starts:  " + root.formatHour(SettingsStore.autoThemeDarkStart)
+            isCurrentItem: function (item) {
+                return item === SettingsStore.autoThemeDarkStart;
+            }
+            itemLabel: function (item) {
+                return root.formatHour(item);
+            }
+            onItemSelected: function (item) {
+                SettingsStore.setAutoThemeDarkStart(item);
+            }
+
+            KeyNavigation.up: lightStartScope
         }
 
         HintBar {

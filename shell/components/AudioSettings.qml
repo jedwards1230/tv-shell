@@ -13,6 +13,14 @@ FocusScope {
     property int defaultSinkIndex: -1
     property string formatInfo: "Unavailable"
 
+    // Output card profiles (#234): the available output profiles of every audio
+    // card (stereo / surround 5.1 / 7.1 / …). PipeWire auto-selects the highest-
+    // *priority* available profile, which is always stereo — so a 5.1-capable AVR
+    // over HDMI silently lands on a 2-channel sink. Surfacing the profile here lets
+    // the user switch the card to Digital Surround 5.1 and make 5.1 active.
+    property var cardProfiles: []
+    property int currentProfileIndex: -1
+
     // Guard: re-apply persisted default only once per page-load
     property bool _reapplied: false
 
@@ -191,21 +199,134 @@ FocusScope {
         }
     }
 
-    // Shared process for 5.1 channel test tones — single-shot so it exits
-    // promptly and never hangs audio.
-    //
-    // ALSA 6-channel speaker index map (standard 5.1 order):
-    //   FL=1, FR=2, Rear L=3, Rear R=4, Center=5, LFE=6
+    // Enumerate every card's AVAILABLE output profiles (#234). Emits one
+    // tab-separated line per profile: `<cardName>\t<profileName>\t<active>\t<desc>`.
+    // Only output-bearing profiles on connected ports (`available: yes`) are
+    // listed, so the dropdown shows e.g. "Digital Stereo (HDMI 2)" alongside
+    // "Digital Surround 5.1 (HDMI 2)".
     Process {
-        id: testTone
-        property var pendingCmd: []
-        command: pendingCmd
+        id: listProfiles
+        command: ["bash", "-c", "pactl list cards | awk '" + "/^Card #/ { flush(); card=\"\"; ap=\"\"; n=0; inprof=0 } " + "/^[ \\t]*Name:/ { card=$2 } " + "/^[ \\t]*Profiles:/ { inprof=1; next } " + "/^[ \\t]*Active Profile:/ { ap=$3; inprof=0; flush() } " + "inprof && /available: yes/ { line=$0; sub(/^[ \\t]+/,\"\",line); ci=index(line,\": \"); if(ci<1) next; pname=substr(line,1,ci-1); if(pname !~ /^output:/) next; rest=substr(line,ci+2); si=index(rest,\" (sinks:\"); if(si>0) desc=substr(rest,1,si-1); else desc=rest; buf[n]=pname \"|\" desc; n++ } " + "function flush(  i,a){ for(i=0;i<n;i++){ split(buf[i],a,\"|\"); print card \"\\t\" a[1] \"\\t\" ((a[1]==ap)?\"1\":\"0\") \"\\t\" a[2] } n=0 } " + "END { flush() }'"]
+        stdout: SplitParser {
+            property var collected: []
+            onRead: line => {
+                let parts = line.split("\t");
+                if (parts.length < 4)
+                    return;
+                let entry = {
+                    card: parts[0],
+                    profile: parts[1],
+                    active: parts[2] === "1",
+                    desc: parts[3]
+                };
+                collected.push(entry);
+                if (entry.active)
+                    root.currentProfileIndex = collected.length - 1;
+            }
+        }
+        onExited: {
+            root.cardProfiles = listProfiles.stdout.collected;
+            listProfiles.stdout.collected = [];
+        }
+    }
+
+    // Apply a card profile (#234), then make that card's resulting sink the
+    // default so the surround channels become active and the Speaker Test (which
+    // targets @DEFAULT_AUDIO_SINK@) exercises all 6. Card/profile are passed via
+    // env so their content can never inject shell commands.
+    Process {
+        id: setCardProfile
+        property string cardName: ""
+        property string profileName: ""
+        environment: ({
+                "GS_CARD": cardName,
+                "GS_PROFILE": profileName
+            })
+        command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
+        onExited: {
+            // Refresh everything: new default sink, format, and active profile.
+            listSinks.running = true;
+            getFormat.running = true;
+            listProfiles.running = true;
+            refreshTimer.start();
+        }
+    }
+
+    // 5.1 channel toggles (#234). Each channel is an independent on/off toggle:
+    // press A to start a sustained tone on that speaker, press again to stop.
+    // Multiple channels can be on at once; "All channels" mirrors the whole set
+    // (and shows active when every channel is on). The active set is rendered as
+    // a 6-channel WAV — a steady 480 Hz tone in each active channel — and looped
+    // via pw-play. PipeWire's 6-channel order is FL,FR,FC,LFE,RL,RR →
+    //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5.
+    property var channelActive: [false, false, false, false, false, false]
+    readonly property var channelLabels: ["Front L", "Front R", "Center", "LFE/Sub", "Rear L", "Rear R"]
+    readonly property bool anyChannelActive: channelActive.indexOf(true) >= 0
+    readonly property bool allChannelsActive: channelActive.indexOf(false) < 0
+    readonly property string activeLabels: {
+        var names = [];
+        for (var i = 0; i < 6; i++)
+            if (channelActive[i])
+                names.push(channelLabels[i]);
+        return names.join(", ");
+    }
+
+    function toggleChannel(c) {
+        var arr = channelActive.slice();
+        arr[c] = !arr[c];
+        channelActive = arr;
+        applyTones();
+    }
+
+    function setAllChannels(on) {
+        channelActive = [on, on, on, on, on, on];
+        applyTones();
+    }
+
+    // Push the active set to the tone player. Empty set → stop; otherwise
+    // (re)start so the regenerated multi-channel WAV reflects the current set.
+    function applyTones() {
+        var mask = [];
+        for (var i = 0; i < 6; i++)
+            if (channelActive[i])
+                mask.push(i);
+        tonePlayer.mask = mask.join(",");
+        if (mask.length === 0)
+            tonePlayer.running = false;
+        else
+        // onExited won't restart (none active)
+        if (tonePlayer.running)
+            tonePlayer.running = false;
+        else
+            // onExited restarts with the new mask
+            tonePlayer.running = true;      // start fresh
+    }
+
+    // Loops a ~20s steady-tone WAV containing exactly the active channels;
+    // restarts on exit while any channel stays active (continuous play, and a
+    // mask change reloads via a stop→onExited→start). 480 Hz × a 24000-sample
+    // block tiles seamlessly (100 samples/cycle). Mask passed via env (no inject).
+    Process {
+        id: tonePlayer
+        property string mask: "0"
+        environment: ({
+                "GS_MASK": mask
+            })
+        // python generates the WAV then `exec`s into pw-play (same PID), so when
+        // Quickshell kills this Process to change the set, pw-play dies with it —
+        // no orphaned child left playing. Fixed temp path → no file accumulation.
+        command: ["python3", "-c", "import wave,struct,math,os\n" + "mask=[int(x) for x in os.environ.get('GS_MASK','0').split(',') if x!='']\n" + "sr=48000;nch=6;freq=480;amp=0.5;blk=24000\n" + "block=bytearray()\n" + "for i in range(blk):\n" + " s=int(amp*32767*math.sin(2*math.pi*freq*i/sr))\n" + " fr=[0]*nch\n" + " for c in mask: fr[c]=s\n" + " block+=struct.pack('<%dh'%nch,*fr)\n" + "data=bytes(block)*40\n" + "fn=os.path.join(os.environ.get('XDG_RUNTIME_DIR','/tmp'),'game-shell-tone.wav')\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "w.writeframes(data);w.close()\n" + "os.execvp('pw-play',['pw-play','--volume','0.85',fn])\n"]
+        onExited: {
+            if (root.anyChannelActive)
+                running = true;
+        }
     }
 
     Component.onCompleted: {
         getVolume.running = true;
         listSinks.running = true;
         getFormat.running = true;
+        listProfiles.running = true;
     }
 
     // Refresh when section becomes visible. Do NOT grab focus here — focus
@@ -217,6 +338,10 @@ FocusScope {
             getVolume.running = true;
             listSinks.running = true;
             getFormat.running = true;
+            listProfiles.running = true;
+        } else if (root.anyChannelActive) {
+            // Don't leave tones playing after navigating away from Audio.
+            root.setAllChannels(false);
         }
     }
 
@@ -390,16 +515,47 @@ FocusScope {
             }
 
             KeyNavigation.up: muteScope
+            KeyNavigation.down: profileDropdownScope
+        }
+
+        // Output profile (surround) — #234. Lets the user switch a card to its
+        // 5.1/7.1 profile; PipeWire otherwise always defaults to stereo.
+        SectionHeader {
+            text: "Output Profile (Surround)"
+        }
+
+        SettingsDropdown {
+            id: profileDropdownScope
+            model: root.cardProfiles
+            displayText: root.currentProfileIndex >= 0 && root.currentProfileIndex < root.cardProfiles.length ? root.cardProfiles[root.currentProfileIndex].desc : "Stereo"
+            maxHeight: 500
+            rowHeight: 72
+            isCurrentItem: function (item) {
+                return item.active;
+            }
+            itemLabel: function (item) {
+                return item.desc;
+            }
+            onItemSelected: function (item) {
+                setCardProfile.cardName = item.card;
+                setCardProfile.profileName = item.profile;
+                setCardProfile.running = true;
+            }
+
+            KeyNavigation.up: sinkDropdownScope
             KeyNavigation.down: testToneFlScope
         }
 
+        Text {
+            text: "Switch HDMI/analog output between stereo and surround (5.1 / 7.1) when the receiver supports it."
+            font.pixelSize: Theme.fontHint
+            color: Theme.textMuted
+        }
+
         // ---------------------------------------------------------------
-        // Speaker Test (5.1)
-        //
-        // ALSA 6-channel index map (document for maintenance):
-        //   FL=1 (Front Left), FR=2 (Front Right),
-        //   Rear L=3, Rear R=4, Center=5, LFE=6
-        // single-shot: -l 1 ensures speaker-test exits after one pass.
+        // Speaker Test (5.1) — short, soft tones via pw-play (#234).
+        // PipeWire 6-channel index map (FL,FR,FC,LFE,RL,RR):
+        //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5
         // ---------------------------------------------------------------
         SectionHeader {
             text: "Speaker Test (5.1)"
@@ -411,7 +567,7 @@ FocusScope {
             color: Theme.textSecondary
         }
 
-        // Row 1: FL, FR, Center
+        // Row 1: Front L | Center | Front R (matches the physical speaker layout)
         RowLayout {
             Layout.fillWidth: true
             spacing: 16
@@ -422,8 +578,8 @@ FocusScope {
                 height: testToneFlBtn.height
                 activeFocusOnTab: true
 
-                KeyNavigation.up: sinkDropdownScope
-                KeyNavigation.right: testToneFrScope
+                KeyNavigation.up: profileDropdownScope
+                KeyNavigation.right: testToneCScope
                 KeyNavigation.down: testToneRlScope
 
                 SettingsButton {
@@ -431,11 +587,10 @@ FocusScope {
                     text: "Front L"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // FL = channel 1
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "1"];
-                        testTone.running = true;
-                    }
+                    color: root.channelActive[0] ? Theme.sidebarActive : (testToneFlScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneFlScope.activeFocus ? 2 : 1
+                    border.color: testToneFlScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(0)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -449,46 +604,14 @@ FocusScope {
             }
 
             FocusScope {
-                id: testToneFrScope
-                width: testToneFrBtn.width
-                height: testToneFrBtn.height
-                activeFocusOnTab: true
-
-                KeyNavigation.up: sinkDropdownScope
-                KeyNavigation.left: testToneFlScope
-                KeyNavigation.right: testToneCScope
-                KeyNavigation.down: testToneRrScope
-
-                SettingsButton {
-                    id: testToneFrBtn
-                    text: "Front R"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    onActivated: {
-                        // FR = channel 2
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "2"];
-                        testTone.running = true;
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneFrScope.forceActiveFocus();
-                            testToneFrBtn.activated();
-                        }
-                    }
-                }
-            }
-
-            FocusScope {
                 id: testToneCScope
                 width: testToneCBtn.width
                 height: testToneCBtn.height
                 activeFocusOnTab: true
 
-                KeyNavigation.up: sinkDropdownScope
-                KeyNavigation.left: testToneFrScope
+                KeyNavigation.up: profileDropdownScope
+                KeyNavigation.left: testToneFlScope
+                KeyNavigation.right: testToneFrScope
                 KeyNavigation.down: testToneLfeScope
 
                 SettingsButton {
@@ -496,11 +619,10 @@ FocusScope {
                     text: "Center"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // Center = channel 5
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "5"];
-                        testTone.running = true;
-                    }
+                    color: root.channelActive[2] ? Theme.sidebarActive : (testToneCScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneCScope.activeFocus ? 2 : 1
+                    border.color: testToneCScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(2)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -512,9 +634,40 @@ FocusScope {
                     }
                 }
             }
+
+            FocusScope {
+                id: testToneFrScope
+                width: testToneFrBtn.width
+                height: testToneFrBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: profileDropdownScope
+                KeyNavigation.left: testToneCScope
+                KeyNavigation.down: testToneRrScope
+
+                SettingsButton {
+                    id: testToneFrBtn
+                    text: "Front R"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    color: root.channelActive[1] ? Theme.sidebarActive : (testToneFrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneFrScope.activeFocus ? 2 : 1
+                    border.color: testToneFrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(1)
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneFrScope.forceActiveFocus();
+                            testToneFrBtn.activated();
+                        }
+                    }
+                }
+            }
         }
 
-        // Row 2: Rear L, Rear R, LFE
+        // Row 2: Rear L | LFE/Sub | Rear R
         RowLayout {
             Layout.fillWidth: true
             spacing: 16
@@ -526,7 +679,7 @@ FocusScope {
                 activeFocusOnTab: true
 
                 KeyNavigation.up: testToneFlScope
-                KeyNavigation.right: testToneRrScope
+                KeyNavigation.right: testToneLfeScope
                 KeyNavigation.down: testToneAllScope
 
                 SettingsButton {
@@ -534,11 +687,10 @@ FocusScope {
                     text: "Rear L"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // Rear L = channel 3
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "3"];
-                        testTone.running = true;
-                    }
+                    color: root.channelActive[4] ? Theme.sidebarActive : (testToneRlScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneRlScope.activeFocus ? 2 : 1
+                    border.color: testToneRlScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(4)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -552,46 +704,14 @@ FocusScope {
             }
 
             FocusScope {
-                id: testToneRrScope
-                width: testToneRrBtn.width
-                height: testToneRrBtn.height
-                activeFocusOnTab: true
-
-                KeyNavigation.up: testToneFrScope
-                KeyNavigation.left: testToneRlScope
-                KeyNavigation.right: testToneLfeScope
-                KeyNavigation.down: testToneAllScope
-
-                SettingsButton {
-                    id: testToneRrBtn
-                    text: "Rear R"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    onActivated: {
-                        // Rear R = channel 4
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "4"];
-                        testTone.running = true;
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneRrScope.forceActiveFocus();
-                            testToneRrBtn.activated();
-                        }
-                    }
-                }
-            }
-
-            FocusScope {
                 id: testToneLfeScope
                 width: testToneLfeBtn.width
                 height: testToneLfeBtn.height
                 activeFocusOnTab: true
 
                 KeyNavigation.up: testToneCScope
-                KeyNavigation.left: testToneRrScope
+                KeyNavigation.left: testToneRlScope
+                KeyNavigation.right: testToneRrScope
                 KeyNavigation.down: testToneAllScope
 
                 SettingsButton {
@@ -599,11 +719,10 @@ FocusScope {
                     text: "LFE/Sub"
                     focus: parent.activeFocus
                     anchors.fill: parent
-                    onActivated: {
-                        // LFE = channel 6
-                        testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "sine", "-f", "440", "-l", "1", "-s", "6"];
-                        testTone.running = true;
-                    }
+                    color: root.channelActive[3] ? Theme.sidebarActive : (testToneLfeScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneLfeScope.activeFocus ? 2 : 1
+                    border.color: testToneLfeScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(3)
                     MouseArea {
                         anchors.fill: parent
                         hoverEnabled: true
@@ -611,6 +730,37 @@ FocusScope {
                         onClicked: {
                             testToneLfeScope.forceActiveFocus();
                             testToneLfeBtn.activated();
+                        }
+                    }
+                }
+            }
+
+            FocusScope {
+                id: testToneRrScope
+                width: testToneRrBtn.width
+                height: testToneRrBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: testToneFrScope
+                KeyNavigation.left: testToneLfeScope
+                KeyNavigation.down: testToneAllScope
+
+                SettingsButton {
+                    id: testToneRrBtn
+                    text: "Rear R"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    color: root.channelActive[5] ? Theme.sidebarActive : (testToneRrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneRrScope.activeFocus ? 2 : 1
+                    border.color: testToneRrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(5)
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneRrScope.forceActiveFocus();
+                            testToneRrBtn.activated();
                         }
                     }
                 }
@@ -624,18 +774,17 @@ FocusScope {
             height: testToneAllBtn.height
             activeFocusOnTab: true
 
-            KeyNavigation.up: testToneRlScope
+            KeyNavigation.up: testToneLfeScope
 
             SettingsButton {
                 id: testToneAllBtn
                 text: "All channels"
                 focus: parent.activeFocus
                 anchors.fill: parent
-                onActivated: {
-                    // WAV sweep across all 6 channels, single pass
-                    testTone.pendingCmd = ["speaker-test", "-D", "default", "-c", "6", "-t", "wav", "-l", "1"];
-                    testTone.running = true;
-                }
+                color: root.allChannelsActive ? Theme.sidebarActive : (testToneAllScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                border.width: testToneAllScope.activeFocus ? 2 : 1
+                border.color: testToneAllScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                onActivated: root.setAllChannels(!root.allChannelsActive)
                 MouseArea {
                     anchors.fill: parent
                     hoverEnabled: true
@@ -645,6 +794,30 @@ FocusScope {
                         testToneAllBtn.activated();
                     }
                 }
+            }
+        }
+
+        // Conditional "now playing" popup — appears below the grid only while a
+        // tone is active, explaining how to turn it off.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 64
+            radius: 16
+            visible: root.anyChannelActive
+            color: Theme.darkMode ? Qt.rgba(Theme.ember.r, Theme.ember.g, Theme.ember.b, 0.18) : Qt.rgba(Theme.navy.r, Theme.navy.g, Theme.navy.b, 0.12)
+            border.width: 2
+            border.color: Theme.ember
+
+            Text {
+                anchors.fill: parent
+                anchors.leftMargin: 24
+                anchors.rightMargin: 24
+                verticalAlignment: Text.AlignVCenter
+                text: "♪  Playing: " + root.activeLabels + "   —   press a speaker (or All channels) again to turn it off"
+                font.pixelSize: Theme.fontSmall
+                font.bold: true
+                color: Theme.textPrimary
+                elide: Text.ElideRight
             }
         }
 

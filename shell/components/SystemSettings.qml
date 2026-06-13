@@ -23,6 +23,15 @@ FocusScope {
     property var storageMounts: []
     property bool storageLoading: false
 
+    // Live hardware telemetry (#235) — driven by the daemon `sys-metrics` IPC.
+    property real cpuPct: 0
+    property real memUsed: 0
+    property real memTotal: 0
+    property int memPct: 0
+    property real load1: 0
+    property var temps: []
+    property bool metricsLoaded: false
+
     function focusFirst() {
         // No interactive controls — the page auto-refreshes. Focus the page root
         // so B/Back still returns to the sidebar.
@@ -68,11 +77,32 @@ FocusScope {
         }
     }
 
+    // Daemon IPC — sys-metrics (#235). Live CPU/memory/load/temps; updates in
+    // place via the 1s Timer below (no loading flash on periodic polls).
+    SocketClient {
+        id: getSysMetrics
+        onResponseReceived: line => {
+            try {
+                let obj = JSON.parse(line);
+                root.cpuPct = obj.cpuPct || 0;
+                root.memUsed = obj.memUsed || 0;
+                root.memTotal = obj.memTotal || 0;
+                root.memPct = obj.memPct || 0;
+                root.load1 = obj.load1 || 0;
+                root.temps = Array.isArray(obj.temps) ? obj.temps : [];
+                root.metricsLoaded = true;
+            } catch (e) {
+                console.log("SystemSettings: failed to parse sys-metrics:", e);
+            }
+        }
+    }
+
     Component.onCompleted: {
         root.loading = true;
         getSysStatus.request("sys-status");
         root.storageLoading = true;
         getStorageStatus.request("storage-status");
+        getSysMetrics.request("sys-metrics");
     }
 
     // Live refresh — re-poll every second while visible so uptime ticks and
@@ -85,7 +115,22 @@ FocusScope {
         onTriggered: {
             getSysStatus.request("sys-status");
             getStorageStatus.request("storage-status");
+            getSysMetrics.request("sys-metrics");
         }
+    }
+
+    // Format raw bytes as a human-readable GiB/MiB string (shared by the
+    // Hardware and Storage sections). 0 → "0 B"; negative/unknown → "".
+    function fmtBytes(n) {
+        if (n < 0)
+            return "";
+        if (n === 0)
+            return "0 B";
+        if (n >= 1073741824)
+            return (n / 1073741824).toFixed(1) + " GiB";
+        if (n >= 1048576)
+            return (n / 1048576).toFixed(1) + " MiB";
+        return (n / 1024).toFixed(1) + " KiB";
     }
 
     ColumnLayout {
@@ -146,6 +191,209 @@ FocusScope {
                     }
                 }
             }
+        }
+
+        // Hardware — live CPU / memory / load / temperatures (#235)
+        SectionHeader {
+            text: "Hardware"
+        }
+
+        // Three stat cards side by side: CPU, Memory, Load. Each owns its bar in
+        // its own row, so nothing overlaps and the section fills the width.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 16
+
+            // --- CPU card ---
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 170
+                radius: 16
+                color: Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 12
+
+                    Text {
+                        text: "CPU Usage"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+                    Text {
+                        text: root.metricsLoaded ? root.cpuPct.toFixed(1) + "%" : "—"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 16
+                        radius: 8
+                        color: Theme.surfaceHover
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, root.cpuPct / 100))
+                            height: parent.height
+                            radius: 8
+                            color: root.cpuPct >= 90 ? Theme.crimson : Theme.ember
+                            Behavior on width {
+                                NumberAnimation {
+                                    duration: 250
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Memory card ---
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 170
+                radius: 16
+                color: Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 12
+
+                    Text {
+                        text: "Memory"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+                    Text {
+                        text: root.metricsLoaded && root.memTotal > 0 ? root.memPct + "%" : "—"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                    }
+                    Text {
+                        text: root.metricsLoaded && root.memTotal > 0 ? root.fmtBytes(root.memUsed) + " / " + root.fmtBytes(root.memTotal) : ""
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textMuted
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 16
+                        radius: 8
+                        color: Theme.surfaceHover
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, root.memPct / 100))
+                            height: parent.height
+                            radius: 8
+                            color: root.memPct >= 90 ? Theme.crimson : Theme.ember
+                            Behavior on width {
+                                NumberAnimation {
+                                    duration: 250
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Load card ---
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 170
+                radius: 16
+                color: Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 12
+
+                    Text {
+                        text: "Load Average"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+                    Text {
+                        text: root.metricsLoaded ? root.load1.toFixed(2) : "—"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                    }
+                    Text {
+                        text: "1-minute average"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textMuted
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
+                }
+            }
+        }
+
+        // Temperatures — wrapping pills so the row fills the width and adapts to
+        // however many sensors the host exposes (CPU/GPU sorted first).
+        Text {
+            text: "Temperatures"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textSecondary
+            visible: root.temps.length > 0
+        }
+
+        Flow {
+            Layout.fillWidth: true
+            spacing: 12
+
+            Repeater {
+                model: root.temps
+
+                delegate: Rectangle {
+                    required property var modelData
+                    radius: 12
+                    color: Theme.surface
+                    border.width: 2
+                    border.color: Theme.surfaceBorder
+                    implicitWidth: tempPillRow.implicitWidth + 36
+                    implicitHeight: 60
+
+                    RowLayout {
+                        id: tempPillRow
+                        anchors.centerIn: parent
+                        spacing: 14
+
+                        Text {
+                            text: modelData.label
+                            font.pixelSize: Theme.fontSmall
+                            color: Theme.textSecondary
+                        }
+                        Text {
+                            text: modelData.celsius.toFixed(1) + " °C"
+                            font.pixelSize: Theme.fontSmall
+                            font.bold: true
+                            color: modelData.celsius >= 90 ? Theme.crimson : Theme.textPrimary
+                        }
+                    }
+                }
+            }
+        }
+
+        Text {
+            visible: root.metricsLoaded && root.temps.length === 0
+            text: "No temperature sensors reported"
+            font.pixelSize: Theme.fontSmall
+            color: Theme.textMuted
         }
 
         // Storage — free-space readout
