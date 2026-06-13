@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 // Compact network quick-popover, anchored beside the originating QuickAction
 // glyph (#118). Controller-navigable, 10-foot sized. Mirrors VolumeOverlay's
@@ -241,358 +242,305 @@ FocusScope {
         event.accepted = true;
     }
 
-    // Light scrim — popover, not a full modal. Click-outside dismisses.
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.35)
-        MouseArea {
-            anchors.fill: parent
-            onClicked: root.opened = false
-        }
-    }
+    AnchoredPopover {
+        anchorRect: root.anchorRect
+        panelWidth: Units.gridUnit * 24
+        onDismissed: root.opened = false
 
-    // === Anchored popover panel ===
-    Rectangle {
-        id: panel
-        width: Math.min(Units.gridUnit * 24, root.width - Units.gridUnit * 2)
-        height: overlayColumn.implicitHeight + Units.gridUnit * 1.5
-        radius: Units.radiusLG
-        color: Theme.surface
-        border.width: Units.borderMedium
-        border.color: Theme.surfaceBorder
-
-        // Anchor below the glyph when it's in the top half of the screen
-        // (home, top-right) and above it when in the bottom half (drawer,
-        // bottom-left). Then clamp fully on-screen.
-        readonly property real _gap: Units.spacingMD
-        readonly property real _ax: root.anchorRect ? root.anchorRect.x : 0
-        readonly property real _ay: root.anchorRect ? root.anchorRect.y : 0
-        readonly property real _aw: root.anchorRect ? root.anchorRect.w : 0
-        readonly property real _ah: root.anchorRect ? root.anchorRect.h : 0
-        readonly property bool _below: (_ay + _ah / 2) < root.height / 2
-
-        x: {
-            if (!root.anchorRect)
-                return (root.width - width) / 2;
-            // Top-right glyph → open left (align right edges); bottom-left
-            // glyph → open right (align left edges).
-            var desired = _below ? (_ax + _aw - width) : _ax;
-            var maxX = root.width - width - Units.spacingLG;
-            return Math.max(Units.spacingLG, Math.min(desired, maxX));
-        }
-        y: {
-            if (!root.anchorRect)
-                return (root.height - height) / 2;
-            var desired = _below ? (_ay + _ah + _gap) : (_ay - height - _gap);
-            var maxY = root.height - height - Units.spacingLG;
-            return Math.max(Units.spacingLG, Math.min(desired, maxY));
+        // --- Title ---
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: "Network"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textPrimary
         }
 
-        ColumnLayout {
-            id: overlayColumn
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: parent.top
-                margins: Units.gridUnit * 0.75
-            }
-            spacing: Units.spacingMD
+        // --- Connection info ---
+        Rectangle {
+            Layout.fillWidth: true
+            height: connInfoCol.implicitHeight + Units.spacingLG * 2
+            radius: Units.radiusMD
+            color: Theme.cardBackground
+            border.width: Units.borderThin
+            border.color: Theme.surfaceBorder
 
-            // --- Title ---
-            Text {
-                Layout.alignment: Qt.AlignHCenter
-                text: "Network"
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
-            }
+            ColumnLayout {
+                id: connInfoCol
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    top: parent.top
+                    margins: Units.spacingLG
+                }
+                spacing: Units.spacingXS
 
-            // --- Connection info ---
-            Rectangle {
-                Layout.fillWidth: true
-                height: connInfoCol.implicitHeight + Units.spacingLG * 2
-                radius: Units.radiusMD
-                color: Theme.cardBackground
-                border.width: Units.borderThin
-                border.color: Theme.surfaceBorder
+                Text {
+                    visible: root.statusLoaded && root.connName !== ""
+                    text: root.connName + " · " + root._typeLabel(root.connType)
+                    font.pixelSize: Theme.fontHint
+                    font.bold: true
+                    color: Theme.textPrimary
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
 
-                ColumnLayout {
-                    id: connInfoCol
-                    anchors {
-                        left: parent.left
-                        right: parent.right
-                        top: parent.top
-                        margins: Units.spacingLG
-                    }
-                    spacing: Units.spacingXS
+                // IPv4 address — explicitly labelled so it's easy to read.
+                RowLayout {
+                    visible: root.statusLoaded && root.ipAddress !== ""
+                    Layout.fillWidth: true
+                    spacing: Units.spacingSM
 
                     Text {
-                        visible: root.statusLoaded && root.connName !== ""
-                        text: root.connName + " · " + root._typeLabel(root.connType)
+                        text: "IP"
                         font.pixelSize: Theme.fontHint
-                        font.bold: true
-                        color: Theme.textPrimary
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
+                        color: Theme.textMuted
                     }
-
-                    // IPv4 address — explicitly labelled so it's easy to read.
-                    RowLayout {
-                        visible: root.statusLoaded && root.ipAddress !== ""
-                        Layout.fillWidth: true
-                        spacing: Units.spacingSM
-
-                        Text {
-                            text: "IP"
-                            font.pixelSize: Theme.fontHint
-                            color: Theme.textMuted
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: root.ipAddress
-                            font.pixelSize: Theme.fontHint
-                            font.family: "monospace"
-                            color: Theme.textSecondary
-                            elide: Text.ElideRight
-                        }
-                    }
-
                     Text {
-                        visible: root.statusLoaded && root.device !== ""
-                        text: root.device
+                        Layout.fillWidth: true
+                        text: root.ipAddress
                         font.pixelSize: Theme.fontHint
                         font.family: "monospace"
-                        color: Theme.textMuted
+                        color: Theme.textSecondary
+                        elide: Text.ElideRight
                     }
+                }
 
-                    Text {
-                        visible: root.statusLoaded && root.connName === ""
-                        text: "No active connection"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textMuted
-                    }
+                Text {
+                    visible: root.statusLoaded && root.device !== ""
+                    text: root.device
+                    font.pixelSize: Theme.fontHint
+                    font.family: "monospace"
+                    color: Theme.textMuted
+                }
 
-                    Text {
-                        visible: !root.statusLoaded
-                        text: "Loading…"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textMuted
-                    }
+                Text {
+                    visible: root.statusLoaded && root.connName === ""
+                    text: "No active connection"
+                    font.pixelSize: Theme.fontHint
+                    color: Theme.textMuted
+                }
+
+                Text {
+                    visible: !root.statusLoaded
+                    text: "Loading…"
+                    font.pixelSize: Theme.fontHint
+                    color: Theme.textMuted
+                }
+            }
+        }
+
+        // --- Live speed row ---
+        Rectangle {
+            Layout.fillWidth: true
+            height: speedRow.implicitHeight + Units.spacingLG * 2
+            radius: Units.radiusMD
+            color: Theme.cardBackground
+            border.width: Units.borderThin
+            border.color: Theme.surfaceBorder
+            visible: root.device !== ""
+
+            RowLayout {
+                id: speedRow
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    top: parent.top
+                    margins: Units.spacingLG
+                }
+                spacing: Units.spacingXL
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "↓ " + root.downSpeed
+                    font.pixelSize: Theme.fontHint
+                    font.bold: true
+                    color: Theme.online
+                    horizontalAlignment: Text.AlignLeft
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "↑ " + root.upSpeed
+                    font.pixelSize: Theme.fontHint
+                    font.bold: true
+                    color: Theme.ember
+                    horizontalAlignment: Text.AlignRight
+                }
+            }
+        }
+
+        // --- Divider ---
+        Rectangle {
+            Layout.fillWidth: true
+            height: 2
+            color: Theme.surfaceBorder
+            visible: root.device !== ""
+        }
+
+        // --- Interface toggle ---
+        Rectangle {
+            id: toggleRow
+            Layout.fillWidth: true
+            height: Units.gridUnit * 1.6
+            radius: Units.radiusMD
+            visible: root.device !== ""
+
+            // Focused when _focusRow === 0
+            readonly property bool rowFocused: root.activeFocus && root._focusRow === 0
+
+            color: {
+                if (rowFocused)
+                    return Theme.surfaceHover;
+                return Theme.cardBackground;
+            }
+            border.width: rowFocused ? Units.borderMedium : Units.borderThin
+            border.color: rowFocused ? Theme.focusBorder : Theme.surfaceBorder
+
+            Behavior on color {
+                ColorAnimation {
+                    duration: 100
                 }
             }
 
-            // --- Live speed row ---
-            Rectangle {
-                Layout.fillWidth: true
-                height: speedRow.implicitHeight + Units.spacingLG * 2
-                radius: Units.radiusMD
-                color: Theme.cardBackground
-                border.width: Units.borderThin
-                border.color: Theme.surfaceBorder
-                visible: root.device !== ""
+            RowLayout {
+                anchors {
+                    fill: parent
+                    leftMargin: Units.spacingLG
+                    rightMargin: Units.spacingLG
+                }
+                spacing: Units.spacingMD
 
-                RowLayout {
-                    id: speedRow
-                    anchors {
-                        left: parent.left
-                        right: parent.right
-                        top: parent.top
-                        margins: Units.spacingLG
-                    }
-                    spacing: Units.spacingXL
+                // Status dot
+                Rectangle {
+                    width: Units.gridUnit * 0.44
+                    height: Units.gridUnit * 0.44
+                    radius: width / 2
+                    color: root.ifaceUp ? Theme.online : Theme.offline
+                }
 
-                    Text {
-                        Layout.fillWidth: true
-                        text: "↓ " + root.downSpeed
-                        font.pixelSize: Theme.fontHint
-                        font.bold: true
-                        color: Theme.online
-                        horizontalAlignment: Text.AlignLeft
-                    }
+                Text {
+                    Layout.fillWidth: true
+                    text: "Network: " + (root.ifaceUp ? "On" : "Off")
+                    font.pixelSize: Theme.fontHint
+                    font.bold: true
+                    color: Theme.textPrimary
+                }
 
-                    Text {
-                        Layout.fillWidth: true
-                        text: "↑ " + root.upSpeed
-                        font.pixelSize: Theme.fontHint
-                        font.bold: true
-                        color: Theme.ember
-                        horizontalAlignment: Text.AlignRight
-                    }
+                Text {
+                    visible: toggleRow.rowFocused
+                    text: root.ifaceUp ? "A: Turn off" : "A: Turn on"
+                    font.pixelSize: Theme.fontHint
+                    color: root.ifaceUp ? Theme.warning : Theme.online
                 }
             }
 
-            // --- Divider ---
-            Rectangle {
-                Layout.fillWidth: true
-                height: 2
-                color: Theme.surfaceBorder
-                visible: root.device !== ""
-            }
-
-            // --- Interface toggle ---
-            Rectangle {
-                id: toggleRow
-                Layout.fillWidth: true
-                height: Units.gridUnit * 1.6
-                radius: Units.radiusMD
-                visible: root.device !== ""
-
-                // Focused when _focusRow === 0
-                readonly property bool rowFocused: root.activeFocus && root._focusRow === 0
-
-                color: {
-                    if (rowFocused)
-                        return Theme.surfaceHover;
-                    return Theme.cardBackground;
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: {
+                    root._focusRow = 0;
                 }
-                border.width: rowFocused ? Units.borderMedium : Units.borderThin
-                border.color: rowFocused ? Theme.focusBorder : Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 100
-                    }
-                }
-
-                RowLayout {
-                    anchors {
-                        fill: parent
-                        leftMargin: Units.spacingLG
-                        rightMargin: Units.spacingLG
-                    }
-                    spacing: Units.spacingMD
-
-                    // Status dot
-                    Rectangle {
-                        width: Units.gridUnit * 0.44
-                        height: Units.gridUnit * 0.44
-                        radius: width / 2
-                        color: root.ifaceUp ? Theme.online : Theme.offline
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: "Network: " + (root.ifaceUp ? "On" : "Off")
-                        font.pixelSize: Theme.fontHint
-                        font.bold: true
-                        color: Theme.textPrimary
-                    }
-
-                    Text {
-                        visible: toggleRow.rowFocused
-                        text: root.ifaceUp ? "A: Turn off" : "A: Turn on"
-                        font.pixelSize: Theme.fontHint
-                        color: root.ifaceUp ? Theme.warning : Theme.online
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onEntered: {
-                        root._focusRow = 0;
-                    }
-                    onClicked: {
-                        root._focusRow = 0;
-                        if (root.ifaceUp) {
-                            root._confirmStep = 1;
-                        } else if (root.device !== "") {
-                            nmcliConnect.dev = root.device;
-                            nmcliConnect.running = true;
-                        }
+                onClicked: {
+                    root._focusRow = 0;
+                    if (root.ifaceUp) {
+                        root._confirmStep = 1;
+                    } else if (root.device !== "") {
+                        nmcliConnect.dev = root.device;
+                        nmcliConnect.running = true;
                     }
                 }
             }
+        }
 
-            // --- Confirm-disconnect row (only when _confirmStep === 1) ---
-            Rectangle {
-                id: confirmRow
-                Layout.fillWidth: true
-                height: confirmCol.implicitHeight + Units.spacingLG * 2
-                radius: Units.radiusMD
-                visible: root._confirmStep === 1
+        // --- Confirm-disconnect row (only when _confirmStep === 1) ---
+        Rectangle {
+            id: confirmRow
+            Layout.fillWidth: true
+            height: confirmCol.implicitHeight + Units.spacingLG * 2
+            radius: Units.radiusMD
+            visible: root._confirmStep === 1
 
-                // Focused when _focusRow === 1 (in confirm mode)
-                readonly property bool rowFocused: root.activeFocus && root._focusRow === 1 && root._confirmStep === 1
+            // Focused when _focusRow === 1 (in confirm mode)
+            readonly property bool rowFocused: root.activeFocus && root._focusRow === 1 && root._confirmStep === 1
 
-                color: rowFocused ? Theme.crimson : Qt.darker(Theme.crimson, 1.5)
-                border.width: rowFocused ? Units.borderMedium : Units.borderThin
-                border.color: rowFocused ? Theme.textOnDark : Theme.crimson
+            color: rowFocused ? Theme.crimson : Qt.darker(Theme.crimson, 1.5)
+            border.width: rowFocused ? Units.borderMedium : Units.borderThin
+            border.color: rowFocused ? Theme.textOnDark : Theme.crimson
 
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 100
-                    }
-                }
-
-                ColumnLayout {
-                    id: confirmCol
-                    anchors {
-                        left: parent.left
-                        right: parent.right
-                        top: parent.top
-                        margins: Units.spacingLG
-                    }
-                    spacing: Units.spacingXS
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: "⚠  This will disconnect the network"
-                        font.pixelSize: Theme.fontHint
-                        font.bold: true
-                        color: Theme.textOnDark
-                        wrapMode: Text.Wrap
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: "Moonlight streaming and remote access will stop."
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textOnDarkMuted
-                        wrapMode: Text.Wrap
-                    }
-
-                    Text {
-                        visible: confirmRow.rowFocused
-                        text: "A: Confirm disconnect"
-                        font.pixelSize: Theme.fontHint
-                        font.bold: true
-                        color: Theme.textOnDark
-                    }
-
-                    Text {
-                        visible: !confirmRow.rowFocused
-                        text: "↓ navigate here, then A to confirm"
-                        font.pixelSize: Theme.fontHint
-                        color: Theme.textOnDarkMuted
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onEntered: {
-                        root._focusRow = 1;
-                    }
-                    onClicked: {
-                        root._focusRow = 1;
-                        if (root.device !== "") {
-                            nmcliDisconnect.dev = root.device;
-                            nmcliDisconnect.running = true;
-                        }
-                    }
+            Behavior on color {
+                ColorAnimation {
+                    duration: 100
                 }
             }
 
-            // --- Hint bar ---
-            Text {
-                Layout.alignment: Qt.AlignHCenter
-                text: root._confirmStep === 1 ? "▲▼ Navigate    A: Confirm    B: Cancel" : "A: Toggle    B: Close"
-                font.pixelSize: Theme.fontHint
-                color: Theme.textMuted
+            ColumnLayout {
+                id: confirmCol
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    top: parent.top
+                    margins: Units.spacingLG
+                }
+                spacing: Units.spacingXS
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "⚠  This will disconnect the network"
+                    font.pixelSize: Theme.fontHint
+                    font.bold: true
+                    color: Theme.textOnDark
+                    wrapMode: Text.Wrap
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Moonlight streaming and remote access will stop."
+                    font.pixelSize: Theme.fontHint
+                    color: Theme.textOnDarkMuted
+                    wrapMode: Text.Wrap
+                }
+
+                Text {
+                    visible: confirmRow.rowFocused
+                    text: "A: Confirm disconnect"
+                    font.pixelSize: Theme.fontHint
+                    font.bold: true
+                    color: Theme.textOnDark
+                }
+
+                Text {
+                    visible: !confirmRow.rowFocused
+                    text: "↓ navigate here, then A to confirm"
+                    font.pixelSize: Theme.fontHint
+                    color: Theme.textOnDarkMuted
+                }
             }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: {
+                    root._focusRow = 1;
+                }
+                onClicked: {
+                    root._focusRow = 1;
+                    if (root.device !== "") {
+                        nmcliDisconnect.dev = root.device;
+                        nmcliDisconnect.running = true;
+                    }
+                }
+            }
+        }
+
+        // --- Hint bar ---
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: root._confirmStep === 1 ? "▲▼ Navigate    A: Confirm    B: Cancel" : "A: Toggle    B: Close"
+            font.pixelSize: Theme.fontHint
+            color: Theme.textMuted
         }
     }
 }
