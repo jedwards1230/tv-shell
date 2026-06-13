@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 FocusScope {
     id: root
@@ -418,19 +419,16 @@ FocusScope {
         id: mlMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 24
+        spacing: 32
 
         // === Display Mode Toggle ===
-        Text {
+        SectionHeader {
             text: "Display Mode"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
             id: viewModeRow
-            Layout.alignment: Qt.AlignLeft
+            Layout.alignment: Qt.AlignHCenter
             spacing: 24
 
             property int focusIndex: Theme.streamingViewMode === "apps" ? 1 : 0
@@ -544,11 +542,8 @@ FocusScope {
             color: Theme.surfaceBorder
         }
 
-        Text {
+        SectionHeader {
             text: "Streaming Servers"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         // Server list
@@ -673,88 +668,114 @@ FocusScope {
                         }
                     }
 
-                    // Pair button — only when the host is reachable but unpaired.
-                    // Sizing wrapper only — NOT a focus container. Do NOT add
-                    // focus:true (breaks list d-pad nav). Highlight is driven by
-                    // the external `highlighted` property.
-                    Item {
-                        width: pairBtn.width
-                        height: pairBtn.height
-                        visible: serverList._rowActions(modelData.host).indexOf("pair") >= 0
+                    // Action buttons grouped tight on the right. Without an
+                    // explicit Layout size the bare Items distributed across the
+                    // row, leaving Unpair stranded mid-row away from Remove.
+                    RowLayout {
+                        spacing: 16
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
 
-                        SettingsButton {
-                            id: pairBtn
-                            text: "Pair"
-                            // Clamp actionCol to the (possibly-shrunk) action list
-                            // so the highlight never silently vanishes when the
-                            // host status drops an action.
-                            highlighted: {
-                                let acts = serverList._rowActions(modelData.host);
-                                return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "pair";
-                            }
-                            onActivated: root.startPairing(index)
+                        // Pair button — only when the host is reachable but unpaired.
+                        // Sizing wrapper only — NOT a focus container. Do NOT add
+                        // focus:true (breaks list d-pad nav). Highlight is driven by
+                        // the external `highlighted` property.
+                        Item {
+                            Layout.preferredWidth: pairBtn.implicitWidth
+                            Layout.preferredHeight: pairBtn.implicitHeight
+                            width: pairBtn.width
+                            height: pairBtn.height
+                            visible: serverList._rowActions(modelData.host).indexOf("pair") >= 0
 
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: pairBtn.activated()
-                            }
-                        }
-                    }
+                            SettingsButton {
+                                id: pairBtn
+                                text: "Pair"
+                                // Clamp actionCol to the (possibly-shrunk) action list
+                                // so the highlight never silently vanishes when the
+                                // host status drops an action.
+                                highlighted: {
+                                    let acts = serverList._rowActions(modelData.host);
+                                    return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "pair";
+                                }
+                                onActivated: root.startPairing(index)
 
-                    // Unpair button — only when the host is paired AND the saved
-                    // target has Sunshine creds (see _rowActions). Drops THIS
-                    // client's pairing via Sunshine's web API. Sizing wrapper only
-                    // — NOT a focus container. Do NOT add focus:true (breaks list
-                    // d-pad nav). Highlight is driven by the external `highlighted`
-                    // property.
-                    Item {
-                        width: unpairBtn.width
-                        height: unpairBtn.height
-                        visible: serverList._rowActions(modelData.host).indexOf("unpair") >= 0
-
-                        SettingsButton {
-                            id: unpairBtn
-                            text: "Unpair"
-                            // Clamp actionCol to the action list length (see Pair).
-                            highlighted: {
-                                let acts = serverList._rowActions(modelData.host);
-                                return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "unpair";
-                            }
-                            onActivated: root.confirmUnpairIndex = index
-
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: unpairBtn.activated()
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: pairBtn.activated()
+                                }
                             }
                         }
-                    }
 
-                    // Remove button. Sizing wrapper only — NOT a focus container.
-                    // Do NOT add focus:true (breaks list d-pad nav). Highlight is
-                    // driven by the external `highlighted` property.
-                    Item {
-                        width: removeBtn.width
-                        height: removeBtn.height
+                        // Unpair button — only when the host is paired AND the saved
+                        // target has Sunshine creds (see _rowActions). Drops THIS
+                        // client's pairing via Sunshine's web API. Sizing wrapper only
+                        // — NOT a focus container. Do NOT add focus:true (breaks list
+                        // d-pad nav). Highlight is driven by the external `highlighted`
+                        // property.
+                        Item {
+                            Layout.preferredWidth: unpairBtn.implicitWidth
+                            Layout.preferredHeight: unpairBtn.implicitHeight
+                            width: unpairBtn.width
+                            height: unpairBtn.height
+                            visible: serverList._rowActions(modelData.host).indexOf("unpair") >= 0
 
-                        SettingsButton {
-                            id: removeBtn
-                            text: "Remove"
-                            // Clamp actionCol to the action list length (see Pair).
-                            highlighted: {
-                                let acts = serverList._rowActions(modelData.host);
-                                return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "remove";
+                            SettingsButton {
+                                id: unpairBtn
+                                text: "Unpair"
+                                // Clamp actionCol to the action list length (see Pair).
+                                highlighted: {
+                                    let acts = serverList._rowActions(modelData.host);
+                                    return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "unpair";
+                                }
+                                onActivated: root.confirmUnpairIndex = index
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: unpairBtn.activated()
+                                }
                             }
-                            onActivated: root.confirmRemoveIndex = index
+                        }
 
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: removeBtn.activated()
+                        // Remove button — destructive action; crimson styling when
+                        // highlighted. Sizing wrapper only — NOT a focus container.
+                        // Do NOT add focus:true (breaks list d-pad nav). Highlight is
+                        // driven by the external `highlighted` property.
+                        Item {
+                            Layout.preferredWidth: removeBtn.implicitWidth
+                            Layout.preferredHeight: removeBtn.implicitHeight
+                            width: removeBtn.width
+                            height: removeBtn.height
+
+                            SettingsButton {
+                                id: removeBtn
+                                text: "Remove"
+                                // Clamp actionCol to the action list length (see Pair).
+                                highlighted: {
+                                    let acts = serverList._rowActions(modelData.host);
+                                    return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "remove";
+                                }
+                                onActivated: root.confirmRemoveIndex = index
+
+                                // Crimson destructive tint overlay — rendered above the
+                                // button surface when highlighted, not a property conflict.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    color: removeBtn.highlighted ? Qt.rgba(Theme.crimson.r, Theme.crimson.g, Theme.crimson.b, 0.2) : "transparent"
+                                    border.width: removeBtn.highlighted ? 3 : 0
+                                    border.color: Theme.crimson
+                                    visible: removeBtn.highlighted
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: removeBtn.activated()
+                                }
                             }
                         }
                     }
@@ -804,11 +825,9 @@ FocusScope {
             }
         }
 
-        Text {
-            text: root.servers.length === 0 ? "No servers configured" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            visible: root.servers.length === 0
+            line: "No servers configured"
         }
 
         // Add server button
@@ -1058,13 +1077,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        // Hint
-        Text {
+        HintBar {
             text: root.showAddForm ? "Esc: Cancel" : "A: Select  |  Servers are launched from Home"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
-            visible: !root.showAddForm || root.showAddForm
         }
     }
 

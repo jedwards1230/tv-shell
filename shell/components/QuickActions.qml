@@ -19,8 +19,8 @@ FocusScope {
     signal focusUpRequested
 
     property int currentIndex: 0
-    property int iconSize: 64
-    property int imgSize: 32
+    property int iconSize: 100
+    property int imgSize: 62
     readonly property int _spacing: 12
     // Cap the visible width to enable the scroll carousel. Defaults to
     // effectively unbounded (top-right has room for all icons).

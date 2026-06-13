@@ -71,7 +71,12 @@ Rectangle {
         id: label
         anchors.centerIn: parent
         font.pixelSize: Theme.fontBody
-        color: Theme.textPrimary
+        // When a call site fills the button with the active accent (sidebarActive,
+        // e.g. an "On" toggle or a selected chip), the label must be light or it
+        // is unreadable in light mode (textPrimary is dark there). Derive the
+        // label color from the actual fill so every blue-filled SettingsButton
+        // gets readable text without each call site repeating the logic.
+        color: root.color === Theme.sidebarActive ? Theme.textOnDark : Theme.textPrimary
     }
 
     Keys.onReturnPressed: root.activated()

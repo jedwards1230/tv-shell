@@ -160,11 +160,8 @@ FocusScope {
         anchors.margins: Theme.padding
         spacing: 32
 
-        Text {
+        SectionHeader {
             text: "Displays"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         // HDR live-state status line (read-only, driven by daemon-read hdr field)
@@ -303,11 +300,8 @@ FocusScope {
         }
 
         // HDR toggle
-        Text {
+        SectionHeader {
             text: "HDR"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.monitors.length > 0
         }
 
@@ -352,11 +346,8 @@ FocusScope {
         }
 
         // Scale controls
-        Text {
+        SectionHeader {
             text: "Scale"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.monitors.length > 0
         }
 
@@ -405,11 +396,8 @@ FocusScope {
         }
 
         // Resolution / Mode dropdown
-        Text {
+        SectionHeader {
             text: "Resolution"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.monitors.length > 0
         }
 
@@ -471,11 +459,8 @@ FocusScope {
         }
 
         // Refresh Rate dropdown (separate from resolution)
-        Text {
+        SectionHeader {
             text: "Refresh Rate"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.monitors.length > 0
         }
 
@@ -528,11 +513,8 @@ FocusScope {
         }
 
         // Night-light / Color temperature
-        Text {
+        SectionHeader {
             text: "Night Light"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         FocusScope {
@@ -642,11 +624,8 @@ FocusScope {
         }
 
         // Overscan / safe-area
-        Text {
+        SectionHeader {
             text: "Overscan"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         SettingsButtonGroup {
@@ -695,11 +674,8 @@ FocusScope {
         }
 
         // Auto-Dim (OLED burn-in protection, #143)
-        Text {
+        SectionHeader {
             text: "Auto-Dim"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         // Enable / disable toggle
@@ -740,11 +716,8 @@ FocusScope {
         }
 
         // Delay selector — 1 / 2 / 5 / 10 minutes
-        Text {
+        SectionHeader {
             text: "Dim Delay"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             opacity: SettingsStore.autoDimEnabled ? 1.0 : 0.4
         }
 
@@ -790,11 +763,8 @@ FocusScope {
         }
 
         // Appearance — Theme Mode
-        Text {
+        SectionHeader {
             text: "Appearance"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
@@ -861,15 +831,21 @@ FocusScope {
                 Rectangle {
                     required property var modelData
                     required property int index
+                    readonly property bool isSelected: Theme.themeMode === modelData.id
                     width: 400
                     height: 280
                     radius: Theme.cardRadius
-                    color: Theme.surface
+                    color: isSelected ? Theme.sidebarActive : Theme.surface
                     clip: true
-                    border.width: modeList.focusIndex === index && modeList.activeFocus ? 4 : 2
-                    border.color: modeList.focusIndex === index && modeList.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    border.width: (modeList.focusIndex === index && modeList.activeFocus) || isSelected ? 3 : 2
+                    border.color: isSelected ? Theme.focusBorder : (modeList.focusIndex === index && modeList.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
 
                     Behavior on border.color {
+                        ColorAnimation {
+                            duration: 150
+                        }
+                    }
+                    Behavior on color {
                         ColorAnimation {
                             duration: 150
                         }
@@ -879,28 +855,7 @@ FocusScope {
                         anchors.fill: parent
                         radius: parent.radius
                         color: Theme.surfaceHover
-                        visible: modeList.focusIndex === index && modeList.activeFocus
-                    }
-
-                    Rectangle {
-                        anchors.top: parent.top
-                        anchors.right: parent.right
-                        anchors.margins: 16
-                        width: appliedLabel.implicitWidth + 28
-                        height: appliedLabel.implicitHeight + 14
-                        radius: height / 2
-                        color: Theme.online
-                        visible: Theme.themeMode === modelData.id
-                        z: 1
-
-                        Text {
-                            id: appliedLabel
-                            anchors.centerIn: parent
-                            text: "✓ Active"
-                            font.pixelSize: Theme.fontCaption
-                            font.bold: true
-                            color: Theme.textOnDark
-                        }
+                        visible: modeList.focusIndex === index && modeList.activeFocus && !parent.isSelected
                     }
 
                     ColumnLayout {
@@ -915,7 +870,7 @@ FocusScope {
                         Text {
                             text: modelData.icon
                             font.pixelSize: Theme.fontTitle
-                            color: Theme.themeMode === modelData.id ? Theme.online : Theme.textPrimary
+                            color: Theme.textPrimary
                             Layout.alignment: Qt.AlignHCenter
                         }
 
@@ -956,18 +911,8 @@ FocusScope {
             }
         }
 
-        Text {
-            text: "Current: " + Theme.themeMode.charAt(0).toUpperCase() + Theme.themeMode.slice(1)
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
-        }
-
-        Text {
+        HintBar {
             text: "A: Open/apply  |  B: Close dropdown  |  HDR note: applies live via hyprctl"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }

@@ -233,11 +233,8 @@ FocusScope {
         spacing: 32
 
         // Volume control
-        Text {
+        SectionHeader {
             text: "Volume"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
@@ -371,11 +368,8 @@ FocusScope {
         }
 
         // Output device dropdown
-        Text {
+        SectionHeader {
             text: "Output Device"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         SettingsDropdown {
@@ -407,11 +401,8 @@ FocusScope {
         //   Rear L=3, Rear R=4, Center=5, LFE=6
         // single-shot: -l 1 ensures speaker-test exits after one pass.
         // ---------------------------------------------------------------
-        Text {
+        SectionHeader {
             text: "Speaker Test (5.1)"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         Text {
@@ -660,11 +651,8 @@ FocusScope {
         // ---------------------------------------------------------------
         // Format / sample-rate card (read-only — not in focus chain)
         // ---------------------------------------------------------------
-        Text {
+        SectionHeader {
             text: "Format"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         Rectangle {
@@ -687,6 +675,10 @@ FocusScope {
 
         Item {
             Layout.fillHeight: true
+        }
+
+        HintBar {
+            text: "Use A to open the output device dropdown"
         }
     }
 }

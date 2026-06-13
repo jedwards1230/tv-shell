@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 // Network settings — rewired (Phase 3) to read system network state from the
 // input daemon's NetworkManager-over-zbus backbone instead of shelling out to
@@ -133,10 +134,11 @@ FocusScope {
     // Read-only page: focus the WiFi list when an adapter exists; otherwise
     // focus the Test button so D-pad entry still registers on a wired-only host.
     function focusFirst() {
-        if (root.hasWifi)
-            wifiList.forceActiveFocus();
-        else
-            testButtonScope.forceActiveFocus();
+        // Land on the Test connection button — it's the only actionable control
+        // on this otherwise read-only page, and it sits ABOVE the WiFi list. The
+        // WiFi list is a ListView that traps Up internally, so defaulting into it
+        // made the Test button unreachable. From Test, Down enters the list.
+        testButtonScope.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -146,11 +148,8 @@ FocusScope {
         spacing: 32
 
         // Connection status
-        Text {
+        SectionHeader {
             text: "Active Connections"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         SettingsList {
@@ -225,11 +224,8 @@ FocusScope {
         }
 
         // IP Address
-        Text {
+        SectionHeader {
             text: "IP Addresses"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         Rectangle {
@@ -251,11 +247,8 @@ FocusScope {
         }
 
         // Gateway / DNS — read-only card mirroring the IP Addresses card.
-        Text {
+        SectionHeader {
             text: "Gateway / DNS"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.gateway !== "" || root.dnsServers.length > 0
         }
 
@@ -293,6 +286,11 @@ FocusScope {
             }
         }
 
+        // Diagnostics
+        SectionHeader {
+            text: "Diagnostics"
+        }
+
         // Test connection action — bounded one-shot ping.
         RowLayout {
             Layout.fillWidth: true
@@ -302,6 +300,9 @@ FocusScope {
                 id: testButtonScope
                 width: testButton.implicitWidth
                 height: testButton.implicitHeight
+
+                // Test sits above the WiFi list — Down enters the list (when present).
+                KeyNavigation.down: root.hasWifi ? wifiList : null
 
                 SettingsButton {
                     id: testButton
@@ -326,16 +327,14 @@ FocusScope {
         }
 
         // WiFi networks
-        Text {
+        SectionHeader {
             text: "WiFi Networks"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.hasWifi
         }
 
         SettingsList {
             id: wifiList
+            KeyNavigation.up: testButtonScope
             // rowStride = delegate 96 + spacing 8 (#123/#139 row-count sizing).
             rowStride: 104
             maxHeight: 400
@@ -397,7 +396,7 @@ FocusScope {
                                     let active = modelData.signal >= threshold;
                                     if (modelData.inUse)
                                         return active ? Theme.textOnDark : Theme.textOnDarkMuted;
-                                    return active ? Theme.focusBorder : Theme.surfaceHover;
+                                    return active ? Theme.online : Theme.textSecondary;
                                 }
                                 anchors.bottom: parent.bottom
                             }
@@ -450,12 +449,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        // Info hint
-        Text {
+        HintBar {
             text: "Network configuration is read-only"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }

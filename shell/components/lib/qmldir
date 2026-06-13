@@ -1,4 +1,7 @@
 module components.lib
 HintBar 1.0 HintBar.qml
-SettingsDropdown 1.0 SettingsDropdown.qml
+PreferenceRow 1.0 PreferenceRow.qml
+SectionHeader 1.0 SectionHeader.qml
 SettingsButtonGroup 1.0 SettingsButtonGroup.qml
+SettingsDropdown 1.0 SettingsDropdown.qml
+StatusPill 1.0 StatusPill.qml

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 // Bluetooth settings — rewired (Phase 3) to talk to the input daemon's D-Bus
 // (bluer) backbone over the Unix socket instead of shelling out to
@@ -291,6 +292,8 @@ FocusScope {
         if (visible) {
             btPowerStatus.request("bt-power-status");
             btEvents.start();
+        } else {
+            btEvents.stop();
         }
     }
 
@@ -302,38 +305,21 @@ FocusScope {
         id: btMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 24
+        spacing: 32
 
-        // Power toggle
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 24
+        // Bluetooth section header
+        SectionHeader {
+            text: "Bluetooth"
+        }
 
-            Rectangle {
-                Layout.preferredWidth: 160
-                Layout.preferredHeight: 56
-                radius: 28
-                color: root.powered ? Theme.online : Theme.textSecondary
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 200
-                    }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: root.powered ? "ON" : "OFF"
-                    font.pixelSize: Theme.fontSmall
-                    font.bold: true
-                    color: Theme.textOnDark
-                }
-            }
+        // Power toggle row — PreferenceRow with On/Off state-pill button (plan §1c)
+        PreferenceRow {
+            label: "Bluetooth Power"
 
             FocusScope {
                 id: powerToggleScope
-                Layout.preferredWidth: powerToggleBtn.implicitWidth
-                Layout.preferredHeight: powerToggleBtn.implicitHeight
+                implicitWidth: powerToggleBtn.implicitWidth
+                implicitHeight: powerToggleBtn.implicitHeight
                 focus: true
                 activeFocusOnTab: true
 
@@ -342,9 +328,10 @@ FocusScope {
 
                 SettingsButton {
                     id: powerToggleBtn
-                    text: root.powered ? "Turn Off" : "Turn On"
+                    text: root.powered ? "On" : "Off"
                     focus: parent.activeFocus
                     anchors.fill: parent
+                    color: root.powered ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
 
                     onActivated: {
                         if (root.powered)
@@ -364,11 +351,18 @@ FocusScope {
                     }
                 }
             }
+        }
+
+        // Scan row (only when powered)
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 24
+            visible: root.powered
 
             FocusScope {
                 id: scanScope
-                Layout.preferredWidth: scanBtn.implicitWidth
-                Layout.preferredHeight: scanBtn.implicitHeight
+                implicitWidth: scanBtn.implicitWidth
+                implicitHeight: scanBtn.implicitHeight
                 activeFocusOnTab: true
                 visible: root.powered
 
@@ -402,20 +396,17 @@ FocusScope {
                 Layout.fillWidth: true
             }
 
-            Text {
+            StatusPill {
+                pillState: "warn"
+                showDot: false
                 text: root.statusMessage
-                font.pixelSize: Theme.fontSmall
-                color: Theme.gold
                 visible: root.statusMessage !== ""
             }
         }
 
         // Paired devices
-        Text {
+        SectionHeader {
             text: "Paired Devices"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.powered && root.pairedDevices.length > 0
         }
 
@@ -483,8 +474,6 @@ FocusScope {
                     onClicked: {
                         pairedList.currentIndex = index;
                         pairedList.forceActiveFocus();
-                    }
-                    onDoubleClicked: {
                         if (modelData.connected) {
                             btDisconnect.disconnect(modelData.mac);
                         } else {
@@ -515,11 +504,8 @@ FocusScope {
         }
 
         // Available (unpaired) devices
-        Text {
+        SectionHeader {
             text: "Available Devices"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
             visible: root.powered && root.availableDevices.length > 0
         }
 
@@ -579,8 +565,6 @@ FocusScope {
                     onClicked: {
                         availList.currentIndex = index;
                         availList.forceActiveFocus();
-                    }
-                    onDoubleClicked: {
                         btPair.pair(modelData.mac);
                     }
                 }
@@ -599,12 +583,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        // Hint
-        Text {
+        HintBar {
             text: root.powered ? "A: Connect/Disconnect  |  Scan to find new devices" : "Turn on Bluetooth to manage devices"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }

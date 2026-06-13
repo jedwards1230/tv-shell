@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import "lib"
 
 // System/About page (#128): displays OS, kernel, hostname, and uptime, plus a
 // storage free-space readout (folded in from the former standalone Storage
@@ -23,7 +24,9 @@ FocusScope {
     property bool storageLoading: false
 
     function focusFirst() {
-        sysRefreshScope.forceActiveFocus();
+        // No interactive controls — the page auto-refreshes. Focus the page root
+        // so B/Back still returns to the sidebar.
+        root.forceActiveFocus();
     }
 
     // Daemon IPC — sys-status (#164)
@@ -72,21 +75,31 @@ FocusScope {
         getStorageStatus.request("storage-status");
     }
 
+    // Live refresh — re-poll every second while visible so uptime ticks and
+    // everything else stays current. No loading flag on the periodic poll, so
+    // values update in place without flashing "Loading…".
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.visible
+        onTriggered: {
+            getSysStatus.request("sys-status");
+            getStorageStatus.request("storage-status");
+        }
+    }
+
     ColumnLayout {
         id: contentColumn
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 48
+        spacing: 32
 
-        Text {
+        SectionHeader {
             text: "About This System"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         ColumnLayout {
-            spacing: 24
+            spacing: 14
             Layout.fillWidth: true
 
             Repeater {
@@ -118,7 +131,10 @@ FocusScope {
                         text: modelData.label
                         font.pixelSize: Theme.fontBody
                         color: Theme.textSecondary
-                        Layout.preferredWidth: 300
+                        // minimumWidth guarantees the label column never shrinks
+                        // into the value (was colliding: "Operating SystemCachyOS").
+                        Layout.preferredWidth: 320
+                        Layout.minimumWidth: 320
                     }
 
                     Text {
@@ -132,44 +148,9 @@ FocusScope {
             }
         }
 
-        FocusScope {
-            id: sysRefreshScope
-            width: sysRefreshBtn.width
-            height: sysRefreshBtn.height
-            focus: true
-            activeFocusOnTab: true
-
-            KeyNavigation.down: storageRefreshScope
-
-            SettingsButton {
-                id: sysRefreshBtn
-                text: "Refresh"
-                focus: parent.activeFocus
-                anchors.fill: parent
-
-                onActivated: {
-                    root.loading = true;
-                    getSysStatus.request("sys-status");
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        sysRefreshScope.forceActiveFocus();
-                        sysRefreshBtn.activated();
-                    }
-                }
-            }
-        }
-
         // Storage — free-space readout
-        Text {
+        SectionHeader {
             text: "Storage"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         SettingsList {
@@ -254,36 +235,8 @@ FocusScope {
             }
         }
 
-        FocusScope {
-            id: storageRefreshScope
-            width: storageRefreshBtn.width
-            height: storageRefreshBtn.height
-            activeFocusOnTab: true
-
-            KeyNavigation.up: sysRefreshScope
-
-            SettingsButton {
-                id: storageRefreshBtn
-                text: "Refresh"
-                focus: parent.activeFocus
-                anchors.fill: parent
-
-                onActivated: {
-                    root.storageLoading = true;
-                    root.storageMounts = [];
-                    getStorageStatus.request("storage-status");
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        storageRefreshScope.forceActiveFocus();
-                        storageRefreshBtn.activated();
-                    }
-                }
-            }
+        HintBar {
+            text: "Updates automatically"
         }
     }
 }

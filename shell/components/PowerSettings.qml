@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 FocusScope {
     id: root
@@ -64,12 +65,17 @@ FocusScope {
         id: pwrMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 48
+        spacing: 32
+
+        SectionHeader {
+            text: "Power Settings"
+        }
 
         // Power settings controls — sleep timer, wake-on-controller, end session
         ColumnLayout {
             Layout.alignment: Qt.AlignLeft
-            spacing: 16
+            Layout.fillWidth: true
+            spacing: 24
 
             // Sleep Timer row
             RowLayout {
@@ -224,6 +230,12 @@ FocusScope {
         Item {
             Layout.fillHeight: true
             Layout.maximumHeight: 100
+        }
+
+        SectionHeader {
+            text: "Power Actions"
+            block: false
+            Layout.alignment: Qt.AlignHCenter
         }
 
         // Power buttons - large and centered
@@ -412,11 +424,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        Text {
+        HintBar {
             text: "A: Select  |  Use with caution"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 
