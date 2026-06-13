@@ -64,9 +64,6 @@ Item {
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
 
-    // === Change notification ===
-    signal settingsChanged(string key, var value)
-
     // Emitted once each time a get-config response has been parsed, so root-level
     // consumers can (re)apply system state that the daemon doesn't itself restore
     // on boot — e.g. the audio surround card profile (#234).
@@ -196,7 +193,6 @@ Item {
         if (mode === "auto" || mode === "light" || mode === "dark") {
             themeMode = mode;
             save();
-            settingsChanged("themeMode", mode);
         }
     }
 
@@ -204,7 +200,6 @@ Item {
         if (hour >= 0 && hour <= 23) {
             autoThemeDarkStart = hour;
             save();
-            settingsChanged("autoThemeDarkStart", hour);
         }
     }
 
@@ -212,7 +207,6 @@ Item {
         if (hour >= 0 && hour <= 23) {
             autoThemeLightStart = hour;
             save();
-            settingsChanged("autoThemeLightStart", hour);
         }
     }
 
@@ -220,26 +214,22 @@ Item {
         if (mode === "servers" || mode === "apps") {
             streamingViewMode = mode;
             save();
-            settingsChanged("streamingViewMode", mode);
         }
     }
 
     function setControllerDebug(enabled) {
         controllerDebug = enabled;
         save();
-        settingsChanged("controllerDebug", enabled);
     }
 
     function setRumbleEnabled(enabled) {
         rumbleEnabled = enabled;
         save();
-        settingsChanged("rumbleEnabled", enabled);
     }
 
     function setReduceMotion(enabled) {
         reduceMotion = enabled;
         save();
-        settingsChanged("reduceMotion", enabled);
     }
 
     function setWidgetSpotifyEnabled(enabled) {
@@ -257,61 +247,51 @@ Item {
     function setTextScale(scale) {
         textScale = scale;
         save();
-        settingsChanged("textScale", scale);
     }
 
     function setHdrEnabled(enabled) {
         hdrEnabled = enabled;
         save();
-        settingsChanged("hdrEnabled", enabled);
     }
 
     function setNightLightEnabled(enabled) {
         nightLightEnabled = enabled;
         save();
-        settingsChanged("nightLightEnabled", enabled);
     }
 
     function setNightLightTemp(temp) {
         nightLightTemp = temp;
         save();
-        settingsChanged("nightLightTemp", temp);
     }
 
     function setOverscan(pct) {
         overscan = pct;
         save();
-        settingsChanged("overscan", pct);
     }
 
     function setSleepTimerMinutes(m) {
         sleepTimerMinutes = m;
         save();
-        settingsChanged("sleepTimerMinutes", m);
     }
 
     function setWakeOnController(enabled) {
         wakeOnController = enabled;
         save();
-        settingsChanged("wakeOnController", enabled);
     }
 
     function setAutoDimEnabled(enabled) {
         autoDimEnabled = enabled;
         save();
-        settingsChanged("autoDimEnabled", enabled);
     }
 
     function setAutoDimDelayMinutes(minutes) {
         autoDimDelayMinutes = minutes;
         save();
-        settingsChanged("autoDimDelayMinutes", minutes);
     }
 
     function setDefaultSink(name) {
         defaultSink = name;
         save();
-        settingsChanged("defaultSink", name);
     }
 
     // Persist the chosen surround card profile as "card|profile" so it can be
@@ -319,31 +299,26 @@ Item {
     function setAudioCardProfile(value) {
         audioCardProfile = value;
         save();
-        settingsChanged("audioCardProfile", value);
     }
 
     function setCecFocusOnStartup(enabled) {
         cecFocusOnStartup = enabled;
         save();
-        settingsChanged("cecFocusOnStartup", enabled);
     }
 
     function setCecFocusOnWake(enabled) {
         cecFocusOnWake = enabled;
         save();
-        settingsChanged("cecFocusOnWake", enabled);
     }
 
     function setCecAutoSwitchOnPowerOn(enabled) {
         cecAutoSwitchOnPowerOn = enabled;
         save();
-        settingsChanged("cecAutoSwitchOnPowerOn", enabled);
     }
 
     function setCecDefaultInput(addr) {
         cecDefaultInput = addr;
         save();
-        settingsChanged("cecDefaultInput", addr);
     }
 
     // Set or clear a local name override for a CEC logical address. An empty/blank
@@ -358,7 +333,6 @@ Item {
             delete copy[key];
         cecDeviceNames = copy;
         save();
-        settingsChanged("cecDeviceNames", copy);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===
@@ -380,8 +354,7 @@ Item {
 
     // All daemon IPC goes over native Quickshell sockets (SocketClient, #97).
     // The set-config body (a JSON string) is passed as the request body so
-    // arbitrary JSON never needs shell/argv quoting. (Phase 8 retired the
-    // python3 socket shims.)
+    // arbitrary JSON never needs shell/argv quoting.
 
     SocketClient {
         id: getBindingsProc
@@ -452,6 +425,36 @@ Item {
     onDefaultSinkChanged: {
         if (defaultSink !== "" && !startupSinkApply.running)
             startupSinkApply.running = true;
+    }
+
+    // Re-apply persisted surround card profile once at boot after settings load.
+    // PipeWire reverts non-default card profiles (e.g. Digital Surround 5.1) to
+    // stereo across reboots. The profile string is "card|profile"; card and profile
+    // are passed via env so their content can never inject shell commands. (#234)
+    property bool _audioProfileApplied: false
+
+    Process {
+        id: startupCardProfileApply
+        property string cardName: ""
+        property string profileName: ""
+        environment: ({
+                "GS_CARD": cardName,
+                "GS_PROFILE": profileName
+            })
+        command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
+    }
+
+    onConfigLoaded: {
+        if (!store._audioProfileApplied) {
+            var v = store.audioCardProfile;
+            var sep = v ? v.indexOf("|") : -1;
+            if (sep >= 0) {
+                store._audioProfileApplied = true;
+                startupCardProfileApply.cardName = v.substring(0, sep);
+                startupCardProfileApply.profileName = v.substring(sep + 1);
+                startupCardProfileApply.running = true;
+            }
+        }
     }
 
     Component.onCompleted: {
