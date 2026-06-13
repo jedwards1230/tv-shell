@@ -823,12 +823,16 @@ FocusScope {
                 // row persists that device as the preferred default input (#16).
                 // Mouse users click the row's "Set as default" button directly.
                 Keys.onReturnPressed: {
-                    if (currentIndex >= 0 && currentIndex < root.devices.length)
-                        SettingsStore.setCecDefaultInput(root.devices[currentIndex].logicalAddress);
+                    if (currentIndex >= 0 && currentIndex < root.devices.length) {
+                        var a = root.devices[currentIndex].logicalAddress;
+                        SettingsStore.setCecDefaultInput(a === SettingsStore.cecDefaultInput ? -1 : a);
+                    }
                 }
                 Keys.onEnterPressed: {
-                    if (currentIndex >= 0 && currentIndex < root.devices.length)
-                        SettingsStore.setCecDefaultInput(root.devices[currentIndex].logicalAddress);
+                    if (currentIndex >= 0 && currentIndex < root.devices.length) {
+                        var a = root.devices[currentIndex].logicalAddress;
+                        SettingsStore.setCecDefaultInput(a === SettingsStore.cecDefaultInput ? -1 : a);
+                    }
                 }
 
                 delegate: Rectangle {
@@ -944,7 +948,7 @@ FocusScope {
                             z: 1
                             text: modelData.logicalAddress === SettingsStore.cecDefaultInput ? "Default ✓" : "Set as default"
                             highlighted: modelData.logicalAddress === SettingsStore.cecDefaultInput
-                            onActivated: SettingsStore.setCecDefaultInput(modelData.logicalAddress)
+                            onActivated: SettingsStore.setCecDefaultInput(modelData.logicalAddress === SettingsStore.cecDefaultInput ? -1 : modelData.logicalAddress)
                         }
                     }
 
