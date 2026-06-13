@@ -74,7 +74,8 @@ FocusScope {
         // Power settings controls — sleep timer, wake-on-controller, end session
         ColumnLayout {
             Layout.alignment: Qt.AlignLeft
-            spacing: 16
+            Layout.fillWidth: true
+            spacing: 24
 
             // Sleep Timer row
             RowLayout {
