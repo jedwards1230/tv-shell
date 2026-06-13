@@ -8,9 +8,7 @@ Rectangle {
     property string pillState: "neutral"
     property string text: ""
     property bool showDot: true
-    readonly property color _accent: pillState === "good" ? Theme.online
-        : pillState === "warn" ? Theme.gold
-        : pillState === "bad" ? Theme.offline : Theme.textMuted
+    readonly property color _accent: pillState === "good" ? Theme.online : pillState === "warn" ? Theme.gold : pillState === "bad" ? Theme.offline : Theme.textMuted
     implicitHeight: 56
     implicitWidth: pillRow.implicitWidth + 32
     radius: height / 2
