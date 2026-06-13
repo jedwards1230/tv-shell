@@ -198,143 +198,202 @@ FocusScope {
             text: "Hardware"
         }
 
-        ColumnLayout {
-            spacing: 14
+        // Three stat cards side by side: CPU, Memory, Load. Each owns its bar in
+        // its own row, so nothing overlaps and the section fills the width.
+        RowLayout {
             Layout.fillWidth: true
+            spacing: 16
 
-            // CPU usage — label + value + utilisation bar
-            RowLayout {
+            // --- CPU card ---
+            Rectangle {
                 Layout.fillWidth: true
-                spacing: 24
+                Layout.preferredHeight: 170
+                radius: 16
+                color: Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
 
-                Text {
-                    text: "CPU Usage"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textSecondary
-                    Layout.preferredWidth: 320
-                    Layout.minimumWidth: 320
-                }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 12
 
-                Text {
-                    text: root.metricsLoaded ? root.cpuPct.toFixed(1) + "%" : "Loading…"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textPrimary
-                    Layout.preferredWidth: 140
-                }
-
-                // Thin utilisation bar — ember fill on a muted track.
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 16
-                    radius: 8
-                    color: Theme.surfaceHover
+                    Text {
+                        text: "CPU Usage"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+                    Text {
+                        text: root.metricsLoaded ? root.cpuPct.toFixed(1) + "%" : "—"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
                     Rectangle {
-                        width: parent.width * Math.max(0, Math.min(1, root.cpuPct / 100))
-                        height: parent.height
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 16
                         radius: 8
-                        color: root.cpuPct >= 90 ? Theme.crimson : Theme.ember
-                        Behavior on width {
-                            NumberAnimation {
-                                duration: 250
+                        color: Theme.surfaceHover
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, root.cpuPct / 100))
+                            height: parent.height
+                            radius: 8
+                            color: root.cpuPct >= 90 ? Theme.crimson : Theme.ember
+                            Behavior on width {
+                                NumberAnimation {
+                                    duration: 250
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Memory — label + used/total (%) + usage bar
-            RowLayout {
+            // --- Memory card ---
+            Rectangle {
                 Layout.fillWidth: true
-                spacing: 24
+                Layout.preferredHeight: 170
+                radius: 16
+                color: Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
 
-                Text {
-                    text: "Memory"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textSecondary
-                    Layout.preferredWidth: 320
-                    Layout.minimumWidth: 320
-                }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 12
 
-                Text {
-                    text: root.metricsLoaded && root.memTotal > 0 ? root.fmtBytes(root.memUsed) + " / " + root.fmtBytes(root.memTotal) + " (" + root.memPct + "%)" : "Loading…"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textPrimary
-                    Layout.preferredWidth: 360
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 16
-                    radius: 8
-                    color: Theme.surfaceHover
+                    Text {
+                        text: "Memory"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+                    Text {
+                        text: root.metricsLoaded && root.memTotal > 0 ? root.memPct + "%" : "—"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                    }
+                    Text {
+                        text: root.metricsLoaded && root.memTotal > 0 ? root.fmtBytes(root.memUsed) + " / " + root.fmtBytes(root.memTotal) : ""
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textMuted
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
                     Rectangle {
-                        width: parent.width * Math.max(0, Math.min(1, root.memPct / 100))
-                        height: parent.height
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 16
                         radius: 8
-                        color: root.memPct >= 90 ? Theme.crimson : Theme.ember
-                        Behavior on width {
-                            NumberAnimation {
-                                duration: 250
+                        color: Theme.surfaceHover
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, root.memPct / 100))
+                            height: parent.height
+                            radius: 8
+                            color: root.memPct >= 90 ? Theme.crimson : Theme.ember
+                            Behavior on width {
+                                NumberAnimation {
+                                    duration: 250
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Load average (1 min)
-            RowLayout {
+            // --- Load card ---
+            Rectangle {
                 Layout.fillWidth: true
-                spacing: 24
+                Layout.preferredHeight: 170
+                radius: 16
+                color: Theme.surface
+                border.width: 2
+                border.color: Theme.surfaceBorder
 
-                Text {
-                    text: "Load Average (1m)"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textSecondary
-                    Layout.preferredWidth: 320
-                    Layout.minimumWidth: 320
-                }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 12
 
-                Text {
-                    text: root.metricsLoaded ? root.load1.toFixed(2) : "Loading…"
-                    font.pixelSize: Theme.fontBody
-                    color: Theme.textPrimary
-                    Layout.fillWidth: true
+                    Text {
+                        text: "Load Average"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+                    Text {
+                        text: root.metricsLoaded ? root.load1.toFixed(2) : "—"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                    }
+                    Text {
+                        text: "1-minute average"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textMuted
+                    }
+                    Item {
+                        Layout.fillHeight: true
+                    }
                 }
             }
+        }
 
-            // Temperature sensors (CPU/GPU first). Hidden until at least one
-            // sensor reports — many VMs/hosts expose none.
+        // Temperatures — wrapping pills so the row fills the width and adapts to
+        // however many sensors the host exposes (CPU/GPU sorted first).
+        Text {
+            text: "Temperatures"
+            font.pixelSize: Theme.fontBody
+            font.bold: true
+            color: Theme.textSecondary
+            visible: root.temps.length > 0
+        }
+
+        Flow {
+            Layout.fillWidth: true
+            spacing: 12
+
             Repeater {
                 model: root.temps
 
-                delegate: RowLayout {
+                delegate: Rectangle {
                     required property var modelData
-                    Layout.fillWidth: true
-                    spacing: 24
+                    radius: 12
+                    color: Theme.surface
+                    border.width: 2
+                    border.color: Theme.surfaceBorder
+                    implicitWidth: tempPillRow.implicitWidth + 36
+                    implicitHeight: 60
 
-                    Text {
-                        text: modelData.label
-                        font.pixelSize: Theme.fontBody
-                        color: Theme.textSecondary
-                        Layout.preferredWidth: 320
-                        Layout.minimumWidth: 320
-                    }
+                    RowLayout {
+                        id: tempPillRow
+                        anchors.centerIn: parent
+                        spacing: 14
 
-                    Text {
-                        text: modelData.celsius.toFixed(1) + " °C"
-                        font.pixelSize: Theme.fontBody
-                        color: modelData.celsius >= 90 ? Theme.crimson : Theme.textPrimary
-                        Layout.fillWidth: true
+                        Text {
+                            text: modelData.label
+                            font.pixelSize: Theme.fontSmall
+                            color: Theme.textSecondary
+                        }
+                        Text {
+                            text: modelData.celsius.toFixed(1) + " °C"
+                            font.pixelSize: Theme.fontSmall
+                            font.bold: true
+                            color: modelData.celsius >= 90 ? Theme.crimson : Theme.textPrimary
+                        }
                     }
                 }
             }
+        }
 
-            Text {
-                visible: root.metricsLoaded && root.temps.length === 0
-                text: "No temperature sensors reported"
-                font.pixelSize: Theme.fontSmall
-                color: Theme.textMuted
-            }
+        Text {
+            visible: root.metricsLoaded && root.temps.length === 0
+            text: "No temperature sensors reported"
+            font.pixelSize: Theme.fontSmall
+            color: Theme.textMuted
         }
 
         // Storage — free-space readout

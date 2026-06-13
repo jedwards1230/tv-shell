@@ -566,30 +566,7 @@ FocusScope {
             color: Theme.textSecondary
         }
 
-        // "Now playing" banner — lists the active channels while any tone plays.
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            radius: 16
-            visible: root.anyChannelActive
-            color: Theme.darkMode ? Qt.rgba(Theme.ember.r, Theme.ember.g, Theme.ember.b, 0.18) : Qt.rgba(Theme.navy.r, Theme.navy.g, Theme.navy.b, 0.12)
-            border.width: 2
-            border.color: Theme.ember
-
-            Text {
-                anchors.fill: parent
-                anchors.leftMargin: 24
-                anchors.rightMargin: 24
-                verticalAlignment: Text.AlignVCenter
-                text: "♪  Playing: " + root.activeLabels + "   (press a speaker again to stop it)"
-                font.pixelSize: Theme.fontSmall
-                font.bold: true
-                color: Theme.textPrimary
-                elide: Text.ElideRight
-            }
-        }
-
-        // Row 1: FL, FR, Center
+        // Row 1: Front L | Center | Front R (matches the physical speaker layout)
         RowLayout {
             Layout.fillWidth: true
             spacing: 16
@@ -601,7 +578,7 @@ FocusScope {
                 activeFocusOnTab: true
 
                 KeyNavigation.up: profileDropdownScope
-                KeyNavigation.right: testToneFrScope
+                KeyNavigation.right: testToneCScope
                 KeyNavigation.down: testToneRlScope
 
                 SettingsButton {
@@ -626,45 +603,14 @@ FocusScope {
             }
 
             FocusScope {
-                id: testToneFrScope
-                width: testToneFrBtn.width
-                height: testToneFrBtn.height
-                activeFocusOnTab: true
-
-                KeyNavigation.up: profileDropdownScope
-                KeyNavigation.left: testToneFlScope
-                KeyNavigation.right: testToneCScope
-                KeyNavigation.down: testToneRrScope
-
-                SettingsButton {
-                    id: testToneFrBtn
-                    text: "Front R"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[1] ? Theme.sidebarActive : (testToneFrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneFrScope.activeFocus ? 2 : 1
-                    border.color: testToneFrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(1)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneFrScope.forceActiveFocus();
-                            testToneFrBtn.activated();
-                        }
-                    }
-                }
-            }
-
-            FocusScope {
                 id: testToneCScope
                 width: testToneCBtn.width
                 height: testToneCBtn.height
                 activeFocusOnTab: true
 
                 KeyNavigation.up: profileDropdownScope
-                KeyNavigation.left: testToneFrScope
+                KeyNavigation.left: testToneFlScope
+                KeyNavigation.right: testToneFrScope
                 KeyNavigation.down: testToneLfeScope
 
                 SettingsButton {
@@ -687,9 +633,40 @@ FocusScope {
                     }
                 }
             }
+
+            FocusScope {
+                id: testToneFrScope
+                width: testToneFrBtn.width
+                height: testToneFrBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: profileDropdownScope
+                KeyNavigation.left: testToneCScope
+                KeyNavigation.down: testToneRrScope
+
+                SettingsButton {
+                    id: testToneFrBtn
+                    text: "Front R"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    color: root.channelActive[1] ? Theme.sidebarActive : (testToneFrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneFrScope.activeFocus ? 2 : 1
+                    border.color: testToneFrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(1)
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneFrScope.forceActiveFocus();
+                            testToneFrBtn.activated();
+                        }
+                    }
+                }
+            }
         }
 
-        // Row 2: Rear L, Rear R, LFE
+        // Row 2: Rear L | LFE/Sub | Rear R
         RowLayout {
             Layout.fillWidth: true
             spacing: 16
@@ -701,7 +678,7 @@ FocusScope {
                 activeFocusOnTab: true
 
                 KeyNavigation.up: testToneFlScope
-                KeyNavigation.right: testToneRrScope
+                KeyNavigation.right: testToneLfeScope
                 KeyNavigation.down: testToneAllScope
 
                 SettingsButton {
@@ -726,45 +703,14 @@ FocusScope {
             }
 
             FocusScope {
-                id: testToneRrScope
-                width: testToneRrBtn.width
-                height: testToneRrBtn.height
-                activeFocusOnTab: true
-
-                KeyNavigation.up: testToneFrScope
-                KeyNavigation.left: testToneRlScope
-                KeyNavigation.right: testToneLfeScope
-                KeyNavigation.down: testToneAllScope
-
-                SettingsButton {
-                    id: testToneRrBtn
-                    text: "Rear R"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-                    color: root.channelActive[5] ? Theme.sidebarActive : (testToneRrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
-                    border.width: testToneRrScope.activeFocus ? 2 : 1
-                    border.color: testToneRrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
-                    onActivated: root.toggleChannel(5)
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            testToneRrScope.forceActiveFocus();
-                            testToneRrBtn.activated();
-                        }
-                    }
-                }
-            }
-
-            FocusScope {
                 id: testToneLfeScope
                 width: testToneLfeBtn.width
                 height: testToneLfeBtn.height
                 activeFocusOnTab: true
 
                 KeyNavigation.up: testToneCScope
-                KeyNavigation.left: testToneRrScope
+                KeyNavigation.left: testToneRlScope
+                KeyNavigation.right: testToneRrScope
                 KeyNavigation.down: testToneAllScope
 
                 SettingsButton {
@@ -787,6 +733,37 @@ FocusScope {
                     }
                 }
             }
+
+            FocusScope {
+                id: testToneRrScope
+                width: testToneRrBtn.width
+                height: testToneRrBtn.height
+                activeFocusOnTab: true
+
+                KeyNavigation.up: testToneFrScope
+                KeyNavigation.left: testToneLfeScope
+                KeyNavigation.down: testToneAllScope
+
+                SettingsButton {
+                    id: testToneRrBtn
+                    text: "Rear R"
+                    focus: parent.activeFocus
+                    anchors.fill: parent
+                    color: root.channelActive[5] ? Theme.sidebarActive : (testToneRrScope.activeFocus ? Theme.surfaceHover : Theme.surface)
+                    border.width: testToneRrScope.activeFocus ? 2 : 1
+                    border.color: testToneRrScope.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
+                    onActivated: root.toggleChannel(5)
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            testToneRrScope.forceActiveFocus();
+                            testToneRrBtn.activated();
+                        }
+                    }
+                }
+            }
         }
 
         // Row 3: All channels
@@ -796,7 +773,7 @@ FocusScope {
             height: testToneAllBtn.height
             activeFocusOnTab: true
 
-            KeyNavigation.up: testToneRlScope
+            KeyNavigation.up: testToneLfeScope
 
             SettingsButton {
                 id: testToneAllBtn
@@ -816,6 +793,30 @@ FocusScope {
                         testToneAllBtn.activated();
                     }
                 }
+            }
+        }
+
+        // Conditional "now playing" popup — appears below the grid only while a
+        // tone is active, explaining how to turn it off.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 64
+            radius: 16
+            visible: root.anyChannelActive
+            color: Theme.darkMode ? Qt.rgba(Theme.ember.r, Theme.ember.g, Theme.ember.b, 0.18) : Qt.rgba(Theme.navy.r, Theme.navy.g, Theme.navy.b, 0.12)
+            border.width: 2
+            border.color: Theme.ember
+
+            Text {
+                anchors.fill: parent
+                anchors.leftMargin: 24
+                anchors.rightMargin: 24
+                verticalAlignment: Text.AlignVCenter
+                text: "♪  Playing: " + root.activeLabels + "   —   press a speaker (or All channels) again to turn it off"
+                font.pixelSize: Theme.fontSmall
+                font.bold: true
+                color: Theme.textPrimary
+                elide: Text.ElideRight
             }
         }
 
