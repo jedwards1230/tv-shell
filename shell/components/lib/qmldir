@@ -1,2 +1,3 @@
 module components.lib
 HintBar 1.0 HintBar.qml
+SettingsDropdown 1.0 SettingsDropdown.qml
