@@ -39,6 +39,7 @@ Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
 PlexCard 1.0 PlexCard.qml
 PlexWidget 1.0 PlexWidget.qml
+WidgetsSettings 1.0 WidgetsSettings.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
 KeyBindingsSettings 1.0 KeyBindingsSettings.qml
 HyprctlClients 1.0 HyprctlClients.qml

@@ -26,6 +26,11 @@ FocusScope {
     property var previousRow: null
     property var nextRow: null
 
+    // Home-screen widget toggle (Settings ▸ Widgets). When false the widget is
+    // hidden and collapses to zero height; the host's merged-model filter then
+    // lets the player fall back to the running row.
+    property bool widgetEnabled: true
+
     signal escaped
     // Context action (gamepad X / Tab) — the host opens a quit popover.
     signal contextRequested
@@ -72,8 +77,9 @@ FocusScope {
     // the host via the desktop entry / identity.
     readonly property bool _canOpen: hasPlayer && (playerDesktopEntry !== "" || playerIdentity !== "")
 
-    implicitHeight: hasPlayer ? card.implicitHeight : 0
-    visible: hasPlayer
+    readonly property bool _shown: hasPlayer && widgetEnabled
+    implicitHeight: _shown ? card.implicitHeight : 0
+    visible: _shown
     height: implicitHeight
 
     // Draw a skip-track icon (two triangles + a bar) centred by construction.

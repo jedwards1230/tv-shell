@@ -51,6 +51,11 @@ Rectangle {
     }
 
     Component {
+        id: widgetsComp
+        WidgetsSettings {}
+    }
+
+    Component {
         id: accessibilityComp
         AccessibilitySettings {}
     }
@@ -129,6 +134,13 @@ Rectangle {
                 fallback: "\u{1F319}",
                 component: provider.settingsComponent
             });
+        s.push({
+            id: "widgets",
+            name: "Widgets",
+            iconSource: "icons/widgets.svg",
+            fallback: "\u{25A6}",
+            component: widgetsComp
+        });
         s.push({
             id: "accessibility",
             name: "Accessibility",

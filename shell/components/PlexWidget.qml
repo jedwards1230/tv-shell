@@ -20,6 +20,15 @@ ColumnLayout {
     property Item previousRow: null
     property Item nextRow: null
 
+    // Home-screen widget toggle (Settings ▸ Widgets). When false the widget is
+    // hidden and collapses to zero height.
+    property bool widgetEnabled: true
+
+    // True while either poster row holds focus. The host's focus safety-net
+    // (_reanchorFocusIfNeeded) checks this so it doesn't yank focus back out of
+    // the Plex rows (they aren't NavigableRows it knows about directly).
+    readonly property bool rowFocused: onDeckRow.activeFocus || recentRow.activeFocus
+
     signal escaped
     // A card was activated — the host opens the Plex app.
     signal openPlexRequested
@@ -37,9 +46,10 @@ ColumnLayout {
     readonly property bool _hasOnDeck: onDeckItems.length > 0
     readonly property bool _hasRecent: recentItems.length > 0
 
-    // Collapse entirely when disabled or empty — keeps the home layout unchanged
-    // when there's nothing to show (same contract as a missing player / target).
-    visible: root._enabled && (root._hasOnDeck || root._hasRecent)
+    // Collapse entirely when toggled off, disabled, or empty — keeps the home
+    // layout unchanged when there's nothing to show (same contract as a missing
+    // player / target).
+    visible: root.widgetEnabled && root._enabled && (root._hasOnDeck || root._hasRecent)
 
     // First/last *visible* sub-row, for the host's neighbour wiring.
     readonly property var firstRow: _hasOnDeck ? onDeckRow : recentRow

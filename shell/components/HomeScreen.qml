@@ -51,7 +51,7 @@ FocusScope {
     function _reanchorFocusIfNeeded() {
         if (!root.activeFocus)
             return;
-        if (mediaWidget.activeFocus || statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
+        if (mediaWidget.activeFocus || plexWidget.rowFocused || statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
             return;
         for (let i = 0; i < appViewRepeater.count; i++) {
             let item = appViewRepeater.itemAt(i);
@@ -591,6 +591,7 @@ FocusScope {
             MediaWidget {
                 id: mediaWidget
                 Layout.fillWidth: true
+                widgetEnabled: Theme.widgetSpotifyEnabled
                 // Sits at the top of the content rows: Up returns to the
                 // status-icon row, Down drops into the first content row.
                 previousRow: statusIcons
@@ -629,6 +630,7 @@ FocusScope {
             PlexWidget {
                 id: plexWidget
                 Layout.fillWidth: true
+                widgetEnabled: Theme.widgetPlexEnabled
                 previousRow: mediaWidget.visible ? mediaWidget : statusIcons
                 nextRow: root._firstContentRow()
                 onEscaped: {
