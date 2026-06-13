@@ -49,6 +49,7 @@ Item {
     property bool autoDimEnabled: false          // auto-dim OLED protection (#143)
     property int autoDimDelayMinutes: 2          // idle minutes before dimming (#143)
     property string defaultSink: ""              // WirePlumber sink node.name (stable across reboots)
+    property string audioCardProfile: ""         // "card|profile" surround profile to reapply on boot (#234)
     property bool cecFocusOnStartup: false      // claim active source when daemon starts (default off)
     property bool cecFocusOnWake: true          // claim active source on resume from sleep (default on)
     property bool cecAutoSwitchOnPowerOn: false // switch TV/AVR input when a device powers on (default off, daemon wiring TBD)
@@ -60,6 +61,11 @@ Item {
 
     // === Change notification ===
     signal settingsChanged(string key, var value)
+
+    // Emitted once each time a get-config response has been parsed, so root-level
+    // consumers can (re)apply system state that the daemon doesn't itself restore
+    // on boot — e.g. the audio surround card profile (#234).
+    signal configLoaded
 
     // === Binding IPC signals ===
     signal bindingsReceived(var bindings)
@@ -111,6 +117,8 @@ Item {
                     store.autoDimDelayMinutes = obj.autoDimDelayMinutes;
                 if (typeof obj.defaultSink === "string")
                     store.defaultSink = obj.defaultSink;
+                if (typeof obj.audioCardProfile === "string")
+                    store.audioCardProfile = obj.audioCardProfile;
                 if (typeof obj.cecFocusOnStartup === "boolean")
                     store.cecFocusOnStartup = obj.cecFocusOnStartup;
                 if (typeof obj.cecFocusOnWake === "boolean")
@@ -123,6 +131,7 @@ Item {
                     store.cecDeviceNames = obj.cecDeviceNames;
                 if (obj.keyBindings && typeof obj.keyBindings === "object")
                     store.keyBindings = obj.keyBindings;
+                store.configLoaded();
             } catch (e) {
                 console.log("SettingsStore: failed to parse settings:", e);
             }
@@ -161,6 +170,7 @@ Item {
             "autoDimEnabled": store.autoDimEnabled,
             "autoDimDelayMinutes": store.autoDimDelayMinutes,
             "defaultSink": store.defaultSink,
+            "audioCardProfile": store.audioCardProfile,
             "cecFocusOnStartup": store.cecFocusOnStartup,
             "cecFocusOnWake": store.cecFocusOnWake,
             "cecAutoSwitchOnPowerOn": store.cecAutoSwitchOnPowerOn,
@@ -279,6 +289,14 @@ Item {
         defaultSink = name;
         save();
         settingsChanged("defaultSink", name);
+    }
+
+    // Persist the chosen surround card profile as "card|profile" so it can be
+    // re-applied on boot (PipeWire otherwise reverts to the stereo default).
+    function setAudioCardProfile(value) {
+        audioCardProfile = value;
+        save();
+        settingsChanged("audioCardProfile", value);
     }
 
     function setCecFocusOnStartup(enabled) {

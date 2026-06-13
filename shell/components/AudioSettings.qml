@@ -395,6 +395,9 @@ FocusScope {
                 setCardProfile.cardName = item.card;
                 setCardProfile.profileName = item.profile;
                 setCardProfile.running = true;
+                // Persist so the surround profile is re-applied on next boot
+                // (PipeWire otherwise falls back to the stereo default).
+                SettingsStore.setAudioCardProfile(item.card + "|" + item.profile);
             }
 
             KeyNavigation.up: sinkDropdownScope

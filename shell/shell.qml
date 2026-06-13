@@ -137,6 +137,41 @@ ShellRoot {
             shellIdleTimer.restart();
     }
 
+    // === Audio surround profile re-apply on boot (#234) ===
+    // PipeWire reverts non-default card profiles (e.g. Digital Surround 5.1) to
+    // the stereo default across reboots. The shell re-applies the persisted
+    // "card|profile" once, after settings have loaded — independent of whether the
+    // Audio settings page is ever opened. Command mirrors AudioSettings'
+    // setCardProfile (env-passed args, never interpolated, so content can't inject).
+    property bool _audioProfileApplied: false
+
+    Process {
+        id: audioProfileApplyCmd
+        property string cardName: ""
+        property string profileName: ""
+        environment: ({
+                "GS_CARD": cardName,
+                "GS_PROFILE": profileName
+            })
+        command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
+    }
+
+    Connections {
+        target: Components.SettingsStore
+        function onConfigLoaded() {
+            if (root._audioProfileApplied)
+                return;
+            var v = Components.SettingsStore.audioCardProfile;
+            var sep = v ? v.indexOf("|") : -1;
+            if (sep < 0)
+                return;
+            root._audioProfileApplied = true;
+            audioProfileApplyCmd.cardName = v.substring(0, sep);
+            audioProfileApplyCmd.profileName = v.substring(sep + 1);
+            audioProfileApplyCmd.running = true;
+        }
+    }
+
     // #193: backstop so the launch overlay can't get stuck if a window never maps
     // (launch failed silently, app exited instantly, etc.). The window poller hides
     // it the moment the app actually appears, so on the happy path this never
