@@ -526,16 +526,10 @@ FocusScope {
             text: "Format"
         }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: formatLabel.implicitHeight + 48
-            radius: 16
-            color: Theme.surface
-
+        ReadonlyInfoCard {
             Text {
                 id: formatLabel
-                anchors.fill: parent
-                anchors.margins: 24
+                width: parent.width
                 text: root.formatInfo
                 font.pixelSize: Theme.fontSmall
                 font.family: "monospace"
