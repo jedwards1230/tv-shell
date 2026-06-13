@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 // IPC protocol: see docs/IPC_PROTOCOL.md
 // Commands used: status, grab, release, list-input-devices, get-pads,
@@ -317,12 +318,8 @@ FocusScope {
         spacing: 32
 
         // === Connected Controllers (fleet — player slot + battery) ===
-        Text {
+        SectionHeader {
             text: "Connected Controllers"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
-            Layout.fillWidth: true
         }
 
         // Live fleet from the daemon (get-pads + pad:* events). Each row shows
@@ -437,12 +434,8 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 24
 
-            Text {
+            SectionHeader {
                 text: "Detected Input Devices"
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textPrimary
-                Layout.fillWidth: true
             }
 
             FocusScope {
@@ -590,11 +583,8 @@ FocusScope {
 
         // --- Input Daemon Status ---
 
-        Text {
+        SectionHeader {
             text: "Input Daemon"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
@@ -602,23 +592,18 @@ FocusScope {
             spacing: 24
 
             // Status indicator
-            Rectangle {
-                width: 24
-                height: 24
-                radius: 12
-                color: root.daemonRunning && root.daemonConnected ? Theme.online : Theme.offline
-            }
-
-            Text {
+            StatusPill {
+                pillState: root.daemonRunning && root.daemonConnected ? "good" : "bad"
                 text: {
                     if (!root.daemonRunning)
                         return "Daemon not running";
                     if (!root.daemonConnected)
                         return "No controller connected";
-                    return root.daemonGrabbed ? "Controller connected — Grabbed (shell has exclusive input)" : "Controller connected — Released (raw input to apps)";
+                    return root.daemonGrabbed ? "Grabbed" : "Released";
                 }
-                font.pixelSize: Theme.fontSmall
-                color: Theme.textSecondary
+            }
+
+            Item {
                 Layout.fillWidth: true
             }
 
@@ -660,11 +645,8 @@ FocusScope {
 
         // --- Controller Database (#159) ---
 
-        Text {
+        SectionHeader {
             text: "Controller Database"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
@@ -775,11 +757,8 @@ FocusScope {
 
         // --- Debug Input Toggle ---
 
-        Text {
+        SectionHeader {
             text: "Debug"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
@@ -827,11 +806,8 @@ FocusScope {
 
         // --- Rumble Toggle (#99) ---
 
-        Text {
+        SectionHeader {
             text: "Rumble"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
@@ -880,11 +856,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        Text {
+        HintBar {
             text: "A: Select  |  Auto-refreshes every 10s"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }

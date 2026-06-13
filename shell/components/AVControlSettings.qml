@@ -288,7 +288,7 @@ FocusScope {
 
             // Status indicator
             StatusPill {
-                state: root.cecAvailable ? "good" : "neutral"
+                pillState: root.cecAvailable ? "good" : "neutral"
                 text: root.statusText
             }
 
