@@ -12,5 +12,6 @@ SectionHeader 1.0 SectionHeader.qml
 SettingsButtonGroup 1.0 SettingsButtonGroup.qml
 SettingsListRow 1.0 SettingsListRow.qml
 SettingsDropdown 1.0 SettingsDropdown.qml
+StatCard 1.0 StatCard.qml
 StatusPill 1.0 StatusPill.qml
 VolumeBar 1.0 VolumeBar.qml
