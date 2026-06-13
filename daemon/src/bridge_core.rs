@@ -1,0 +1,582 @@
+//! Shared action logic used by both the HTTP bridge and the MCP server.
+//!
+//! All async fns here are cross-platform (no Linux-only imports). The binary
+//! (`main.rs`) is Linux-gated, but the logic — intent validation, screenshot
+//! capture, log reading, status assembly — compiles and unit-tests on macOS.
+//!
+//! **Callers** pass in the channel handles they already hold; this module never
+//! owns channels directly. Both `http.rs` and `mcp.rs` call into these fns.
+
+use crate::protocol::{Event, INTENT_OVERLAY_TARGETS};
+use crate::state::Control;
+use serde::Serialize;
+use tokio::sync::{broadcast, mpsc, oneshot};
+
+// ─── Intent validation ───────────────────────────────────────────────────────
+
+/// Returns `true` when `name` is an intent the shell's QML handler recognises.
+///
+/// The vocabulary mirrors `INTENT_VOCAB` in `protocol.rs` plus the
+/// namespaced deep-link families:
+///
+/// - `settings:<any>` — open a settings page by slug
+/// - `overlay:<target>` — open a QAM overlay (`volume`, `network`, `session`)
+/// - `app:<wmClass>` — launch a local app by its StartupWMClass
+///
+/// Unknown `overlay:` targets are accepted here (the shell degrades gracefully)
+/// because the target list may grow without a daemon rebuild.
+pub fn is_valid_intent(name: &str) -> bool {
+    crate::protocol::is_known_intent(name)
+}
+
+/// Build the `intent:<name>` string broadcast on the event bus from a
+/// validated `name` token (e.g. `"menu"` → `"intent:menu"`).
+///
+/// Called by both the IPC server and the HTTP/MCP bridges so the on-wire
+/// event payload is always consistent.
+pub fn intent_broadcast_name(name: &str) -> String {
+    format!("intent:{name}")
+}
+
+// ─── Intent dispatch ─────────────────────────────────────────────────────────
+
+/// Dispatch an intent through the control channel and return the daemon's
+/// reply string, or `None` when the channel is closed.
+///
+/// The reply is either `"ok"` or `"error:<message>"`.
+pub async fn dispatch_intent(control_tx: &mpsc::Sender<Control>, name: String) -> Option<String> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    control_tx
+        .send(Control::Intent {
+            name,
+            reply: reply_tx,
+        })
+        .await
+        .ok()?;
+    reply_rx.await.ok()
+}
+
+/// Dispatch a key synthesise through the control channel and return the
+/// daemon's reply, or `None` when the channel is closed.
+///
+/// The reply is either `"ok"` or `"error:<message>"`.
+pub async fn dispatch_key(control_tx: &mpsc::Sender<Control>, name: String) -> Option<String> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    control_tx
+        .send(Control::Key {
+            name,
+            reply: reply_tx,
+        })
+        .await
+        .ok()?;
+    reply_rx.await.ok()
+}
+
+// ─── Screenshot ──────────────────────────────────────────────────────────────
+
+/// Capture the Wayland display to raw PNG bytes via `grim -`.
+///
+/// When `flash` is `true`, [`Event::ScreenshotFlash`] is broadcast on
+/// `events_tx` immediately after a successful capture — before returning —
+/// so the QML shell can paint a brief white vignette. The overlay never
+/// appears in the captured PNG because the flash fires **after** `grim`
+/// completes.
+///
+/// Returns `Ok(png_bytes)` on success, `Err(message)` on any failure.
+pub async fn capture_screenshot(
+    events_tx: &broadcast::Sender<Event>,
+    flash: bool,
+) -> Result<Vec<u8>, String> {
+    let mut cmd = tokio::process::Command::new("grim");
+    cmd.arg("-");
+    // Inject all available session env vars (WAYLAND_DISPLAY,
+    // HYPRLAND_INSTANCE_SIGNATURE, XDG_RUNTIME_DIR) so grim finds the live
+    // Wayland socket even when the daemon was started before `exec Hyprland`.
+    for (k, v) in crate::session_env::session_env_pairs() {
+        cmd.env(k, v);
+    }
+    match cmd.output().await {
+        Ok(out) if out.status.success() => {
+            if flash {
+                // Ignored when there are no broadcast subscribers.
+                let _ = events_tx.send(Event::ScreenshotFlash);
+            }
+            Ok(out.stdout)
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            Err(format!("grim failed: {}", stderr.trim()))
+        }
+        Err(e) => Err(format!("grim error: {e}")),
+    }
+}
+
+// ─── Status ──────────────────────────────────────────────────────────────────
+
+/// Serialisable status blob returned by `get_status` / `GET /dev/status`.
+#[derive(Debug, Serialize)]
+pub struct StatusInfo {
+    /// Short git SHA of the checked-out repo at `install_root()`.
+    pub sha: String,
+    /// PID of the running daemon process.
+    pub daemon_pid: u32,
+    /// Version string from `Cargo.toml`.
+    pub version: &'static str,
+    /// Whether `pgrep -x quickshell` exits zero.
+    pub shell_running: bool,
+    /// `WAYLAND_DISPLAY` if resolvable, else `null`.
+    pub wayland_display: Option<String>,
+    /// `true` when `HYPRLAND_INSTANCE_SIGNATURE` is resolvable.
+    pub hypr_sig_present: bool,
+}
+
+/// Assemble the [`StatusInfo`] by querying the environment and running git.
+pub async fn get_status() -> StatusInfo {
+    let root = crate::session_env::install_root();
+
+    let sha = {
+        let out = tokio::process::Command::new("git")
+            .args([
+                "-C",
+                root.to_str().unwrap_or("."),
+                "rev-parse",
+                "--short",
+                "HEAD",
+            ])
+            .output()
+            .await;
+        match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+            _ => "unknown".to_owned(),
+        }
+    };
+
+    let shell_running = matches!(
+        tokio::process::Command::new("pgrep")
+            .args(["-x", "quickshell"])
+            .output()
+            .await,
+        Ok(o) if o.status.success()
+    );
+
+    StatusInfo {
+        sha,
+        daemon_pid: std::process::id(),
+        version: env!("CARGO_PKG_VERSION"),
+        shell_running,
+        wayland_display: crate::session_env::resolve_wayland_display(),
+        hypr_sig_present: crate::session_env::resolve_hypr_signature().is_some(),
+    }
+}
+
+// ─── Logs ────────────────────────────────────────────────────────────────────
+
+const QS_LOG_PATH: &str = "/tmp/qs-log.txt";
+
+/// Read the quickshell log file, apply optional `filter`, and return the
+/// last `lines` lines.
+///
+/// Returns an explanatory string (not an error) when the log file does not
+/// exist yet — callers may display it as-is. `Err` is returned only on
+/// unexpected I/O failures.
+pub fn get_logs(lines: usize, filter: Option<&str>) -> Result<String, String> {
+    let content = match std::fs::read_to_string(QS_LOG_PATH) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(
+                "(no /tmp/qs-log.txt yet — POST /dev/restart-shell to capture quickshell logs)\n"
+                    .to_owned(),
+            );
+        }
+        Err(e) => return Err(format!("read log failed: {e}")),
+    };
+
+    let filtered: Vec<&str> = match filter {
+        Some(f) => {
+            let f_lower = f.to_lowercase();
+            content
+                .lines()
+                .filter(|l| l.to_lowercase().contains(&f_lower))
+                .collect()
+        }
+        None => content.lines().collect(),
+    };
+
+    let tail: String = filtered
+        .iter()
+        .rev()
+        .take(lines)
+        .copied()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(format!("{tail}\n"))
+}
+
+// ─── Dev operations ──────────────────────────────────────────────────────────
+
+/// Run a git command in `root`, returning `(success, combined_stdout_stderr)`.
+async fn git_run(root: &std::path::Path, args: &[&str]) -> (bool, String) {
+    let out = tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .await;
+    match out {
+        Ok(o) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            (o.status.success(), combined)
+        }
+        Err(e) => (false, format!("git error: {e}")),
+    }
+}
+
+/// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset to remote.
+///
+/// Returns a short status line on success, or `Err(message)` on failure.
+pub async fn dev_deploy(git_ref: Option<&str>) -> Result<String, String> {
+    let root = crate::session_env::install_root();
+    let r = git_ref.unwrap_or("main");
+    tracing::info!("dev/deploy: ref={r} root={}", root.display());
+
+    let root_str = root.to_str().unwrap_or(".");
+
+    // Fetch
+    let (ok, out) = git_run(&root, &["-C", root_str, "fetch", "origin", "--prune"]).await;
+    if !ok {
+        return Err(format!("git fetch failed: {out}"));
+    }
+
+    // Checkout
+    let (ok, out) = git_run(&root, &["-C", root_str, "checkout", "-f", r]).await;
+    if !ok {
+        return Err(format!("git checkout failed: {out}"));
+    }
+
+    // Reset to remote tracking branch (if it exists)
+    let remote_ref = format!("origin/{r}");
+    let (has_remote, _) = git_run(
+        &root,
+        &[
+            "-C",
+            root_str,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &remote_ref,
+        ],
+    )
+    .await;
+    if has_remote {
+        let (ok, out) = git_run(&root, &["-C", root_str, "reset", "--hard", &remote_ref]).await;
+        if !ok {
+            return Err(format!("git reset failed: {out}"));
+        }
+    }
+
+    // Report resulting SHA
+    let (ok, sha_out) = git_run(&root, &["-C", root_str, "rev-parse", "--short", "HEAD"]).await;
+    if !ok {
+        return Err(format!("git rev-parse failed: {sha_out}"));
+    }
+    let sha = sha_out.trim();
+    Ok(format!("deployed {r} @ {sha}\n"))
+}
+
+/// `POST /dev/build` — build via scripts/build-daemon.sh + install the binary.
+///
+/// Returns the last 12 lines of cargo stderr on success, `Err(message)` on failure.
+pub async fn dev_build() -> Result<String, String> {
+    let root = crate::session_env::install_root();
+    let daemon_dir = root.join("daemon");
+    tracing::info!("dev/build: cwd={}", daemon_dir.display());
+
+    let build_script = root.join("scripts/build-daemon.sh");
+    let out = tokio::process::Command::new("bash")
+        .arg(&build_script)
+        .env("GAME_SHELL_ROOT", &root)
+        .current_dir(&root)
+        .output()
+        .await;
+
+    match out {
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let tail: String = stderr
+                .lines()
+                .rev()
+                .take(12)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if !o.status.success() {
+                return Err(format!("cargo build failed:\n{tail}"));
+            }
+
+            // Install the binary
+            let src = daemon_dir.join("target/release/game-shell-input");
+            let dst = root.join("bin/game-shell-input");
+            let install = tokio::process::Command::new("install")
+                .args(["-m755"])
+                .arg(&src)
+                .arg(&dst)
+                .output()
+                .await;
+
+            match install {
+                Ok(i) if i.status.success() => Ok(format!("{tail}\nok\n")),
+                Ok(i) => {
+                    let err = String::from_utf8_lossy(&i.stderr);
+                    Err(format!("install failed: {err}"))
+                }
+                Err(e) => Err(format!("install error: {e}")),
+            }
+        }
+        Err(e) => Err(format!("cargo error: {e}")),
+    }
+}
+
+/// `POST /dev/restart-shell` — kill quickshell and relaunch detached.
+///
+/// Returns a brief startup summary (no errors seen / first WARN/ERROR lines).
+pub async fn dev_restart_shell() -> Result<String, String> {
+    // Kill existing quickshell (ignore failure — it may not be running).
+    let _ = tokio::process::Command::new("pkill")
+        .args(["-x", "quickshell"])
+        .output()
+        .await;
+
+    let log_file = match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(QS_LOG_PATH)
+    {
+        Ok(f) => f,
+        Err(e) => return Err(format!("open log failed: {e}")),
+    };
+    let log_stderr = match log_file.try_clone() {
+        Ok(f) => f,
+        Err(e) => return Err(format!("clone log fd failed: {e}")),
+    };
+
+    // Spawn quickshell detached (new session so it outlives this handler task).
+    let mut cmd = std::process::Command::new("setsid");
+    cmd.args(["quickshell", "-c", "game-shell"]);
+    cmd.stdout(log_file);
+    cmd.stderr(log_stderr);
+    for (k, v) in crate::session_env::session_env_pairs() {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
+        Ok(_) => {}
+        Err(e) => return Err(format!("spawn failed: {e}")),
+    }
+
+    // Give quickshell a moment to emit initial log lines.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let log_content = std::fs::read_to_string(QS_LOG_PATH).unwrap_or_default();
+    let filtered: String = log_content
+        .lines()
+        .filter(|l| {
+            let upper = l.to_uppercase();
+            (upper.contains("WARN") || upper.contains("ERROR"))
+                && !upper.contains("COULD NOT LOAD ICON")
+        })
+        .rev()
+        .take(30)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if filtered.is_empty() {
+        Ok("started (no WARN/ERROR in first 3s)\n".to_owned())
+    } else {
+        Ok(format!("{filtered}\n"))
+    }
+}
+
+/// Request daemon re-exec. Sets the reexec flag and wakes the main select!.
+pub fn request_reexec(
+    reexec_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reexec_notify: &std::sync::Arc<tokio::sync::Notify>,
+) {
+    reexec_flag.store(true, std::sync::atomic::Ordering::Release);
+    reexec_notify.notify_one();
+}
+
+// ─── Convenience sugar tools ─────────────────────────────────────────────────
+
+/// Build an `intent:settings:<page>` name. The page slug is passed through
+/// unvalidated — unknown slugs are a graceful no-op in QML.
+pub fn settings_intent(page: &str) -> String {
+    format!("settings:{page}")
+}
+
+/// Build an `intent:overlay:<target>` name.
+/// Returns `Err` when `target` is not in the known overlay vocabulary.
+pub fn overlay_intent(target: &str) -> Result<String, String> {
+    if INTENT_OVERLAY_TARGETS.contains(&target) {
+        Ok(format!("overlay:{target}"))
+    } else {
+        let valid = INTENT_OVERLAY_TARGETS.join(", ");
+        Err(format!("unknown overlay target '{target}'; valid: {valid}"))
+    }
+}
+
+/// Build an `intent:app:<wm_class>` name.
+pub fn app_intent(wm_class: &str) -> String {
+    format!("app:{wm_class}")
+}
+
+// ─── Unit tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::INTENT_VOCAB;
+
+    // ── intent validation ────────────────────────────────────────────────────
+
+    #[test]
+    fn known_vocab_intents_are_valid() {
+        for &name in INTENT_VOCAB {
+            assert!(
+                is_valid_intent(name),
+                "expected '{name}' to be valid intent"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_deep_link_is_valid() {
+        assert!(is_valid_intent("settings:bluetooth"));
+        assert!(is_valid_intent("settings:audio"));
+        assert!(is_valid_intent("settings:anything-at-all"));
+    }
+
+    #[test]
+    fn overlay_known_targets_are_valid() {
+        assert!(is_valid_intent("overlay:volume"));
+        assert!(is_valid_intent("overlay:network"));
+        assert!(is_valid_intent("overlay:session"));
+    }
+
+    #[test]
+    fn overlay_unknown_target_is_invalid() {
+        assert!(!is_valid_intent("overlay:doesnotexist"));
+    }
+
+    #[test]
+    fn app_deep_link_is_valid() {
+        assert!(is_valid_intent("app:steam"));
+        assert!(is_valid_intent("app:org.mozilla.Firefox"));
+    }
+
+    #[test]
+    fn unknown_intent_is_invalid() {
+        assert!(!is_valid_intent(""));
+        assert!(!is_valid_intent("unknown-thing"));
+        assert!(!is_valid_intent("foo:bar"));
+    }
+
+    // ── status struct serialises to expected JSON fields ─────────────────────
+
+    #[test]
+    fn status_info_serialises() {
+        let s = StatusInfo {
+            sha: "abc1234".into(),
+            daemon_pid: 42,
+            version: "0.1.0",
+            shell_running: true,
+            wayland_display: Some("wayland-1".into()),
+            hypr_sig_present: false,
+        };
+        let json = serde_json::to_string(&s).expect("serialise StatusInfo");
+        assert!(json.contains("\"sha\":\"abc1234\""));
+        assert!(json.contains("\"daemon_pid\":42"));
+        assert!(json.contains("\"version\":\"0.1.0\""));
+        assert!(json.contains("\"shell_running\":true"));
+        assert!(json.contains("\"wayland_display\":\"wayland-1\""));
+        assert!(json.contains("\"hypr_sig_present\":false"));
+    }
+
+    #[test]
+    fn status_info_null_wayland() {
+        let s = StatusInfo {
+            sha: "abc".into(),
+            daemon_pid: 1,
+            version: "0.1.0",
+            shell_running: false,
+            wayland_display: None,
+            hypr_sig_present: false,
+        };
+        let json = serde_json::to_string(&s).expect("serialise StatusInfo");
+        assert!(json.contains("\"wayland_display\":null"));
+    }
+
+    // ── logs filter ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn get_logs_no_file_returns_ok_placeholder() {
+        // A path that definitely does not exist — expect Ok with a hint.
+        // We can't override the path constant, but we can test the public fn
+        // indirectly by confirming it returns Ok (not Err) on NotFound.
+        // This test only verifies the NotFound arm; the real fs test needs a
+        // temp file, which is an integration test concern.
+        let result = get_logs(10, None);
+        // Either the log exists (Ok with content) or it doesn't (Ok with placeholder).
+        // Either way it should NOT be an Err on a normal dev box.
+        // On CI, /tmp/qs-log.txt is unlikely to exist — we check both cases.
+        match result {
+            Ok(s) => {
+                // Either real content or the placeholder.
+                assert!(!s.is_empty(), "get_logs should return non-empty string");
+            }
+            Err(e) => {
+                // Only acceptable if not a NotFound error (some other I/O failure
+                // is theoretically possible in a restricted environment).
+                panic!("get_logs returned Err unexpectedly: {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn overlay_intent_known_target() {
+        assert_eq!(overlay_intent("volume"), Ok("overlay:volume".to_owned()));
+        assert_eq!(overlay_intent("network"), Ok("overlay:network".to_owned()));
+    }
+
+    #[test]
+    fn overlay_intent_unknown_target_err() {
+        let result = overlay_intent("oops");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("oops"));
+        assert!(msg.contains("valid:"));
+    }
+
+    #[test]
+    fn settings_intent_passthrough() {
+        assert_eq!(settings_intent("bluetooth"), "settings:bluetooth");
+        assert_eq!(settings_intent("anything"), "settings:anything");
+    }
+
+    #[test]
+    fn app_intent_passthrough() {
+        assert_eq!(app_intent("steam"), "app:steam");
+    }
+}

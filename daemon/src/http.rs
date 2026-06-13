@@ -39,13 +39,13 @@
 //! Linux-gated, so in practice the listener only runs on Linux — but the pure
 //! parser and unit tests compile and run on macOS / CI.
 
+use crate::bridge_core;
 use crate::protocol::Event;
-use crate::session_env;
 use crate::state::Control;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc};
 
 // ─── Error types ────────────────────────────────────────────────────────────
 
@@ -360,16 +360,6 @@ fn ct_eq_str(a: &str, b: &str) -> bool {
     a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
-/// Send a control request and await the runtime's response line.
-async fn request<F>(control_tx: &mpsc::Sender<Control>, make: F) -> Option<String>
-where
-    F: FnOnce(oneshot::Sender<String>) -> Control,
-{
-    let (reply_tx, reply_rx) = oneshot::channel();
-    control_tx.send(make(reply_tx)).await.ok()?;
-    reply_rx.await.ok()
-}
-
 /// Handle a single TCP connection: parse the HTTP/1.1 request, check auth,
 /// dispatch to the control channel or screenshotter, and write a response.
 async fn handle_connection(
@@ -462,7 +452,7 @@ async fn handle_connection(
     // Dispatch to the daemon control channel or screenshotter.
     match action {
         HttpAction::Intent(name) => {
-            let reply = request(control_tx, move |reply| Control::Intent { name, reply }).await;
+            let reply = bridge_core::dispatch_intent(control_tx, name).await;
             let resp = match reply {
                 None => http_response(503, "daemon unavailable"),
                 Some(r) if r.starts_with("error:") => {
@@ -474,7 +464,7 @@ async fn handle_connection(
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::Key(name) => {
-            let reply = request(control_tx, move |reply| Control::Key { name, reply }).await;
+            let reply = bridge_core::dispatch_key(control_tx, name).await;
             let resp = match reply {
                 None => http_response(503, "daemon unavailable"),
                 Some(r) if r.starts_with("error:") => {
@@ -486,32 +476,9 @@ async fn handle_connection(
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::Screenshot { flash } => {
-            // Shell out to grim(1) — captures the Wayland display to stdout as PNG.
-            // `grim -` writes the PNG to stdout; we capture it and stream it back.
-            // The daemon is launched before `exec Hyprland`, so it may not inherit
-            // WAYLAND_DISPLAY — resolve via session_env (which also checks
-            // XDG_RUNTIME_DIR) so grim finds the live socket.
-            let mut cmd = tokio::process::Command::new("grim");
-            cmd.arg("-");
-            // Inject all available session env vars (WAYLAND_DISPLAY,
-            // HYPRLAND_INSTANCE_SIGNATURE, XDG_RUNTIME_DIR) for consistency.
-            for (k, v) in session_env::session_env_pairs() {
-                cmd.env(k, v);
-            }
-            let result = cmd.output().await;
-            match result {
-                Ok(out) if out.status.success() => {
-                    let png = out.stdout;
-                    // Broadcast the flash signal immediately after grim succeeds
-                    // (capture complete) so the UI overlay is prompt — before
-                    // streaming the PNG bytes, which TCP backpressure could delay.
-                    // The overlay never appears in the captured PNG because the
-                    // flash fires AFTER capture (#166).
-                    // Ignored when no subscribers are connected (send returns
-                    // SendError when receiver_count == 0, which is fine here).
-                    if flash {
-                        let _ = events_tx.send(Event::ScreenshotFlash);
-                    }
+            // Delegate capture to bridge_core so the grim logic is shared with MCP.
+            match bridge_core::capture_screenshot(events_tx, flash).await {
+                Ok(png) => {
                     // Binary-safe response: write the header then the raw PNG bytes.
                     // We do NOT use http_response() here — that function takes a &str
                     // body and would corrupt arbitrary binary data.
@@ -519,16 +486,8 @@ async fn handle_connection(
                     let _ = stream.write_all(&header).await;
                     let _ = stream.write_all(&png).await;
                 }
-                Ok(out) => {
-                    // grim exited non-zero — include stderr in the 500 body.
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    let body = format!("grim failed: {}", stderr.trim());
-                    let resp = http_response(500, &body);
-                    let _ = stream.write_all(resp.as_bytes()).await;
-                }
-                Err(e) => {
-                    let body = format!("grim error: {e}");
-                    let resp = http_response(500, &body);
+                Err(msg) => {
+                    let resp = http_response(500, &msg);
                     let _ = stream.write_all(resp.as_bytes()).await;
                 }
             }
@@ -552,8 +511,7 @@ async fn handle_connection(
             let resp = http_response(200, "ok, re-execing\n");
             let _ = stream.write_all(resp.as_bytes()).await;
             let _ = stream.flush().await;
-            reexec_flag.store(true, std::sync::atomic::Ordering::Release);
-            reexec_notify.notify_one();
+            bridge_core::request_reexec(reexec_flag, reexec_notify);
         }
         HttpAction::DevLogs { lines, filter } => {
             let resp = handle_dev_logs(lines, filter.as_deref());
@@ -567,329 +525,46 @@ async fn handle_connection(
 }
 
 // ─── Dev-control handlers (#167) ────────────────────────────────────────────
-
-/// Run a git command with `cwd` and collect stdout+stderr.
-/// Returns `(exit_ok, combined_output)`.
-async fn git_run(root: &std::path::Path, args: &[&str]) -> (bool, String) {
-    let out = tokio::process::Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .await;
-    match out {
-        Ok(o) => {
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            );
-            (o.status.success(), combined)
-        }
-        Err(e) => (false, format!("git error: {e}")),
-    }
-}
+// These thin wrappers translate bridge_core Results into HTTP response strings.
 
 /// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset to remote.
 async fn handle_dev_deploy(git_ref: Option<&str>) -> String {
-    let root = session_env::install_root();
-    let r = git_ref.unwrap_or("main");
-    tracing::info!("dev/deploy: ref={r} root={}", root.display());
-
-    // Fetch
-    let (ok, out) = git_run(
-        &root,
-        &[
-            "-C",
-            root.to_str().unwrap_or("."),
-            "fetch",
-            "origin",
-            "--prune",
-        ],
-    )
-    .await;
-    if !ok {
-        return http_response(500, &format!("git fetch failed: {out}"));
+    match bridge_core::dev_deploy(git_ref).await {
+        Ok(body) => http_response(200, &body),
+        Err(msg) => http_response(500, &msg),
     }
-
-    // Checkout
-    let (ok, out) = git_run(
-        &root,
-        &["-C", root.to_str().unwrap_or("."), "checkout", "-f", r],
-    )
-    .await;
-    if !ok {
-        return http_response(500, &format!("git checkout failed: {out}"));
-    }
-
-    // Try to reset to remote tracking branch
-    let remote_ref = format!("origin/{r}");
-    let (has_remote, _) = git_run(
-        &root,
-        &[
-            "-C",
-            root.to_str().unwrap_or("."),
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &remote_ref,
-        ],
-    )
-    .await;
-    if has_remote {
-        let (ok, out) = git_run(
-            &root,
-            &[
-                "-C",
-                root.to_str().unwrap_or("."),
-                "reset",
-                "--hard",
-                &remote_ref,
-            ],
-        )
-        .await;
-        if !ok {
-            return http_response(500, &format!("git reset failed: {out}"));
-        }
-    }
-
-    // Report the resulting SHA
-    let (ok, sha_out) = git_run(
-        &root,
-        &[
-            "-C",
-            root.to_str().unwrap_or("."),
-            "rev-parse",
-            "--short",
-            "HEAD",
-        ],
-    )
-    .await;
-    if !ok {
-        return http_response(500, &format!("git rev-parse failed: {sha_out}"));
-    }
-    let sha = sha_out.trim();
-    let body = format!("deployed {r} @ {sha}\n");
-    http_response(200, &body)
 }
 
 /// `POST /dev/build` — build via scripts/build-daemon.sh + install the binary.
 async fn handle_dev_build() -> String {
-    let root = session_env::install_root();
-    let daemon_dir = root.join("daemon");
-    tracing::info!("dev/build: cwd={}", daemon_dir.display());
-
-    // Build flags (Cargo features, profile) are owned by the repo's build
-    // script — not hardcoded here — so the dev bridge and homelab-ansible stay
-    // in sync on the daemon's on-device feature set (e.g. `cec`). See
-    // scripts/build-daemon.sh.
-    let build_script = root.join("scripts/build-daemon.sh");
-    let out = tokio::process::Command::new("bash")
-        .arg(&build_script)
-        .env("GAME_SHELL_ROOT", &root)
-        .current_dir(&root)
-        .output()
-        .await;
-
-    match out {
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            let tail: String = stderr
-                .lines()
-                .rev()
-                .take(12)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            if !o.status.success() {
-                return http_response(500, &format!("cargo build failed:\n{tail}"));
-            }
-
-            // Install the binary
-            let src = daemon_dir.join("target/release/game-shell-input");
-            let dst = root.join("bin/game-shell-input");
-            let install = tokio::process::Command::new("install")
-                .args(["-m755"])
-                .arg(&src)
-                .arg(&dst)
-                .output()
-                .await;
-
-            match install {
-                Ok(i) if i.status.success() => {
-                    let body = format!("{tail}\nok\n");
-                    http_response(200, &body)
-                }
-                Ok(i) => {
-                    let err = String::from_utf8_lossy(&i.stderr);
-                    http_response(500, &format!("install failed: {err}"))
-                }
-                Err(e) => http_response(500, &format!("install error: {e}")),
-            }
-        }
-        Err(e) => http_response(500, &format!("cargo error: {e}")),
+    match bridge_core::dev_build().await {
+        Ok(body) => http_response(200, &body),
+        Err(msg) => http_response(500, &msg),
     }
 }
 
 /// `POST /dev/restart-shell` — kill quickshell and relaunch detached.
 async fn handle_dev_restart_shell() -> String {
-    // Kill existing quickshell (ignore failure — it may not be running).
-    let _ = tokio::process::Command::new("pkill")
-        .args(["-x", "quickshell"])
-        .output()
-        .await;
-
-    // Open log file for child stdio.
-    let log_path = "/tmp/qs-log.txt";
-    let log_file = match std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(log_path)
-    {
-        Ok(f) => f,
-        Err(e) => return http_response(500, &format!("open log failed: {e}")),
-    };
-    let log_stderr = match log_file.try_clone() {
-        Ok(f) => f,
-        Err(e) => return http_response(500, &format!("clone log fd failed: {e}")),
-    };
-
-    // Spawn quickshell detached (new session so it outlives this handler task).
-    let mut cmd = std::process::Command::new("setsid");
-    cmd.args(["quickshell", "-c", "game-shell"]);
-    cmd.stdout(log_file);
-    cmd.stderr(log_stderr);
-    // Inject session env vars so quickshell finds the compositor sockets.
-    for (k, v) in session_env::session_env_pairs() {
-        cmd.env(k, v);
+    match bridge_core::dev_restart_shell().await {
+        Ok(body) => http_response(200, &body),
+        Err(msg) => http_response(500, &msg),
     }
-    match cmd.spawn() {
-        Ok(_) => {}
-        Err(e) => return http_response(500, &format!("spawn failed: {e}")),
-    }
-
-    // Give quickshell a moment to start up and emit initial log lines.
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-    // Read and filter the log file.
-    let log_content = std::fs::read_to_string(log_path).unwrap_or_default();
-    let filtered: String = log_content
-        .lines()
-        .filter(|l| {
-            let upper = l.to_uppercase();
-            (upper.contains("WARN") || upper.contains("ERROR"))
-                && !upper.contains("COULD NOT LOAD ICON")
-        })
-        .rev()
-        .take(30)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let body = if filtered.is_empty() {
-        "started (no WARN/ERROR in first 3s)\n".to_owned()
-    } else {
-        format!("{filtered}\n")
-    };
-    http_response(200, &body)
 }
 
 /// `GET /dev/logs[?lines=N&filter=F]` — tail /tmp/qs-log.txt.
 fn handle_dev_logs(lines: usize, filter: Option<&str>) -> String {
-    let log_path = "/tmp/qs-log.txt";
-    let content = match std::fs::read_to_string(log_path) {
-        Ok(c) => c,
-        // No log yet (e.g. on a fresh boot quickshell isn't redirected here until
-        // a /dev/restart-shell). Degrade gracefully rather than returning 500.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return http_response(
-                200,
-                "(no /tmp/qs-log.txt yet — POST /dev/restart-shell to capture quickshell logs)\n",
-            );
-        }
-        Err(e) => return http_response(500, &format!("read log failed: {e}")),
-    };
-
-    let filtered: Vec<&str> = match filter {
-        Some(f) => {
-            let f_lower = f.to_lowercase();
-            content
-                .lines()
-                .filter(|l| l.to_lowercase().contains(&f_lower))
-                .collect()
-        }
-        None => content.lines().collect(),
-    };
-
-    let tail: String = filtered
-        .iter()
-        .rev()
-        .take(lines)
-        .copied()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let body = format!("{tail}\n");
-    http_response(200, &body)
+    match bridge_core::get_logs(lines, filter) {
+        Ok(body) => http_response(200, &body),
+        Err(msg) => http_response(500, &msg),
+    }
 }
 
 /// `GET /dev/status` — JSON status blob.
 async fn handle_dev_status() -> String {
-    let root = session_env::install_root();
-
-    // SHA from git.
-    let sha = {
-        let out = tokio::process::Command::new("git")
-            .args([
-                "-C",
-                root.to_str().unwrap_or("."),
-                "rev-parse",
-                "--short",
-                "HEAD",
-            ])
-            .output()
-            .await;
-        match out {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_owned(),
-            _ => "unknown".to_owned(),
-        }
-    };
-
-    // Is quickshell running?
-    let shell_running = matches!(
-        tokio::process::Command::new("pgrep")
-            .args(["-x", "quickshell"])
-            .output()
-            .await,
-        Ok(o) if o.status.success()
-    );
-
-    let wayland = match session_env::resolve_wayland_display() {
-        Some(d) => format!("\"{}\"", d.replace('\\', "\\\\").replace('"', "\\\"")),
-        None => "null".to_owned(),
-    };
-
-    let hypr_sig_present = session_env::resolve_hypr_signature().is_some();
-
-    let version = env!("CARGO_PKG_VERSION");
-    let pid = std::process::id();
-
-    let json = format!(
-        r#"{{"sha":"{sha}","daemon_pid":{pid},"version":"{version}","shell_running":{shell_running},"wayland_display":{wayland},"hypr_sig_present":{hypr_sig_present}}}"#
-    );
-
-    // Return JSON with appropriate Content-Type.
-    let reason = "OK";
+    let info = bridge_core::get_status().await;
+    let json = serde_json::to_string(&info).unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
     format!(
-        "HTTP/1.1 200 {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         json.len(),
         json
     )

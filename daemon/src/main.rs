@@ -21,6 +21,9 @@ use game_shell_input::{
     watch,
 };
 
+#[cfg(all(target_os = "linux", feature = "mcp"))]
+use game_shell_input::mcp;
+
 #[cfg(target_os = "linux")]
 use game_shell_input::ipc::{ControllerDbState, SharedControllerDbState};
 
@@ -147,6 +150,42 @@ fn main() -> anyhow::Result<()> {
                     tracing::warn!(
                         "GAME_SHELL_HTTP_BIND={bind_str:?} is not a valid host:port address: {e}"
                     );
+                }
+            }
+        }
+
+        // MCP server (#mcp-bridge): opt-in via GAME_SHELL_MCP_BIND.
+        // When the env var is unset (the default), no socket is opened.
+        // The cancellation token is wired to signal handling + re-exec so
+        // the MCP server stops cleanly when the process exits.
+        #[cfg(feature = "mcp")]
+        {
+            if let Ok(bind_str) = std::env::var("GAME_SHELL_MCP_BIND") {
+                match bind_str.parse::<std::net::SocketAddr>() {
+                    Ok(addr) => {
+                        let cancel = tokio_util::sync::CancellationToken::new();
+                        let mcp_cancel = cancel.clone();
+                        // Wire cancel to the reexec notify so the MCP server
+                        // stops when the daemon re-execs.
+                        let reexec_for_mcp = reexec_notify.clone();
+                        tokio::spawn(async move {
+                            reexec_for_mcp.notified().await;
+                            cancel.cancel();
+                        });
+                        tokio::spawn(mcp::serve(
+                            addr,
+                            control_tx.clone(),
+                            events_tx.clone(),
+                            reexec_notify.clone(),
+                            reexec_flag.clone(),
+                            mcp_cancel,
+                        ));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "GAME_SHELL_MCP_BIND={bind_str:?} is not a valid host:port address: {e}"
+                        );
+                    }
                 }
             }
         }

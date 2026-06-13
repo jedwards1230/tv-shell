@@ -34,6 +34,22 @@ path = "src/main.rs"
 # CI's cec leg runs on Debian Trixie for the same reason — not bookworm/2.36).
 cec = ["dep:cec-rs", "libcec-sys/static"]
 
+# MCP server via rmcp 1.7.0 (the official Model Context Protocol Rust SDK).
+# OFF by default — same rationale as `cec`: the default build leg (CI + macOS
+# dev boxes) stays free of the rmcp / axum / schemars C-adjacent toolchain.
+#
+# The module (`mcp.rs`) is ALSO `#[cfg(target_os = "linux")]`-gated, so even
+# when this feature is enabled the MCP server only compiles/runs on Linux.
+# Enable at deploy time alongside `cec`:
+#   cargo build --release --features cec,mcp
+# (scripts/build-daemon.sh defaults to "cec,mcp")
+#
+# rmcp features used:
+#   - server:                          ServerHandler + tool macros
+#   - macros:                          #[tool], #[tool_router], #[tool_handler]
+#   - transport-streamable-http-server: StreamableHttpService over axum
+mcp = ["dep:rmcp", "dep:axum", "dep:base64"]
+
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -59,6 +75,19 @@ libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # Constant-time comparison for HTTP bearer-token auth (prevents timing oracles, #151).
 subtle = "2"
+# base64 encoding for MCP screenshot tool (PNG bytes → base64 for Content::image).
+# Optional: only needed under the `mcp` feature.
+base64 = { version = "0.22", optional = true }
+
+# MCP server (rmcp 1.7.0 — official Model Context Protocol Rust SDK).
+# Optional + feature-gated (`mcp`): brings in axum, schemars, and the full
+# MCP protocol machinery. The `transport-streamable-http-server` feature pulls
+# in axum transitively; we declare axum directly so we can use it in mcp.rs.
+rmcp = { version = "1.7.0", features = ["server", "macros", "transport-streamable-http-server"], optional = true }
+# axum is used in mcp.rs to host the StreamableHttpService. Also optional so
+# the default build never links it. Version must be compatible with rmcp's
+# transitive axum requirement (rmcp 1.7.0 uses axum 0.8).
+axum = { version = "0.8", optional = true }
 
 # evdev/uinput are Linux kernel interfaces. Keep them off non-Linux hosts so
 # the pure-logic modules (protocol, config, device GUID math) still compile and

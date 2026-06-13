@@ -29,8 +29,18 @@ pub mod system;
 // Cross-platform: no Linux-only imports.
 pub mod session_env;
 
+// Shared action logic used by both the HTTP bridge and the MCP server.
+// Cross-platform: no Linux-only imports.
+pub mod bridge_core;
+
 // LAN HTTP control bridge — cross-platform (tokio only; no Linux-only imports).
 pub mod http;
+
+// MCP server (rmcp 1.7.0): opt-in via `--features mcp`. Linux-gated AND
+// feature-gated so the default build (macOS dev boxes, CI default leg) never
+// links rmcp or axum.
+#[cfg(feature = "mcp")]
+pub mod mcp;
 
 // evdev/uinput input runtime — Linux kernel interfaces.
 #[cfg(target_os = "linux")]

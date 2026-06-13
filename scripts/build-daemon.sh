@@ -23,7 +23,7 @@
 set -euo pipefail
 
 ROOT="${GAME_SHELL_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-FEATURES="${GAME_SHELL_FEATURES:-cec}"
+FEATURES="${GAME_SHELL_FEATURES:-cec,mcp}"
 
 cd "$ROOT/daemon"
 echo "build-daemon: cargo build --release --features ${FEATURES} (in ${ROOT}/daemon)"
