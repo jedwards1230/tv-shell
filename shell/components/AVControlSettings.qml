@@ -42,6 +42,11 @@ FocusScope {
 
     // Friendly label for a CEC logical address (no OSD name in cec-rs 12.0.1).
     function nameForAddress(addr) {
+        // Prefer a local name override (#16, set via the config file — a freeform
+        // on-screen editor is deferred to #20). Keyed by the stringified address.
+        var o = SettingsStore.cecDeviceNames[String(addr)];
+        if (o && o.length)
+            return o;
         // CEC logical-address table (HDMI-CEC spec), consistent with the
         // daemon's cec-rs CecLogicalAddress semantics.
         switch (addr) {
@@ -385,8 +390,8 @@ FocusScope {
                     activeFocusOnTab: true
 
                     // Refresh is hidden when CEC is unavailable — wrap Up to the
-                    // other (always-visible) toggle so focus can't vanish.
-                    KeyNavigation.up: root.cecAvailable ? refreshScope : focusWakeScope
+                    // last (always-visible) toggle so focus can't vanish.
+                    KeyNavigation.up: root.cecAvailable ? refreshScope : autoSwitchScope
                     KeyNavigation.down: focusWakeScope
 
                     SettingsButton {
@@ -443,10 +448,7 @@ FocusScope {
                     activeFocusOnTab: true
 
                     KeyNavigation.up: focusStartupScope
-                    // When CEC is unavailable the action row below is hidden —
-                    // wrap Down back to the first toggle instead of self-looping
-                    // (which would trap focus).
-                    KeyNavigation.down: root.cecAvailable ? wakeScope : focusStartupScope
+                    KeyNavigation.down: autoSwitchScope
 
                     SettingsButton {
                         id: focusWakeBtn
@@ -465,6 +467,66 @@ FocusScope {
                             onClicked: {
                                 focusWakeScope.forceActiveFocus();
                                 focusWakeBtn.activated();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Auto-switch input on power-on toggle (persist-only in Phase 1; the
+            // daemon does not act on it yet — behaviour wiring is a follow-up).
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                ColumnLayout {
+                    spacing: 2
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Auto-switch input on power-on"
+                        font.pixelSize: Theme.fontSmall
+                        color: Theme.textSecondary
+                    }
+
+                    Text {
+                        text: "Switch the TV/AVR to this input automatically when a device powers on."
+                        font.pixelSize: Theme.fontHint
+                        color: Theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+
+                FocusScope {
+                    id: autoSwitchScope
+                    width: autoSwitchBtn.width
+                    height: autoSwitchBtn.height
+                    activeFocusOnTab: true
+
+                    KeyNavigation.up: focusWakeScope
+                    // When CEC is unavailable the action row below is hidden —
+                    // wrap Down back to the first toggle instead of self-looping
+                    // (which would trap focus).
+                    KeyNavigation.down: root.cecAvailable ? wakeScope : focusStartupScope
+
+                    SettingsButton {
+                        id: autoSwitchBtn
+                        text: SettingsStore.cecAutoSwitchOnPowerOn ? "On" : "Off"
+                        focus: parent.activeFocus
+                        anchors.fill: parent
+
+                        color: SettingsStore.cecAutoSwitchOnPowerOn ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
+
+                        onActivated: SettingsStore.setCecAutoSwitchOnPowerOn(!SettingsStore.cecAutoSwitchOnPowerOn)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                autoSwitchScope.forceActiveFocus();
+                                autoSwitchBtn.activated();
                             }
                         }
                     }
@@ -540,9 +602,9 @@ FocusScope {
                     focus: root.cecAvailable
                     activeFocusOnTab: true
 
-                    KeyNavigation.up: focusWakeScope
+                    KeyNavigation.up: autoSwitchScope
                     KeyNavigation.right: sleepScope
-                    KeyNavigation.down: deviceListView.count > 0 ? deviceListView : wakeScope
+                    KeyNavigation.down: deviceRepeater.count > 0 ? deviceRepeater.itemAt(0) : wakeScope
 
                     Rectangle {
                         anchors.fill: parent
@@ -602,7 +664,7 @@ FocusScope {
 
                     KeyNavigation.left: wakeScope
                     KeyNavigation.right: switchScope
-                    KeyNavigation.down: deviceListView.count > 0 ? deviceListView : sleepScope
+                    KeyNavigation.down: deviceRepeater.count > 0 ? deviceRepeater.itemAt(0) : sleepScope
 
                     Rectangle {
                         anchors.fill: parent
@@ -661,7 +723,7 @@ FocusScope {
                     activeFocusOnTab: true
 
                     KeyNavigation.left: sleepScope
-                    KeyNavigation.down: deviceListView.count > 0 ? deviceListView : switchScope
+                    KeyNavigation.down: deviceRepeater.count > 0 ? deviceRepeater.itemAt(0) : switchScope
 
                     Rectangle {
                         anchors.fill: parent
@@ -717,7 +779,6 @@ FocusScope {
         // Device list
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.fillHeight: true
             spacing: 16
             visible: root.cecAvailable
 
@@ -746,110 +807,183 @@ FocusScope {
                 }
             }
 
-            ListView {
-                id: deviceListView
+            // Device rows as a Repeater of per-row FocusScopes (not a ListView):
+            // each row becomes its own activeFocusItem so SettingsPanel's outer
+            // contentFlick scrolls the WHOLE page to follow focus down the rows
+            // (the Focus Preferences section slides up out of view). A ListView
+            // holds focus as one tall item, so moving currentIndex never changed
+            // Window.activeFocusItem and the page never scrolled per-row.
+            ColumnLayout {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
                 spacing: 16
-                clip: true
-                model: root.devices
                 visible: root.devices.length > 0
 
-                KeyNavigation.up: wakeScope
+                Repeater {
+                    id: deviceRepeater
+                    model: root.devices
 
-                delegate: Rectangle {
-                    required property int index
-                    required property var modelData
-                    width: deviceListView.width
-                    height: 160
-                    radius: 16
-                    color: deviceListView.currentIndex === index && deviceListView.activeFocus ? Theme.surfaceHover : Theme.surface
-                    border.width: 2
-                    border.color: Theme.surfaceBorder
+                    delegate: FocusScope {
+                        id: deviceRow
+                        required property int index
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 160
+                        activeFocusOnTab: true
 
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
+                        // Measure the longer "Set as default" label so every row's
+                        // action button shares one stable width — otherwise the
+                        // default row's narrower "Default ✓" button would jut left
+                        // out of the right-aligned column.
+                        TextMetrics {
+                            id: defaultBtnMetrics
+                            font.pixelSize: Theme.fontBody
+                            text: "Set as default"
                         }
-                    }
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 32
-                        anchors.rightMargin: 32
-                        spacing: 24
+                        // First row goes back up to the Wake-AV action button
+                        // (matches the old deviceListView.KeyNavigation.up).
+                        // itemAt() can be transiently null during model rebuilds
+                        // (CEC rescans reassign root.devices) — acceptable, the
+                        // KeyNavigation binding re-evaluates.
+                        KeyNavigation.up: index > 0 ? deviceRepeater.itemAt(index - 1) : wakeScope
+                        KeyNavigation.down: index < deviceRepeater.count - 1 ? deviceRepeater.itemAt(index + 1) : null
 
-                        // Device name + power badge + address detail.
-                        ColumnLayout {
-                            spacing: 8
-                            Layout.fillWidth: true
+                        // Controller path for "Set as default": Return/Enter on the
+                        // focused row toggles that device as the preferred default
+                        // input — re-selecting the current default clears it (#16).
+                        Keys.onReturnPressed: {
+                            var a = modelData.logicalAddress;
+                            SettingsStore.setCecDefaultInput(a === SettingsStore.cecDefaultInput ? -1 : a);
+                        }
+                        Keys.onEnterPressed: {
+                            var a = modelData.logicalAddress;
+                            SettingsStore.setCecDefaultInput(a === SettingsStore.cecDefaultInput ? -1 : a);
+                        }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 16
+                            color: deviceRow.activeFocus ? Theme.surfaceHover : Theme.surface
+                            border.width: 2
+                            border.color: Theme.surfaceBorder
+
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: 150
+                                }
+                            }
 
                             RowLayout {
-                                spacing: 16
+                                anchors.fill: parent
+                                anchors.leftMargin: 32
+                                anchors.rightMargin: 32
+                                spacing: 24
 
-                                Text {
-                                    // cec-rs 12.0.1 exposes no OSD name; derive a
-                                    // friendly label from the logical address.
-                                    text: root.nameForAddress(modelData.logicalAddress)
-                                    font.pixelSize: Theme.fontBody
-                                    font.bold: true
-                                    color: Theme.textPrimary
-                                }
+                                // Device name + power badge + address detail.
+                                ColumnLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
 
-                                // Power status badge
-                                Rectangle {
-                                    width: powerLabel.implicitWidth + 24
-                                    height: 40
-                                    radius: 20
-                                    color: {
-                                        if (modelData.powerStatus === "on")
-                                            return Qt.rgba(0.176, 0.541, 0.306, 0.2);
-                                        if (modelData.powerStatus === "standby")
-                                            return Qt.rgba(0.843, 0.651, 0.294, 0.2);
-                                        return Theme.surfaceHover;
+                                    RowLayout {
+                                        spacing: 16
+
+                                        Text {
+                                            // cec-rs 12.0.1 exposes no OSD name; derive a
+                                            // friendly label from the logical address.
+                                            text: root.nameForAddress(deviceRow.modelData.logicalAddress)
+                                            font.pixelSize: Theme.fontBody
+                                            font.bold: true
+                                            color: Theme.textPrimary
+                                        }
+
+                                        // Power status badge
+                                        Rectangle {
+                                            width: powerLabel.implicitWidth + 24
+                                            height: 40
+                                            radius: 20
+                                            color: {
+                                                if (deviceRow.modelData.powerStatus === "on")
+                                                    return Qt.rgba(0.176, 0.541, 0.306, 0.2);
+                                                if (deviceRow.modelData.powerStatus === "standby")
+                                                    return Qt.rgba(0.843, 0.651, 0.294, 0.2);
+                                                return Theme.surfaceHover;
+                                            }
+
+                                            Text {
+                                                id: powerLabel
+                                                anchors.centerIn: parent
+                                                text: {
+                                                    if (deviceRow.modelData.powerStatus === "on")
+                                                        return "On";
+                                                    if (deviceRow.modelData.powerStatus === "standby")
+                                                        return "Standby";
+                                                    if (deviceRow.modelData.powerStatus === "waking")
+                                                        return "Waking";
+                                                    if (deviceRow.modelData.powerStatus === "sleeping")
+                                                        return "Sleeping";
+                                                    return "Unknown";
+                                                }
+                                                font.pixelSize: Theme.fontCaption
+                                                color: {
+                                                    if (deviceRow.modelData.powerStatus === "on")
+                                                        return Theme.online;
+                                                    if (deviceRow.modelData.powerStatus === "standby")
+                                                        return Theme.gold;
+                                                    return Theme.textSecondary;
+                                                }
+                                            }
+                                        }
+
+                                        // Default-input badge — shown when this device is
+                                        // the persisted preferred default (#16). Reuses the
+                                        // power-badge styling (crimson/sidebarActive tint).
+                                        Rectangle {
+                                            visible: deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput
+                                            width: defaultLabel.implicitWidth + 24
+                                            height: 40
+                                            radius: 20
+                                            color: Theme.sidebarActive
+
+                                            Text {
+                                                id: defaultLabel
+                                                anchors.centerIn: parent
+                                                text: "Default"
+                                                font.pixelSize: Theme.fontCaption
+                                                color: Theme.textOnDark
+                                            }
+                                        }
                                     }
 
                                     Text {
-                                        id: powerLabel
-                                        anchors.centerIn: parent
-                                        text: {
-                                            if (modelData.powerStatus === "on")
-                                                return "On";
-                                            if (modelData.powerStatus === "standby")
-                                                return "Standby";
-                                            if (modelData.powerStatus === "waking")
-                                                return "Waking";
-                                            if (modelData.powerStatus === "sleeping")
-                                                return "Sleeping";
-                                            return "Unknown";
-                                        }
-                                        font.pixelSize: Theme.fontCaption
-                                        color: {
-                                            if (modelData.powerStatus === "on")
-                                                return Theme.online;
-                                            if (modelData.powerStatus === "standby")
-                                                return Theme.gold;
-                                            return Theme.textSecondary;
-                                        }
+                                        text: "Logical address: " + deviceRow.modelData.logicalAddress
+                                        font.pixelSize: Theme.fontSmall
+                                        color: Theme.textSecondary
                                     }
+                                }
+
+                                // Set-as-default action — persists the preference (Phase 1
+                                // is persist-only; daemon behaviour wiring is a follow-up).
+                                // z lifts it above the row-selection MouseArea so its own
+                                // click handler wins; Return on the focused row is the
+                                // controller path.
+                                SettingsButton {
+                                    z: 1
+                                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                                    Layout.preferredWidth: defaultBtnMetrics.width + 80
+                                    text: deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput ? "Default ✓" : "Set as default"
+                                    highlighted: deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput
+                                    onActivated: SettingsStore.setCecDefaultInput(deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput ? -1 : deviceRow.modelData.logicalAddress)
                                 }
                             }
 
-                            Text {
-                                text: "Logical address: " + modelData.logicalAddress
-                                font.pixelSize: Theme.fontSmall
-                                color: Theme.textSecondary
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    deviceRow.forceActiveFocus();
+                                }
                             }
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            deviceListView.currentIndex = index;
-                            deviceListView.forceActiveFocus();
                         }
                     }
                 }
@@ -858,7 +992,7 @@ FocusScope {
 
         // Hint bar
         Text {
-            text: root.cecAvailable ? "A: Select  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
+            text: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
             font.pixelSize: Theme.fontHint
             color: Theme.textSecondary
             Layout.alignment: Qt.AlignHCenter
