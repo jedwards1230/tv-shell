@@ -10,6 +10,7 @@ PreferenceRow 1.0 PreferenceRow.qml
 ReadonlyInfoCard 1.0 ReadonlyInfoCard.qml
 SectionHeader 1.0 SectionHeader.qml
 SettingsButtonGroup 1.0 SettingsButtonGroup.qml
+SettingsListRow 1.0 SettingsListRow.qml
 SettingsDropdown 1.0 SettingsDropdown.qml
 StatusPill 1.0 StatusPill.qml
 VolumeBar 1.0 VolumeBar.qml

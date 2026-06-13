@@ -381,21 +381,12 @@ FocusScope {
             KeyNavigation.up: powerToggleScope
             KeyNavigation.down: availList.count > 0 ? availList : powerToggleScope
 
-            delegate: Rectangle {
+            delegate: SettingsListRow {
                 required property int index
                 required property var modelData
                 width: pairedList.width
-                height: 96
-                radius: Units.radiusMD
-                color: pairedList.currentIndex === index && pairedList.activeFocus ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: modelData.connected ? Theme.online : Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
+                selected: pairedList.currentIndex === index && pairedList.activeFocus
+                borderColor: modelData.connected ? Theme.online : Theme.surfaceBorder
 
                 RowLayout {
                     anchors.fill: parent
@@ -479,21 +470,11 @@ FocusScope {
 
             KeyNavigation.up: pairedList.count > 0 ? pairedList : powerToggleScope
 
-            delegate: Rectangle {
+            delegate: SettingsListRow {
                 required property int index
                 required property var modelData
                 width: availList.width
-                height: 96
-                radius: Units.radiusMD
-                color: availList.currentIndex === index && availList.activeFocus ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
+                selected: availList.currentIndex === index && availList.activeFocus
 
                 RowLayout {
                     anchors.fill: parent
