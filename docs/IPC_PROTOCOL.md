@@ -1003,6 +1003,40 @@ body degrades to the offline object (the command does not error):
 The response *parser* is a pure, unit-tested function (parses Sunshine's
 `/serverinfo` XML into the object above).
 
+### Plex hubs (home-screen Plex widget)
+
+#### `plex-hubs`
+
+Fetch the Plex server's **On Deck** (continue-watching / up-next) and **Recently
+Added** hubs for the home-screen Plex widget. Bare command — no body. Stateless
+and cross-platform (`reqwest`), served like `sunshine-status`.
+
+Config comes from the **daemon environment** (typically `daemon.env`):
+
+- `GAME_SHELL_PLEX_URL` — server base, e.g. `https://plex.lilbro.cloud`
+- `GAME_SHELL_PLEX_TOKEN` — an `X-Plex-Token`
+
+The token never leaves the daemon: the reply embeds ready-to-load, tokenized
+poster URLs (`/photo/:/transcode?…&X-Plex-Token=…`) so the QML `Image` loads art
+directly without ever seeing the credential.
+
+Reply (compact single-line JSON):
+
+```json
+{"enabled":true,
+ "onDeck":[{"title":"Dexter","subtitle":"S6 · E2 · Once Upon a Time...","kind":"episode","art":"https://…","progress":0.0}],
+ "recentlyAdded":[{"title":"Skyfall","subtitle":"2012","kind":"movie","art":"https://…","progress":0.05}]}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `enabled` | `false` when `GAME_SHELL_PLEX_URL`/`GAME_SHELL_PLEX_TOKEN` are unset — the widget then hides itself |
+| `onDeck` / `recentlyAdded` | up to 16 / 24 items; each `{title,subtitle,kind,art,progress}` |
+| `progress` | 0..1 resume position (On Deck partially-watched items); 0 otherwise |
+
+A disabled or unreachable server degrades to `{"enabled":false,…}` / empty hubs
+rather than erroring.
+
 ### Moonlight local-config "forget" (creds-free unpair)
 
 #### `moonlight-forget <host>`
