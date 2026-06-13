@@ -830,6 +830,16 @@ FocusScope {
                         implicitHeight: 160
                         activeFocusOnTab: true
 
+                        // Measure the longer "Set as default" label so every row's
+                        // action button shares one stable width — otherwise the
+                        // default row's narrower "Default ✓" button would jut left
+                        // out of the right-aligned column.
+                        TextMetrics {
+                            id: defaultBtnMetrics
+                            font.pixelSize: Theme.fontBody
+                            text: "Set as default"
+                        }
+
                         // First row goes back up to the Wake-AV action button
                         // (matches the old deviceListView.KeyNavigation.up).
                         // itemAt() can be transiently null during model rebuilds
@@ -958,6 +968,8 @@ FocusScope {
                                 // controller path.
                                 SettingsButton {
                                     z: 1
+                                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                                    Layout.preferredWidth: defaultBtnMetrics.width + 80
                                     text: deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput ? "Default ✓" : "Set as default"
                                     highlighted: deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput
                                     onActivated: SettingsStore.setCecDefaultInput(deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput ? -1 : deviceRow.modelData.logicalAddress)
