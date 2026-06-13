@@ -184,6 +184,28 @@ FocusScope {
         }
     }
 
+    // Soft neutral focus halo behind the card (matches the FocusFrame card cue:
+    // a shadow-like grey glow instead of a crimson ring). Painted before `card`
+    // so it sits behind it.
+    Rectangle {
+        id: cardGlow
+        anchors.centerIn: card
+        width: card.width + 28
+        height: card.height + 28
+        radius: card.radius + 14
+        color: "transparent"
+        border.width: 14
+        border.color: Theme.cardFocusGlow
+        opacity: root.activeFocus && !Theme.mouseMode ? 1.0 : 0.0
+        visible: opacity > 0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: 180
+            }
+        }
+    }
+
     Rectangle {
         id: card
         width: parent.width
@@ -191,7 +213,7 @@ FocusScope {
         radius: Theme.cardRadius
         color: Theme.cardBackground
         border.width: root.activeFocus && !Theme.mouseMode ? Units.borderMedium : Units.borderThin
-        border.color: root.activeFocus && !Theme.mouseMode ? Theme.focusBorder : Theme.surfaceBorder
+        border.color: root.activeFocus && !Theme.mouseMode ? Theme.cardFocusBorder : Theme.surfaceBorder
 
         Behavior on border.color {
             ColorAnimation {
