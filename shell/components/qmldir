@@ -41,6 +41,7 @@ NavigationDrawer 1.0 NavigationDrawer.qml
 KeyBindingsSettings 1.0 KeyBindingsSettings.qml
 HyprctlClients 1.0 HyprctlClients.qml
 AVController 1.0 AVController.qml
+AudioController 1.0 AudioController.qml
 SocketClient 1.0 SocketClient.qml
 InputManager 1.0 InputManager.qml
 AppLifecycleManager 1.0 AppLifecycleManager.qml

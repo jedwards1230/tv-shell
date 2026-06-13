@@ -24,90 +24,29 @@ FocusScope {
     // Guard: re-apply persisted default only once per page-load
     property bool _reapplied: false
 
-    // --- Processes ---
+    // --- Shared audio controller ---
 
-    Process {
-        id: getVolume
-        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
-        stdout: SplitParser {
-            onRead: line => {
-                // Output: "Volume: 0.50" or "Volume: 0.50 [MUTED]"
-                let parts = line.trim().split(" ");
-                if (parts.length >= 2) {
-                    root.volume = Math.round(parseFloat(parts[1]) * 100);
-                }
-                root.muted = line.indexOf("[MUTED]") >= 0;
-            }
-        }
-    }
-
-    Process {
-        id: setVolume
-        property string level: "50%"
-        command: ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", level]
-        onExited: {
-            getVolume.running = true;
-        }
-    }
-
-    Process {
-        id: toggleMute
-        command: ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
-        onExited: {
-            getVolume.running = true;
-        }
-    }
-
-    Process {
-        id: listSinks
-        command: ["bash", "-c", "wpctl status | sed -n '/Audio/,/Video/p' | sed -n '/Sinks:/,/Sources:/p' | grep -v 'Sinks:\\|Sources:\\|^$'"]
-        stdout: SplitParser {
-            property var collected: []
-            onRead: line => {
-                // Lines like: " │      46. <AVR name>  [vol: 1.00]"
-                //             " │  *   86. Radeon HD Audio   [vol: 1.00]"
-                // Strip box-drawing chars and leading whitespace
-                let cleaned = line.replace(/[│├└─┐┘┌┬┴┤┼]/g, " ");
-                let isDefault = cleaned.indexOf("*") >= 0;
-                // Extract id and name from "  *   86. Some Name  [vol: 1.00]"
-                let match = cleaned.match(/\*?\s*(\d+)\.\s+(.+?)(?:\s+\[vol:.+\])?\s*$/);
-                if (match) {
-                    let entry = {
-                        id: parseInt(match[1]),
-                        name: match[2].trim(),
-                        isDefault: isDefault
-                    };
-                    collected.push(entry);
-                    if (isDefault)
-                        root.defaultSinkIndex = collected.length - 1;
-                }
-            }
-        }
-        onExited: {
-            root.sinks = listSinks.stdout.collected;
-            listSinks.stdout.collected = [];
-            // Re-apply persisted default once on first populate
+    AudioController {
+        id: audioCtl
+        onSinksChanged: {
+            // Mirror sinks/defaultSinkIndex onto root for the UI.
+            root.sinks = audioCtl.sinks;
+            root.defaultSinkIndex = audioCtl.defaultSinkIndex;
+            // Re-apply persisted default once on first populate.
             if (!root._reapplied && SettingsStore.defaultSink !== "") {
                 root._reapplied = true;
                 reapplySink.wantName = SettingsStore.defaultSink;
                 reapplySink.running = true;
             }
-            // Refresh format info after sink list updates
+            // Refresh format info after sink list updates.
             getFormat.running = true;
         }
-    }
-
-    // Live-switch the default sink by numeric id (volatile — changes across reboots)
-    Process {
-        id: setDefaultSink
-        property int sinkId: 0
-        command: ["wpctl", "set-default", String(sinkId)]
-        onExited: {
-            // After switching, read the node.name of the new default to persist it
+        onVolumeChanged: root.volume = audioCtl.volume
+        onMutedChanged: root.muted = audioCtl.muted
+        onSinkSwitched: sinkId => {
+            // After switching, read the node.name to persist it.
             readNodeName.pendingSinkId = sinkId;
             readNodeName.running = true;
-            listSinks.running = true;
-            refreshTimer.start();
         }
     }
 
@@ -142,16 +81,7 @@ FocusScope {
         command: ["bash", "-c", "[ -z \"$GAME_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$GAME_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$GAME_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
         onExited: {
             // Refresh the list so UI reflects the re-applied default
-            listSinks.running = true;
-        }
-    }
-
-    Timer {
-        id: refreshTimer
-        interval: 500
-        onTriggered: {
-            getVolume.running = true;
-            getFormat.running = true;
+            audioCtl.refresh();
         }
     }
 
@@ -245,10 +175,9 @@ FocusScope {
         command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
         onExited: {
             // Refresh everything: new default sink, format, and active profile.
-            listSinks.running = true;
+            audioCtl.refresh();
             getFormat.running = true;
             listProfiles.running = true;
-            refreshTimer.start();
         }
     }
 
@@ -323,8 +252,7 @@ FocusScope {
     }
 
     Component.onCompleted: {
-        getVolume.running = true;
-        listSinks.running = true;
+        audioCtl.refresh();
         getFormat.running = true;
         listProfiles.running = true;
     }
@@ -335,8 +263,7 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             root._reapplied = false;
-            getVolume.running = true;
-            listSinks.running = true;
+            audioCtl.refresh();
             getFormat.running = true;
             listProfiles.running = true;
         } else if (root.anyChannelActive) {
@@ -372,11 +299,7 @@ FocusScope {
                 KeyNavigation.right: volUpScope
                 KeyNavigation.down: muteScope
                 text: "  -  "
-                onActivated: {
-                    root.volume = Math.max(0, root.volume - 5);
-                    setVolume.level = root.volume + "%";
-                    setVolume.running = true;
-                }
+                onActivated: audioCtl.setVolumeLevel(audioCtl.volume - 5)
             }
 
             // Volume bar
@@ -413,11 +336,7 @@ FocusScope {
                 KeyNavigation.left: volDownScope
                 KeyNavigation.down: muteScope
                 text: "  +  "
-                onActivated: {
-                    root.volume = Math.min(100, root.volume + 5);
-                    setVolume.level = root.volume + "%";
-                    setVolume.running = true;
-                }
+                onActivated: audioCtl.setVolumeLevel(audioCtl.volume + 5)
             }
         }
 
@@ -426,7 +345,7 @@ FocusScope {
             KeyNavigation.up: volDownScope
             KeyNavigation.down: sinkDropdownScope
             text: root.muted ? "Unmute" : "Mute"
-            onActivated: toggleMute.running = true
+            onActivated: audioCtl.toggleMuteState()
         }
 
         // Output device dropdown
@@ -447,8 +366,7 @@ FocusScope {
                 return item.name;
             }
             onItemSelected: function (item) {
-                setDefaultSink.sinkId = item.id;
-                setDefaultSink.running = true;
+                audioCtl.setDefaultSinkById(item.id);
             }
 
             KeyNavigation.up: muteScope

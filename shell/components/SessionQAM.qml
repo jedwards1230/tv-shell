@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Io
 
 // SessionQAM — right-edge "Quick Access Menu" drawer (#218, epic #133 Phase 2).
 //
@@ -31,11 +30,7 @@ Drawer {
     // 0 = tab bar focused, 1 = tab content focused
     property int _focusRow: 0
 
-    // --- Quick Settings (audio) state, mirrored from VolumeOverlay ---
-    property int volume: 50
-    property bool muted: false
-    property var sinks: []
-    property int defaultSinkIndex: -1
+    // --- Quick Settings UI state ---
     property bool _outputExpanded: false
     property int _sinkCursor: 0
     // Quick Settings sub-row: 0 = volume bar, 1 = output selector.
@@ -63,8 +58,7 @@ Drawer {
         root._outputExpanded = false;
         root._csRow = 0;
         root.opened = true;
-        getVolume.running = true;
-        listSinks.running = true;
+        audioCtl.refresh();
         Qt.callLater(() => contentRoot.forceActiveFocus());
     }
 
@@ -79,12 +73,6 @@ Drawer {
         // as a safety net if `opened` is ever set true without going through it.
         if (opened)
             Qt.callLater(() => contentRoot.forceActiveFocus());
-    }
-
-    function _currentSinkName() {
-        if (root.defaultSinkIndex >= 0 && root.defaultSinkIndex < root.sinks.length)
-            return root.sinks[root.defaultSinkIndex].name;
-        return "No output device";
     }
 
     // Move focus from the tab bar into the active tab's content.
@@ -112,71 +100,11 @@ Drawer {
         contentRoot.forceActiveFocus();
     }
 
-    // --- wpctl processes (mirrored from VolumeOverlay.qml) ---
-    Process {
-        id: getVolume
-        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
-        stdout: SplitParser {
-            onRead: line => {
-                let parts = line.trim().split(" ");
-                if (parts.length >= 2)
-                    root.volume = Math.round(parseFloat(parts[1]) * 100);
-                root.muted = line.indexOf("[MUTED]") >= 0;
-            }
+    AudioController {
+        id: audioCtl
+        onSinkCursorSync: idx => {
+            root._sinkCursor = idx;
         }
-    }
-    Process {
-        id: setVolume
-        property string level: "50%"
-        command: ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", level]
-        onExited: getVolume.running = true
-    }
-    Process {
-        id: toggleMute
-        command: ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
-        onExited: getVolume.running = true
-    }
-    Process {
-        id: listSinks
-        command: ["bash", "-c", "wpctl status | sed -n '/Audio/,/Video/p' | sed -n '/Sinks:/,/Sources:/p' | grep -v 'Sinks:\\|Sources:\\|^$'"]
-        stdout: SplitParser {
-            property var collected: []
-            onRead: line => {
-                let cleaned = line.replace(/[│├└─┐┘┌┬┴┤┼]/g, " ");
-                let isDefault = cleaned.indexOf("*") >= 0;
-                let match = cleaned.match(/\*?\s*(\d+)\.\s+(.+?)(?:\s+\[vol:.+\])?\s*$/);
-                if (match) {
-                    let entry = {
-                        id: parseInt(match[1]),
-                        name: match[2].trim(),
-                        isDefault: isDefault
-                    };
-                    collected.push(entry);
-                    if (isDefault)
-                        root.defaultSinkIndex = collected.length - 1;
-                }
-            }
-        }
-        onExited: {
-            root.sinks = listSinks.stdout.collected;
-            listSinks.stdout.collected = [];
-            if (root.defaultSinkIndex >= 0)
-                root._sinkCursor = root.defaultSinkIndex;
-        }
-    }
-    Process {
-        id: setDefaultSink
-        property int sinkId: 0
-        command: ["wpctl", "set-default", String(sinkId)]
-        onExited: {
-            listSinks.running = true;
-            refreshTimer.start();
-        }
-    }
-    Timer {
-        id: refreshTimer
-        interval: 500
-        onTriggered: getVolume.running = true
     }
 
     // === Content ===
@@ -204,12 +132,11 @@ Drawer {
                         if (root._sinkCursor > 0)
                             root._sinkCursor--;
                     } else if (event.key === Qt.Key_Down) {
-                        if (root._sinkCursor < root.sinks.length - 1)
+                        if (root._sinkCursor < audioCtl.sinks.length - 1)
                             root._sinkCursor++;
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        if (root._sinkCursor >= 0 && root._sinkCursor < root.sinks.length && !setDefaultSink.running) {
-                            setDefaultSink.sinkId = root.sinks[root._sinkCursor].id;
-                            setDefaultSink.running = true;
+                        if (root._sinkCursor >= 0 && root._sinkCursor < audioCtl.sinks.length) {
+                            audioCtl.setDefaultSinkById(audioCtl.sinks[root._sinkCursor].id);
                         }
                         root._outputExpanded = false;
                     } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
@@ -218,17 +145,13 @@ Drawer {
                 } else if (root._csRow === 0) {
                     // Volume bar row.
                     if (event.key === Qt.Key_Left) {
-                        root.volume = Math.max(0, root.volume - 5);
-                        setVolume.level = root.volume + "%";
-                        setVolume.running = true;
+                        audioCtl.setVolumeLevel(audioCtl.volume - 5);
                     } else if (event.key === Qt.Key_Right) {
-                        root.volume = Math.min(100, root.volume + 5);
-                        setVolume.level = root.volume + "%";
-                        setVolume.running = true;
+                        audioCtl.setVolumeLevel(audioCtl.volume + 5);
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        toggleMute.running = true;
+                        audioCtl.toggleMuteState();
                     } else if (event.key === Qt.Key_Down) {
-                        if (root.sinks.length > 0)
+                        if (audioCtl.sinks.length > 0)
                             root._csRow = 1;
                     } else if (event.key === Qt.Key_Up) {
                         root._returnToTabs();
@@ -238,8 +161,8 @@ Drawer {
                 } else {
                     // Output selector row.
                     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        if (root.sinks.length > 0) {
-                            root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
+                        if (audioCtl.sinks.length > 0) {
+                            root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
                             root._outputExpanded = true;
                         }
                     } else if (event.key === Qt.Key_Up) {
@@ -431,7 +354,7 @@ Drawer {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: root._currentSinkName()
+                                text: audioCtl.currentSinkName()
                                 font.pixelSize: Theme.fontBody
                                 color: Theme.textPrimary
                                 elide: Text.ElideRight
@@ -446,7 +369,7 @@ Drawer {
 
                         // Expanded: full sink list.
                         Repeater {
-                            model: root._outputExpanded ? root.sinks : []
+                            model: root._outputExpanded ? audioCtl.sinks : []
                             Rectangle {
                                 required property int index
                                 required property var modelData
@@ -487,10 +410,7 @@ Drawer {
                                     onEntered: root._sinkCursor = index
                                     hoverEnabled: true
                                     onClicked: {
-                                        if (!setDefaultSink.running) {
-                                            setDefaultSink.sinkId = modelData.id;
-                                            setDefaultSink.running = true;
-                                        }
+                                        audioCtl.setDefaultSinkById(modelData.id);
                                         root._outputExpanded = false;
                                     }
                                 }
@@ -503,10 +423,10 @@ Drawer {
                         visible: !root._outputExpanded
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            if (root.sinks.length > 0) {
+                            if (audioCtl.sinks.length > 0) {
                                 root._focusRow = 1;
                                 root._csRow = 1;
-                                root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
+                                root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
                                 root._outputExpanded = true;
                             }
                         }
@@ -530,10 +450,10 @@ Drawer {
                     border.color: Theme.focusBorder
 
                     Rectangle {
-                        width: parent.width * (root.volume / 100)
+                        width: parent.width * (audioCtl.volume / 100)
                         height: parent.height
                         radius: parent.radius
-                        color: root.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
+                        color: audioCtl.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
                         Behavior on width {
                             NumberAnimation {
                                 duration: 80
@@ -542,10 +462,10 @@ Drawer {
                     }
                     Text {
                         anchors.centerIn: parent
-                        text: root.muted ? "MUTED" : root.volume + "%"
+                        text: audioCtl.muted ? "MUTED" : audioCtl.volume + "%"
                         font.pixelSize: Theme.fontHint
                         font.bold: true
-                        color: root.volume > 40 && !root.muted ? Theme.textOnDark : Theme.textPrimary
+                        color: audioCtl.volume > 40 && !audioCtl.muted ? Theme.textOnDark : Theme.textPrimary
                     }
                 }
             }

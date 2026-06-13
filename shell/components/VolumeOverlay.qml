@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Io
 import "lib"
 
 // Compact volume quick-popover, anchored beside the originating QuickAction
@@ -19,12 +18,6 @@ FocusScope {
     // Scene-root rect {x, y, w, h} of the glyph that opened this popover.
     property var anchorRect: null
 
-    // --- Audio state ---
-    property int volume: 50
-    property bool muted: false
-    property var sinks: []
-    property int defaultSinkIndex: -1
-
     // Output list collapsed by default (keeps the popover compact); expands to
     // the full sink switcher on demand — and only ever opens on A (never on a
     // directional key), matching the frontend dropdown rule.
@@ -34,6 +27,13 @@ FocusScope {
     // adjusts, A mutes), 1 = output selector (A expands). Directional keys only
     // MOVE focus between rows; they never open the dropdown.
     property int _focusRow: 0
+
+    AudioController {
+        id: audioCtl
+        onSinkCursorSync: idx => {
+            root._sinkCursor = idx;
+        }
+    }
 
     visible: opened
     anchors.fill: parent
@@ -54,89 +54,8 @@ FocusScope {
             });
             root._outputExpanded = false;
             root._focusRow = 0;
-            getVolume.running = true;
-            listSinks.running = true;
+            audioCtl.refresh();
         }
-    }
-
-    function _currentSinkName() {
-        if (root.defaultSinkIndex >= 0 && root.defaultSinkIndex < root.sinks.length)
-            return root.sinks[root.defaultSinkIndex].name;
-        return "No output device";
-    }
-
-    // --- wpctl processes (mirrored from AudioSettings.qml) ---
-
-    Process {
-        id: getVolume
-        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
-        stdout: SplitParser {
-            onRead: line => {
-                let parts = line.trim().split(" ");
-                if (parts.length >= 2)
-                    root.volume = Math.round(parseFloat(parts[1]) * 100);
-                root.muted = line.indexOf("[MUTED]") >= 0;
-            }
-        }
-    }
-
-    Process {
-        id: setVolume
-        property string level: "50%"
-        command: ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", level]
-        onExited: getVolume.running = true
-    }
-
-    Process {
-        id: toggleMute
-        command: ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
-        onExited: getVolume.running = true
-    }
-
-    Process {
-        id: listSinks
-        command: ["bash", "-c", "wpctl status | sed -n '/Audio/,/Video/p' | sed -n '/Sinks:/,/Sources:/p' | grep -v 'Sinks:\\|Sources:\\|^$'"]
-        stdout: SplitParser {
-            property var collected: []
-            onRead: line => {
-                let cleaned = line.replace(/[│├└─┐┘┌┬┴┤┼]/g, " ");
-                let isDefault = cleaned.indexOf("*") >= 0;
-                let match = cleaned.match(/\*?\s*(\d+)\.\s+(.+?)(?:\s+\[vol:.+\])?\s*$/);
-                if (match) {
-                    let entry = {
-                        id: parseInt(match[1]),
-                        name: match[2].trim(),
-                        isDefault: isDefault
-                    };
-                    collected.push(entry);
-                    if (isDefault)
-                        root.defaultSinkIndex = collected.length - 1;
-                }
-            }
-        }
-        onExited: {
-            root.sinks = listSinks.stdout.collected;
-            listSinks.stdout.collected = [];
-            // Sync cursor to default sink
-            if (root.defaultSinkIndex >= 0)
-                root._sinkCursor = root.defaultSinkIndex;
-        }
-    }
-
-    Process {
-        id: setDefaultSink
-        property int sinkId: 0
-        command: ["wpctl", "set-default", String(sinkId)]
-        onExited: {
-            listSinks.running = true;
-            refreshTimer.start();
-        }
-    }
-
-    Timer {
-        id: refreshTimer
-        interval: 500
-        onTriggered: getVolume.running = true
     }
 
     // --- Key handling ---
@@ -147,12 +66,11 @@ FocusScope {
                 if (root._sinkCursor > 0)
                     root._sinkCursor--;
             } else if (event.key === Qt.Key_Down) {
-                if (root._sinkCursor < root.sinks.length - 1)
+                if (root._sinkCursor < audioCtl.sinks.length - 1)
                     root._sinkCursor++;
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                if (root._sinkCursor >= 0 && root._sinkCursor < root.sinks.length) {
-                    setDefaultSink.sinkId = root.sinks[root._sinkCursor].id;
-                    setDefaultSink.running = true;
+                if (root._sinkCursor >= 0 && root._sinkCursor < audioCtl.sinks.length) {
+                    audioCtl.setDefaultSinkById(audioCtl.sinks[root._sinkCursor].id);
                 }
                 root._outputExpanded = false;
             } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
@@ -163,7 +81,7 @@ FocusScope {
             // output dropdown opens on A only (never on a directional key).
             if (event.key === Qt.Key_Down) {
                 // Move focus to the output selector row (if there is one).
-                if (root._focusRow === 0 && root.sinks.length > 0)
+                if (root._focusRow === 0 && audioCtl.sinks.length > 0)
                     root._focusRow = 1;
             } else if (event.key === Qt.Key_Up) {
                 // Move focus back to the volume bar.
@@ -171,26 +89,22 @@ FocusScope {
                     root._focusRow = 0;
             } else if (event.key === Qt.Key_Left) {
                 if (root._focusRow === 0) {
-                    root.volume = Math.max(0, root.volume - 5);
-                    setVolume.level = root.volume + "%";
-                    setVolume.running = true;
+                    audioCtl.setVolumeLevel(audioCtl.volume - 5);
                 }
             } else if (event.key === Qt.Key_Right) {
                 if (root._focusRow === 0) {
-                    root.volume = Math.min(100, root.volume + 5);
-                    setVolume.level = root.volume + "%";
-                    setVolume.running = true;
+                    audioCtl.setVolumeLevel(audioCtl.volume + 5);
                 }
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 if (root._focusRow === 1) {
                     // A on the focused output selector → open the dropdown.
-                    if (root.sinks.length > 0) {
-                        root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
+                    if (audioCtl.sinks.length > 0) {
+                        root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
                         root._outputExpanded = true;
                     }
                 } else {
                     // A on the volume bar → toggle mute.
-                    toggleMute.running = true;
+                    audioCtl.toggleMuteState();
                 }
             } else if (event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
                 root.opened = false;
@@ -225,10 +139,10 @@ FocusScope {
             border.color: Theme.focusBorder
 
             Rectangle {
-                width: parent.width * (root.volume / 100)
+                width: parent.width * (audioCtl.volume / 100)
                 height: parent.height
                 radius: parent.radius
-                color: root.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
+                color: audioCtl.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
 
                 Behavior on width {
                     NumberAnimation {
@@ -239,10 +153,10 @@ FocusScope {
 
             Text {
                 anchors.centerIn: parent
-                text: root.muted ? "MUTED" : root.volume + "%"
+                text: audioCtl.muted ? "MUTED" : audioCtl.volume + "%"
                 font.pixelSize: Theme.fontHint
                 font.bold: true
-                color: root.volume > 40 && !root.muted ? Theme.textOnDark : Theme.textPrimary
+                color: audioCtl.volume > 40 && !audioCtl.muted ? Theme.textOnDark : Theme.textPrimary
             }
         }
 
@@ -250,9 +164,9 @@ FocusScope {
         Text {
             Layout.alignment: Qt.AlignHCenter
             visible: !root._outputExpanded && root._focusRow === 0
-            text: root.muted ? "A: unmute" : "A: mute"
+            text: audioCtl.muted ? "A: unmute" : "A: mute"
             font.pixelSize: Theme.fontHint
-            color: root.muted ? Theme.warning : Theme.textMuted
+            color: audioCtl.muted ? Theme.warning : Theme.textMuted
         }
 
         // --- Output: collapsed current row (default) ---
@@ -261,7 +175,7 @@ FocusScope {
             Layout.fillWidth: true
             height: Units.gridUnit * 1.6
             radius: Units.radiusMD
-            visible: !root._outputExpanded && root.sinks.length > 0
+            visible: !root._outputExpanded && audioCtl.sinks.length > 0
 
             // Highlighted only when the output selector row has focus.
             readonly property bool rowFocused: root.activeFocus && root._focusRow === 1 && !root._outputExpanded
@@ -286,7 +200,7 @@ FocusScope {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Output: " + root._currentSinkName()
+                    text: "Output: " + audioCtl.currentSinkName()
                     font.pixelSize: Theme.fontHint
                     color: Theme.textPrimary
                     elide: Text.ElideRight
@@ -310,9 +224,9 @@ FocusScope {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     // A click opens the dropdown (open-on-click rule).
-                    if (root.sinks.length > 0) {
+                    if (audioCtl.sinks.length > 0) {
                         root._focusRow = 1;
-                        root._sinkCursor = root.defaultSinkIndex >= 0 ? root.defaultSinkIndex : 0;
+                        root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
                         root._outputExpanded = true;
                     }
                 }
@@ -329,7 +243,7 @@ FocusScope {
         }
 
         Repeater {
-            model: root._outputExpanded ? root.sinks : []
+            model: root._outputExpanded ? audioCtl.sinks : []
 
             Rectangle {
                 required property int index
@@ -381,8 +295,7 @@ FocusScope {
                     cursorShape: Qt.PointingHandCursor
                     onEntered: root._sinkCursor = index
                     onClicked: {
-                        setDefaultSink.sinkId = modelData.id;
-                        setDefaultSink.running = true;
+                        audioCtl.setDefaultSinkById(modelData.id);
                         root._outputExpanded = false;
                     }
                 }
