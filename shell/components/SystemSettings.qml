@@ -208,7 +208,7 @@ FocusScope {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 170
-                radius: 16
+                radius: Units.radiusMD
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -256,7 +256,7 @@ FocusScope {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 170
-                radius: 16
+                radius: Units.radiusMD
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -309,7 +309,7 @@ FocusScope {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 170
-                radius: 16
+                radius: Units.radiusMD
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -430,7 +430,7 @@ FocusScope {
                 required property var modelData
                 width: parent ? parent.width : 0
                 height: 80
-                radius: 16
+                radius: Units.radiusMD
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder

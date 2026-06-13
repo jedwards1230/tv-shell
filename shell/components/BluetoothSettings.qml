@@ -427,7 +427,7 @@ FocusScope {
                 required property var modelData
                 width: pairedList.width
                 height: 96
-                radius: 16
+                radius: Units.radiusMD
                 color: pairedList.currentIndex === index && pairedList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: modelData.connected ? Theme.online : Theme.surfaceBorder
@@ -525,7 +525,7 @@ FocusScope {
                 required property var modelData
                 width: availList.width
                 height: 96
-                radius: 16
+                radius: Units.radiusMD
                 color: availList.currentIndex === index && availList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder

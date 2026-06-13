@@ -446,7 +446,7 @@ FocusScope {
             anchors.centerIn: parent
             width: 700
             height: 350
-            radius: 32
+            radius: Units.radiusXL
             color: Theme.surface
 
             ColumnLayout {

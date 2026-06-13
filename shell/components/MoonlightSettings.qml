@@ -901,7 +901,7 @@ FocusScope {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 80
-                        radius: 16
+                        radius: Units.radiusMD
                         color: Theme.surfaceHover
                         border.width: nameInput.activeFocus ? 2 : 0
                         border.color: Theme.focusBorder
@@ -942,7 +942,7 @@ FocusScope {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 80
-                        radius: 16
+                        radius: Units.radiusMD
                         color: Theme.surfaceHover
                         border.width: hostInput.activeFocus ? 2 : 0
                         border.color: Theme.focusBorder
@@ -984,7 +984,7 @@ FocusScope {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 80
-                        radius: 16
+                        radius: Units.radiusMD
                         color: Theme.surfaceHover
                         border.width: appInput.activeFocus ? 2 : 0
                         border.color: Theme.focusBorder
@@ -1099,7 +1099,7 @@ FocusScope {
             anchors.centerIn: parent
             width: 800
             height: 350
-            radius: 32
+            radius: Units.radiusXL
             color: Theme.surface
 
             ColumnLayout {
@@ -1192,7 +1192,7 @@ FocusScope {
             anchors.centerIn: parent
             width: 800
             height: 350
-            radius: 32
+            radius: Units.radiusXL
             color: Theme.surface
 
             ColumnLayout {
@@ -1287,7 +1287,7 @@ FocusScope {
             anchors.centerIn: parent
             width: 900
             height: 420
-            radius: 32
+            radius: Units.radiusXL
             color: Theme.surface
 
             ColumnLayout {

@@ -707,7 +707,7 @@ FocusScope {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 120
-                radius: 16
+                radius: Units.radiusMD
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -776,7 +776,7 @@ FocusScope {
 
                         Rectangle {
                             anchors.fill: parent
-                            radius: 16
+                            radius: Units.radiusMD
                             color: deviceRow.activeFocus ? Theme.surfaceHover : Theme.surface
                             border.width: 2
                             border.color: Theme.surfaceBorder
