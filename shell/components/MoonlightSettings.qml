@@ -868,126 +868,48 @@ FocusScope {
                 }
 
                 // Name
-                RowLayout {
-                    spacing: 24
-
-                    Text {
-                        text: "Name"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                        Layout.preferredWidth: 160
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 80
-                        radius: Units.radiusMD
-                        color: Theme.surfaceHover
-                        border.width: nameInput.activeFocus ? 2 : 0
-                        border.color: Theme.focusBorder
-
-                        TextInput {
-                            id: nameInput
-                            anchors.fill: parent
-                            anchors.leftMargin: 24
-                            anchors.rightMargin: 24
-                            anchors.topMargin: 20
-                            anchors.bottomMargin: 20
-                            text: root.newName
-                            font.pixelSize: Theme.fontSmall
-                            color: Theme.textPrimary
-                            clip: true
-                            verticalAlignment: TextInput.AlignVCenter
-                            onTextChanged: root.newName = text
-                            KeyNavigation.down: hostInput
-                            Keys.onEscapePressed: {
-                                root.resetForm();
-                                serverList.forceActiveFocus();
-                            }
-                        }
+                LabeledTextInput {
+                    id: nameRow
+                    label: "Name"
+                    text: root.newName
+                    onTextChanged: text => root.newName = text
+                    Component.onCompleted: {
+                        nameRow.inputField.KeyNavigation.down = Qt.binding(function () { return hostRow.inputField; });
+                        nameRow.inputField.Keys.onEscapePressed = function (event) {
+                            root.resetForm();
+                            serverList.forceActiveFocus();
+                        };
                     }
                 }
 
                 // Host
-                RowLayout {
-                    spacing: 24
-
-                    Text {
-                        text: "Host"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                        Layout.preferredWidth: 160
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 80
-                        radius: Units.radiusMD
-                        color: Theme.surfaceHover
-                        border.width: hostInput.activeFocus ? 2 : 0
-                        border.color: Theme.focusBorder
-
-                        TextInput {
-                            id: hostInput
-                            anchors.fill: parent
-                            anchors.leftMargin: 24
-                            anchors.rightMargin: 24
-                            anchors.topMargin: 20
-                            anchors.bottomMargin: 20
-                            text: root.newHost
-                            font.pixelSize: Theme.fontSmall
-                            color: Theme.textPrimary
-                            clip: true
-                            verticalAlignment: TextInput.AlignVCenter
-                            onTextChanged: root.newHost = text
-                            KeyNavigation.up: nameInput
-                            KeyNavigation.down: appInput
-                            Keys.onEscapePressed: {
-                                root.resetForm();
-                                serverList.forceActiveFocus();
-                            }
-                        }
+                LabeledTextInput {
+                    id: hostRow
+                    label: "Host"
+                    text: root.newHost
+                    onTextChanged: text => root.newHost = text
+                    Component.onCompleted: {
+                        hostRow.inputField.KeyNavigation.up = Qt.binding(function () { return nameRow.inputField; });
+                        hostRow.inputField.KeyNavigation.down = Qt.binding(function () { return appRow.inputField; });
+                        hostRow.inputField.Keys.onEscapePressed = function (event) {
+                            root.resetForm();
+                            serverList.forceActiveFocus();
+                        };
                     }
                 }
 
                 // App
-                RowLayout {
-                    spacing: 24
-
-                    Text {
-                        text: "App"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                        Layout.preferredWidth: 160
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 80
-                        radius: Units.radiusMD
-                        color: Theme.surfaceHover
-                        border.width: appInput.activeFocus ? 2 : 0
-                        border.color: Theme.focusBorder
-
-                        TextInput {
-                            id: appInput
-                            anchors.fill: parent
-                            anchors.leftMargin: 24
-                            anchors.rightMargin: 24
-                            anchors.topMargin: 20
-                            anchors.bottomMargin: 20
-                            text: root.newApp
-                            font.pixelSize: Theme.fontSmall
-                            color: Theme.textPrimary
-                            clip: true
-                            verticalAlignment: TextInput.AlignVCenter
-                            onTextChanged: root.newApp = text
-                            KeyNavigation.up: hostInput
-                            Keys.onEscapePressed: {
-                                root.resetForm();
-                                serverList.forceActiveFocus();
-                            }
-                        }
+                LabeledTextInput {
+                    id: appRow
+                    label: "App"
+                    text: root.newApp
+                    onTextChanged: text => root.newApp = text
+                    Component.onCompleted: {
+                        appRow.inputField.KeyNavigation.up = Qt.binding(function () { return hostRow.inputField; });
+                        appRow.inputField.Keys.onEscapePressed = function (event) {
+                            root.resetForm();
+                            serverList.forceActiveFocus();
+                        };
                     }
                 }
 

@@ -6,6 +6,7 @@ CountBadge 1.0 CountBadge.qml
 FocusAccentBar 1.0 FocusAccentBar.qml
 FocusButton 1.0 FocusButton.qml
 HintBar 1.0 HintBar.qml
+LabeledTextInput 1.0 LabeledTextInput.qml
 PreferenceRow 1.0 PreferenceRow.qml
 ReadonlyInfoCard 1.0 ReadonlyInfoCard.qml
 SectionHeader 1.0 SectionHeader.qml
