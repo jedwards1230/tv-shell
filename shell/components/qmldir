@@ -12,6 +12,7 @@ singleton Units 1.0 Units.qml
 singleton WindowMatcher 1.0 WindowMatcher.qml
 StreamCard 1.0 StreamCard.qml
 QuickActions 1.0 QuickActions.qml
+QuickActionButton 1.0 QuickActionButton.qml
 StreamOverlay 1.0 StreamOverlay.qml
 SettingsPanel 1.0 SettingsPanel.qml
 SettingsButton 1.0 SettingsButton.qml
