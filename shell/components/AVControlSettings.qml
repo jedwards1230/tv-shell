@@ -426,186 +426,42 @@ FocusScope {
                 spacing: 32
 
                 // Wake AV
-                FocusScope {
+                ActionCard {
                     id: wakeScope
-                    width: 340
-                    height: 120
                     // Only claim the root scope's focus when actually visible
                     // (CEC available). Otherwise the root FocusScope holds focus
                     // itself so the read-only state stays dismissable.
                     focus: root.cecAvailable
-                    activeFocusOnTab: true
-
+                    accentColor: Theme.online
+                    title: "Wake AV"
+                    subtitle: "CEC power on"
                     KeyNavigation.up: autoSwitchScope
                     KeyNavigation.right: sleepScope
                     KeyNavigation.down: deviceRepeater.count > 0 ? deviceRepeater.itemAt(0) : wakeScope
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 24
-                        color: parent.activeFocus ? Theme.online : Theme.surface
-                        border.width: parent.activeFocus ? 0 : 2
-                        border.color: Theme.surfaceBorder
-
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: 150
-                            }
-                        }
-
-                        ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: 4
-
-                            Text {
-                                text: "Wake AV"
-                                font.pixelSize: Theme.fontTitle
-                                font.bold: true
-                                color: wakeScope.activeFocus ? Theme.textOnDark : Theme.textPrimary
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-
-                            Text {
-                                text: "CEC power on"
-                                font.pixelSize: Theme.fontSmall
-                                color: wakeScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                wakeScope.forceActiveFocus();
-                                root.doWake();
-                            }
-                        }
-                    }
-
-                    Keys.onReturnPressed: {
-                        root.doWake();
-                    }
+                    onActivated: root.doWake()
                 }
 
                 // Sleep AV
-                FocusScope {
+                ActionCard {
                     id: sleepScope
-                    width: 340
-                    height: 120
-                    activeFocusOnTab: true
-
+                    accentColor: Theme.gold
+                    title: "Sleep AV"
+                    subtitle: "CEC standby"
                     KeyNavigation.left: wakeScope
                     KeyNavigation.right: switchScope
                     KeyNavigation.down: deviceRepeater.count > 0 ? deviceRepeater.itemAt(0) : sleepScope
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 24
-                        color: parent.activeFocus ? Theme.gold : Theme.surface
-                        border.width: parent.activeFocus ? 0 : 2
-                        border.color: Theme.surfaceBorder
-
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: 150
-                            }
-                        }
-
-                        ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: 4
-
-                            Text {
-                                text: "Sleep AV"
-                                font.pixelSize: Theme.fontTitle
-                                font.bold: true
-                                color: sleepScope.activeFocus ? Theme.textOnDark : Theme.textPrimary
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-
-                            Text {
-                                text: "CEC standby"
-                                font.pixelSize: Theme.fontSmall
-                                color: sleepScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                sleepScope.forceActiveFocus();
-                                root.doSleep();
-                            }
-                        }
-                    }
-
-                    Keys.onReturnPressed: {
-                        root.doSleep();
-                    }
+                    onActivated: root.doSleep()
                 }
 
                 // Switch Input
-                FocusScope {
+                ActionCard {
                     id: switchScope
-                    width: 340
-                    height: 120
-                    activeFocusOnTab: true
-
+                    accentColor: Theme.ember
+                    title: "Switch Input"
+                    subtitle: "Set active source"
                     KeyNavigation.left: sleepScope
                     KeyNavigation.down: deviceRepeater.count > 0 ? deviceRepeater.itemAt(0) : switchScope
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 24
-                        color: parent.activeFocus ? Theme.ember : Theme.surface
-                        border.width: parent.activeFocus ? 0 : 2
-                        border.color: Theme.surfaceBorder
-
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: 150
-                            }
-                        }
-
-                        ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: 4
-
-                            Text {
-                                text: "Switch Input"
-                                font.pixelSize: Theme.fontTitle
-                                font.bold: true
-                                color: switchScope.activeFocus ? Theme.textOnDark : Theme.textPrimary
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-
-                            Text {
-                                text: "Set active source"
-                                font.pixelSize: Theme.fontSmall
-                                color: switchScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                switchScope.forceActiveFocus();
-                                root.doSwitchInput();
-                            }
-                        }
-                    }
-
-                    Keys.onReturnPressed: {
-                        root.doSwitchInput();
-                    }
+                    onActivated: root.doSwitchInput()
                 }
             }
         }
