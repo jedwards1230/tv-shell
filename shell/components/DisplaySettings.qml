@@ -364,12 +364,30 @@ FocusScope {
             id: scaleRow
             visible: root.monitors.length > 0
             options: [
-                {label: "0.5x", value: 0.5},
-                {label: "1x", value: 1.0},
-                {label: "1.25x", value: 1.25},
-                {label: "1.5x", value: 1.5},
-                {label: "1.75x", value: 1.75},
-                {label: "2x", value: 2.0}
+                {
+                    label: "0.5x",
+                    value: 0.5
+                },
+                {
+                    label: "1x",
+                    value: 1.0
+                },
+                {
+                    label: "1.25x",
+                    value: 1.25
+                },
+                {
+                    label: "1.5x",
+                    value: 1.5
+                },
+                {
+                    label: "1.75x",
+                    value: 1.75
+                },
+                {
+                    label: "2x",
+                    value: 2.0
+                }
             ]
             isCurrentOption: function (opt) {
                 return root.monitors.length > root.selectedMonitor && Math.abs(root.monitors[root.selectedMonitor].scale - opt.value) < 0.05;
@@ -561,12 +579,30 @@ FocusScope {
             id: nightLightTempScope
 
             property var tempPresets: [
-                {label: "Off (disable)", value: 0},
-                {label: "Very Warm (3500K)", value: 3500},
-                {label: "Warm (4000K)", value: 4000},
-                {label: "Neutral (4500K)", value: 4500},
-                {label: "Cool (5500K)", value: 5500},
-                {label: "Daylight (6500K)", value: 6500}
+                {
+                    label: "Off (disable)",
+                    value: 0
+                },
+                {
+                    label: "Very Warm (3500K)",
+                    value: 3500
+                },
+                {
+                    label: "Warm (4000K)",
+                    value: 4000
+                },
+                {
+                    label: "Neutral (4500K)",
+                    value: 4500
+                },
+                {
+                    label: "Cool (5500K)",
+                    value: 5500
+                },
+                {
+                    label: "Daylight (6500K)",
+                    value: 6500
+                }
             ]
 
             model: tempPresets
@@ -616,12 +652,30 @@ FocusScope {
         SettingsButtonGroup {
             id: overscanScope
             options: [
-                {label: "0%", value: 0},
-                {label: "2%", value: 2},
-                {label: "4%", value: 4},
-                {label: "6%", value: 6},
-                {label: "8%", value: 8},
-                {label: "10%", value: 10}
+                {
+                    label: "0%",
+                    value: 0
+                },
+                {
+                    label: "2%",
+                    value: 2
+                },
+                {
+                    label: "4%",
+                    value: 4
+                },
+                {
+                    label: "6%",
+                    value: 6
+                },
+                {
+                    label: "8%",
+                    value: 8
+                },
+                {
+                    label: "10%",
+                    value: 10
+                }
             ]
             isCurrentOption: function (opt) {
                 return SettingsStore.overscan === opt.value;
@@ -700,10 +754,22 @@ FocusScope {
             activeFocusOnTab: SettingsStore.autoDimEnabled
             enabled: SettingsStore.autoDimEnabled
             options: [
-                {label: "1 min", value: 1},
-                {label: "2 min", value: 2},
-                {label: "5 min", value: 5},
-                {label: "10 min", value: 10}
+                {
+                    label: "1 min",
+                    value: 1
+                },
+                {
+                    label: "2 min",
+                    value: 2
+                },
+                {
+                    label: "5 min",
+                    value: 5
+                },
+                {
+                    label: "10 min",
+                    value: 10
+                }
             ]
             isCurrentOption: function (opt) {
                 return SettingsStore.autoDimDelayMinutes === opt.value;
