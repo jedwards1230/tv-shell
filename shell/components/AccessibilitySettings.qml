@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 // Accessibility settings page (#109, #110).
 // Controller-first: A/Return toggles Reduce Motion; A/Return on the Text Size
@@ -308,11 +309,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        Text {
+        HintBar {
             text: "Text Scale: " + (Theme.textScale === 1.0 ? "Default" : Theme.textScale === 1.15 ? "Large" : "Larger")
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
         }
     }
 }
