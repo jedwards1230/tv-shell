@@ -140,7 +140,9 @@ pub fn parse_items(root: &Value, base: &str, token: &str, limit: usize) -> Vec<V
 
 /// Non-empty string field accessor.
 fn str_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
-    v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
 }
 
 /// Integer field accessor (Plex emits these as JSON numbers).

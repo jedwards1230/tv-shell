@@ -8,9 +8,7 @@
 
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
-use crate::{
-    apps, config, controllerdb, health, moonlight, notifications, plex, recents, system,
-};
+use crate::{apps, config, controllerdb, health, moonlight, notifications, plex, recents, system};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::os::unix::fs::PermissionsExt;
