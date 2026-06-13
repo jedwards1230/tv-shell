@@ -238,6 +238,8 @@ FocusScope {
                 iconPath: ""
                 fallbackGlyph: Theme.themeMode === "dark" ? "☾" : Theme.themeMode === "light" ? "☀" : "◐"
                 fallbackColor: Theme.textPrimary
+                // These glyphs sit low in the font box vs the others — nudge up.
+                glyphOffsetY: -Math.round(root.imgSize * 0.08)
                 a11yName: root._labels[2]
                 onActivated: {
                     if (Theme.themeMode === "auto")

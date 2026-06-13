@@ -24,6 +24,9 @@ Rectangle {
     property string iconPath: ""        // full file:// path or "" → fallback
     property string fallbackGlyph: ""
     property color fallbackColor: Theme.textMuted
+    // Optical vertical nudge for fallback glyphs whose font metrics don't sit on
+    // the same baseline as the others (e.g. the theme-toggle ◐/☾/☀).
+    property real glyphOffsetY: 0
 
     // Accessibility label.
     property string a11yName: ""
@@ -68,8 +71,11 @@ Rectangle {
 
     Text {
         anchors.centerIn: parent
+        anchors.verticalCenterOffset: glyph.glyphOffsetY
         text: glyph.fallbackGlyph
         font.pixelSize: glyph.imgSize
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
         color: glyph.fallbackColor
         visible: !(glyph.iconPath !== "" && iconImg.status === Image.Ready)
     }
