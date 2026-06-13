@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "lib"
 
 FocusScope {
     id: root
@@ -418,19 +419,16 @@ FocusScope {
         id: mlMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 24
+        spacing: 32
 
         // === Display Mode Toggle ===
-        Text {
+        SectionHeader {
             text: "Display Mode"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         RowLayout {
             id: viewModeRow
-            Layout.alignment: Qt.AlignLeft
+            Layout.alignment: Qt.AlignHCenter
             spacing: 24
 
             property int focusIndex: Theme.streamingViewMode === "apps" ? 1 : 0
@@ -544,11 +542,8 @@ FocusScope {
             color: Theme.surfaceBorder
         }
 
-        Text {
+        SectionHeader {
             text: "Streaming Servers"
-            font.pixelSize: Theme.fontBody
-            font.bold: true
-            color: Theme.textPrimary
         }
 
         // Server list
@@ -733,7 +728,8 @@ FocusScope {
                         }
                     }
 
-                    // Remove button. Sizing wrapper only — NOT a focus container.
+                    // Remove button — destructive action; crimson styling when
+                    // highlighted. Sizing wrapper only — NOT a focus container.
                     // Do NOT add focus:true (breaks list d-pad nav). Highlight is
                     // driven by the external `highlighted` property.
                     Item {
@@ -749,6 +745,17 @@ FocusScope {
                                 return serverList.activeFocus && serverList.currentIndex === index && acts[Math.min(serverList.actionCol, acts.length - 1)] === "remove";
                             }
                             onActivated: root.confirmRemoveIndex = index
+
+                            // Crimson destructive tint overlay — rendered above the
+                            // button surface when highlighted, not a property conflict.
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: parent.radius
+                                color: removeBtn.highlighted ? Qt.rgba(Theme.crimson.r, Theme.crimson.g, Theme.crimson.b, 0.2) : "transparent"
+                                border.width: removeBtn.highlighted ? 3 : 0
+                                border.color: Theme.crimson
+                                visible: removeBtn.highlighted
+                            }
 
                             MouseArea {
                                 anchors.fill: parent
@@ -804,11 +811,9 @@ FocusScope {
             }
         }
 
-        Text {
-            text: root.servers.length === 0 ? "No servers configured" : ""
-            font.pixelSize: Theme.fontSmall
-            color: Theme.textSecondary
-            visible: text !== ""
+        SettingsEmptyState {
+            visible: root.servers.length === 0
+            line: "No servers configured"
         }
 
         // Add server button
@@ -1058,13 +1063,8 @@ FocusScope {
             Layout.fillHeight: true
         }
 
-        // Hint
-        Text {
+        HintBar {
             text: root.showAddForm ? "Esc: Cancel" : "A: Select  |  Servers are launched from Home"
-            font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
-            visible: !root.showAddForm || root.showAddForm
         }
     }
 
