@@ -13,6 +13,14 @@ FocusScope {
     property int defaultSinkIndex: -1
     property string formatInfo: "Unavailable"
 
+    // Output card profiles (#234): the available output profiles of every audio
+    // card (stereo / surround 5.1 / 7.1 / …). PipeWire auto-selects the highest-
+    // *priority* available profile, which is always stereo — so a 5.1-capable AVR
+    // over HDMI silently lands on a 2-channel sink. Surfacing the profile here lets
+    // the user switch the card to Digital Surround 5.1 and make 5.1 active.
+    property var cardProfiles: []
+    property int currentProfileIndex: -1
+
     // Guard: re-apply persisted default only once per page-load
     property bool _reapplied: false
 
@@ -191,6 +199,59 @@ FocusScope {
         }
     }
 
+    // Enumerate every card's AVAILABLE output profiles (#234). Emits one
+    // tab-separated line per profile: `<cardName>\t<profileName>\t<active>\t<desc>`.
+    // Only output-bearing profiles on connected ports (`available: yes`) are
+    // listed, so the dropdown shows e.g. "Digital Stereo (HDMI 2)" alongside
+    // "Digital Surround 5.1 (HDMI 2)".
+    Process {
+        id: listProfiles
+        command: ["bash", "-c", "pactl list cards | awk '" + "/^Card #/ { flush(); card=\"\"; ap=\"\"; n=0; inprof=0 } " + "/^[ \\t]*Name:/ { card=$2 } " + "/^[ \\t]*Profiles:/ { inprof=1; next } " + "/^[ \\t]*Active Profile:/ { ap=$3; inprof=0; flush() } " + "inprof && /available: yes/ { line=$0; sub(/^[ \\t]+/,\"\",line); ci=index(line,\": \"); if(ci<1) next; pname=substr(line,1,ci-1); if(pname !~ /^output:/) next; rest=substr(line,ci+2); si=index(rest,\" (sinks:\"); if(si>0) desc=substr(rest,1,si-1); else desc=rest; buf[n]=pname \"|\" desc; n++ } " + "function flush(  i,a){ for(i=0;i<n;i++){ split(buf[i],a,\"|\"); print card \"\\t\" a[1] \"\\t\" ((a[1]==ap)?\"1\":\"0\") \"\\t\" a[2] } n=0 } " + "END { flush() }'"]
+        stdout: SplitParser {
+            property var collected: []
+            onRead: line => {
+                let parts = line.split("\t");
+                if (parts.length < 4)
+                    return;
+                let entry = {
+                    card: parts[0],
+                    profile: parts[1],
+                    active: parts[2] === "1",
+                    desc: parts[3]
+                };
+                collected.push(entry);
+                if (entry.active)
+                    root.currentProfileIndex = collected.length - 1;
+            }
+        }
+        onExited: {
+            root.cardProfiles = listProfiles.stdout.collected;
+            listProfiles.stdout.collected = [];
+        }
+    }
+
+    // Apply a card profile (#234), then make that card's resulting sink the
+    // default so the surround channels become active and the Speaker Test (which
+    // targets @DEFAULT_AUDIO_SINK@) exercises all 6. Card/profile are passed via
+    // env so their content can never inject shell commands.
+    Process {
+        id: setCardProfile
+        property string cardName: ""
+        property string profileName: ""
+        environment: ({
+                "GS_CARD": cardName,
+                "GS_PROFILE": profileName
+            })
+        command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
+        onExited: {
+            // Refresh everything: new default sink, format, and active profile.
+            listSinks.running = true;
+            getFormat.running = true;
+            listProfiles.running = true;
+            refreshTimer.start();
+        }
+    }
+
     // Shared process for 5.1 channel test tones — single-shot so it exits
     // promptly and never hangs audio.
     //
@@ -206,6 +267,7 @@ FocusScope {
         getVolume.running = true;
         listSinks.running = true;
         getFormat.running = true;
+        listProfiles.running = true;
     }
 
     // Refresh when section becomes visible. Do NOT grab focus here — focus
@@ -217,6 +279,7 @@ FocusScope {
             getVolume.running = true;
             listSinks.running = true;
             getFormat.running = true;
+            listProfiles.running = true;
         }
     }
 
@@ -390,7 +453,41 @@ FocusScope {
             }
 
             KeyNavigation.up: muteScope
+            KeyNavigation.down: profileDropdownScope
+        }
+
+        // Output profile (surround) — #234. Lets the user switch a card to its
+        // 5.1/7.1 profile; PipeWire otherwise always defaults to stereo.
+        SectionHeader {
+            text: "Output Profile (Surround)"
+        }
+
+        SettingsDropdown {
+            id: profileDropdownScope
+            model: root.cardProfiles
+            displayText: root.currentProfileIndex >= 0 && root.currentProfileIndex < root.cardProfiles.length ? root.cardProfiles[root.currentProfileIndex].desc : "Stereo"
+            maxHeight: 500
+            rowHeight: 72
+            isCurrentItem: function (item) {
+                return item.active;
+            }
+            itemLabel: function (item) {
+                return item.desc;
+            }
+            onItemSelected: function (item) {
+                setCardProfile.cardName = item.card;
+                setCardProfile.profileName = item.profile;
+                setCardProfile.running = true;
+            }
+
+            KeyNavigation.up: sinkDropdownScope
             KeyNavigation.down: testToneFlScope
+        }
+
+        Text {
+            text: "Switch HDMI/analog output between stereo and surround (5.1 / 7.1) when the receiver supports it."
+            font.pixelSize: Theme.fontHint
+            color: Theme.textMuted
         }
 
         // ---------------------------------------------------------------
@@ -422,7 +519,7 @@ FocusScope {
                 height: testToneFlBtn.height
                 activeFocusOnTab: true
 
-                KeyNavigation.up: sinkDropdownScope
+                KeyNavigation.up: profileDropdownScope
                 KeyNavigation.right: testToneFrScope
                 KeyNavigation.down: testToneRlScope
 
@@ -454,7 +551,7 @@ FocusScope {
                 height: testToneFrBtn.height
                 activeFocusOnTab: true
 
-                KeyNavigation.up: sinkDropdownScope
+                KeyNavigation.up: profileDropdownScope
                 KeyNavigation.left: testToneFlScope
                 KeyNavigation.right: testToneCScope
                 KeyNavigation.down: testToneRrScope
@@ -487,7 +584,7 @@ FocusScope {
                 height: testToneCBtn.height
                 activeFocusOnTab: true
 
-                KeyNavigation.up: sinkDropdownScope
+                KeyNavigation.up: profileDropdownScope
                 KeyNavigation.left: testToneFrScope
                 KeyNavigation.down: testToneLfeScope
 

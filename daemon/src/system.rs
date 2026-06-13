@@ -237,6 +237,209 @@ fn statvfs_entry(mountpoint: &str) -> Option<MountEntry> {
 }
 
 // ---------------------------------------------------------------------------
+// sys-metrics (#235)
+// ---------------------------------------------------------------------------
+
+/// One temperature sensor reading for `sys-metrics`.
+#[derive(Debug, serde::Serialize)]
+pub struct TempEntry {
+    /// Friendly label, e.g. `"CPU Tctl"`, `"GPU edge"`, `"NVMe Composite"`.
+    pub label: String,
+    /// Temperature in degrees Celsius, rounded to one decimal.
+    pub celsius: f64,
+}
+
+/// Live hardware telemetry for the System page (#235). All fields degrade
+/// gracefully to zero / empty on non-Linux hosts (no `/proc` or `/sys`).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SysMetrics {
+    /// Aggregate CPU utilisation 0..=100 (sampled over a short window).
+    pub cpu_pct: f64,
+    /// Used memory in bytes (`MemTotal - MemAvailable`).
+    pub mem_used: u64,
+    /// Total memory in bytes.
+    pub mem_total: u64,
+    /// Memory usage percentage 0..=100.
+    pub mem_pct: u8,
+    /// 1-minute load average.
+    pub load1: f64,
+    /// Temperature sensors, CPU/GPU sorted first.
+    pub temps: Vec<TempEntry>,
+}
+
+/// Read `(idle, total)` CPU jiffies from the aggregate `cpu` line of
+/// `/proc/stat`. `idle` folds in `iowait`. Returns `None` if unparseable.
+fn read_cpu_times() -> Option<(u64, u64)> {
+    let stat = fs::read_to_string("/proc/stat").ok()?;
+    let line = stat.lines().next()?;
+    let vals: Vec<u64> = line
+        .split_whitespace()
+        .skip(1) // skip the "cpu" label
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if vals.len() < 4 {
+        return None;
+    }
+    // user nice system idle iowait irq softirq steal guest guest_nice
+    let idle = vals[3] + vals.get(4).copied().unwrap_or(0);
+    let total: u64 = vals.iter().sum();
+    Some((idle, total))
+}
+
+/// Aggregate CPU utilisation as a percentage, sampled over a ~200 ms window.
+/// Two `/proc/stat` reads are required to compute a busy delta; the short
+/// sleep is fine because this runs on tokio's blocking pool. Returns `0.0`
+/// when `/proc/stat` is unavailable (non-Linux).
+fn cpu_percent() -> f64 {
+    let (idle1, total1) = match read_cpu_times() {
+        Some(v) => v,
+        None => return 0.0,
+    };
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let (idle2, total2) = match read_cpu_times() {
+        Some(v) => v,
+        None => return 0.0,
+    };
+    let dt = total2.saturating_sub(total1);
+    let di = idle2.saturating_sub(idle1);
+    if dt == 0 {
+        return 0.0;
+    }
+    (((dt - di) as f64 / dt as f64) * 100.0).clamp(0.0, 100.0)
+}
+
+/// Parse the leading kB number from a `/proc/meminfo` value (e.g.
+/// `"  32768 kB"`) and return it in bytes.
+fn parse_meminfo_kb(s: &str) -> u64 {
+    s.split_whitespace()
+        .next()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|kb| kb * 1024)
+        .unwrap_or(0)
+}
+
+/// Read `(used, total)` memory in bytes from `/proc/meminfo`. `used` is
+/// `MemTotal - MemAvailable` (matching what `free`/most tools report as used).
+fn mem_info() -> (u64, u64) {
+    let content = fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    let mut total = 0u64;
+    let mut avail = 0u64;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            total = parse_meminfo_kb(rest);
+        } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            avail = parse_meminfo_kb(rest);
+        }
+    }
+    (total.saturating_sub(avail), total)
+}
+
+/// Map a raw hwmon chip name (+ optional per-sensor label) to a friendly,
+/// couch-readable label. `k10temp`/`coretemp` → `CPU`, `amdgpu`/`nvidia` →
+/// `GPU`, `nvme` → `NVMe`; everything else passes through verbatim.
+fn friendly_temp_label(chip: &str, sub: Option<&str>) -> String {
+    let base = match chip {
+        "k10temp" | "coretemp" | "zenpower" | "cpu_thermal" => "CPU",
+        "amdgpu" | "nouveau" | "nvidia" | "radeon" => "GPU",
+        "nvme" => "NVMe",
+        other => other,
+    };
+    match sub {
+        Some(s) if !s.is_empty() && s != base => format!("{base} {s}"),
+        _ => base.to_string(),
+    }
+}
+
+/// Scan `/sys/class/hwmon/*/temp*_input` for temperature sensors. Each input
+/// is reported in millidegrees; values outside (0, 150] °C are treated as
+/// bogus and skipped. The list is bounded to keep the readout couch-sized.
+fn read_temps() -> Vec<TempEntry> {
+    let mut out: Vec<TempEntry> = Vec::new();
+    let dir = match fs::read_dir("/sys/class/hwmon") {
+        Ok(d) => d,
+        Err(_) => return out,
+    };
+    for entry in dir.flatten() {
+        let path = entry.path();
+        let chip = fs::read_to_string(path.join("name"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let mut inputs: Vec<String> = match fs::read_dir(&path) {
+            Ok(files) => files
+                .flatten()
+                .filter_map(|f| f.file_name().into_string().ok())
+                .filter(|n| n.starts_with("temp") && n.ends_with("_input"))
+                .collect(),
+            Err(_) => continue,
+        };
+        inputs.sort();
+        for input in inputs {
+            let raw = match fs::read_to_string(path.join(&input)) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let milli: f64 = match raw.trim().parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let celsius = milli / 1000.0;
+            if celsius <= 0.0 || celsius > 150.0 {
+                continue;
+            }
+            let label_file = input.replace("_input", "_label");
+            let sub = fs::read_to_string(path.join(&label_file))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            out.push(TempEntry {
+                label: friendly_temp_label(&chip, sub.as_deref()),
+                celsius: (celsius * 10.0).round() / 10.0,
+            });
+        }
+    }
+    // CPU/GPU first, then everything else; bound the total.
+    out.sort_by_key(|t| {
+        if t.label.starts_with("CPU") {
+            0
+        } else if t.label.starts_with("GPU") {
+            1
+        } else {
+            2
+        }
+    });
+    out.truncate(8);
+    out
+}
+
+/// Build the `sys-metrics` JSON response (#235).
+pub fn sys_metrics_json() -> String {
+    let cpu_pct = (cpu_percent() * 10.0).round() / 10.0;
+    let (mem_used, mem_total) = mem_info();
+    let mem_pct = if mem_total > 0 {
+        ((mem_used as f64 / mem_total as f64) * 100.0).round() as u8
+    } else {
+        0
+    };
+    let load1 = fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().map(String::from))
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(|f| (f * 100.0).round() / 100.0)
+        .unwrap_or(0.0);
+    let metrics = SysMetrics {
+        cpu_pct,
+        mem_used,
+        mem_total,
+        mem_pct,
+        load1,
+        temps: read_temps(),
+    };
+    serde_json::to_string(&metrics).unwrap_or_else(|_| "{}".into())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -305,5 +508,37 @@ mod tests {
         let json = storage_status_json();
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert!(v.is_array(), "storage-status must be a JSON array");
+    }
+
+    #[test]
+    fn parse_meminfo_kb_converts_to_bytes() {
+        assert_eq!(parse_meminfo_kb("  32768 kB"), 32768 * 1024);
+        assert_eq!(parse_meminfo_kb("0 kB"), 0);
+        assert_eq!(parse_meminfo_kb("garbage"), 0);
+    }
+
+    #[test]
+    fn friendly_temp_label_maps_known_chips() {
+        assert_eq!(friendly_temp_label("k10temp", Some("Tctl")), "CPU Tctl");
+        assert_eq!(friendly_temp_label("amdgpu", Some("edge")), "GPU edge");
+        assert_eq!(friendly_temp_label("nvme", Some("Composite")), "NVMe Composite");
+        // No sub-label → bare base name (no trailing space).
+        assert_eq!(friendly_temp_label("coretemp", None), "CPU");
+        // A sub-label equal to the base is not duplicated.
+        assert_eq!(friendly_temp_label("k10temp", Some("CPU")), "CPU");
+        // Unknown chip passes through.
+        assert_eq!(friendly_temp_label("iwlwifi", None), "iwlwifi");
+    }
+
+    #[test]
+    fn sys_metrics_json_is_valid_json_with_required_keys() {
+        let json = sys_metrics_json();
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        for key in ["cpuPct", "memUsed", "memTotal", "memPct", "load1", "temps"] {
+            assert!(v.get(key).is_some(), "missing '{key}' field");
+        }
+        assert!(v["temps"].is_array(), "temps must be a JSON array");
+        // mem_pct is always in range even on a non-Linux host (where it's 0).
+        assert!(v["memPct"].as_u64().unwrap() <= 100);
     }
 }

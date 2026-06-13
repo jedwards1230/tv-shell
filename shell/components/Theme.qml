@@ -63,13 +63,29 @@ Item {
     readonly property bool reduceMotion: SettingsStore.reduceMotion  // #109
     readonly property real textScale: SettingsStore.textScale          // #110
     property int _currentHour: new Date().getHours()
+
+    // === Auto theme schedule (#231, persisted via SettingsStore) ===
+    // "auto" mode flips light↔dark on a configurable daily schedule.
+    readonly property int autoDarkStart: SettingsStore.autoThemeDarkStart
+    readonly property int autoLightStart: SettingsStore.autoThemeLightStart
+
+    // True if `hour` falls in the dark window [darkStart, lightStart), handling
+    // the usual midnight wrap (e.g. dark 20:00 → light 07:00).
+    function _hourIsDark(hour, darkStart, lightStart) {
+        if (darkStart === lightStart)
+            return false; // degenerate schedule → never auto-dark
+        if (darkStart < lightStart)
+            return hour >= darkStart && hour < lightStart;
+        return hour >= darkStart || hour < lightStart;
+    }
+
     property bool darkMode: {
         if (themeMode === "dark")
             return true;
         if (themeMode === "light")
             return false;
-        // auto: dark from 8 PM to 7 AM
-        return _currentHour >= 20 || _currentHour < 7;
+        // auto: follow the configurable day/night schedule
+        return _hourIsDark(_currentHour, autoDarkStart, autoLightStart);
     }
 
     // === Settings Persistence ===

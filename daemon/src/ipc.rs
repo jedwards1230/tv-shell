@@ -340,6 +340,7 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         // --- #164: sys-status / storage-status ---
         Command::SysStatus => Some(spawn_blocking_string(system::sys_status_json).await),
         Command::StorageStatus => Some(spawn_blocking_string(system::storage_status_json).await),
+        Command::SysMetrics => Some(spawn_blocking_string(system::sys_metrics_json).await),
 
         _ => None,
     }

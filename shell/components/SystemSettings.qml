@@ -23,6 +23,15 @@ FocusScope {
     property var storageMounts: []
     property bool storageLoading: false
 
+    // Live hardware telemetry (#235) — driven by the daemon `sys-metrics` IPC.
+    property real cpuPct: 0
+    property real memUsed: 0
+    property real memTotal: 0
+    property int memPct: 0
+    property real load1: 0
+    property var temps: []
+    property bool metricsLoaded: false
+
     function focusFirst() {
         // No interactive controls — the page auto-refreshes. Focus the page root
         // so B/Back still returns to the sidebar.
@@ -68,11 +77,32 @@ FocusScope {
         }
     }
 
+    // Daemon IPC — sys-metrics (#235). Live CPU/memory/load/temps; updates in
+    // place via the 1s Timer below (no loading flash on periodic polls).
+    SocketClient {
+        id: getSysMetrics
+        onResponseReceived: line => {
+            try {
+                let obj = JSON.parse(line);
+                root.cpuPct = obj.cpuPct || 0;
+                root.memUsed = obj.memUsed || 0;
+                root.memTotal = obj.memTotal || 0;
+                root.memPct = obj.memPct || 0;
+                root.load1 = obj.load1 || 0;
+                root.temps = Array.isArray(obj.temps) ? obj.temps : [];
+                root.metricsLoaded = true;
+            } catch (e) {
+                console.log("SystemSettings: failed to parse sys-metrics:", e);
+            }
+        }
+    }
+
     Component.onCompleted: {
         root.loading = true;
         getSysStatus.request("sys-status");
         root.storageLoading = true;
         getStorageStatus.request("storage-status");
+        getSysMetrics.request("sys-metrics");
     }
 
     // Live refresh — re-poll every second while visible so uptime ticks and
@@ -85,7 +115,22 @@ FocusScope {
         onTriggered: {
             getSysStatus.request("sys-status");
             getStorageStatus.request("storage-status");
+            getSysMetrics.request("sys-metrics");
         }
+    }
+
+    // Format raw bytes as a human-readable GiB/MiB string (shared by the
+    // Hardware and Storage sections). 0 → "0 B"; negative/unknown → "".
+    function fmtBytes(n) {
+        if (n < 0)
+            return "";
+        if (n === 0)
+            return "0 B";
+        if (n >= 1073741824)
+            return (n / 1073741824).toFixed(1) + " GiB";
+        if (n >= 1048576)
+            return (n / 1048576).toFixed(1) + " MiB";
+        return (n / 1024).toFixed(1) + " KiB";
     }
 
     ColumnLayout {
@@ -145,6 +190,150 @@ FocusScope {
                         wrapMode: Text.WordWrap
                     }
                 }
+            }
+        }
+
+        // Hardware — live CPU / memory / load / temperatures (#235)
+        SectionHeader {
+            text: "Hardware"
+        }
+
+        ColumnLayout {
+            spacing: 14
+            Layout.fillWidth: true
+
+            // CPU usage — label + value + utilisation bar
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                Text {
+                    text: "CPU Usage"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.preferredWidth: 320
+                    Layout.minimumWidth: 320
+                }
+
+                Text {
+                    text: root.metricsLoaded ? root.cpuPct.toFixed(1) + "%" : "Loading…"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textPrimary
+                    Layout.preferredWidth: 140
+                }
+
+                // Thin utilisation bar — ember fill on a muted track.
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 16
+                    radius: 8
+                    color: Theme.surfaceHover
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(1, root.cpuPct / 100))
+                        height: parent.height
+                        radius: 8
+                        color: root.cpuPct >= 90 ? Theme.crimson : Theme.ember
+                        Behavior on width {
+                            NumberAnimation {
+                                duration: 250
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Memory — label + used/total (%) + usage bar
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                Text {
+                    text: "Memory"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.preferredWidth: 320
+                    Layout.minimumWidth: 320
+                }
+
+                Text {
+                    text: root.metricsLoaded && root.memTotal > 0 ? root.fmtBytes(root.memUsed) + " / " + root.fmtBytes(root.memTotal) + " (" + root.memPct + "%)" : "Loading…"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textPrimary
+                    Layout.preferredWidth: 360
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 16
+                    radius: 8
+                    color: Theme.surfaceHover
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(1, root.memPct / 100))
+                        height: parent.height
+                        radius: 8
+                        color: root.memPct >= 90 ? Theme.crimson : Theme.ember
+                        Behavior on width {
+                            NumberAnimation {
+                                duration: 250
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Load average (1 min)
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 24
+
+                Text {
+                    text: "Load Average (1m)"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.preferredWidth: 320
+                    Layout.minimumWidth: 320
+                }
+
+                Text {
+                    text: root.metricsLoaded ? root.load1.toFixed(2) : "Loading…"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textPrimary
+                    Layout.fillWidth: true
+                }
+            }
+
+            // Temperature sensors (CPU/GPU first). Hidden until at least one
+            // sensor reports — many VMs/hosts expose none.
+            Repeater {
+                model: root.temps
+
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: 24
+
+                    Text {
+                        text: modelData.label
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.preferredWidth: 320
+                        Layout.minimumWidth: 320
+                    }
+
+                    Text {
+                        text: modelData.celsius.toFixed(1) + " °C"
+                        font.pixelSize: Theme.fontBody
+                        color: modelData.celsius >= 90 ? Theme.crimson : Theme.textPrimary
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+
+            Text {
+                visible: root.metricsLoaded && root.temps.length === 0
+                text: "No temperature sensors reported"
+                font.pixelSize: Theme.fontSmall
+                color: Theme.textMuted
             }
         }
 

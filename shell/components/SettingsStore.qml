@@ -33,6 +33,8 @@ Item {
 
     // === Persisted settings (QML-owned) ===
     property string themeMode: "dark"             // "auto" | "light" | "dark"
+    property int autoThemeDarkStart: 20           // hour (0-23) "auto" flips to dark (#231)
+    property int autoThemeLightStart: 7           // hour (0-23) "auto" flips to light (#231)
     property string streamingViewMode: "servers"  // "servers" | "apps"
     property bool controllerDebug: false
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
@@ -74,6 +76,10 @@ Item {
                 var obj = JSON.parse(line);
                 if (obj.themeMode === "auto" || obj.themeMode === "light" || obj.themeMode === "dark")
                     store.themeMode = obj.themeMode;
+                if (typeof obj.autoThemeDarkStart === "number" && obj.autoThemeDarkStart >= 0 && obj.autoThemeDarkStart <= 23)
+                    store.autoThemeDarkStart = obj.autoThemeDarkStart;
+                if (typeof obj.autoThemeLightStart === "number" && obj.autoThemeLightStart >= 0 && obj.autoThemeLightStart <= 23)
+                    store.autoThemeLightStart = obj.autoThemeLightStart;
                 // Migration: prefer streamingViewMode, fall back to the
                 // legacy moonlightViewMode key for existing settings files.
                 var viewMode = obj.streamingViewMode !== undefined ? obj.streamingViewMode : obj.moonlightViewMode;
@@ -139,6 +145,8 @@ Item {
     function save() {
         var body = JSON.stringify({
             "themeMode": store.themeMode,
+            "autoThemeDarkStart": store.autoThemeDarkStart,
+            "autoThemeLightStart": store.autoThemeLightStart,
             "streamingViewMode": store.streamingViewMode,
             "controllerDebug": store.controllerDebug,
             "rumbleEnabled": store.rumbleEnabled,
@@ -168,6 +176,22 @@ Item {
             themeMode = mode;
             save();
             settingsChanged("themeMode", mode);
+        }
+    }
+
+    function setAutoThemeDarkStart(hour) {
+        if (hour >= 0 && hour <= 23) {
+            autoThemeDarkStart = hour;
+            save();
+            settingsChanged("autoThemeDarkStart", hour);
+        }
+    }
+
+    function setAutoThemeLightStart(hour) {
+        if (hour >= 0 && hour <= 23) {
+            autoThemeLightStart = hour;
+            save();
+            settingsChanged("autoThemeLightStart", hour);
         }
     }
 
