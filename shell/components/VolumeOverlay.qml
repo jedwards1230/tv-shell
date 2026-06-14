@@ -129,35 +129,12 @@ FocusScope {
         }
 
         // --- Volume bar ---
-        Rectangle {
+        VolumeBar {
             Layout.fillWidth: true
-            height: Units.gridUnit * 1.5
-            radius: height / 2
-            color: Theme.surfaceHover
-            // Focus ring when the volume bar row has controller focus.
-            border.width: root.activeFocus && root._focusRow === 0 && !root._outputExpanded ? Units.borderMedium : 0
-            border.color: Theme.focusBorder
-
-            Rectangle {
-                width: parent.width * (audioCtl.volume / 100)
-                height: parent.height
-                radius: parent.radius
-                color: audioCtl.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
-
-                Behavior on width {
-                    NumberAnimation {
-                        duration: 80
-                    }
-                }
-            }
-
-            Text {
-                anchors.centerIn: parent
-                text: audioCtl.muted ? "MUTED" : audioCtl.volume + "%"
-                font.pixelSize: Theme.fontHint
-                font.bold: true
-                color: audioCtl.volume > 40 && !audioCtl.muted ? Theme.textOnDark : Theme.textPrimary
-            }
+            volume: audioCtl.volume
+            muted: audioCtl.muted
+            trackHeight: Units.gridUnit * 1.5
+            showFocusBorder: root.activeFocus && root._focusRow === 0 && !root._outputExpanded
         }
 
         // --- Mute toggle hint ---

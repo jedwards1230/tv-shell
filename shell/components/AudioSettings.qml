@@ -303,32 +303,12 @@ FocusScope {
             }
 
             // Volume bar
-            Rectangle {
+            VolumeBar {
                 Layout.fillWidth: true
-                height: 56
-                radius: 28
-                color: Theme.surfaceHover
-
-                Rectangle {
-                    width: parent.width * (root.volume / 100)
-                    height: parent.height
-                    radius: 28
-                    color: root.muted ? Theme.textSecondary : (Theme.darkMode ? Theme.ember : Theme.navy)
-
-                    Behavior on width {
-                        NumberAnimation {
-                            duration: 100
-                        }
-                    }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: root.muted ? "MUTED" : root.volume + "%"
-                    font.pixelSize: Theme.fontBody
-                    font.bold: true
-                    color: root.volume > 40 ? Theme.textOnDark : Theme.textPrimary
-                }
+                volume: root.volume
+                muted: root.muted
+                trackHeight: 56
+                labelPixelSize: Theme.fontBody
             }
 
             FocusButton {
@@ -546,16 +526,10 @@ FocusScope {
             text: "Format"
         }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: formatLabel.implicitHeight + 48
-            radius: 16
-            color: Theme.surface
-
+        ReadonlyInfoCard {
             Text {
                 id: formatLabel
-                anchors.fill: parent
-                anchors.margins: 24
+                width: parent.width
                 text: root.formatInfo
                 font.pixelSize: Theme.fontSmall
                 font.family: "monospace"

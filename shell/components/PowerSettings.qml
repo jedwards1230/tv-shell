@@ -177,180 +177,43 @@ FocusScope {
             Layout.alignment: Qt.AlignHCenter
             spacing: 32
 
-            FocusScope {
+            ActionCard {
                 id: suspendScope
                 Layout.preferredWidth: 500
-                Layout.preferredHeight: 120
                 focus: true
-                activeFocusOnTab: true
-
+                accentColor: Theme.gold
+                restBorderColor: Theme.surfaceHover
+                title: "Sleep"
+                subtitle: root.canSuspend ? "Suspend to RAM" : "Suspend unavailable"
                 KeyNavigation.up: endSessionScope
                 KeyNavigation.down: restartScope
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 24
-                    color: parent.activeFocus ? Theme.gold : Theme.surface
-                    border.width: parent.activeFocus ? 0 : 2
-                    border.color: Theme.surfaceHover
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: 4
-
-                        Text {
-                            text: "Sleep"
-                            font.pixelSize: Theme.fontTitle
-                            font.bold: true
-                            color: suspendScope.activeFocus ? Theme.textOnDark : Theme.textPrimary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-
-                        Text {
-                            text: root.canSuspend ? "Suspend to RAM" : "Suspend unavailable"
-                            font.pixelSize: Theme.fontSmall
-                            color: suspendScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            suspendScope.forceActiveFocus();
-                            if (root.canSuspend)
-                                root.confirmAction = "suspend";
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
+                onActivated: {
                     if (root.canSuspend)
                         root.confirmAction = "suspend";
                 }
             }
 
-            FocusScope {
+            ActionCard {
                 id: restartScope
                 Layout.preferredWidth: 500
-                Layout.preferredHeight: 120
-                activeFocusOnTab: true
-
+                accentColor: Theme.ember
+                restBorderColor: Theme.surfaceHover
+                title: "Restart"
+                subtitle: "Reboot the system"
                 KeyNavigation.up: suspendScope
                 KeyNavigation.down: shutdownScope
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 24
-                    color: parent.activeFocus ? Theme.ember : Theme.surface
-                    border.width: parent.activeFocus ? 0 : 2
-                    border.color: Theme.surfaceHover
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: 4
-
-                        Text {
-                            text: "Restart"
-                            font.pixelSize: Theme.fontTitle
-                            font.bold: true
-                            color: restartScope.activeFocus ? Theme.textOnDark : Theme.textPrimary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-
-                        Text {
-                            text: "Reboot the system"
-                            font.pixelSize: Theme.fontSmall
-                            color: restartScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            restartScope.forceActiveFocus();
-                            root.confirmAction = "restart";
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    root.confirmAction = "restart";
-                }
+                onActivated: root.confirmAction = "restart"
             }
 
-            FocusScope {
+            ActionCard {
                 id: shutdownScope
                 Layout.preferredWidth: 500
-                Layout.preferredHeight: 120
-                activeFocusOnTab: true
-
+                accentColor: Theme.crimson
+                restBorderColor: Theme.surfaceHover
+                title: "Shutdown"
+                subtitle: "Power off the system"
                 KeyNavigation.up: restartScope
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 24
-                    color: parent.activeFocus ? Theme.crimson : Theme.surface
-                    border.width: parent.activeFocus ? 0 : 2
-                    border.color: Theme.surfaceHover
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: 4
-
-                        Text {
-                            text: "Shutdown"
-                            font.pixelSize: Theme.fontTitle
-                            font.bold: true
-                            color: shutdownScope.activeFocus ? Theme.textOnDark : Theme.textPrimary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-
-                        Text {
-                            text: "Power off the system"
-                            font.pixelSize: Theme.fontSmall
-                            color: shutdownScope.activeFocus ? Theme.textOnDarkMuted : Theme.textSecondary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            shutdownScope.forceActiveFocus();
-                            root.confirmAction = "shutdown";
-                        }
-                    }
-                }
-
-                Keys.onReturnPressed: {
-                    root.confirmAction = "shutdown";
-                }
+                onActivated: root.confirmAction = "shutdown"
             }
         }
 

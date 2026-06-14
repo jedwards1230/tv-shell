@@ -225,16 +225,10 @@ FocusScope {
             text: "IP Addresses"
         }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: ipLabel.implicitHeight + 48
-            radius: 16
-            color: Theme.surface
-
+        ReadonlyInfoCard {
             Text {
                 id: ipLabel
-                anchors.fill: parent
-                anchors.margins: 24
+                width: parent.width
                 text: root.ipAddress || "Fetching..."
                 font.pixelSize: Theme.fontSmall
                 font.family: "monospace"
@@ -249,17 +243,12 @@ FocusScope {
             visible: root.gateway !== "" || root.dnsServers.length > 0
         }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: gatewayDnsContent.implicitHeight + 48
-            radius: 16
-            color: Theme.surface
+        ReadonlyInfoCard {
             visible: root.gateway !== "" || root.dnsServers.length > 0
 
             Column {
                 id: gatewayDnsContent
-                anchors.fill: parent
-                anchors.margins: 24
+                width: parent.width
                 spacing: 8
 
                 Text {

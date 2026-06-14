@@ -205,140 +205,27 @@ FocusScope {
             spacing: 16
 
             // --- CPU card ---
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 170
-                radius: Units.radiusMD
-                color: Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 24
-                    spacing: 12
-
-                    Text {
-                        text: "CPU Usage"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                    Text {
-                        text: root.metricsLoaded ? root.cpuPct.toFixed(1) + "%" : "—"
-                        font.pixelSize: Theme.fontTitle
-                        font.bold: true
-                        color: Theme.textPrimary
-                    }
-                    Item {
-                        Layout.fillHeight: true
-                    }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 16
-                        radius: 8
-                        color: Theme.surfaceHover
-                        Rectangle {
-                            width: parent.width * Math.max(0, Math.min(1, root.cpuPct / 100))
-                            height: parent.height
-                            radius: 8
-                            color: root.cpuPct >= 90 ? Theme.crimson : Theme.ember
-                            Behavior on width {
-                                NumberAnimation {
-                                    duration: 250
-                                }
-                            }
-                        }
-                    }
-                }
+            StatCard {
+                label: "CPU Usage"
+                value: root.metricsLoaded ? root.cpuPct.toFixed(1) + "%" : "—"
+                barProgress: root.cpuPct / 100
+                barHighColor: root.cpuPct >= 90 ? Theme.crimson : Theme.ember
             }
 
             // --- Memory card ---
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 170
-                radius: Units.radiusMD
-                color: Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 24
-                    spacing: 12
-
-                    Text {
-                        text: "Memory"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                    Text {
-                        text: root.metricsLoaded && root.memTotal > 0 ? root.memPct + "%" : "—"
-                        font.pixelSize: Theme.fontTitle
-                        font.bold: true
-                        color: Theme.textPrimary
-                    }
-                    Text {
-                        text: root.metricsLoaded && root.memTotal > 0 ? root.fmtBytes(root.memUsed) + " / " + root.fmtBytes(root.memTotal) : ""
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textMuted
-                    }
-                    Item {
-                        Layout.fillHeight: true
-                    }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 16
-                        radius: 8
-                        color: Theme.surfaceHover
-                        Rectangle {
-                            width: parent.width * Math.max(0, Math.min(1, root.memPct / 100))
-                            height: parent.height
-                            radius: 8
-                            color: root.memPct >= 90 ? Theme.crimson : Theme.ember
-                            Behavior on width {
-                                NumberAnimation {
-                                    duration: 250
-                                }
-                            }
-                        }
-                    }
-                }
+            StatCard {
+                label: "Memory"
+                value: root.metricsLoaded && root.memTotal > 0 ? root.memPct + "%" : "—"
+                subtext: root.metricsLoaded && root.memTotal > 0 ? root.fmtBytes(root.memUsed) + " / " + root.fmtBytes(root.memTotal) : ""
+                barProgress: root.memPct / 100
+                barHighColor: root.memPct >= 90 ? Theme.crimson : Theme.ember
             }
 
             // --- Load card ---
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 170
-                radius: Units.radiusMD
-                color: Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 24
-                    spacing: 12
-
-                    Text {
-                        text: "Load Average"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textSecondary
-                    }
-                    Text {
-                        text: root.metricsLoaded ? root.load1.toFixed(2) : "—"
-                        font.pixelSize: Theme.fontTitle
-                        font.bold: true
-                        color: Theme.textPrimary
-                    }
-                    Text {
-                        text: "1-minute average"
-                        font.pixelSize: Theme.fontSmall
-                        color: Theme.textMuted
-                    }
-                    Item {
-                        Layout.fillHeight: true
-                    }
-                }
+            StatCard {
+                label: "Load Average"
+                value: root.metricsLoaded ? root.load1.toFixed(2) : "—"
+                subtext: "1-minute average"
             }
         }
 

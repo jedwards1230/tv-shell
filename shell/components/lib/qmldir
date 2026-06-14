@@ -1,11 +1,18 @@
 module components.lib
+ActionCard 1.0 ActionCard.qml
 AnchoredPopover 1.0 AnchoredPopover.qml
+AppIcon 1.0 AppIcon.qml
 CountBadge 1.0 CountBadge.qml
 FocusAccentBar 1.0 FocusAccentBar.qml
 FocusButton 1.0 FocusButton.qml
 HintBar 1.0 HintBar.qml
+LabeledTextInput 1.0 LabeledTextInput.qml
 PreferenceRow 1.0 PreferenceRow.qml
+ReadonlyInfoCard 1.0 ReadonlyInfoCard.qml
 SectionHeader 1.0 SectionHeader.qml
 SettingsButtonGroup 1.0 SettingsButtonGroup.qml
+SettingsListRow 1.0 SettingsListRow.qml
 SettingsDropdown 1.0 SettingsDropdown.qml
+StatCard 1.0 StatCard.qml
 StatusPill 1.0 StatusPill.qml
+VolumeBar 1.0 VolumeBar.qml
