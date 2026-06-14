@@ -610,6 +610,19 @@ pub struct AppEntry {
     pub comment: String,
 }
 
+/// Object wrapper for the `list_apps` tool result.
+///
+/// MCP requires a structured tool's `outputSchema` to have an `object` root
+/// type. A bare `Vec<AppEntry>` serialises to a JSON array root, which rmcp
+/// rejects at tool-router build time (a runtime panic, hit on every request).
+/// Nesting the list under `apps` keeps the root an object.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+pub struct ListAppsResult {
+    /// Installed applications discovered from `.desktop` files.
+    pub apps: Vec<AppEntry>,
+}
+
 impl From<apps::App> for AppEntry {
     fn from(a: apps::App) -> Self {
         AppEntry {

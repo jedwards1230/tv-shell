@@ -423,8 +423,10 @@ impl GameShellMcp {
             Use this to discover launchable apps before calling launch_app.",
         annotations(read_only_hint = true)
     )]
-    async fn list_apps(&self) -> Result<Json<Vec<bridge_core::AppEntry>>, String> {
-        Ok(Json(bridge_core::list_apps().await))
+    async fn list_apps(&self) -> Result<Json<bridge_core::ListAppsResult>, String> {
+        Ok(Json(bridge_core::ListAppsResult {
+            apps: bridge_core::list_apps().await,
+        }))
     }
 
     // ── UI state ─────────────────────────────────────────────────────────────
@@ -804,6 +806,17 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Building the tool router validates every tool's input AND output schema.
+    // rmcp panics here if a structured tool's output schema root isn't an
+    // `object` (e.g. a tool returning `Json<Vec<_>>` — a JSON array root). The
+    // router is built per MCP session at runtime, so such a panic breaks EVERY
+    // request (empty reply) rather than failing the build. This test forces the
+    // validation in CI so the regression can't ship again.
+    #[test]
+    fn tool_router_builds_without_panic() {
+        let _ = GameShellMcp::tool_router();
+    }
 
     // ── NavKey enum serialisation ─────────────────────────────────────────────
 
