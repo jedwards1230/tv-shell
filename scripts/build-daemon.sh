@@ -19,7 +19,7 @@
 #
 # Env overrides:
 #   GAME_SHELL_ROOT      repo root (default: parent of this script's directory)
-#   GAME_SHELL_FEATURES  cargo --features list (default: "cec")
+#   GAME_SHELL_FEATURES  cargo --features list (default: "cec,mcp")
 set -euo pipefail
 
 ROOT="${GAME_SHELL_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"

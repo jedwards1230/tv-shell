@@ -3,8 +3,8 @@
 A Rust backend daemon replacing `input/gamepad-input.py` and the QML shell's
 inline `python3`/shell-out parsers. Same Unix socket + newline-delimited wire
 protocol (`docs/IPC_PROTOCOL.md`). Phases 1–4 of
-[#28](https://github.com/jedwards1230/game-shell/issues/28) (HDMI-CEC now in
-daemon via `cec.rs`/cec-rs — compile-verified, needs on-device verification).
+[#28](https://github.com/jedwards1230/game-shell/issues/28) (HDMI-CEC deployed
+and verified on game-client-1 via `cec.rs`/cec-rs with static-linked libcec).
 
 The QML shell depends on this daemon for the Settings / app-discovery / system
 pages as well as input; it is the sole backend (the Python
@@ -150,11 +150,10 @@ Two more subsystems replace the remaining QML *reads*:
 macOS build and verifiable only on-device. `health.rs` runs everywhere, but its
 live fetch needs a reachable Sunshine host.
 
-**HDMI-CEC now lives in the daemon** (`cec.rs`, cec-rs/libcec, #94) —
-compile-verified only, needs on-device verification on the deploy host.
-`AVController.qml` was migrated to use the daemon's `cec-*` IPC over
-`SocketClient` (no more `living-room-cec` shell-out). `AVControlSettings.qml`
-was also migrated to the daemon's `cec-*` IPC (#16 complete).
+**HDMI-CEC lives in the daemon** (`cec.rs`, cec-rs/libcec, #94) — deployed and
+verified on game-client-1 with static-linked libcec (no system libcec dependency).
+`AVController.qml` and `AVControlSettings.qml` use the daemon's `cec-*` IPC over
+`SocketClient` (the `living-room-cec` shell-out chain is gone).
 
 **CEC focus toggles:** opening the libcec connection no longer auto-claims the
 active source (`activate_source(false)` in the builder). Daemon-start focus is
@@ -259,6 +258,5 @@ printf 'intent home\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"   # -> ok
 Phase 3 (zbus/Bluetooth/Wi-Fi-read/power) and Phase 4 (Hyprland + Sunshine
 `health`) **require on-device verification** — the Linux-only modules (D-Bus,
 `hyprland`) don't compile or run on macOS/CI, and `health`'s live fetch needs a
-reachable Sunshine host. **HDMI-CEC now lives in the daemon** (`cec.rs`,
-cec-rs/libcec, #94): compile-verified only — scan/power/active-source behavior
-needs on-device verification on the deploy host (no CEC hardware on CI).
+reachable Sunshine host. **HDMI-CEC** (`cec.rs`, #94) is deployed and verified on
+game-client-1 (static-linked libcec, no CEC hardware on CI).

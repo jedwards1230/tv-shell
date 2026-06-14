@@ -2,9 +2,10 @@
 # super-intent.sh — keyboard control-surface bridge for the game-shell.
 #
 # Hyprland binds inject a shell intent by passing its name as $1:
-#   bare Super        -> super-intent.sh menu        (toggle the nav drawer)
-#   Super + Escape    -> super-intent.sh home        (return-to-shell escape)
-#   Super + Backspace -> super-intent.sh home-hold   (reset to home)
+#   bare Super        -> super-intent.sh menu             (toggle the nav drawer)
+#   Super + Escape    -> super-intent.sh home             (return-to-shell escape)
+#   Super + Backspace -> super-intent.sh home-hold        (reset to home)
+#   Super + Right     -> super-intent.sh overlay:session  (open Session QAM)
 #
 # It writes `intent <name>` to the input daemon's control surface, which
 # validates the name against the closed vocabulary and re-broadcasts

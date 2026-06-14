@@ -17,7 +17,7 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 ```
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
-- **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots (#98), and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED, #99/#100/#101), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset). Build with `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
+- **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots, and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset), **`Super+Right` → `intent overlay:session`** (open Session QAM). Build with `scripts/build-daemon.sh` (canonical; uses `--features cec,mcp`) or `cargo build --release --features cec,mcp` and install to `$GAME_SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
 - **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
 - **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
@@ -37,7 +37,6 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     SettingsPanel.qml        # Left sidebar + right content loader
     {Audio,Bluetooth,Network,Display,Power}Settings.qml
     MoonlightSettings.qml    # Server management (add/remove/configure)
-    AppearanceSettings.qml   # Theme mode selector (auto/light/dark)
     SettingsButton.qml       # Reusable button component
     MarqueeText.qml          # Scrolling text for long names
     Drawer.qml               # Reusable slide-in drawer (any edge)
@@ -61,7 +60,7 @@ daemon/                      # Rust backend daemon (game-shell-input) — sole b
 packaging/                   # PKGBUILD / install layout (see #147)
 scripts/
   game-shell-session.sh       # Session wrapper launched by SDDM
-  super-intent.sh             # Hyprland Super binds -> intents (Super=menu/drawer, +Escape=home, +Backspace=reset)
+  super-intent.sh             # Hyprland Super binds -> intents (Super=menu/drawer, +Escape=home, +Backspace=reset, +Right=overlay:session)
 ```
 
 ### Shared Component Library (`lib/`)
@@ -98,8 +97,8 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 
 - **Streaming targets**: Loaded from `~/.config/game-shell/targets.json` at startup (single-line JSON — see gotchas). The path is resolved client-side by the `Paths` QML singleton (`$GAME_SHELL_TARGETS` env → else `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json`); a missing file is a clean no-op (empty target list, no crash). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.
 - **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `streamingViewMode`, `controllerDebug` (QML-owned) and `keyBindings` (daemon-owned). The **daemon is the sole writer** — `SettingsStore` reads via `get-config` and hands QML-owned keys to `set-config` (read-modify-write), so QML never formats config JSON itself. All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore.
-- **Config locations & paths**: The shell is prefix-agnostic (#145). Per-user config lives under `~/.config/game-shell/` (`settings.json`, `targets.json`, optional `daemon.env`, optional `hyprland-local.conf`); system defaults conventionally under `/etc/game-shell/`. The install prefix is resolved at runtime — never hardcode `/opt/game-shell`. Env vars: `GAME_SHELL_DIR` (install root; exported by the session script, also derived from `current_exe`), `GAME_SHELL_INPUT_BIN` (override the daemon binary path for the re-exec/dev-override hook; falls back to `$GAME_SHELL_DIR/bin/game-shell-input`), `GAME_SHELL_TARGETS` (override the streaming-targets file path), `GAME_SHELL_SOCK` (daemon IPC socket). `/opt/game-shell` survives only as a documented last-ditch fallback in `game-shell-session.sh` and the daemon's `install_root()`.
-- **App discovery & recents**: `AppDiscoveryManager` (apps via `list-apps`) and `RecentsTracker` (`get-recents` / `record-launch`) read JSON straight from the daemon, which owns the `.desktop` scanning (`freedesktop-desktop-entry` crate) and recents file. QML no longer parses `.desktop` files. The QML side talks to the daemon over a native `Quickshell.Io` socket via `SocketClient.qml` (#97) — the old per-call `python3 -c` Unix-socket shims were retired.
+- **Config locations & paths**: The shell is prefix-agnostic. Per-user config lives under `~/.config/game-shell/` (`settings.json`, `targets.json`, optional `daemon.env`, optional `hyprland-local.conf`); system defaults conventionally under `/etc/game-shell/`. The install prefix is resolved at runtime — never hardcode `/opt/game-shell`. Env vars: `GAME_SHELL_DIR` (install root; exported by the session script, also derived from `current_exe`), `GAME_SHELL_INPUT_BIN` (override the daemon binary path for the re-exec/dev-override hook; falls back to `$GAME_SHELL_DIR/bin/game-shell-input`), `GAME_SHELL_TARGETS` (override the streaming-targets file path), `GAME_SHELL_SOCK` (daemon IPC socket). `/opt/game-shell` survives only as a documented last-ditch fallback in `game-shell-session.sh` and the daemon's `install_root()`.
+- **App discovery & recents**: `AppDiscoveryManager` (apps via `list-apps`) and `RecentsTracker` (`get-recents` / `record-launch`) read JSON straight from the daemon, which owns the `.desktop` scanning (`freedesktop-desktop-entry` crate) and recents file. QML no longer parses `.desktop` files. The QML side talks to the daemon over a native `Quickshell.Io` socket via `SocketClient.qml` — the old per-call `python3 -c` Unix-socket shims were retired.
 - **Input daemon IPC**: See [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) for the full protocol specification. QML sends commands via Unix socket; the daemon streams events to subscribers.
 - **Input & state**: [docs/INPUT_AND_STATE.md](docs/INPUT_AND_STATE.md) is the canonical reference for the shell's state machine (`idle`/`launching`/`streaming`/`reconnecting`/`appRunning`), focus model, the per-context input-semantics matrix, B/Escape back precedence, and the `intent` control surface. Read it before changing any input/focus/nav code.
 - **Settings panels**: SettingsPanel uses a Loader to swap between section components. Each section manages its own system calls via `Quickshell.Io.Process`.
@@ -122,33 +121,14 @@ one bearer token, both thin adapters over `daemon/src/bridge_core.rs`. See
 [`docs/CONTROL_SURFACE.md`](docs/CONTROL_SURFACE.md) (and the Agent-Native Dev Loop
 under Development).
 
-The daemon's `bt-*` (BlueZ/`bluer`), `net-*` (NetworkManager/`zbus`, read-only),
-and `power-*` (logind + UPower/`zbus`) IPC commands are the **D-Bus backbone**
-(Phase 3, #28). **Phase 4** adds Hyprland reads (`hypr-active`/`hypr-clients` +
-`hypr:activewindow`/`hypr:fullscreen` events via direct Hyprland IPC sockets,
-replacing the `hyprctl clients -j` shell-out and feeding `AppLifecycleManager.qml`) and
-Sunshine session detection (`sunshine-status <host> <port>` via `reqwest`/rustls
-against Sunshine's self-signed `/serverinfo`, replacing the inline HTTP polls in
-`StreamManager.qml`/`StreamCard.qml`). These replace the
-QML shell-outs/HTTP polls that *read* system state. The Linux-only modules
-(D-Bus, Hyprland) are unverifiable on macOS/CI and need on-device verification on
-the deploy host; `sunshine-status` runs cross-platform but its live fetch needs a
-reachable host (its response parser is pure and unit-tested). What deliberately
-stays a shell-out: Wi-Fi **join** (`nmcli`), audio (`wpctl`), one-shot compositor
-*actions* (`hyprctl dispatch`), and reboot/poweroff (`systemctl`). **HDMI-CEC**
-moved into the daemon (`cec-*` IPC via `cec-rs`/libcec, #94/#16): a single
-persistent in-process libcec connection replaces the per-call shell-outs. It is
-**feature-gated** (`cargo build --features cec`) and Linux-only so the default
-build keeps the no-system-C-deps invariant — the libcec-sys link is exercised
-only in the dedicated `--features cec` CI leg and on the deploy host (libcec 7).
-The `cec` feature **static-links a bundled libcec** (`libcec-sys/static`, #179):
-the binary carries its own libcec + p8-platform, so there is no system
-`libcec`/`libcec-dev` dependency at build or runtime (the CI leg asserts this via
-`ldd`). Build needs only `libudev-dev` + `pkg-config` + network for the archive.
-Opening the connection no longer auto-claims the active source
-(`activate_source(false)`); startup and resume focus are gated by
-`cecFocusOnStartup` (default `false`) and `cecFocusOnWake` (default `true`),
-both within the `GAME_SHELL_CEC_LIFECYCLE` master gate.
+The table above reflects the deliberate split: the daemon owns all *reads* of
+system state (D-Bus, Hyprland IPC, Sunshine), while shell-outs remain only for
+write/action commands (`nmcli` join, `wpctl`, `hyprctl dispatch`, `systemctl`).
+**HDMI-CEC** lives in the daemon (`cec-*` IPC, deployed and verified on game-client-1
+with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtime).
+CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
+`cecFocusOnWake` (default `true`), both within the `GAME_SHELL_CEC_LIFECYCLE`
+master env gate.
 
 ## Development
 
@@ -178,26 +158,16 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.pn
 
 ### Rust Input Daemon
 
+For on-device / deploy builds, use the canonical script which sets the right feature flags:
+
 ```bash
-cd daemon && cargo build --release
+./scripts/build-daemon.sh   # equivalent to: cd daemon && cargo build --release --features cec,mcp
 # Install to the daemon binary's resolved location ($GAME_SHELL_DIR/bin by
 # default; $GAME_SHELL_INPUT_BIN overrides the exact path).
-install -m755 target/release/game-shell-input "$GAME_SHELL_DIR/bin/game-shell-input"
+install -m755 daemon/target/release/game-shell-input "$GAME_SHELL_DIR/bin/game-shell-input"
 ```
 
-**HDMI-CEC is an opt-in feature (#94).** A plain `cargo build` is C-free; the
-`cec` feature pulls in `cec-rs`/`libcec-sys` and **static-links a bundled libcec**
-(it forwards `libcec-sys/static`, #179) — a prebuilt static libcec + p8-platform
-is fetched from ssalonen/libcec-static-builds and linked into the binary, so the
-daemon needs **no system `libcec`/`libcec-dev`** at build or runtime (a host can
-manage/remove system libcec freely). The static path needs no bindgen/cmake/clang
-— only `libudev-dev` + `pkg-config` (libudev link hint) and network at build time
-to fetch the archive (Arch/CachyOS on the deploy host; the deploy build uses
-`--features cec`):
-
-```bash
-cd daemon && cargo build --release --features cec
-```
+**HDMI-CEC (`--features cec`) and the MCP server (`--features mcp`) are opt-in features.** A plain `cargo build` is C-free; the `cec` feature pulls in `cec-rs`/`libcec-sys` and **static-links a bundled libcec** — a prebuilt static libcec + p8-platform is fetched from ssalonen/libcec-static-builds and linked into the binary, so the daemon needs **no system `libcec`/`libcec-dev`** at build or runtime. The static path needs no bindgen/cmake/clang — only `libudev-dev` + `pkg-config` and network at build time to fetch the archive.
 
 Requires Linux with evdev and uinput access. Auto-discovers gamepad by vendor/product ID (defaults: Xbox controller `045e:028e`, configurable via `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` env vars). The Linux-only evdev/uinput/D-Bus modules build only on the target (or CI); the cross-platform subset (`protocol`, `config`, `state`, `device` GUID math, `apps`, `health`, `recents`) builds and tests on any host.
 
