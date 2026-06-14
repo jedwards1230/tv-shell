@@ -872,15 +872,15 @@ FocusScope {
                     id: nameRow
                     label: "Name"
                     text: root.newName
-                    onTextChanged: text => root.newName = text
+                    onTextEdited: text => root.newName = text
+                    onEscapePressed: {
+                        root.resetForm();
+                        serverList.forceActiveFocus();
+                    }
                     Component.onCompleted: {
                         nameRow.inputField.KeyNavigation.down = Qt.binding(function () {
                             return hostRow.inputField;
                         });
-                        nameRow.inputField.Keys.onEscapePressed = function (event) {
-                            root.resetForm();
-                            serverList.forceActiveFocus();
-                        };
                     }
                 }
 
@@ -889,7 +889,11 @@ FocusScope {
                     id: hostRow
                     label: "Host"
                     text: root.newHost
-                    onTextChanged: text => root.newHost = text
+                    onTextEdited: text => root.newHost = text
+                    onEscapePressed: {
+                        root.resetForm();
+                        serverList.forceActiveFocus();
+                    }
                     Component.onCompleted: {
                         hostRow.inputField.KeyNavigation.up = Qt.binding(function () {
                             return nameRow.inputField;
@@ -897,10 +901,6 @@ FocusScope {
                         hostRow.inputField.KeyNavigation.down = Qt.binding(function () {
                             return appRow.inputField;
                         });
-                        hostRow.inputField.Keys.onEscapePressed = function (event) {
-                            root.resetForm();
-                            serverList.forceActiveFocus();
-                        };
                     }
                 }
 
@@ -909,15 +909,15 @@ FocusScope {
                     id: appRow
                     label: "App"
                     text: root.newApp
-                    onTextChanged: text => root.newApp = text
+                    onTextEdited: text => root.newApp = text
+                    onEscapePressed: {
+                        root.resetForm();
+                        serverList.forceActiveFocus();
+                    }
                     Component.onCompleted: {
                         appRow.inputField.KeyNavigation.up = Qt.binding(function () {
                             return hostRow.inputField;
                         });
-                        appRow.inputField.Keys.onEscapePressed = function (event) {
-                            root.resetForm();
-                            serverList.forceActiveFocus();
-                        };
                     }
                 }
 

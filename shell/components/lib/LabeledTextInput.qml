@@ -29,7 +29,14 @@ FocusScope {
     property string text: ""
     property alias inputField: input
 
-    signal textChanged(string text)
+    // Named `textEdited` (not `textChanged`) to avoid colliding with the
+    // auto-generated change signal of the `text` property above.
+    signal textEdited(string text)
+
+    // Forwarded from the inner TextInput's Keys.onEscapePressed. Call sites bind
+    // this declaratively — Keys.* handlers are read-only and cannot be assigned
+    // imperatively on the aliased inner input from the outside.
+    signal escapePressed
 
     Layout.fillWidth: true
     implicitWidth: row.implicitWidth
@@ -67,7 +74,11 @@ FocusScope {
                 color: Theme.textPrimary
                 clip: true
                 verticalAlignment: TextInput.AlignVCenter
-                onTextChanged: root.textChanged(text)
+                onTextChanged: root.textEdited(text)
+                Keys.onEscapePressed: event => {
+                    root.escapePressed();
+                    event.accepted = true;
+                }
             }
         }
     }
