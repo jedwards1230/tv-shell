@@ -39,7 +39,7 @@ then the only gate.
 |--------|------|--------|
 | POST | `/intent/<name>` | dispatch intent (`<name>` percent-decoded; see vocab below) |
 | POST | `/key/<name>` | synthesize nav key: `up\|down\|left\|right\|select\|back` |
-| GET | `/screenshot[.png]` `[?flash=1]` | `grim -` PNG; `flash=1` paints a post-capture vignette |
+| GET | `/screenshot[.png]` `[?flash=1]` | `grim -` PNG; `flash=1` paints a post-capture vignette. Capture provenance rides in `X-GameShell-{Sha,Branch,Version,Captured-At}` response headers (body stays pure PNG) |
 | GET | `/dev/status` | JSON `StatusInfo` blob |
 | GET | `/dev/logs` `[?lines=N&filter=str]` | tail `/tmp/qs-log.txt` (lines default 100, max 1000) |
 | POST | `/dev/deploy` `[?ref=git-ref]` | git fetch + checkout + reset (ref default `main`) |
@@ -72,7 +72,7 @@ conditionally, `mcp.rs:413`).
 | `launch_app` | `wm_class` (StartupWMClass) | write | `app:<wm_class>` |
 | `list_apps` | — | read-only | XDG `.desktop` scan → `[{name,wm_class,comment}]` |
 | `get_ui_state` | — | read-only | Hyprland active window + quickshell focus |
-| `take_screenshot` | `flash` (bool) | read-only | `grim` → PNG content |
+| `take_screenshot` | `flash` (bool) | read-only | `grim` → PNG content + a trailing JSON text block `{captured_at,sha,branch,version}` |
 | `get_status` | — | read-only | typed `StatusInfo` JSON (output schema) |
 | `get_logs` | `lines` (≤1000), `filter` | read-only | tail `/tmp/qs-log.txt` |
 | `restart_shell` | — | destructive | kill + relaunch quickshell |
@@ -90,6 +90,11 @@ conditionally, `mcp.rs:413`).
 - `get_ui_state` reports compositor-level window focus (class + title + whether
   quickshell is focused) — NOT QML-internal state. Use `take_screenshot` for
   in-shell view state.
+- `take_screenshot` returns capture provenance alongside the frame (HTTP: `X-GameShell-*`
+  headers; MCP: a trailing JSON text block) so a caller can tell *which* deployed
+  checkout produced the image — latest `main`, a feature branch, or another agent's
+  work. It's read live per capture (via `bridge_core::capture_meta`), because a
+  `dev_deploy` mutates HEAD under the long-lived daemon without a restart.
 - `list_apps` makes `launch_app` discoverable without guessing `wm_class` values.
 
 `GAME_SHELL_MCP_ALLOWED_HOSTS` (comma-separated `host[:port]`) sets the rmcp Host

@@ -113,6 +113,77 @@ pub async fn capture_screenshot(
     }
 }
 
+/// Capture-time provenance returned alongside a screenshot so a caller can tell
+/// *which* deployed game-shell produced the frame — distinguishing latest `main`,
+/// a feature branch, or another agent's checkout at a glance.
+///
+/// **Read live per capture, never cached:** a `dev_deploy` mutates HEAD under the
+/// long-lived daemon (it does `git checkout` + `reset --hard` without restarting
+/// the process), so the deployed SHA/branch can change between two screenshots.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+pub struct CaptureMeta {
+    /// RFC3339 UTC timestamp of when the metadata was gathered — immediately
+    /// after the PNG was captured. `"unknown"` if the clock format fails.
+    pub captured_at: String,
+    /// Short git SHA of the checked-out repo at `install_root()`.
+    pub sha: String,
+    /// Current branch name, or `"HEAD"` on a detached checkout (tag/SHA).
+    pub branch: String,
+    /// Version string from `Cargo.toml`.
+    pub version: &'static str,
+}
+
+/// Resolve the short SHA and branch name of the repo at `root`.
+///
+/// Two `git rev-parse` invocations are run concurrently: `--short HEAD` and
+/// `--abbrev-ref HEAD`. They can't be combined into one call because both flags
+/// are global and would apply to every listed revision. A detached HEAD yields
+/// `branch == "HEAD"`. Any failure degrades to `"unknown"`.
+async fn git_sha_and_branch(root: &std::path::Path) -> (String, String) {
+    let Some(root_str) = root.to_str() else {
+        return ("unknown".to_owned(), "unknown".to_owned());
+    };
+    let run = |args: [&'static str; 1]| {
+        let root_str = root_str.to_owned();
+        let extra = args[0];
+        async move {
+            let out = tokio::process::Command::new("git")
+                .args(["-C", &root_str, "rev-parse", extra, "HEAD"])
+                .output()
+                .await;
+            match out {
+                Ok(o) if o.status.success() => {
+                    let s = String::from_utf8_lossy(&o.stdout).trim().to_owned();
+                    if s.is_empty() {
+                        "unknown".to_owned()
+                    } else {
+                        s
+                    }
+                }
+                _ => "unknown".to_owned(),
+            }
+        }
+    };
+    tokio::join!(run(["--short"]), run(["--abbrev-ref"]))
+}
+
+/// Gather [`CaptureMeta`] for the current capture. See the struct docs for why
+/// this is read live rather than cached.
+pub async fn capture_meta() -> CaptureMeta {
+    let root = crate::session_env::install_root();
+    let (sha, branch) = git_sha_and_branch(&root).await;
+    let captured_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "unknown".to_owned());
+    CaptureMeta {
+        captured_at,
+        sha,
+        branch,
+        version: env!("CARGO_PKG_VERSION"),
+    }
+}
+
 // ─── Status ──────────────────────────────────────────────────────────────────
 
 /// Serialisable status blob returned by `get_status` / `GET /dev/status`.
@@ -141,19 +212,7 @@ pub struct StatusInfo {
 pub async fn get_status() -> StatusInfo {
     let root = crate::session_env::install_root();
 
-    let sha = match root.to_str() {
-        None => "unknown".to_owned(),
-        Some(root_str) => {
-            let out = tokio::process::Command::new("git")
-                .args(["-C", root_str, "rev-parse", "--short", "HEAD"])
-                .output()
-                .await;
-            match out {
-                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_owned(),
-                _ => "unknown".to_owned(),
-            }
-        }
-    };
+    let (sha, _branch) = git_sha_and_branch(&root).await;
 
     let shell_running = matches!(
         tokio::process::Command::new("pgrep")
@@ -715,6 +774,21 @@ mod tests {
         assert!(json.contains("\"shell_running\":true"));
         assert!(json.contains("\"wayland_display\":\"wayland-1\""));
         assert!(json.contains("\"hypr_sig_present\":false"));
+    }
+
+    #[test]
+    fn capture_meta_serialises() {
+        let m = CaptureMeta {
+            captured_at: "2026-06-14T18:26:00Z".into(),
+            sha: "a1b2c3d".into(),
+            branch: "feat/screenshot-metadata".into(),
+            version: "0.1.0",
+        };
+        let json = serde_json::to_string(&m).expect("serialise CaptureMeta");
+        assert!(json.contains("\"captured_at\":\"2026-06-14T18:26:00Z\""));
+        assert!(json.contains("\"sha\":\"a1b2c3d\""));
+        assert!(json.contains("\"branch\":\"feat/screenshot-metadata\""));
+        assert!(json.contains("\"version\":\"0.1.0\""));
     }
 
     #[test]

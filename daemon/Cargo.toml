@@ -81,6 +81,11 @@ libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # Constant-time comparison for HTTP bearer-token auth (prevents timing oracles, #151).
 subtle = "2"
+# RFC3339 timestamps for screenshot capture metadata (bridge_core::capture_meta).
+# Pure-Rust, no system libs — preserves the C-free default build. default-features
+# = false trims to just what we use: `std` for `OffsetDateTime::now_utc()` and
+# `formatting` for the Rfc3339 well-known format.
+time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 # base64 encoding for MCP screenshot tool (PNG bytes → base64 for Content::image).
 # Optional: only needed under the `mcp` feature.
 base64 = { version = "0.22", optional = true }

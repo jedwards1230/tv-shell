@@ -452,7 +452,10 @@ impl GameShellMcp {
         description = "Capture the current Wayland display as a PNG image. \
             Set flash=true to trigger a brief white vignette on the game-shell UI \
             after capture (visual feedback for the user at the TV). \
-            Call this after every UI action to confirm the expected state was reached.",
+            Call this after every UI action to confirm the expected state was reached. \
+            Returns two content blocks: the PNG image, then a JSON text block of \
+            capture metadata {captured_at, sha, branch, version} identifying which \
+            deployed game-shell produced the frame (main vs a feature branch).",
         annotations(read_only_hint = true)
     )]
     async fn take_screenshot(
@@ -462,7 +465,14 @@ impl GameShellMcp {
         match bridge_core::capture_screenshot(&self.handles.events_tx, flash).await {
             Ok(png) => {
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
-                CallToolResult::success(vec![Content::image(b64, "image/png")])
+                // Provenance rides in a trailing text block so the agent can tell
+                // which checkout produced the frame. Read live (see capture_meta).
+                let meta = bridge_core::capture_meta().await;
+                let meta_json = serde_json::to_string(&meta).unwrap_or_else(|_| "{}".to_owned());
+                CallToolResult::success(vec![
+                    Content::image(b64, "image/png"),
+                    Content::text(meta_json),
+                ])
             }
             Err(msg) => CallToolResult::error(vec![Content::text(msg)]),
         }
