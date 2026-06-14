@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import "../"
 
 // Padded surface card wrapping static content (text, columns, etc.).
