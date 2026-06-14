@@ -10,10 +10,13 @@
 //! **Transport**: StreamableHttpService over axum, served at `/mcp`. The MCP
 //! endpoint is at `http://<bind>/mcp`.
 //!
-//! **Linux-only + feature-gated**: this entire module is
-//! `#[cfg(all(target_os = "linux", feature = "mcp"))]` — the `rmcp` crate
-//! links against several Linux-oriented async I/O primitives. Default builds
-//! (including macOS dev boxes and the CI default leg) exclude it entirely.
+//! **Feature-gated (cross-platform)**: this module is gated on
+//! `#[cfg(feature = "mcp")]` only — `rmcp`, `axum`, and `tokio` are all
+//! cross-platform, so the module compiles and typechecks on macOS dev boxes
+//! just as well as on Linux. It is NOT `#[cfg(target_os = "linux")]`-gated.
+//! Only the binary (`main.rs`) and the Linux-specific modules (evdev, uinput,
+//! zbus, Hyprland IPC) carry an OS guard; the MCP server itself runs anywhere
+//! tokio does.
 
 use std::sync::Arc;
 
@@ -22,7 +25,7 @@ use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo},
     schemars::{self, JsonSchema},
-    tool, tool_handler, tool_router, ServerHandler,
+    tool, tool_handler, tool_router, Json, ServerHandler,
 };
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
@@ -145,10 +148,13 @@ impl ServerHandler for GameShellMcp {
 impl GameShellMcp {
     // ── Navigation / intents ──────────────────────────────────────────────────
 
-    #[tool(description = "Send a named intent to the game-shell UI. \
-        Bare names: home, home-tap, home-hold, menu, settings, power. \
-        Deep-link families (colon-delimited): settings:<page-slug>, \
-        overlay:<target (volume|network|session)>, app:<StartupWMClass>.")]
+    #[tool(
+        description = "Send a named intent to the game-shell UI. \
+            Bare names: home, home-tap, home-hold, menu, settings, power. \
+            Deep-link families (colon-delimited): settings:<page-slug>, \
+            overlay:<target (volume|network|session)>, app:<StartupWMClass>.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
     async fn send_intent(
         &self,
         Parameters(SendIntentParams { name }): Parameters<SendIntentParams>,
@@ -166,8 +172,11 @@ impl GameShellMcp {
         }
     }
 
-    #[tool(description = "Synthesize a directional or action keypress on the \
-        game-shell virtual keyboard. Valid keys: up, down, left, right, select, back.")]
+    #[tool(
+        description = "Synthesize a directional or action keypress on the \
+            game-shell virtual keyboard. Valid keys: up, down, left, right, select, back.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
     async fn navigate(
         &self,
         Parameters(NavigateParams { key }): Parameters<NavigateParams>,
@@ -182,10 +191,13 @@ impl GameShellMcp {
         }
     }
 
-    #[tool(description = "Open a specific settings page directly. \
-        Known page slugs: audio, bluetooth, network, display, controllers, \
-        keybindings, avcontrol, accessibility, power, system. \
-        Unknown slugs are a graceful no-op in QML.")]
+    #[tool(
+        description = "Open a specific settings page directly. \
+            Known page slugs: audio, bluetooth, network, display, controllers, \
+            keybindings, avcontrol, accessibility, power, system. \
+            Unknown slugs are a graceful no-op in QML.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
     async fn open_settings(
         &self,
         Parameters(OpenSettingsParams { page }): Parameters<OpenSettingsParams>,
@@ -201,8 +213,10 @@ impl GameShellMcp {
         }
     }
 
-    #[tool(description = "Open a QAM overlay popover. \
-        Valid targets: volume, network, session.")]
+    #[tool(
+        description = "Open a QAM overlay popover. Valid targets: volume, network, session.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
     async fn open_overlay(
         &self,
         Parameters(OpenOverlayParams { target }): Parameters<OpenOverlayParams>,
@@ -221,7 +235,10 @@ impl GameShellMcp {
         }
     }
 
-    #[tool(description = "Launch a local .desktop application by its StartupWMClass.")]
+    #[tool(
+        description = "Launch a local .desktop application by its StartupWMClass.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
     async fn launch_app(
         &self,
         Parameters(LaunchAppParams { wm_class }): Parameters<LaunchAppParams>,
@@ -239,9 +256,12 @@ impl GameShellMcp {
 
     // ── Screenshot ────────────────────────────────────────────────────────────
 
-    #[tool(description = "Capture the current Wayland display as a PNG image. \
-        Set flash=true to trigger a brief white vignette on the game-shell UI \
-        after capture (visual feedback for the user at the TV).")]
+    #[tool(
+        description = "Capture the current Wayland display as a PNG image. \
+            Set flash=true to trigger a brief white vignette on the game-shell UI \
+            after capture (visual feedback for the user at the TV).",
+        annotations(read_only_hint = true)
+    )]
     async fn take_screenshot(
         &self,
         Parameters(TakeScreenshotParams { flash }): Parameters<TakeScreenshotParams>,
@@ -257,20 +277,23 @@ impl GameShellMcp {
 
     // ── Status / diagnostics ──────────────────────────────────────────────────
 
-    #[tool(description = "Return a JSON status blob: git SHA, daemon PID, \
-        daemon version, whether quickshell is running, Wayland display name, \
-        and whether HYPRLAND_INSTANCE_SIGNATURE is resolvable.")]
-    async fn get_status(&self) -> CallToolResult {
-        let info = bridge_core::get_status().await;
-        match serde_json::to_string_pretty(&info) {
-            Ok(json) => CallToolResult::success(vec![Content::text(json)]),
-            Err(e) => CallToolResult::error(vec![Content::text(format!("serialise error: {e}"))]),
-        }
+    #[tool(
+        description = "Return structured status: git SHA, daemon PID, daemon version, \
+            whether quickshell is running, Wayland display name, and whether \
+            HYPRLAND_INSTANCE_SIGNATURE is resolvable. Returns a typed JSON object \
+            with an advertised output schema.",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_status(&self) -> Result<Json<bridge_core::StatusInfo>, String> {
+        Ok(Json(bridge_core::get_status().await))
     }
 
-    #[tool(description = "Return the last N lines of /tmp/qs-log.txt \
-        (the quickshell log file). Optionally filter by a substring. \
-        If the log file does not exist yet, returns an explanatory hint.")]
+    #[tool(
+        description = "Return the last N lines of /tmp/qs-log.txt \
+            (the quickshell log file). Optionally filter by a substring. \
+            If the log file does not exist yet, returns an explanatory hint.",
+        annotations(read_only_hint = true)
+    )]
     async fn get_logs(
         &self,
         Parameters(GetLogsParams { lines, filter }): Parameters<GetLogsParams>,
@@ -284,10 +307,13 @@ impl GameShellMcp {
 
     // ── Shell management ──────────────────────────────────────────────────────
 
-    #[tool(description = "Kill and restart the quickshell process. \
-        Waits 3 seconds for startup and returns the first WARN/ERROR log lines \
-        (or a 'no errors' confirmation). Use after deploying a new game-shell \
-        build to pick up QML changes without rebooting.")]
+    #[tool(
+        description = "Kill and restart the quickshell process. \
+            Waits 3 seconds for startup and returns the first WARN/ERROR log lines \
+            (or a 'no errors' confirmation). Use after deploying a new game-shell \
+            build to pick up QML changes without rebooting.",
+        annotations(read_only_hint = false, destructive_hint = true)
+    )]
     async fn restart_shell(&self) -> CallToolResult {
         match bridge_core::dev_restart_shell().await {
             Ok(body) => CallToolResult::success(vec![Content::text(body)]),
@@ -301,9 +327,12 @@ impl GameShellMcp {
     // error when the dev flag is absent — this is the safest approach with the
     // current rmcp macro model (conditional registration is not yet supported).
 
-    #[tool(description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
-        git fetch + checkout + reset to remote. Defaults to 'main'. \
-        Use to pull a branch onto the device without a full re-deploy.")]
+    #[tool(
+        description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
+            git fetch + checkout + reset to remote. Defaults to 'main'. \
+            Use to pull a branch onto the device without a full re-deploy.",
+        annotations(read_only_hint = false, destructive_hint = true)
+    )]
     async fn dev_deploy(
         &self,
         Parameters(DevDeployParams { git_ref }): Parameters<DevDeployParams>,
@@ -319,9 +348,12 @@ impl GameShellMcp {
         }
     }
 
-    #[tool(description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
-        Run scripts/build-daemon.sh and install the resulting binary. \
-        This is a long-running operation (~15-60 seconds depending on cache).")]
+    #[tool(
+        description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
+            Run scripts/build-daemon.sh and install the resulting binary. \
+            This is a long-running operation (~15-60 seconds depending on cache).",
+        annotations(read_only_hint = false, destructive_hint = true)
+    )]
     async fn dev_build(&self) -> CallToolResult {
         if !self.handles.dev_enabled {
             return CallToolResult::error(vec![Content::text(
@@ -334,9 +366,12 @@ impl GameShellMcp {
         }
     }
 
-    #[tool(description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
-        Re-exec the daemon process (picks up a newly built binary). \
-        The MCP connection will drop immediately after the response.")]
+    #[tool(
+        description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
+            Re-exec the daemon process (picks up a newly built binary). \
+            The MCP connection will drop immediately after the response.",
+        annotations(read_only_hint = false, destructive_hint = true)
+    )]
     async fn dev_restart_daemon(&self) -> CallToolResult {
         if !self.handles.dev_enabled {
             return CallToolResult::error(vec![Content::text(

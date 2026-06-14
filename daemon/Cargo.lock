@@ -944,6 +944,7 @@ dependencies = [
  "notify-debouncer-full",
  "reqwest",
  "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "subtle",

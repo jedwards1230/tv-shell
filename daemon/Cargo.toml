@@ -36,10 +36,12 @@ cec = ["dep:cec-rs", "libcec-sys/static"]
 
 # MCP server via rmcp 1.7.0 (the official Model Context Protocol Rust SDK).
 # OFF by default — same rationale as `cec`: the default build leg (CI + macOS
-# dev boxes) stays free of the rmcp / axum / schemars C-adjacent toolchain.
+# dev boxes) stays free of the rmcp / axum / schemars toolchain.
 #
-# The module (`mcp.rs`) is ALSO `#[cfg(target_os = "linux")]`-gated, so even
-# when this feature is enabled the MCP server only compiles/runs on Linux.
+# The module (`mcp.rs`) is feature-gated only (NOT OS-gated) — rmcp, axum, and
+# tokio are all cross-platform so mcp.rs compiles on macOS dev boxes just fine.
+# Only the binary entry-point (main.rs) and the Linux-specific modules (evdev,
+# uinput, zbus, Hyprland) carry a `cfg(target_os = "linux")` guard.
 # Enable at deploy time alongside `cec`:
 #   cargo build --release --features cec,mcp
 # (scripts/build-daemon.sh defaults to "cec,mcp")
@@ -48,7 +50,11 @@ cec = ["dep:cec-rs", "libcec-sys/static"]
 #   - server:                          ServerHandler + tool macros
 #   - macros:                          #[tool], #[tool_router], #[tool_handler]
 #   - transport-streamable-http-server: StreamableHttpService over axum
-mcp = ["dep:rmcp", "dep:axum", "dep:base64"]
+#
+# `dep:schemars` is included so bridge_core::StatusInfo can derive JsonSchema
+# for structured MCP output (the derive macro needs the canonical crate name in
+# scope, not a re-export path through rmcp).
+mcp = ["dep:rmcp", "dep:axum", "dep:base64", "dep:schemars"]
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
@@ -88,6 +94,13 @@ rmcp = { version = "1.7.0", features = ["server", "macros", "transport-streamabl
 # the default build never links it. Version must be compatible with rmcp's
 # transitive axum requirement (rmcp 1.7.0 uses axum 0.8).
 axum = { version = "0.8", optional = true }
+# schemars is declared directly (optional) so `bridge_core::StatusInfo` can
+# derive `JsonSchema` under `#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]`.
+# The derive macro requires the crate to be available by its canonical crate name
+# `schemars` — a re-export path like `rmcp::schemars` does not satisfy the proc-macro
+# resolver. Version matches rmcp 1.7.0's transitive pin (schemars 1.x); Cargo
+# unifies them to the single resolved copy (1.2.1 in the lockfile).
+schemars = { version = "1", optional = true }
 
 # evdev/uinput are Linux kernel interfaces. Keep them off non-Linux hosts so
 # the pure-logic modules (protocol, config, device GUID math) still compile and
