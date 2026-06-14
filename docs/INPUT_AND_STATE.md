@@ -309,6 +309,7 @@ intents. Unknown leaves are a graceful no-op in QML (logged, no crash).
 | `settings:<page>` | `onIntentSettingsPage` | `settingsPanel.openSectionById(page)` — page ids below |
 | `overlay:volume` | `onIntentOverlay` | `volumeOverlay.openAt(null)` |
 | `overlay:network` | `onIntentOverlay` | `networkOverlay.openAt(null)` |
+| `overlay:session` | `onIntentOverlay` | Open the power/session drawer |
 | `app:<wmClass>` | `onIntentApp` | Match `_applications[].wmClass`, then `checkAndLaunchApp` |
 
 **Settings page ids** (order from `SettingsPanel.sections`, `streaming` only when

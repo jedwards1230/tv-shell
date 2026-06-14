@@ -41,6 +41,7 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `apps.rs` | `.desktop` scan/parse → `list-apps` JSON (cross-platform) |
 | `recents.rs` | Recents file I/O → `record-launch` / `get-recents` (cross-platform) |
 | `device.rs` | SDL GUID + DB matching, fleet discovery, fd-ownership registry, stable wire ids, player-slot allocator |
+| `controllerdb.rs` | Runtime fetch + cache of the upstream SDL_GameControllerDB (`controllerdb-refresh` IPC) |
 | `state.rs` | Control messages + pure input logic (velocity, deadzone, combos) |
 | `input.rs` | Linux input runtime (evdev/uinput) — single state owner; multi-pad `Fleet` |
 | `bluetooth.rs` | **Linux-only.** BlueZ actor via `bluer` — scan/pair/connect/trust + `bt:*` events |
@@ -48,7 +49,17 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `power.rs` | **Linux-only.** logind suspend + UPower battery via `zbus` — `power:*` events |
 | `hyprland.rs` | **Linux-only.** Hyprland actor over direct IPC sockets (no crate) — active-window/clients queries + `hypr:*` events |
 | `cec.rs` | **Linux-only.** HDMI-CEC actor via `cec-rs`/libcec — `cec-scan`/`cec-device`/`cec-power-on`/`cec-power-off`/`cec-active-source` + `cec:*` events |
+| `session.rs` | **Linux-only.** logind session-active watcher — releases/reacquires gamepad grab on VT-switch |
+| `watch.rs` | **Linux-only.** inotify watcher for `settings.json` external edits (triggers `config:changed` broadcast) |
 | `health.rs` | Sunshine session detection via `reqwest`/rustls (cross-platform) — `sunshine-status` |
+| `moonlight.rs` | Moonlight local-config "forget" — creds-free client-side unpair (`moonlight-forget` IPC) |
+| `notifications.rs` | Notification history persistence (`record-notification` / `get-notifications` / `set-notifications` IPC) |
+| `plex.rs` | Plex hubs fetch for the home-screen Plex widget — `plex-hubs` IPC (cross-platform, stateless) |
+| `system.rs` | System/storage status reads for the System settings page — `sys-status` / `storage-status` IPC |
+| `session_env.rs` | Session-environment self-discovery + `daemon.env` loading (resolves `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`) |
+| `bridge_core.rs` | Shared action logic for the HTTP bridge and MCP server (intent dispatch, screenshot, status, log read) |
+| `http.rs` | LAN HTTP/1.1 control bridge (`GAME_SHELL_HTTP_BIND`) — `POST /intent`, `POST /key`, `GET /screenshot`, `/dev/*` |
+| `mcp.rs` | MCP server (`GAME_SHELL_MCP_BIND`, `--features mcp`) — 14 tools over streamable-HTTP at `/mcp` |
 | `ipc.rs` | Unix-socket server, `broadcast` event fan-out, D-Bus command routing |
 | `main.rs` | Runtime wiring + signals + D-Bus actor spawn |
 
@@ -143,7 +154,7 @@ live fetch needs a reachable Sunshine host.
 compile-verified only, needs on-device verification on the deploy host.
 `AVController.qml` was migrated to use the daemon's `cec-*` IPC over
 `SocketClient` (no more `living-room-cec` shell-out). `AVControlSettings.qml`
-is a separate follow-up (#16).
+was also migrated to the daemon's `cec-*` IPC (#16 complete).
 
 **CEC focus toggles:** opening the libcec connection no longer auto-claims the
 active source (`activate_source(false)` in the builder). Daemon-start focus is
@@ -151,6 +162,24 @@ gated by `cecFocusOnStartup` (default `false`) and resume-from-sleep focus by
 `cecFocusOnWake` (default `true`), both within the `GAME_SHELL_CEC_LIFECYCLE`
 master env gate. The manual `cec-active-source` IPC and standby-on-suspend are
 unaffected.
+
+## Network control surface (`http.rs` / `mcp.rs` / `bridge_core.rs`)
+
+Beyond the owner-only Unix-socket IPC, the daemon can expose its
+intent/key/screenshot/dev surface over the network. Two opt-in adapters share one
+bearer token and a single action core (`bridge_core.rs`):
+
+- **HTTP bridge** (`http.rs`, `GAME_SHELL_HTTP_BIND`): a hand-rolled HTTP/1.1
+  listener — `POST /intent/<name>`, `POST /key/<name>`, `GET /screenshot`, and the
+  `/dev/*` routes (status/logs/deploy/build/restart-shell/restart-daemon).
+- **MCP server** (`mcp.rs`, `GAME_SHELL_MCP_BIND`, `--features mcp`): the official
+  `rmcp` 1.7.0 SDK over streamable-HTTP at `/mcp`, exposing 14 tools (the dev tools
+  gated by `GAME_SHELL_MCP_DEV`). Feature-gated only, not OS-gated — compiles on
+  macOS.
+
+Both are unset (closed) by default. Auth, endpoint/tool reference, env vars, and
+security posture: **[`docs/CONTROL_SURFACE.md`](../docs/CONTROL_SURFACE.md)**.
+`scripts/build-daemon.sh` defaults to `--features cec,mcp`.
 
 ## Build & test
 

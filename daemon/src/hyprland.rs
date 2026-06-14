@@ -143,6 +143,17 @@ pub async fn run(
     Ok(())
 }
 
+/// Query the active Hyprland window directly without going through the actor
+/// channel. Returns `Ok(json)` with the same `{class,title,address}` shape as
+/// `hypr-active`, or `Ok("{}")` when no window is active or the socket is
+/// unreachable. Useful for one-shot reads from `bridge_core` where injecting
+/// the actor `mpsc::Sender` would require threading it through multiple layers.
+///
+/// Called by `bridge_core::get_ui_state` (gated `#[cfg(target_os = "linux")]`).
+pub async fn query_active_window() -> String {
+    active_window_json().await
+}
+
 /// Build the `hypr-active` compact-JSON object `{class,title,address}`, or `{}`
 /// when there's no active window / on any IPC failure (so the QML page stays
 /// usable when the Hyprland socket is absent).

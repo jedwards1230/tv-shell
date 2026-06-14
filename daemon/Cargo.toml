@@ -34,6 +34,28 @@ path = "src/main.rs"
 # CI's cec leg runs on Debian Trixie for the same reason — not bookworm/2.36).
 cec = ["dep:cec-rs", "libcec-sys/static"]
 
+# MCP server via rmcp 1.7.0 (the official Model Context Protocol Rust SDK).
+# OFF by default — same rationale as `cec`: the default build leg (CI + macOS
+# dev boxes) stays free of the rmcp / axum / schemars toolchain.
+#
+# The module (`mcp.rs`) is feature-gated only (NOT OS-gated) — rmcp, axum, and
+# tokio are all cross-platform so mcp.rs compiles on macOS dev boxes just fine.
+# Only the binary entry-point (main.rs) and the Linux-specific modules (evdev,
+# uinput, zbus, Hyprland) carry a `cfg(target_os = "linux")` guard.
+# Enable at deploy time alongside `cec`:
+#   cargo build --release --features cec,mcp
+# (scripts/build-daemon.sh defaults to "cec,mcp")
+#
+# rmcp features used:
+#   - server:                          ServerHandler + tool macros
+#   - macros:                          #[tool], #[tool_router], #[tool_handler]
+#   - transport-streamable-http-server: StreamableHttpService over axum
+#
+# `dep:schemars` is included so bridge_core::StatusInfo can derive JsonSchema
+# for structured MCP output (the derive macro needs the canonical crate name in
+# scope, not a re-export path through rmcp).
+mcp = ["dep:rmcp", "dep:axum", "dep:base64", "dep:schemars"]
+
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -59,6 +81,26 @@ libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # Constant-time comparison for HTTP bearer-token auth (prevents timing oracles, #151).
 subtle = "2"
+# base64 encoding for MCP screenshot tool (PNG bytes → base64 for Content::image).
+# Optional: only needed under the `mcp` feature.
+base64 = { version = "0.22", optional = true }
+
+# MCP server (rmcp 1.7.0 — official Model Context Protocol Rust SDK).
+# Optional + feature-gated (`mcp`): brings in axum, schemars, and the full
+# MCP protocol machinery. The `transport-streamable-http-server` feature pulls
+# in axum transitively; we declare axum directly so we can use it in mcp.rs.
+rmcp = { version = "1.7.0", features = ["server", "macros", "transport-streamable-http-server"], optional = true }
+# axum is used in mcp.rs to host the StreamableHttpService. Also optional so
+# the default build never links it. Version must be compatible with rmcp's
+# transitive axum requirement (rmcp 1.7.0 uses axum 0.8).
+axum = { version = "0.8", optional = true }
+# schemars is declared directly (optional) so `bridge_core::StatusInfo` can
+# derive `JsonSchema` under `#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]`.
+# The derive macro requires the crate to be available by its canonical crate name
+# `schemars` — a re-export path like `rmcp::schemars` does not satisfy the proc-macro
+# resolver. Version matches rmcp 1.7.0's transitive pin (schemars 1.x); Cargo
+# unifies them to the single resolved copy (1.2.1 in the lockfile).
+schemars = { version = "1", optional = true }
 
 # evdev/uinput are Linux kernel interfaces. Keep them off non-Linux hosts so
 # the pure-logic modules (protocol, config, device GUID math) still compile and
@@ -88,16 +130,15 @@ bluer = { version = "0.17.4", default-features = false, features = ["bluetoothd"
 # (FSEvents is a different API), and the watch module is cfg-gated to match.
 notify-debouncer-full = "0.3"
 
-# HDMI-CEC (#94): cec-rs wraps the system libcec (GPL-2.0) C library — GPL-2.0
-# is compatible under our GPL-3.0 (#88). 12.0.1 / libcec-sys 9.0.3 support
-# libcec 7 (the daemon static-links bundled libcec 7, so no system libcec is
-# needed on the deploy host (Arch/CachyOS); the 8.x/5.x line only
-# supported libcec ≤6 and made the daemon fail to link there — the #94 revert).
-# OPTIONAL + feature-gated (`cec`): unlike evdev/zbus/bluer (pure Rust, no C),
-# libcec-sys links a C library and needs libcec-dev + libclang-dev at build
-# time. `optional = true` keeps it out of the DEFAULT Linux build entirely (a
-# plain `cfg(target_os="linux")` dep would still be pulled on every Linux
-# build); only `--features cec` activates it via `dep:cec-rs`.
+# HDMI-CEC (#94): cec-rs wraps libcec (GPL-2.0) — compatible under GPL-3.0 (#88).
+# 12.0.1 / libcec-sys 9.0.3 support libcec 7. The `cec` feature STATIC-LINKS a
+# bundled libcec (#179, `libcec-sys/static`): a prebuilt libcec.a + p8-platform
+# is fetched from ssalonen/libcec-static-builds and baked into the binary, so
+# NO system `libcec`/`libcec-dev` is required at build or runtime (the CI `--ldd`
+# assertion verifies this). The static path needs no bindgen/cmake/clang; only
+# `libudev-dev` + `pkg-config` (for the libudev link hint) and network access
+# at build time to fetch the archive. `optional = true` keeps cec-rs out of the
+# default Linux build; only `--features cec` activates it via `dep:cec-rs`.
 cec-rs = { version = "12.0.1", optional = true }
 # Declared directly (optional) ONLY so the `cec` feature can forward
 # `libcec-sys/static` (#179) — static-link a bundled libcec instead of the
