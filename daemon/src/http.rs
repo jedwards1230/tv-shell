@@ -292,9 +292,25 @@ pub fn http_response(status: u16, body: &str) -> String {
 /// Returns the raw header bytes (including the final CRLFCRLF). The caller must
 /// write these bytes then immediately write the raw PNG bytes — do NOT use
 /// `http_response` for binary bodies since it assumes a UTF-8 `&str` body.
-fn png_response_header(png_len: usize) -> Vec<u8> {
+///
+/// Capture provenance rides in `X-GameShell-*` headers (not the body), so the
+/// PNG stays byte-identical to a metadata-unaware client (`curl -o shot.png`).
+/// All four values are header-safe: git SHAs/branch names and the RFC3339
+/// timestamp contain no CR/LF.
+fn png_response_header(png_len: usize, meta: &bridge_core::CaptureMeta) -> Vec<u8> {
     let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {png_len}\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: image/png\r\n\
+         Content-Length: {png_len}\r\n\
+         X-GameShell-Sha: {sha}\r\n\
+         X-GameShell-Branch: {branch}\r\n\
+         X-GameShell-Version: {version}\r\n\
+         X-GameShell-Captured-At: {captured_at}\r\n\
+         Connection: close\r\n\r\n",
+        sha = meta.sha,
+        branch = meta.branch,
+        version = meta.version,
+        captured_at = meta.captured_at,
     );
     header.into_bytes()
 }
@@ -479,7 +495,8 @@ async fn handle_connection(
                     // Binary-safe response: write the header then the raw PNG bytes.
                     // We do NOT use http_response() here — that function takes a &str
                     // body and would corrupt arbitrary binary data.
-                    let header = png_response_header(png.len());
+                    let meta = bridge_core::capture_meta().await;
+                    let header = png_response_header(png.len(), &meta);
                     let _ = stream.write_all(&header).await;
                     let _ = stream.write_all(&png).await;
                 }
@@ -967,11 +984,21 @@ mod tests {
 
     #[test]
     fn png_response_header_well_formed() {
-        let header = png_response_header(1234);
+        let meta = bridge_core::CaptureMeta {
+            captured_at: "2026-06-14T18:26:00Z".to_owned(),
+            sha: "a1b2c3d".to_owned(),
+            branch: "feat/screenshot-metadata".to_owned(),
+            version: "0.1.0",
+        };
+        let header = png_response_header(1234, &meta);
         let s = std::str::from_utf8(&header).unwrap();
         assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(s.contains("Content-Type: image/png\r\n"));
         assert!(s.contains("Content-Length: 1234\r\n"));
+        assert!(s.contains("X-GameShell-Sha: a1b2c3d\r\n"));
+        assert!(s.contains("X-GameShell-Branch: feat/screenshot-metadata\r\n"));
+        assert!(s.contains("X-GameShell-Version: 0.1.0\r\n"));
+        assert!(s.contains("X-GameShell-Captured-At: 2026-06-14T18:26:00Z\r\n"));
         assert!(s.contains("Connection: close\r\n"));
         assert!(s.ends_with("\r\n\r\n"));
     }
