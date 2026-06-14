@@ -29,7 +29,9 @@ FocusScope {
     property string text: ""
     property alias inputField: input
 
-    signal textChanged(string text)
+    // Named `textEdited` (not `textChanged`) to avoid colliding with the
+    // auto-generated change signal of the `text` property above.
+    signal textEdited(string text)
 
     Layout.fillWidth: true
     implicitWidth: row.implicitWidth
@@ -67,7 +69,7 @@ FocusScope {
                 color: Theme.textPrimary
                 clip: true
                 verticalAlignment: TextInput.AlignVCenter
-                onTextChanged: root.textChanged(text)
+                onTextChanged: root.textEdited(text)
             }
         }
     }

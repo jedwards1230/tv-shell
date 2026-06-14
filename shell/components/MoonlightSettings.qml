@@ -872,7 +872,7 @@ FocusScope {
                     id: nameRow
                     label: "Name"
                     text: root.newName
-                    onTextChanged: text => root.newName = text
+                    onTextEdited: text => root.newName = text
                     Component.onCompleted: {
                         nameRow.inputField.KeyNavigation.down = Qt.binding(function () {
                             return hostRow.inputField;
@@ -889,7 +889,7 @@ FocusScope {
                     id: hostRow
                     label: "Host"
                     text: root.newHost
-                    onTextChanged: text => root.newHost = text
+                    onTextEdited: text => root.newHost = text
                     Component.onCompleted: {
                         hostRow.inputField.KeyNavigation.up = Qt.binding(function () {
                             return nameRow.inputField;
@@ -909,7 +909,7 @@ FocusScope {
                     id: appRow
                     label: "App"
                     text: root.newApp
-                    onTextChanged: text => root.newApp = text
+                    onTextEdited: text => root.newApp = text
                     Component.onCompleted: {
                         appRow.inputField.KeyNavigation.up = Qt.binding(function () {
                             return hostRow.inputField;
