@@ -3,6 +3,14 @@
 //! **Opt-in**: the server only starts when the `GAME_SHELL_MCP_BIND` environment
 //! variable is set to a `host:port` address. When unset, no socket is opened.
 //!
+//! **Auth**: bearer-token auth at parity with the HTTP bridge. Uses the same
+//! `GAME_SHELL_HTTP_TOKEN` and `GAME_SHELL_HTTP_AUTH_ENABLED` env vars so
+//! operators only need one token. Applied via an axum middleware layer wrapping
+//! the `/mcp` route; constant-time comparison via `bridge_core::ct_eq_str`.
+//! If auth is enabled but no token is configured, all requests are rejected (fail
+//! closed). `GAME_SHELL_MCP_ALLOWED_HOSTS` (comma-separated host[:port]) overrides
+//! the rmcp host allowlist.
+//!
 //! **Dev tools**: `dev_deploy`, `dev_build`, and `dev_restart_daemon` are only
 //! registered when `GAME_SHELL_MCP_DEV` is set (any non-empty value). This keeps
 //! the production tool surface minimal.
@@ -20,6 +28,12 @@
 
 use std::sync::Arc;
 
+use axum::{
+    extract::Request,
+    http::{HeaderMap, StatusCode},
+    middleware::{self, Next},
+    response::Response,
+};
 use base64::Engine as _;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -40,15 +54,49 @@ use crate::state::Control;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SendIntentParams {
     /// The intent name. Bare names: home, home-tap, home-hold, menu, settings,
-    /// power. Deep-link families: settings:<page-slug>, overlay:<target>,
-    /// app:<StartupWMClass>.
+    /// power. Deep-link families (colon-delimited): settings:<page-slug>,
+    /// overlay:<target (volume|network|session)>, app:<StartupWMClass>.
+    /// To open a specific settings page, overlay, or app, prefer
+    /// open_settings / open_overlay / launch_app.
     pub name: String,
+}
+
+/// Direction or action key for D-pad / keyboard navigation.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NavKey {
+    /// Move focus upward.
+    Up,
+    /// Move focus downward.
+    Down,
+    /// Move focus left.
+    Left,
+    /// Move focus right.
+    Right,
+    /// Activate / confirm the currently focused element (A button / Enter).
+    Select,
+    /// Go up one level / dismiss (B button / Escape).
+    Back,
+}
+
+impl NavKey {
+    fn as_str(&self) -> &'static str {
+        match self {
+            NavKey::Up => "up",
+            NavKey::Down => "down",
+            NavKey::Left => "left",
+            NavKey::Right => "right",
+            NavKey::Select => "select",
+            NavKey::Back => "back",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct NavigateParams {
-    /// Direction or action key: up, down, left, right, select, back.
-    pub key: String,
+    /// Direction or action key. `select` = activate/confirm the focused element
+    /// (A button / Enter); `back` = go up one level / dismiss (B button / Escape).
+    pub key: NavKey,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -59,10 +107,34 @@ pub struct OpenSettingsParams {
     pub page: String,
 }
 
+/// Overlay popover target.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayTarget {
+    /// Audio volume slider popover.
+    Volume,
+    /// Wi-Fi / network connection popover.
+    Network,
+    /// Power / session drawer (sleep, restart, end session).
+    Session,
+}
+
+impl OverlayTarget {
+    fn as_str(&self) -> &'static str {
+        match self {
+            OverlayTarget::Volume => "volume",
+            OverlayTarget::Network => "network",
+            OverlayTarget::Session => "session",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct OpenOverlayParams {
-    /// Overlay target: volume, network, session.
-    pub target: String,
+    /// Overlay popover to open. `volume` = audio volume slider; `network` = Wi-Fi /
+    /// connection popover; `session` = power / session drawer (sleep, restart,
+    /// end session).
+    pub target: OverlayTarget,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -95,6 +167,7 @@ fn default_log_lines() -> u32 {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DevDeployParams {
     /// Git ref to deploy (branch name, tag, or commit SHA). Defaults to "main".
+    /// Only alphanumeric characters, `.`, `_`, `/`, and `-` are accepted.
     pub git_ref: Option<String>,
 }
 
@@ -105,7 +178,7 @@ pub struct DevDeployParams {
 struct Handles {
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
-    reexec_notify: Arc<tokio::sync::Notify>,
+    shutdown: CancellationToken,
     reexec_flag: Arc<std::sync::atomic::AtomicBool>,
     dev_enabled: bool,
 }
@@ -137,9 +210,12 @@ impl ServerHandler for GameShellMcp {
             ))
             .with_instructions(
                 "Controls the game-shell Quickshell UI on the game client. \
-                 Use send_intent / navigate for UI navigation, take_screenshot to \
-                 capture the current display, get_status / get_logs for diagnostics, \
-                 and restart_shell to recover from a crashed UI.",
+                 Use send_intent / navigate for UI navigation; prefer the typed sugar \
+                 tools (open_settings, open_overlay, launch_app) for specific targets. \
+                 Use take_screenshot to capture the current display — call it after \
+                 every action to confirm the UI reached the expected state. \
+                 Use get_status / get_logs for diagnostics and restart_shell to recover \
+                 from a crashed UI.",
             )
     }
 }
@@ -152,7 +228,9 @@ impl GameShellMcp {
         description = "Send a named intent to the game-shell UI. \
             Bare names: home, home-tap, home-hold, menu, settings, power. \
             Deep-link families (colon-delimited): settings:<page-slug>, \
-            overlay:<target (volume|network|session)>, app:<StartupWMClass>.",
+            overlay:<target (volume|network|session)>, app:<StartupWMClass>. \
+            To open a specific settings page, overlay, or app, prefer \
+            open_settings / open_overlay / launch_app.",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
     async fn send_intent(
@@ -160,7 +238,11 @@ impl GameShellMcp {
         Parameters(SendIntentParams { name }): Parameters<SendIntentParams>,
     ) -> CallToolResult {
         if !bridge_core::is_valid_intent(&name) {
-            return CallToolResult::error(vec![Content::text(format!("unknown intent '{name}'"))]);
+            return CallToolResult::error(vec![Content::text(format!(
+                "unknown intent '{name}'. Valid bare intents: home, home-tap, home-hold, \
+                 menu, settings, power. Deep-links: settings:<page>, \
+                 overlay:<volume|network|session>, app:<wmClass>."
+            ))]);
         }
         match bridge_core::dispatch_intent(&self.handles.control_tx, name).await {
             None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
@@ -174,14 +256,17 @@ impl GameShellMcp {
 
     #[tool(
         description = "Synthesize a directional or action keypress on the \
-            game-shell virtual keyboard. Valid keys: up, down, left, right, select, back.",
+            game-shell virtual keyboard. `select` activates/confirms the focused \
+            element (A button / Enter); `back` goes up one level / dismisses \
+            (B button / Escape).",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
     async fn navigate(
         &self,
         Parameters(NavigateParams { key }): Parameters<NavigateParams>,
     ) -> CallToolResult {
-        match bridge_core::dispatch_key(&self.handles.control_tx, key).await {
+        let key_str = key.as_str().to_owned();
+        match bridge_core::dispatch_key(&self.handles.control_tx, key_str).await {
             None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
             Some(r) if r.starts_with("error:") => {
                 let msg = r.trim_start_matches("error:").trim().to_owned();
@@ -214,17 +299,17 @@ impl GameShellMcp {
     }
 
     #[tool(
-        description = "Open a QAM overlay popover. Valid targets: volume, network, session.",
+        description = "Open an overlay popover. `volume` = audio volume slider; \
+            `network` = Wi-Fi / connection popover; `session` = power / session \
+            drawer (sleep, restart, end session).",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
     async fn open_overlay(
         &self,
         Parameters(OpenOverlayParams { target }): Parameters<OpenOverlayParams>,
     ) -> CallToolResult {
-        let intent_name = match bridge_core::overlay_intent(&target) {
-            Ok(n) => n,
-            Err(msg) => return CallToolResult::error(vec![Content::text(msg)]),
-        };
+        let intent_name = bridge_core::overlay_intent(target.as_str())
+            .expect("OverlayTarget enum guarantees a valid target");
         match bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await {
             None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
             Some(r) if r.starts_with("error:") => {
@@ -259,7 +344,8 @@ impl GameShellMcp {
     #[tool(
         description = "Capture the current Wayland display as a PNG image. \
             Set flash=true to trigger a brief white vignette on the game-shell UI \
-            after capture (visual feedback for the user at the TV).",
+            after capture (visual feedback for the user at the TV). \
+            Call this after every UI action to confirm the expected state was reached.",
         annotations(read_only_hint = true)
     )]
     async fn take_screenshot(
@@ -281,7 +367,10 @@ impl GameShellMcp {
         description = "Return structured status: git SHA, daemon PID, daemon version, \
             whether quickshell is running, Wayland display name, and whether \
             HYPRLAND_INSTANCE_SIGNATURE is resolvable. Returns a typed JSON object \
-            with an advertised output schema.",
+            with an advertised output schema. \
+            After an action, call take_screenshot to confirm the UI reached the \
+            expected state. The typed sugar tools (open_settings, open_overlay, \
+            launch_app) are preferred for specific navigation targets.",
         annotations(read_only_hint = true)
     )]
     async fn get_status(&self) -> Result<Json<bridge_core::StatusInfo>, String> {
@@ -378,26 +467,73 @@ impl GameShellMcp {
                 "dev tools disabled — set GAME_SHELL_MCP_DEV to enable",
             )]);
         }
-        bridge_core::request_reexec(&self.handles.reexec_flag, &self.handles.reexec_notify);
+        bridge_core::request_reexec(&self.handles.reexec_flag, &self.handles.shutdown);
         CallToolResult::success(vec![Content::text("ok, re-execing\n")])
     }
+}
+
+// ─── Auth state (shared by the middleware closure) ────────────────────────────
+
+#[derive(Clone)]
+struct AuthState {
+    /// `Some(token)` when auth is enabled and a token is configured.
+    /// `None` when auth is disabled.
+    expected_bearer: Option<String>,
+    /// True when auth is enabled but no token was provided — fail closed.
+    fail_closed: bool,
+}
+
+/// axum middleware that enforces bearer-token auth on all `/mcp` requests.
+///
+/// Mirrors the HTTP bridge's auth logic (`http.rs`) at parity:
+/// - Auth enabled + token set: constant-time comparison of `Authorization: Bearer <token>`.
+/// - Auth enabled + no token:  reject all (fail closed, 401).
+/// - Auth disabled:            pass through unconditionally.
+async fn auth_middleware(
+    axum::extract::State(state): axum::extract::State<AuthState>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if state.fail_closed {
+        // Auth enabled but no token configured — reject all.
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if let Some(expected) = &state.expected_bearer {
+        let provided = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !bridge_core::ct_eq_str(provided, expected) {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+    // Auth disabled or token matched.
+    Ok(next.run(request).await)
 }
 
 // ─── Public serve entry point ─────────────────────────────────────────────────
 
 /// Bind an axum listener to `addr` and serve the MCP Streamable HTTP server
-/// on `/mcp` until the `CancellationToken` is cancelled.
+/// on `/mcp` until the shared `shutdown` token is cancelled.
 ///
-/// Called from `main.rs` when `GAME_SHELL_MCP_BIND` is set. The token is
-/// wired to the daemon's re-exec / shutdown path so the MCP server stops
-/// cleanly when the process exits.
+/// Called from `main.rs` when `GAME_SHELL_MCP_BIND` is set. The shared
+/// CancellationToken is cancelled on SIGTERM/SIGINT or when a re-exec is
+/// requested — both paths call `bridge_core::request_reexec` which cancels
+/// the token. The MCP server then shuts down cleanly and the main loop
+/// proceeds to re-exec (if flagged).
+///
+/// `token` and `auth_enabled` mirror the HTTP bridge's env vars
+/// (`GAME_SHELL_HTTP_TOKEN`, `GAME_SHELL_HTTP_AUTH_ENABLED`) so operators
+/// only need one token for both bridges.
 pub async fn serve(
     addr: std::net::SocketAddr,
+    token: Option<String>,
+    auth_enabled: bool,
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
-    reexec_notify: Arc<tokio::sync::Notify>,
+    shutdown: CancellationToken,
     reexec_flag: Arc<std::sync::atomic::AtomicBool>,
-    cancel: CancellationToken,
 ) {
     use rmcp::transport::streamable_http_server::{
         session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -413,10 +549,65 @@ pub async fn serve(
         );
     }
 
+    // Fix 5: Refuse to start the MCP server when the dangerous combo is present:
+    // non-loopback bind + dev mode + auth effectively disabled (no token / auth off).
+    if dev_enabled && !addr.ip().is_loopback() {
+        let auth_effectively_disabled = !auth_enabled || token.is_none();
+        if auth_effectively_disabled {
+            tracing::error!(
+                "mcp: REFUSING to start MCP server on non-loopback address {addr} \
+                 with GAME_SHELL_MCP_DEV enabled and no authentication. \
+                 This would expose an unauthenticated RCE surface on the LAN. \
+                 Set GAME_SHELL_HTTP_TOKEN + ensure GAME_SHELL_HTTP_AUTH_ENABLED != 0, \
+                 or bind to 127.0.0.1 for local-only dev access."
+            );
+            return;
+        }
+    }
+
+    // Build auth state for the middleware.
+    let auth_state = if !auth_enabled {
+        tracing::warn!(
+            "mcp: AUTH DISABLED (GAME_SHELL_HTTP_AUTH_ENABLED=0) — \
+             any host on the network can send MCP commands without authentication"
+        );
+        AuthState {
+            expected_bearer: None,
+            fail_closed: false,
+        }
+    } else {
+        match &token {
+            None => {
+                tracing::warn!(
+                    "mcp: auth is ENABLED but GAME_SHELL_HTTP_TOKEN is not set — \
+                     all MCP requests will be rejected with 401 (set the token or \
+                     disable auth with GAME_SHELL_HTTP_AUTH_ENABLED=0)"
+                );
+                AuthState {
+                    expected_bearer: None,
+                    fail_closed: true,
+                }
+            }
+            Some(t) => {
+                if addr.ip().is_unspecified() {
+                    tracing::warn!(
+                        "mcp: binding to {} with bearer auth — \
+                         any host on the network can attempt authentication",
+                        addr
+                    );
+                }
+                AuthState {
+                    expected_bearer: Some(format!("Bearer {t}")),
+                    fail_closed: false,
+                }
+            }
+        }
+    };
+
     let handles = Handles {
         control_tx,
         events_tx,
-        reexec_notify,
+        shutdown: shutdown.clone(),
         reexec_flag,
         dev_enabled,
     };
@@ -424,19 +615,52 @@ pub async fn serve(
     // StreamableHttpServerConfig is #[non_exhaustive] — cannot use struct
     // literal syntax with ..Default::default(). Mutate the default instead.
     let mut config = StreamableHttpServerConfig::default();
-    config.cancellation_token = cancel.child_token();
-    // Allow LAN callers (not just loopback). The operator is responsible
-    // for binding to a trusted interface — same posture as the HTTP bridge.
-    config.allowed_hosts = vec![
-        "localhost".into(),
-        "127.0.0.1".into(),
-        "::1".into(),
-        "0.0.0.0".into(),
-        // Accept any Host header value for LAN IPs.
-        // The StreamableHttpService default only allows loopback; we need
-        // to broaden this for the game-client-1 LAN case.
-        "*".into(),
-    ];
+    config.cancellation_token = shutdown.child_token();
+
+    // Fix 3: Configure the host allowlist correctly.
+    //
+    // rmcp 1.7.0 does NOT support a "*" wildcard — it does literal string
+    // matching. An empty allowed_hosts list means "allow all hosts" (see
+    // rmcp source: host_is_allowed returns true when the list is empty).
+    //
+    // We build the allowlist from:
+    //   1. Always: localhost, 127.0.0.1, ::1 (loopback)
+    //   2. GAME_SHELL_MCP_ALLOWED_HOSTS env var (comma-separated host[:port])
+    //   3. If the bind address is a concrete IP (not 0.0.0.0/::), include it.
+    //   4. If the bind is a wildcard AND no env override, clear the list
+    //      (allow-all) and warn — acceptable because Fix 2's bearer token is
+    //      the real gate.
+    let allowed_hosts_env = std::env::var("GAME_SHELL_MCP_ALLOWED_HOSTS").ok();
+    let bind_is_wildcard = addr.ip().is_unspecified();
+
+    if bind_is_wildcard && allowed_hosts_env.is_none() {
+        // Allow all — host header matching disabled. Token is the gate.
+        tracing::warn!(
+            "mcp: host allowlisting is DISABLED (bind is wildcard, \
+             GAME_SHELL_MCP_ALLOWED_HOSTS not set). \
+             DNS-rebinding protection relies on the bearer token. \
+             Set GAME_SHELL_MCP_ALLOWED_HOSTS=<host> or bind to a concrete IP \
+             to restrict by Host header."
+        );
+        config.allowed_hosts = vec![];
+    } else {
+        let mut hosts: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "::1".into()];
+        if !bind_is_wildcard {
+            // Include the concrete bind address so LAN clients connecting to
+            // game-client-1's real IP get through.
+            hosts.push(addr.ip().to_string());
+            hosts.push(addr.to_string()); // also include host:port form
+        }
+        if let Some(env_hosts) = &allowed_hosts_env {
+            for h in env_hosts.split(',') {
+                let h = h.trim();
+                if !h.is_empty() {
+                    hosts.push(h.to_owned());
+                }
+            }
+        }
+        config.allowed_hosts = hosts;
+    }
 
     let handles_clone = handles.clone();
     let service: StreamableHttpService<GameShellMcp, LocalSessionManager> =
@@ -446,7 +670,10 @@ pub async fn serve(
             config,
         );
 
-    let router = axum::Router::new().nest_service("/mcp", service);
+    // Wrap the MCP service with bearer-token auth middleware (Fix 2).
+    let router = axum::Router::new()
+        .nest_service("/mcp", service)
+        .layer(middleware::from_fn_with_state(auth_state, auth_middleware));
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -458,8 +685,91 @@ pub async fn serve(
     tracing::info!("MCP server listening on http://{addr}/mcp");
 
     let _ = axum::serve(listener, router)
-        .with_graceful_shutdown(async move { cancel.cancelled().await })
+        .with_graceful_shutdown(async move { shutdown.cancelled().await })
         .await;
 
     tracing::info!("mcp: server stopped");
+}
+
+// ─── Unit tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── NavKey enum serialisation ─────────────────────────────────────────────
+
+    #[test]
+    fn nav_key_as_str_matches_expected() {
+        assert_eq!(NavKey::Up.as_str(), "up");
+        assert_eq!(NavKey::Down.as_str(), "down");
+        assert_eq!(NavKey::Left.as_str(), "left");
+        assert_eq!(NavKey::Right.as_str(), "right");
+        assert_eq!(NavKey::Select.as_str(), "select");
+        assert_eq!(NavKey::Back.as_str(), "back");
+    }
+
+    #[test]
+    fn nav_key_deserialises_lowercase() {
+        // serde rename_all = "lowercase" → the JSON value must be the lowercase variant
+        let up: NavKey = serde_json::from_str("\"up\"").expect("deserialise up");
+        assert_eq!(up.as_str(), "up");
+        let select: NavKey = serde_json::from_str("\"select\"").expect("deserialise select");
+        assert_eq!(select.as_str(), "select");
+        let back: NavKey = serde_json::from_str("\"back\"").expect("deserialise back");
+        assert_eq!(back.as_str(), "back");
+    }
+
+    #[test]
+    fn nav_key_deserialise_all_variants() {
+        for (json, expected) in &[
+            ("\"up\"", "up"),
+            ("\"down\"", "down"),
+            ("\"left\"", "left"),
+            ("\"right\"", "right"),
+            ("\"select\"", "select"),
+            ("\"back\"", "back"),
+        ] {
+            let k: NavKey = serde_json::from_str(json)
+                .unwrap_or_else(|e| panic!("failed to deserialise {json}: {e}"));
+            assert_eq!(k.as_str(), *expected);
+        }
+    }
+
+    // ── OverlayTarget enum serialisation ──────────────────────────────────────
+
+    #[test]
+    fn overlay_target_as_str_matches_expected() {
+        assert_eq!(OverlayTarget::Volume.as_str(), "volume");
+        assert_eq!(OverlayTarget::Network.as_str(), "network");
+        assert_eq!(OverlayTarget::Session.as_str(), "session");
+    }
+
+    #[test]
+    fn overlay_target_deserialises_lowercase() {
+        let v: OverlayTarget = serde_json::from_str("\"volume\"").expect("deserialise volume");
+        assert_eq!(v.as_str(), "volume");
+        let n: OverlayTarget = serde_json::from_str("\"network\"").expect("deserialise network");
+        assert_eq!(n.as_str(), "network");
+        let s: OverlayTarget = serde_json::from_str("\"session\"").expect("deserialise session");
+        assert_eq!(s.as_str(), "session");
+    }
+
+    #[test]
+    fn overlay_target_maps_to_valid_intent() {
+        // Every OverlayTarget variant must produce a valid overlay intent.
+        for target in &[
+            OverlayTarget::Volume,
+            OverlayTarget::Network,
+            OverlayTarget::Session,
+        ] {
+            let result = bridge_core::overlay_intent(target.as_str());
+            assert!(
+                result.is_ok(),
+                "expected valid intent for {:?}, got {:?}",
+                target.as_str(),
+                result
+            );
+        }
+    }
 }

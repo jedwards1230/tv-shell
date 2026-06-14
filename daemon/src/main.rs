@@ -66,15 +66,20 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(input::run(control_rx, input_events, input_config_changed));
         })?;
 
-    // Re-exec notification: the HTTP /dev/restart-daemon endpoint sets this
-    // flag and wakes the main select! so the process can re-exec itself
-    // (#167). The Notify is woken by the HTTP handler; the AtomicBool
-    // survives past the runtime shutdown so the final re-exec check after
-    // input_thread.join() can read it without holding an Arc<Notify>.
-    let reexec_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    // Unified shutdown signal: a single CancellationToken that is cancelled
+    // on SIGTERM/SIGINT OR when a re-exec is requested (HTTP /dev/restart-daemon
+    // or MCP dev_restart_daemon). Using a single multi-consumer token avoids the
+    // race where Notify::notify_one() wakes only ONE waiter — if both the main
+    // select! and an MCP cancel task are both waiting on the same Notify, only
+    // one of them wakes, meaning the other never proceeds (#mcp-bridge review).
+    //
+    // The AtomicBool carries the re-exec intent across the runtime boundary:
+    // it is set to true by request_reexec() before cancel() is called, then
+    // read after input_thread.join() (after the runtime has fully shut down)
+    // to decide whether to exec() the new binary.
+    let shutdown = tokio_util::sync::CancellationToken::new();
     let reexec_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    // Keep a handle outside the runtime closure for the post-join re-exec check
-    // (the `async move` block below moves `reexec_flag` into the HTTP task).
+    // Keep a handle outside the runtime closure for the post-join re-exec check.
     let reexec_flag_check = reexec_flag.clone();
 
     // Main runtime: IPC server + signal handling + Phase 3 D-Bus actors.
@@ -142,7 +147,7 @@ fn main() -> anyhow::Result<()> {
                         auth_enabled,
                         control_tx.clone(),
                         events_tx.clone(),
-                        reexec_notify.clone(),
+                        shutdown.clone(),
                         reexec_flag.clone(),
                     ));
                 }
@@ -156,29 +161,26 @@ fn main() -> anyhow::Result<()> {
 
         // MCP server (#mcp-bridge): opt-in via GAME_SHELL_MCP_BIND.
         // When the env var is unset (the default), no socket is opened.
-        // The cancellation token is wired to signal handling + re-exec so
-        // the MCP server stops cleanly when the process exits.
+        // Pass a child token so the MCP server stops cleanly whenever the
+        // shared shutdown token is cancelled (signal or re-exec). The single
+        // CancellationToken design (Fix 1) eliminates the previous race where
+        // Notify::notify_one() could wake the MCP cancel task but NOT the main
+        // select!, leaving the daemon stuck with no re-exec.
         #[cfg(feature = "mcp")]
         {
             if let Ok(bind_str) = std::env::var("GAME_SHELL_MCP_BIND") {
                 match bind_str.parse::<std::net::SocketAddr>() {
                     Ok(addr) => {
-                        let cancel = tokio_util::sync::CancellationToken::new();
-                        let mcp_cancel = cancel.clone();
-                        // Wire cancel to the reexec notify so the MCP server
-                        // stops when the daemon re-execs.
-                        let reexec_for_mcp = reexec_notify.clone();
-                        tokio::spawn(async move {
-                            reexec_for_mcp.notified().await;
-                            cancel.cancel();
-                        });
+                        let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
+                        let auth_enabled = http::read_auth_enabled();
                         tokio::spawn(mcp::serve(
                             addr,
+                            token,
+                            auth_enabled,
                             control_tx.clone(),
                             events_tx.clone(),
-                            reexec_notify.clone(),
+                            shutdown.clone(),
                             reexec_flag.clone(),
-                            mcp_cancel,
                         ));
                     }
                     Err(e) => {
@@ -194,8 +196,8 @@ fn main() -> anyhow::Result<()> {
             _ = wait_for_signal() => {
                 tracing::info!("signal received, shutting down");
             }
-            _ = reexec_notify.notified() => {
-                tracing::info!("re-exec requested, shutting down for restart");
+            _ = shutdown.cancelled() => {
+                tracing::info!("shutdown requested, stopping");
             }
         }
 

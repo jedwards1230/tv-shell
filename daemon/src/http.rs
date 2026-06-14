@@ -42,7 +42,6 @@
 use crate::bridge_core;
 use crate::protocol::Event;
 use crate::state::Control;
-use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
@@ -351,13 +350,11 @@ fn extract_authorization(raw: &[u8]) -> Option<String> {
     None
 }
 
-/// Constant-time comparison of two strings to prevent timing oracles.
-/// Uses `subtle::ConstantTimeEq` on the byte representations (#151).
+/// Constant-time string comparison — delegates to the shared helper in
+/// `bridge_core` so both the HTTP bridge and the MCP auth middleware use
+/// identical comparison logic.
 fn ct_eq_str(a: &str, b: &str) -> bool {
-    // ConstantTimeEq on slices requires equal lengths; a length mismatch
-    // leaks only the length (not which character differs), which is
-    // acceptable for a fixed-format "Bearer <token>" prefix.
-    a.as_bytes().ct_eq(b.as_bytes()).into()
+    bridge_core::ct_eq_str(a, b)
 }
 
 /// Handle a single TCP connection: parse the HTTP/1.1 request, check auth,
@@ -368,7 +365,7 @@ async fn handle_connection(
     auth_enabled: bool,
     control_tx: &mpsc::Sender<Control>,
     events_tx: &broadcast::Sender<Event>,
-    reexec_notify: &std::sync::Arc<tokio::sync::Notify>,
+    shutdown: &tokio_util::sync::CancellationToken,
     reexec_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     // Bound the header read with a short timeout (anti-slowloris); the longer
@@ -511,7 +508,7 @@ async fn handle_connection(
             let resp = http_response(200, "ok, re-execing\n");
             let _ = stream.write_all(resp.as_bytes()).await;
             let _ = stream.flush().await;
-            bridge_core::request_reexec(reexec_flag, reexec_notify);
+            bridge_core::request_reexec(reexec_flag, shutdown);
         }
         HttpAction::DevLogs { lines, filter } => {
             let resp = handle_dev_logs(lines, filter.as_deref());
@@ -616,7 +613,7 @@ pub async fn serve(
     auth_enabled: bool,
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
-    reexec_notify: std::sync::Arc<tokio::sync::Notify>,
+    shutdown: tokio_util::sync::CancellationToken,
     reexec_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     if !auth_enabled {
@@ -675,7 +672,7 @@ pub async fn serve(
                 let control_tx = control_tx.clone();
                 let events_tx = events_tx.clone();
                 let conns = active_conns.clone();
-                let reexec_notify = reexec_notify.clone();
+                let shutdown = shutdown.clone();
                 let reexec_flag = reexec_flag.clone();
                 tokio::spawn(async move {
                     // Use DEV_TIMEOUT_SECS (180 s) for all connections.
@@ -692,7 +689,7 @@ pub async fn serve(
                             auth_enabled,
                             &control_tx,
                             &events_tx,
-                            &reexec_notify,
+                            &shutdown,
                             &reexec_flag,
                         ),
                     )

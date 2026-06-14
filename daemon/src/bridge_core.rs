@@ -10,6 +10,7 @@
 use crate::protocol::{Event, INTENT_OVERLAY_TARGETS};
 use crate::state::Control;
 use serde::Serialize;
+use subtle::ConstantTimeEq;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 // ─── Intent validation ───────────────────────────────────────────────────────
@@ -249,6 +250,10 @@ async fn git_run(root: &std::path::Path, args: &[&str]) -> (bool, String) {
 pub async fn dev_deploy(git_ref: Option<&str>) -> Result<String, String> {
     let root = crate::session_env::install_root();
     let r = git_ref.unwrap_or("main");
+
+    // Validate the ref before any git call (Fix 4).
+    validate_git_ref(r)?;
+
     tracing::info!("dev/deploy: ref={r} root={}", root.display());
 
     let root_str = root.to_str().unwrap_or(".");
@@ -414,13 +419,59 @@ pub async fn dev_restart_shell() -> Result<String, String> {
     }
 }
 
-/// Request daemon re-exec. Sets the reexec flag and wakes the main select!.
+/// Request daemon re-exec.
+///
+/// Sets the reexec flag (read after the runtime shuts down to decide whether to
+/// `exec()`) and cancels the shared shutdown token (which stops the MCP server
+/// and unblocks the main `select!` in a race-free way — `CancellationToken` is
+/// multi-consumer safe, unlike `Notify::notify_one()`).
 pub fn request_reexec(
     reexec_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
-    reexec_notify: &std::sync::Arc<tokio::sync::Notify>,
+    shutdown: &tokio_util::sync::CancellationToken,
 ) {
     reexec_flag.store(true, std::sync::atomic::Ordering::Release);
-    reexec_notify.notify_one();
+    shutdown.cancel();
+}
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+/// Constant-time string comparison to prevent timing oracles.
+///
+/// Uses `subtle::ConstantTimeEq` on the UTF-8 byte representations. A length
+/// mismatch leaks only the length (not which character differs), which is
+/// acceptable for a fixed-format `"Bearer <token>"` prefix.
+///
+/// Shared by both the HTTP bridge (`http.rs`) and the MCP auth middleware
+/// (`mcp.rs`) so both bridges use identical comparison logic.
+pub fn ct_eq_str(a: &str, b: &str) -> bool {
+    a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
+// ─── Git ref validation ───────────────────────────────────────────────────────
+
+/// Validate a git ref before passing it to a `git` subprocess.
+///
+/// Accepts refs that match `^[A-Za-z0-9._/-]+$` and rejects:
+/// - refs starting with `-` (flag injection: `-f`, `--exec`, etc.)
+/// - refs containing characters outside the safe set
+///
+/// Returns `Ok(())` when the ref is safe, `Err(message)` otherwise.
+pub fn validate_git_ref(r: &str) -> Result<(), String> {
+    if r.is_empty() {
+        return Err("git ref must not be empty".to_owned());
+    }
+    if r.starts_with('-') {
+        return Err(format!("invalid git ref '{r}': must not start with '-'"));
+    }
+    if !r
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+    {
+        return Err(format!(
+            "invalid git ref '{r}': only A-Z a-z 0-9 . _ / - are allowed"
+        ));
+    }
+    Ok(())
 }
 
 // ─── Convenience sugar tools ─────────────────────────────────────────────────
@@ -583,6 +634,69 @@ mod tests {
     #[test]
     fn app_intent_passthrough() {
         assert_eq!(app_intent("steam"), "app:steam");
+    }
+
+    // ── git ref validation (Fix 4) ───────────────────────────────────────────
+
+    #[test]
+    fn git_ref_accepts_valid_refs() {
+        // branch names
+        assert!(validate_git_ref("main").is_ok());
+        assert!(validate_git_ref("feat/mcp-bridge").is_ok());
+        assert!(validate_git_ref("release-1.2.3").is_ok());
+        assert!(validate_git_ref("v0.1.0").is_ok());
+        // short SHA
+        assert!(validate_git_ref("a1b2c3d").is_ok());
+        // full SHA-like string
+        assert!(validate_git_ref("abc123def456").is_ok());
+        // nested path (rare but valid git)
+        assert!(validate_git_ref("refs/heads/main").is_ok());
+    }
+
+    #[test]
+    fn git_ref_rejects_leading_dash() {
+        assert!(validate_git_ref("-f").is_err());
+        assert!(validate_git_ref("--exec").is_err());
+        assert!(validate_git_ref("-").is_err());
+    }
+
+    #[test]
+    fn git_ref_rejects_empty() {
+        assert!(validate_git_ref("").is_err());
+    }
+
+    #[test]
+    fn git_ref_rejects_special_chars() {
+        assert!(validate_git_ref("main;rm -rf /").is_err());
+        assert!(validate_git_ref("main|evil").is_err());
+        assert!(validate_git_ref("$(evil)").is_err());
+        assert!(validate_git_ref("main\nevil").is_err());
+        assert!(validate_git_ref("main\tevil").is_err());
+        // Spaces are not in the allowed set
+        assert!(validate_git_ref("main evil").is_err());
+    }
+
+    // ── ct_eq_str ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn ct_eq_str_equal() {
+        assert!(ct_eq_str("Bearer secret123", "Bearer secret123"));
+    }
+
+    #[test]
+    fn ct_eq_str_different() {
+        assert!(!ct_eq_str("Bearer secret123", "Bearer secret124"));
+    }
+
+    #[test]
+    fn ct_eq_str_different_lengths() {
+        assert!(!ct_eq_str("short", "much longer string"));
+        assert!(!ct_eq_str("", "nonempty"));
+    }
+
+    #[test]
+    fn ct_eq_str_empty_equal() {
+        assert!(ct_eq_str("", ""));
     }
 
     // ── StatusInfo JsonSchema derive (mcp feature) ───────────────────────────
