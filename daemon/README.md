@@ -152,6 +152,24 @@ gated by `cecFocusOnStartup` (default `false`) and resume-from-sleep focus by
 master env gate. The manual `cec-active-source` IPC and standby-on-suspend are
 unaffected.
 
+## Network control surface (`http.rs` / `mcp.rs` / `bridge_core.rs`)
+
+Beyond the owner-only Unix-socket IPC, the daemon can expose its
+intent/key/screenshot/dev surface over the network. Two opt-in adapters share one
+bearer token and a single action core (`bridge_core.rs`):
+
+- **HTTP bridge** (`http.rs`, `GAME_SHELL_HTTP_BIND`): a hand-rolled HTTP/1.1
+  listener — `POST /intent/<name>`, `POST /key/<name>`, `GET /screenshot`, and the
+  `/dev/*` routes (status/logs/deploy/build/restart-shell/restart-daemon).
+- **MCP server** (`mcp.rs`, `GAME_SHELL_MCP_BIND`, `--features mcp`): the official
+  `rmcp` 1.7.0 SDK over streamable-HTTP at `/mcp`, exposing 11 tools (the dev tools
+  gated by `GAME_SHELL_MCP_DEV`). Feature-gated only, not OS-gated — compiles on
+  macOS.
+
+Both are unset (closed) by default. Auth, endpoint/tool reference, env vars, and
+security posture: **[`docs/CONTROL_SURFACE.md`](../docs/CONTROL_SURFACE.md)**.
+`scripts/build-daemon.sh` defaults to `--features cec,mcp`.
+
 ## Build & test
 
 The full binary only links on **Linux** (`evdev`/`uinput` are kernel

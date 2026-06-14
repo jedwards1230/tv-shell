@@ -116,6 +116,12 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 | `cec-client` | _retired_ — HDMI-CEC now owned by the daemon's `cec-*` IPC (`cec-rs`/libcec, #94); built only `--features cec`. The `cec-client`/`cec-ctl`/`living-room-cec` QML fallback chain is removed |
 | `moonlight` | Game streaming client (`stream`, `list`, `pair`) |
 
+Besides the owner-only Unix-socket IPC, the daemon can expose a **network-facing
+control surface** — an HTTP bridge and an MCP server, both opt-in via env, sharing
+one bearer token, both thin adapters over `daemon/src/bridge_core.rs`. See
+[`docs/CONTROL_SURFACE.md`](docs/CONTROL_SURFACE.md) (and the Agent-Native Dev Loop
+under Development).
+
 The daemon's `bt-*` (BlueZ/`bluer`), `net-*` (NetworkManager/`zbus`, read-only),
 and `power-*` (logind + UPower/`zbus`) IPC commands are the **D-Bus backbone**
 (Phase 3, #28). **Phase 4** adds Hyprland reads (`hypr-active`/`hypr-clients` +
@@ -200,6 +206,25 @@ Requires Linux with evdev and uinput access. Auto-discovers gamepad by vendor/pr
 Catalog of views/overlays/states to capture for visual QA (and how to reach each) — [`docs/qa-screenshot-views.md`](docs/qa-screenshot-views.md):
 
 @docs/qa-screenshot-views.md
+
+### Agent-Native Dev Loop
+
+The daemon is built so an LLM agent can drive the **entire** dev/verify loop with
+no human in the pixel-path. The daemon exposes its control surface over the network
+two ways — a hand-rolled HTTP bridge and an official MCP server — both opt-in, both
+documented in [`docs/CONTROL_SURFACE.md`](docs/CONTROL_SURFACE.md). The MCP server
+makes the shell **drivable and observable as MCP tools**, so an agent runs a full
+**observe → act → verify** loop:
+
+1. `dev_deploy <ref>` → `dev_build` → `dev_restart_daemon` / `restart_shell` — pull a branch and rebuild on-device.
+2. `send_intent` / `navigate` / `open_settings` / `launch_app` — drive the UI.
+3. `take_screenshot` — **see** the result; `get_status` / `get_logs` — diagnose.
+4. Compare against intent, repeat.
+
+Enable on the deploy host: set `GAME_SHELL_MCP_BIND` (+ `GAME_SHELL_HTTP_TOKEN`),
+and `GAME_SHELL_MCP_DEV` for the deploy/build/restart tools. Point an MCP client at
+`http://<host>/mcp`. This is the in-repo, distribution-agnostic version of the
+external screenshot/deploy automation — no host-management tooling required.
 
 ## Design Constraints
 
