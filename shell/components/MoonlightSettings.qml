@@ -838,7 +838,7 @@ FocusScope {
             text: "Add Server"
             onActivated: {
                 root.showAddForm = true;
-                nameInput.forceActiveFocus();
+                nameRow.inputField.forceActiveFocus();
             }
         }
 
