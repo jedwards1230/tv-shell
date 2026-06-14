@@ -235,13 +235,11 @@ Item {
     function setWidgetSpotifyEnabled(enabled) {
         widgetSpotifyEnabled = enabled;
         save();
-        settingsChanged("widgetSpotifyEnabled", enabled);
     }
 
     function setWidgetPlexEnabled(enabled) {
         widgetPlexEnabled = enabled;
         save();
-        settingsChanged("widgetPlexEnabled", enabled);
     }
 
     function setTextScale(scale) {
