@@ -33,6 +33,11 @@ FocusScope {
     // auto-generated change signal of the `text` property above.
     signal textEdited(string text)
 
+    // Forwarded from the inner TextInput's Keys.onEscapePressed. Call sites bind
+    // this declaratively — Keys.* handlers are read-only and cannot be assigned
+    // imperatively on the aliased inner input from the outside.
+    signal escapePressed
+
     Layout.fillWidth: true
     implicitWidth: row.implicitWidth
     implicitHeight: row.implicitHeight
@@ -70,6 +75,10 @@ FocusScope {
                 clip: true
                 verticalAlignment: TextInput.AlignVCenter
                 onTextChanged: root.textEdited(text)
+                Keys.onEscapePressed: event => {
+                    root.escapePressed();
+                    event.accepted = true;
+                }
             }
         }
     }
