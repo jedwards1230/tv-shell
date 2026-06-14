@@ -372,8 +372,15 @@ impl GameShellMcp {
         &self,
         Parameters(OpenOverlayParams { target }): Parameters<OpenOverlayParams>,
     ) -> CallToolResult {
-        let intent_name = bridge_core::overlay_intent(target.as_str())
-            .expect("OverlayTarget enum guarantees a valid target");
+        // The enum should guarantee a valid target, but handle a skew between
+        // the enum and overlay_intent() gracefully rather than panicking the
+        // server mid-request.
+        let intent_name = match bridge_core::overlay_intent(target.as_str()) {
+            Ok(name) => name,
+            Err(msg) => {
+                return CallToolResult::error(vec![Content::text(format!("internal error: {msg}"))])
+            }
+        };
         match bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await {
             None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
             Some(r) if r.starts_with("error:") => {
