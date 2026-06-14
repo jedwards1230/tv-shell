@@ -24,9 +24,6 @@ FocusScope {
     property var dnsServers: []
     property string testResult: ""
 
-    // --- Daemon IPC over a native Quickshell socket (SocketClient, #97) — the
-    // python3 socket shim was retired in Phase 8. ---
-
     // --- Processes ---
 
     // Single round-trip for connectivity, primary type, IPv4, and the active

@@ -91,85 +91,13 @@ ShellRoot {
     // The timer fires only when idle (state === "idle") to avoid suspending
     // during an active stream or app session.
 
-    // Whether logind reports suspend is available; mirrors PowerSettings.canSuspend.
-    // Defaults true so the timer fires until told otherwise.
-    property bool _canSuspend: true
-
-    Components.SocketClient {
-        id: shellSuspendCmd
-    }
-
-    Components.SocketClient {
-        id: shellCanSuspendProc
-        onResponseReceived: response => {
-            let t = response.trim();
-            if (t === "yes")
-                root._canSuspend = true;
-            else if (t === "no")
-                root._canSuspend = false;
-        }
-    }
-
-    Timer {
-        id: shellIdleTimer
-        interval: Components.SettingsStore.sleepTimerMinutes * 60000
-        running: Components.SettingsStore.sleepTimerMinutes > 0 && root._canSuspend
-        repeat: false
-        onTriggered: {
-            if (root._canSuspend && root.state === "idle")
-                shellSuspendCmd.request("power-suspend");
-        }
-    }
-
-    // Restart the idle timer whenever the sleep-timer setting changes (Ea fix).
-    Connections {
-        target: Components.SettingsStore
-        function onSleepTimerMinutesChanged() {
-            if (Components.SettingsStore.sleepTimerMinutes > 0 && root._canSuspend)
-                shellIdleTimer.restart();
-            else
-                shellIdleTimer.stop();
-        }
+    Components.AutoSuspendController {
+        id: autoSuspend
+        shellState: root.state
     }
 
     function _resetIdleTimer() {
-        if (Components.SettingsStore.sleepTimerMinutes > 0 && root._canSuspend)
-            shellIdleTimer.restart();
-    }
-
-    // === Audio surround profile re-apply on boot (#234) ===
-    // PipeWire reverts non-default card profiles (e.g. Digital Surround 5.1) to
-    // the stereo default across reboots. The shell re-applies the persisted
-    // "card|profile" once, after settings have loaded — independent of whether the
-    // Audio settings page is ever opened. Command mirrors AudioSettings'
-    // setCardProfile (env-passed args, never interpolated, so content can't inject).
-    property bool _audioProfileApplied: false
-
-    Process {
-        id: audioProfileApplyCmd
-        property string cardName: ""
-        property string profileName: ""
-        environment: ({
-                "GS_CARD": cardName,
-                "GS_PROFILE": profileName
-            })
-        command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
-    }
-
-    Connections {
-        target: Components.SettingsStore
-        function onConfigLoaded() {
-            if (root._audioProfileApplied)
-                return;
-            var v = Components.SettingsStore.audioCardProfile;
-            var sep = v ? v.indexOf("|") : -1;
-            if (sep < 0)
-                return;
-            root._audioProfileApplied = true;
-            audioProfileApplyCmd.cardName = v.substring(0, sep);
-            audioProfileApplyCmd.profileName = v.substring(sep + 1);
-            audioProfileApplyCmd.running = true;
-        }
+        autoSuspend.resetTimer();
     }
 
     // #193: backstop so the launch overlay can't get stuck if a window never maps
@@ -188,8 +116,6 @@ ShellRoot {
     Component.onCompleted: {
         inputManager.grab();
         inputManager.startListening();
-        // Query logind CanSuspend so the idle timer reflects availability.
-        shellCanSuspendProc.request("power-can-suspend");
     }
 
     Components.InputManager {

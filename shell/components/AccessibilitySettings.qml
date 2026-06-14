@@ -53,7 +53,7 @@ FocusScope {
                 text: Theme.reduceMotion ? "Enabled" : "Disabled"
                 fillActive: Theme.reduceMotion
                 fillColor: Theme.sidebarActive
-                onActivated: Theme.setReduceMotion(!Theme.reduceMotion)
+                onActivated: SettingsStore.setReduceMotion(!SettingsStore.reduceMotion)
             }
         }
 
@@ -88,7 +88,7 @@ FocusScope {
                 return item.label;
             }
             onItemSelected: function (item) {
-                Theme.setTextScale(item.id);
+                SettingsStore.setTextScale(item.id);
             }
 
             KeyNavigation.up: reduceMotionScope

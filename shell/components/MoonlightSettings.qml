@@ -446,7 +446,7 @@ FocusScope {
                     focusIndex++;
             }
             Keys.onReturnPressed: {
-                Theme.setStreamingViewMode(focusIndex === 0 ? "servers" : "apps");
+                SettingsStore.setStreamingViewMode(focusIndex === 0 ? "servers" : "apps");
             }
             Keys.onDownPressed: {
                 if (serverList.count > 0)
@@ -528,7 +528,7 @@ FocusScope {
                         onClicked: {
                             viewModeRow.focusIndex = index;
                             viewModeRow.forceActiveFocus();
-                            Theme.setStreamingViewMode(modelData.id);
+                            SettingsStore.setStreamingViewMode(modelData.id);
                         }
                     }
                 }

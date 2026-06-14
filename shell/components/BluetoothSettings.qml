@@ -24,10 +24,10 @@ FocusScope {
     property var availableDevices: []
     property string statusMessage: ""
 
-    // All daemon IPC goes over native Quickshell sockets (SocketClient, #97) —
-    // the python3 socket shims were retired in Phase 8. Request/response clients
-    // read the first reply line; btEvents is a persistent `subscribe` stream
-    // folding live `bt:*` scan events into the device lists.
+    // All daemon IPC goes over native Quickshell sockets (SocketClient, #97).
+    // Request/response clients read the first reply line; btEvents is a
+    // persistent `subscribe` stream folding live `bt:*` scan events into
+    // the device lists.
 
     // Merge a device object (from bt-list or a bt:device event) into the
     // paired/available lists, partitioning by its `paired` flag. Replaces any

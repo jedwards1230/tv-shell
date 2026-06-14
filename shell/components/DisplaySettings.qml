@@ -769,7 +769,7 @@ FocusScope {
                     focusIndex++;
             }
             Keys.onReturnPressed: {
-                Theme.setThemeMode(modeList.modes[focusIndex].id);
+                SettingsStore.setThemeMode(modeList.modes[focusIndex].id);
             }
             Keys.onUpPressed: {
                 autoDimScope.forceActiveFocus();
@@ -861,7 +861,7 @@ FocusScope {
                         onClicked: {
                             modeList.focusIndex = index;
                             modeList.forceActiveFocus();
-                            Theme.setThemeMode(modelData.id);
+                            SettingsStore.setThemeMode(modelData.id);
                         }
                     }
                 }
