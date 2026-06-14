@@ -130,16 +130,15 @@ bluer = { version = "0.17.4", default-features = false, features = ["bluetoothd"
 # (FSEvents is a different API), and the watch module is cfg-gated to match.
 notify-debouncer-full = "0.3"
 
-# HDMI-CEC (#94): cec-rs wraps the system libcec (GPL-2.0) C library — GPL-2.0
-# is compatible under our GPL-3.0 (#88). 12.0.1 / libcec-sys 9.0.3 support
-# libcec 7 (the daemon static-links bundled libcec 7, so no system libcec is
-# needed on the deploy host (Arch/CachyOS); the 8.x/5.x line only
-# supported libcec ≤6 and made the daemon fail to link there — the #94 revert).
-# OPTIONAL + feature-gated (`cec`): unlike evdev/zbus/bluer (pure Rust, no C),
-# libcec-sys links a C library and needs libcec-dev + libclang-dev at build
-# time. `optional = true` keeps it out of the DEFAULT Linux build entirely (a
-# plain `cfg(target_os="linux")` dep would still be pulled on every Linux
-# build); only `--features cec` activates it via `dep:cec-rs`.
+# HDMI-CEC (#94): cec-rs wraps libcec (GPL-2.0) — compatible under GPL-3.0 (#88).
+# 12.0.1 / libcec-sys 9.0.3 support libcec 7. The `cec` feature STATIC-LINKS a
+# bundled libcec (#179, `libcec-sys/static`): a prebuilt libcec.a + p8-platform
+# is fetched from ssalonen/libcec-static-builds and baked into the binary, so
+# NO system `libcec`/`libcec-dev` is required at build or runtime (the CI `--ldd`
+# assertion verifies this). The static path needs no bindgen/cmake/clang; only
+# `libudev-dev` + `pkg-config` (for the libudev link hint) and network access
+# at build time to fetch the archive. `optional = true` keeps cec-rs out of the
+# default Linux build; only `--features cec` activates it via `dep:cec-rs`.
 cec-rs = { version = "12.0.1", optional = true }
 # Declared directly (optional) ONLY so the `cec` feature can forward
 # `libcec-sys/static` (#179) — static-link a bundled libcec instead of the

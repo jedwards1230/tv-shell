@@ -8,14 +8,16 @@ A minimal 10-foot UI for a dedicated streaming box — controller-navigable home
 
 ```
 SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
-                               └── game-shell-input (Rust daemon: EVIOCGRAB → uinput
-                                   + backend IPC)
+       │                                  │  ▲ intent:* control-surface + Keys
+       │  Super* → super-intent.sh ───────┘  │ (keyboard → intents: menu/home/reset)
+                               └── game-shell-input (Rust daemon: EVIOCGRAB the
+                                   gamepad fleet → per-player uinput; backend IPC)
 ```
 
 - **Quickshell** renders the UI via QML on Hyprland's Wayland compositor
 - **game-shell-input** (Rust daemon, `daemon/`) grabs the gamepad exclusively, emits keyboard/mouse via uinput, and serves the backend IPC (settings, app discovery, Bluetooth/network/power, Hyprland, Sunshine). It is the sole input/backend daemon
 - **Moonlight** streams games from a Sunshine host
-- **living-room-cec** and **end-game-session** scripts handle AV control (deployed separately via Ansible)
+- **end-game-session** script handles session teardown (deployed separately via Ansible); HDMI-CEC is owned by the daemon's `cec-*` IPC (`--features cec`)
 
 ## Structure
 
@@ -27,7 +29,7 @@ shell/                   # QML shell — Quickshell config root (-c game-shell)
     StreamCard.qml       # Individual streaming target card
     QuickActions.qml     # Top-right quick actions (volume, network, theme, power)
     StreamOverlay.qml    # Streaming/reconnecting overlay
-    SettingsPanel.qml    # Audio + power controls
+    SettingsPanel.qml    # Left sidebar + right content loader (~12 pages)
     SettingsButton.qml   # Focusable button widget
     Theme.qml            # Colors, fonts, layout constants
 daemon/                  # Rust backend daemon (game-shell-input) — sole backend
@@ -43,18 +45,9 @@ scripts/
 
 ## Configuration
 
-Streaming targets are defined in `targets.yaml`:
-
-```yaml
-targets:
-  - name: Desktop
-    host: 192.168.1.10  # host: <your-streaming-host-ip>
-    app: Desktop
-    resolution: 3840x2160
-    fps: 120
-    codec: HEVC
-    hdr: true
-```
+Streaming targets are stored in `~/.config/game-shell/targets.json` as single-line
+JSON — managed in-UI via MoonlightSettings. `config/targets.yaml.example` is
+illustrative only (the runtime format is JSON, not YAML).
 
 ## Controls
 
@@ -62,7 +55,7 @@ targets:
 |--------|--------|
 | D-pad | Navigate |
 | A | Select / Launch |
-| B | Back / Settings |
+| B | Back |
 | Y | Actions (context menu) |
 | Home + B (3s) | End session (AV shutdown) |
 

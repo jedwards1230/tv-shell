@@ -760,10 +760,11 @@ wire path — no new variants.
 | `settings:<page>` | Open the Settings panel on the named page. `<page>` is one of the section id slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`, `keybindings`, `avcontrol`, `appearance`, `accessibility`, `power`, plus the provider id (e.g. `streaming` or the active provider's own id) when a streaming provider is configured. |
 | `overlay:volume` | Open the volume QAM popover from idle. |
 | `overlay:network` | Open the network QAM popover from idle. |
+| `overlay:session` | Open the power/session drawer from idle. |
 | `app:<id>` | Launch the local app whose `wmClass` (StartupWMClass) is `<id>`. |
 
 **Validation boundary:** the daemon validates the namespace and structural shape.
-The `overlay:` namespace is **closed** — only `volume` and `network` are valid
+The `overlay:` namespace is **closed** — only `volume`, `network`, and `session` are valid
 leaves; anything else is rejected. The `settings:` and `app:` namespaces accept
 any non-empty leaf (the page/app registries live in QML, not the daemon). An
 empty leaf (`settings:`, `overlay:`, `app:`) or unknown namespace (`foo:bar`)
@@ -862,9 +863,9 @@ echo "key select"       | nc -U "$GAME_SHELL_SOCK"
 
 ## Phase 4 Commands (Hyprland + Sunshine)
 
-Phase 4 adds two subsystems: a Hyprland compositor actor (`hyprland` crate, async
-event listener + data getters) and a Sunshine session detector (`reqwest` over
-the host's self-signed HTTPS endpoint).
+Phase 4 adds two subsystems: a Hyprland compositor actor (direct IPC sockets, no
+crate — see `hyprland.rs`) and a Sunshine session detector (`reqwest` over the
+host's self-signed HTTPS endpoint).
 
 The **Hyprland** commands replace the `hyprctl clients -j` read in
 `components/HyprctlClients.qml` and feed `components/AppLifecycleManager.qml`'s
@@ -1402,7 +1403,7 @@ Returns a JSON object with a snapshot of the running daemon's state. No query pa
 {
   "sha": "a1b2c3d",
   "daemon_pid": 12345,
-  "version": "0.5.0",
+  "version": "0.1.0",
   "shell_running": true,
   "wayland_display": "wayland-1",
   "hypr_sig_present": true

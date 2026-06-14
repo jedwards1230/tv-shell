@@ -58,7 +58,7 @@ subprocesses (auth checked first).
 
 ## MCP tools (`mcp.rs`)
 
-11 tools over streamable-HTTP at `/mcp`. The 3 dev tools are gated by
+12 tools over streamable-HTTP at `/mcp`. The 3 dev tools are gated by
 `GAME_SHELL_MCP_DEV` (any non-empty value) — when unset they return a clear error
 instead of acting (registered unconditionally; rmcp can't yet register
 conditionally, `mcp.rs:413`).

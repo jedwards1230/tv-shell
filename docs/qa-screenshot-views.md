@@ -7,7 +7,7 @@ screenshot batch. Keep this updated as views are added or changed.
 
 See the `game-shell-dev` skill ("Driving the UI for Screenshots"). In short there
 are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
-- **Directional nav / select / back = real key events.** Either `wtype -k <Left|Right|Up|Down|Return|Escape>` (Wayland virtual keyboard) **or** the daemon's `key <name>` IPC (`key up|down|left|right|select|back` over the socket). Both reach the focused surface's `KeyNavigation`. There is **no `Tab` drawer key** — `wtype -k Tab` does nothing useful.
+- **Directional nav / select / back = real key events.** Either `wtype -k <Left|Right|Up|Down|Return|Escape>` (Wayland virtual keyboard) **or** the daemon's `key <name>` IPC (`key up|down|left|right|select|back` over the socket). Both reach the focused surface's `KeyNavigation`. **`Tab` toggles the nav drawer** when the shell window holds Wayland focus (K400 on the couch, `ShellLayout.Keys.onTabPressed → toggleMenu()`, idle only) — but `wtype -k Tab` from an external session may not reach the shell window if focus is elsewhere; prefer `intent menu` over the socket for reliable automation.
 - **Drawer / settings / power / home = the `intent` control surface** (socket): `echo "intent menu" | nc -U /run/user/1000/game-shell-input.sock` toggles the **left nav drawer**; `intent settings` / `intent power` / `intent home` open those. (At the TV the drawer also opens via gamepad **Home** tap or a bare **Super** press — Hyprland bind → `super-intent.sh` → `intent menu`. Super+Escape = escape; Super+Backspace = reset.) Deep-link targets also use this surface: `intent settings:<page>` opens a specific settings page in one command (e.g. `intent settings:bluetooth`); `intent overlay:volume` / `intent overlay:network` open the respective QAM popover; `intent app:<wmClass>` launches a local app by its StartupWMClass.
 - Screenshots are 4K (~2000 tokens each) — shoot in **tiers** (below), not all at once.
 
@@ -50,7 +50,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 ## C. Overlays & dialogs
 | # | View | How to reach | Capturability |
 |---|------|--------------|---------------|
-| C12 | Left nav drawer (`NavigationDrawer`) | `intent menu` (socket) — or gamepad Home / bare Super at the TV | socket-reachable (NOT `wtype` — no Tab handler) |
+| C12 | Left nav drawer (`NavigationDrawer`) | `intent menu` (socket) — or gamepad Home / bare Super at the TV — or `Tab` when the shell window holds Wayland keyboard focus | socket-reachable; `wtype -k Tab` works only when shell window has focus (unreliable in automation) |
 | C13 | Notification center | QuickActions idx 0 → Return | wtype |
 | C14 | Notification center — empty | as above, no notifications | wtype |
 | C15 | Notification toast (`NotificationToast`) | trigger a notification | transient; timing-sensitive |
@@ -100,11 +100,11 @@ capturable with a live stream/app.
 ## Capturability summary
 - **Key-driven (nav/select/back via `wtype -k` or `key <name>`):** A1–A9, B10–B11, C13–C14, C16, C19, E, F; D20 and (once open) the D21–D31 page controls.
 - **Socket deep-link (`intent` command):** D21–D31 settings pages (`intent settings:<page>`) and C20/C21 overlays (`intent overlay:volume` / `intent overlay:network`) are directly socket-reachable in one command without navigating through the sidebar or QuickActions.
-- **Drawer (C12):** `intent menu` over the socket (or gamepad Home / bare Super at the TV) — **not** `wtype` (no Tab handler).
+- **Drawer (C12):** `intent menu` over the socket (or gamepad Home / bare Super at the TV) is the reliable path; `Tab` also works when the shell window holds Wayland keyboard focus, but is unreliable from an external automation session.
 - **Needs a real condition:** C15 (toast timing), C17 (stream conflict), C18 (stream overlay), G (live stream/app).
 
 ## Suggested tiered batch
 1. **Tier 1 — static views, dark mode:** A1–A9, B10–B11, D20–D31 + settings substates, C13/C14/C16/C19.
 2. **Tier 2 — light mode** re-shoot of the core set (E).
 3. **Tier 3 — input-mode** variants (F) where visually distinct.
-4. **Tier 4 — manual/condition:** drawer (C12, `intent menu` over the socket or a TV press), then condition-dependent (C15/C17/C18/G).
+4. **Tier 4 — manual/condition:** drawer (C12, `intent menu` over the socket or a TV press; or `Tab` with direct keyboard focus), then condition-dependent (C15/C17/C18/G).
