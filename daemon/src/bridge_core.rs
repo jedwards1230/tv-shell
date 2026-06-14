@@ -7,6 +7,7 @@
 //! **Callers** pass in the channel handles they already hold; this module never
 //! owns channels directly. Both `http.rs` and `mcp.rs` call into these fns.
 
+use crate::apps;
 use crate::protocol::{Event, INTENT_OVERLAY_TARGETS};
 use crate::state::Control;
 use serde::Serialize;
@@ -495,6 +496,140 @@ pub fn overlay_intent(target: &str) -> Result<String, String> {
 /// Build an `intent:app:<wm_class>` name.
 pub fn app_intent(wm_class: &str) -> String {
     format!("app:{wm_class}")
+}
+
+// ─── UI state ────────────────────────────────────────────────────────────────
+
+/// Lightweight UI-observable state returned by `get_ui_state`.
+///
+/// Reports the Hyprland-level active window (which application currently holds
+/// focus) and whether quickshell is the focused process. This is **window-level
+/// state from the compositor**, not QML-internal state (which settings page is
+/// open, what list item is selected) — QML does not report that to the daemon.
+/// Use `take_screenshot` to observe QML-internal state.
+///
+/// On non-Linux builds (macOS dev) the Hyprland fields are always absent and
+/// `platform_note` explains why.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+pub struct UiState {
+    /// Whether quickshell is currently the active (focused) Hyprland window.
+    /// `None` when the active-window query is unavailable (non-Linux or no
+    /// Hyprland socket).
+    pub quickshell_focused: Option<bool>,
+    /// Class of the currently focused window (from Hyprland's `j/activewindow`).
+    /// `None` when nothing is focused or the query fails.
+    pub active_window_class: Option<String>,
+    /// Title of the currently focused window. `None` when nothing is focused.
+    pub active_window_title: Option<String>,
+    /// Whether quickshell is running at all (via `pgrep -x quickshell`).
+    pub shell_running: bool,
+    /// Present only on non-Linux builds; explains which fields are unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_note: Option<&'static str>,
+}
+
+/// Query lightweight UI / compositor state without a screenshot.
+///
+/// On Linux, performs a one-shot Hyprland `j/activewindow` query to determine
+/// which window is focused and whether it is quickshell. On non-Linux builds the
+/// Hyprland fields are absent (the function still compiles and returns a degraded
+/// result with a `platform_note`).
+pub async fn get_ui_state() -> UiState {
+    let shell_running = matches!(
+        tokio::process::Command::new("pgrep")
+            .args(["-x", "quickshell"])
+            .output()
+            .await,
+        Ok(o) if o.status.success()
+    );
+
+    #[cfg(target_os = "linux")]
+    {
+        use crate::hyprland;
+        let active_json = hyprland::query_active_window().await;
+        // Parse the {class, title} from the JSON; empty object = nothing focused.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&active_json).unwrap_or(serde_json::Value::Null);
+        let class = parsed
+            .get("class")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_owned());
+        let title = parsed
+            .get("title")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_owned());
+        let quickshell_focused = class.as_deref().map(|c| {
+            // quickshell registers as class "quickshell" in Hyprland.
+            c.eq_ignore_ascii_case("quickshell")
+        });
+        return UiState {
+            quickshell_focused,
+            active_window_class: class,
+            active_window_title: title,
+            shell_running,
+            platform_note: None,
+        };
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    UiState {
+        quickshell_focused: None,
+        active_window_class: None,
+        active_window_title: None,
+        shell_running,
+        platform_note: Some(
+            "Hyprland window state is only available on Linux; \
+             shell_running is available on all platforms.",
+        ),
+    }
+}
+
+// ─── App discovery ───────────────────────────────────────────────────────────
+
+/// A single installed application, as returned by the `list_apps` MCP tool.
+///
+/// A trimmed view of [`apps::App`] exposing only the fields an agent needs:
+/// `name` (human-readable display name), `wm_class` (pass to `launch_app`),
+/// and `comment` (optional short description). `exec` and `icon` are omitted —
+/// they are implementation details the agent does not need.
+///
+/// The `JsonSchema` derive is conditional on the `mcp` feature (same gate as
+/// [`StatusInfo`]).
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+pub struct AppEntry {
+    /// Human-readable application name (from the .desktop `Name` field).
+    pub name: String,
+    /// StartupWMClass from the .desktop file — pass this to `launch_app`.
+    pub wm_class: String,
+    /// Optional short description from the .desktop `Comment` field.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub comment: String,
+}
+
+impl From<apps::App> for AppEntry {
+    fn from(a: apps::App) -> Self {
+        AppEntry {
+            name: a.name,
+            wm_class: a.wm_class,
+            comment: a.comment,
+        }
+    }
+}
+
+/// Scan the standard XDG application directories and return the app list as
+/// [`AppEntry`] values.
+///
+/// Runs `apps::scan_apps` on a blocking thread so the async reactor is not
+/// stalled by directory I/O.  Cross-platform: `apps.rs` uses only the standard
+/// library and the pure `freedesktop-desktop-entry` crate — no Linux-only APIs.
+pub async fn list_apps() -> Vec<AppEntry> {
+    tokio::task::spawn_blocking(|| apps::scan_apps().into_iter().map(AppEntry::from).collect())
+        .await
+        .unwrap_or_default()
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────

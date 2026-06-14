@@ -51,14 +51,59 @@ use crate::state::Control;
 
 // ─── Parameter types ─────────────────────────────────────────────────────────
 
+/// A bare shell action name. Deep-links (containing `:`) are rejected — use
+/// `open_settings`, `open_overlay`, or `launch_app` for those.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SendIntentParams {
-    /// The intent name. Bare names: home, home-tap, home-hold, menu, settings,
-    /// power. Deep-link families (colon-delimited): settings:<page-slug>,
-    /// overlay:<target (volume|network|session)>, app:<StartupWMClass>.
-    /// To open a specific settings page, overlay, or app, prefer
-    /// open_settings / open_overlay / launch_app.
+pub struct ShellActionParams {
+    /// Bare action name. Valid values: home, home-tap, home-hold, menu,
+    /// settings, power.
+    /// Deep-links (settings:<page>, overlay:<target>, app:<wmClass>) are NOT
+    /// accepted here — use open_settings / open_overlay / launch_app instead.
     pub name: String,
+}
+
+/// Known settings page slugs. Unknown slugs are a graceful no-op in QML;
+/// this enum constrains the MCP input to the documented set.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingsPage {
+    /// Audio output settings (default sink, volume, speaker test).
+    Audio,
+    /// Bluetooth device scanning and pairing.
+    Bluetooth,
+    /// Wi-Fi / network connectivity.
+    Network,
+    /// Display settings (monitor, HDR, refresh rate, night light, overscan).
+    Display,
+    /// Gamepad/controller configuration.
+    Controllers,
+    /// Key-binding remapping.
+    Keybindings,
+    /// HDMI-CEC AV control and focus preferences.
+    Avcontrol,
+    /// Accessibility (reduce motion, text size).
+    Accessibility,
+    /// Power management (sleep timer, wake-on-controller).
+    Power,
+    /// System info, storage, OS version.
+    System,
+}
+
+impl SettingsPage {
+    fn as_str(&self) -> &'static str {
+        match self {
+            SettingsPage::Audio => "audio",
+            SettingsPage::Bluetooth => "bluetooth",
+            SettingsPage::Network => "network",
+            SettingsPage::Display => "display",
+            SettingsPage::Controllers => "controllers",
+            SettingsPage::Keybindings => "keybindings",
+            SettingsPage::Avcontrol => "avcontrol",
+            SettingsPage::Accessibility => "accessibility",
+            SettingsPage::Power => "power",
+            SettingsPage::System => "system",
+        }
+    }
 }
 
 /// Direction or action key for D-pad / keyboard navigation.
@@ -101,10 +146,8 @@ pub struct NavigateParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct OpenSettingsParams {
-    /// Settings page slug. Known slugs: audio, bluetooth, network, display,
-    /// controllers, keybindings, avcontrol, accessibility, power, system.
-    /// Unknown slugs are a graceful no-op in QML.
-    pub page: String,
+    /// Settings page to open.
+    pub page: SettingsPage,
 }
 
 /// Overlay popover target.
@@ -209,13 +252,25 @@ impl ServerHandler for GameShellMcp {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "Controls the game-shell Quickshell UI on the game client. \
-                 Use send_intent / navigate for UI navigation; prefer the typed sugar \
-                 tools (open_settings, open_overlay, launch_app) for specific targets. \
-                 Use take_screenshot to capture the current display — call it after \
-                 every action to confirm the UI reached the expected state. \
-                 Use get_status / get_logs for diagnostics and restart_shell to recover \
-                 from a crashed UI.",
+                "Controls the game-shell Quickshell UI on the game client.\n\
+                 \n\
+                 Observe → Act → Verify loop:\n\
+                 1. take_screenshot or get_ui_state to observe current state.\n\
+                 2. Act with one of the tools below.\n\
+                 3. take_screenshot to confirm the expected state was reached.\n\
+                 \n\
+                 Tool guide:\n\
+                 - shell_action: top-level bare-verb actions (home, menu, settings, power). \
+                 Does NOT accept deep-links — use the sugar tools for those.\n\
+                 - open_settings(page): navigate directly to a typed settings page.\n\
+                 - open_overlay(target): open volume/network/session QAM popovers.\n\
+                 - launch_app(wm_class): launch an installed app by its StartupWMClass. \
+                 Use list_apps to discover launchable apps and their wm_class values.\n\
+                 - navigate(key): in-view directional focus movement (up/down/left/right) \
+                 and confirm/cancel (select/back). Use after observing what is focused.\n\
+                 - list_apps: discover installed apps (name, wm_class, comment).\n\
+                 - get_status: daemon-level health snapshot (not the UI's on-screen state).\n\
+                 - get_logs / restart_shell: diagnostics and recovery.",
             )
     }
 }
@@ -225,23 +280,30 @@ impl GameShellMcp {
     // ── Navigation / intents ──────────────────────────────────────────────────
 
     #[tool(
-        description = "Send a named intent to the game-shell UI. \
-            Bare names: home, home-tap, home-hold, menu, settings, power. \
-            Deep-link families (colon-delimited): settings:<page-slug>, \
-            overlay:<target (volume|network|session)>, app:<StartupWMClass>. \
-            To open a specific settings page, overlay, or app, prefer \
-            open_settings / open_overlay / launch_app.",
+        description = "Send a bare top-level action to the game-shell UI. \
+            Valid actions: home, home-tap, home-hold, menu, settings, power. \
+            Deep-links (containing ':') are NOT accepted here — \
+            use open_settings / open_overlay / launch_app for those specific targets.",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
-    async fn send_intent(
+    async fn shell_action(
         &self,
-        Parameters(SendIntentParams { name }): Parameters<SendIntentParams>,
+        Parameters(ShellActionParams { name }): Parameters<ShellActionParams>,
     ) -> CallToolResult {
-        if !bridge_core::is_valid_intent(&name) {
+        // Reject any deep-link (colon-delimited) at the MCP-tool layer.
+        // The underlying IPC/HTTP paths still accept them; this restriction
+        // is intentional for the MCP surface only (A1).
+        if name.contains(':') {
+            let valid = crate::protocol::INTENT_VOCAB.join(", ");
             return CallToolResult::error(vec![Content::text(format!(
-                "unknown intent '{name}'. Valid bare intents: home, home-tap, home-hold, \
-                 menu, settings, power. Deep-links: settings:<page>, \
-                 overlay:<volume|network|session>, app:<wmClass>."
+                "deep-links are not accepted here; use open_settings / open_overlay / launch_app. \
+                 Valid actions: {valid}."
+            ))]);
+        }
+        if !bridge_core::is_valid_intent(&name) {
+            let valid = crate::protocol::INTENT_VOCAB.join(", ");
+            return CallToolResult::error(vec![Content::text(format!(
+                "unknown action '{name}'. Valid actions: {valid}."
             ))]);
         }
         match bridge_core::dispatch_intent(&self.handles.control_tx, name).await {
@@ -256,9 +318,14 @@ impl GameShellMcp {
 
     #[tool(
         description = "Synthesize a directional or action keypress on the \
-            game-shell virtual keyboard. `select` activates/confirms the focused \
-            element (A button / Enter); `back` goes up one level / dismisses \
-            (B button / Escape).",
+            game-shell virtual keyboard. Moves focus RELATIVE to the currently \
+            focused element — observe first (take_screenshot or get_ui_state) \
+            to know what is focused before navigating. \
+            `select` = activate/confirm the focused element (A button / Enter); \
+            `back` = go up one level / dismiss (B button / Escape). \
+            This is the lower-level, in-view control tool for moving within an \
+            already-visible UI surface. For top-level navigation use shell_action, \
+            open_settings, open_overlay, or launch_app instead.",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
     async fn navigate(
@@ -277,17 +344,14 @@ impl GameShellMcp {
     }
 
     #[tool(
-        description = "Open a specific settings page directly. \
-            Known page slugs: audio, bluetooth, network, display, controllers, \
-            keybindings, avcontrol, accessibility, power, system. \
-            Unknown slugs are a graceful no-op in QML.",
+        description = "Open a specific settings page directly by name.",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
     async fn open_settings(
         &self,
         Parameters(OpenSettingsParams { page }): Parameters<OpenSettingsParams>,
     ) -> CallToolResult {
-        let intent_name = bridge_core::settings_intent(&page);
+        let intent_name = bridge_core::settings_intent(page.as_str());
         match bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await {
             None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
             Some(r) if r.starts_with("error:") => {
@@ -321,7 +385,11 @@ impl GameShellMcp {
     }
 
     #[tool(
-        description = "Launch a local .desktop application by its StartupWMClass.",
+        description = "Launch a local .desktop application by its StartupWMClass. \
+            `wm_class` is the StartupWMClass from the .desktop file — NOT the \
+            human-readable display name. Examples: `steam`, `org.mozilla.Firefox`, \
+            `com.valvesoftware.Steam`. Use list_apps to discover installed apps \
+            and their exact wm_class values.",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
     async fn launch_app(
@@ -337,6 +405,36 @@ impl GameShellMcp {
             }
             Some(_) => CallToolResult::success(vec![Content::text("ok")]),
         }
+    }
+
+    // ── App discovery ─────────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Return the list of installed .desktop applications as structured JSON. \
+            Each entry has name (human-readable), wm_class (StartupWMClass — pass to \
+            launch_app), and comment (optional description). \
+            Use this to discover launchable apps before calling launch_app.",
+        annotations(read_only_hint = true)
+    )]
+    async fn list_apps(&self) -> Result<Json<Vec<bridge_core::AppEntry>>, String> {
+        Ok(Json(bridge_core::list_apps().await))
+    }
+
+    // ── UI state ─────────────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Return lightweight compositor-level UI state without taking a screenshot. \
+            Reports which Hyprland window is currently focused (class + title), \
+            whether that focused window is quickshell, and whether quickshell is running. \
+            This is WINDOW-LEVEL state from the compositor — it does NOT reveal \
+            which QML page or list item is active inside the shell (use \
+            take_screenshot for that). \
+            On non-Linux builds the Hyprland fields are absent; a platform_note \
+            field explains which data is unavailable.",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_ui_state(&self) -> Result<Json<bridge_core::UiState>, String> {
+        Ok(Json(bridge_core::get_ui_state().await))
     }
 
     // ── Screenshot ────────────────────────────────────────────────────────────
@@ -364,13 +462,11 @@ impl GameShellMcp {
     // ── Status / diagnostics ──────────────────────────────────────────────────
 
     #[tool(
-        description = "Return structured status: git SHA, daemon PID, daemon version, \
-            whether quickshell is running, Wayland display name, and whether \
-            HYPRLAND_INSTANCE_SIGNATURE is resolvable. Returns a typed JSON object \
-            with an advertised output schema. \
-            After an action, call take_screenshot to confirm the UI reached the \
-            expected state. The typed sugar tools (open_settings, open_overlay, \
-            launch_app) are preferred for specific navigation targets.",
+        description = "Return daemon/shell status as typed JSON: git SHA, daemon PID \
+            and version, whether quickshell is running, the Wayland display, and \
+            whether the Hyprland signature resolves. \
+            A daemon-level snapshot — not the UI's on-screen state \
+            (use take_screenshot to see what is actually displayed).",
         annotations(read_only_hint = true)
     )]
     async fn get_status(&self) -> Result<Json<bridge_core::StatusInfo>, String> {
@@ -776,5 +872,176 @@ mod tests {
                 result
             );
         }
+    }
+
+    // ── shell_action: bare-verb acceptance + deep-link rejection ─────────────
+    //
+    // The MCP tool layer rejects deep-links (any name containing ':') and
+    // accepts only the closed bare vocabulary from INTENT_VOCAB. These tests
+    // verify the parsing behaviour independently of the dispatch path.
+
+    #[test]
+    fn shell_action_accepts_all_bare_vocab_entries() {
+        use crate::protocol::INTENT_VOCAB;
+        for &name in INTENT_VOCAB {
+            // Must not contain ':' (it's a bare name) and must be valid.
+            assert!(
+                !name.contains(':'),
+                "INTENT_VOCAB entry '{name}' contains ':' — it is not a bare action"
+            );
+            assert!(
+                bridge_core::is_valid_intent(name),
+                "bare vocab entry '{name}' must be a valid intent"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_action_rejects_settings_deep_link() {
+        // The colon check happens before the vocab check.
+        let name = "settings:bluetooth";
+        assert!(
+            name.contains(':'),
+            "test sanity: '{name}' should contain ':'"
+        );
+    }
+
+    #[test]
+    fn shell_action_rejects_overlay_deep_link() {
+        let name = "overlay:volume";
+        assert!(name.contains(':'));
+    }
+
+    #[test]
+    fn shell_action_rejects_app_deep_link() {
+        let name = "app:steam";
+        assert!(name.contains(':'));
+    }
+
+    #[test]
+    fn shell_action_rejects_unknown_bare_name() {
+        // An unknown bare name (no colon) fails the vocab check.
+        assert!(!bridge_core::is_valid_intent("launchgame"));
+        assert!(!bridge_core::is_valid_intent("unknown"));
+        assert!(!bridge_core::is_valid_intent(""));
+    }
+
+    // ── SettingsPage enum serialisation ──────────────────────────────────────
+
+    #[test]
+    fn settings_page_as_str_covers_all_variants() {
+        let cases = &[
+            (SettingsPage::Audio, "audio"),
+            (SettingsPage::Bluetooth, "bluetooth"),
+            (SettingsPage::Network, "network"),
+            (SettingsPage::Display, "display"),
+            (SettingsPage::Controllers, "controllers"),
+            (SettingsPage::Keybindings, "keybindings"),
+            (SettingsPage::Avcontrol, "avcontrol"),
+            (SettingsPage::Accessibility, "accessibility"),
+            (SettingsPage::Power, "power"),
+            (SettingsPage::System, "system"),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(variant.as_str(), *expected, "SettingsPage variant mismatch");
+        }
+    }
+
+    #[test]
+    fn settings_page_deserialises_lowercase() {
+        let slugs = &[
+            "audio",
+            "bluetooth",
+            "network",
+            "display",
+            "controllers",
+            "keybindings",
+            "avcontrol",
+            "accessibility",
+            "power",
+            "system",
+        ];
+        for slug in slugs {
+            let json = format!("\"{}\"", slug);
+            let page: SettingsPage = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("failed to deserialise SettingsPage '{slug}': {e}"));
+            assert_eq!(
+                page.as_str(),
+                *slug,
+                "SettingsPage::as_str() mismatch for '{slug}'"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_page_rejects_unknown_slug() {
+        let result: Result<SettingsPage, _> = serde_json::from_str("\"unknown-page\"");
+        assert!(
+            result.is_err(),
+            "unknown slug should fail to deserialise as SettingsPage"
+        );
+    }
+
+    #[test]
+    fn settings_page_as_str_produces_valid_settings_intent() {
+        // Every SettingsPage slug must form a valid intent when prefixed by "settings:".
+        for &slug in &[
+            "audio",
+            "bluetooth",
+            "network",
+            "display",
+            "controllers",
+            "keybindings",
+            "avcontrol",
+            "accessibility",
+            "power",
+            "system",
+        ] {
+            let intent = bridge_core::settings_intent(slug);
+            assert!(
+                bridge_core::is_valid_intent(&intent),
+                "settings_intent('{slug}') = '{intent}' should be a valid intent"
+            );
+        }
+    }
+
+    // ── list_apps bridge fn ───────────────────────────────────────────────────
+
+    #[cfg(feature = "mcp")]
+    #[test]
+    fn app_entry_serialises_with_schema() {
+        use schemars::schema_for;
+
+        let entry = bridge_core::AppEntry {
+            name: "Firefox".into(),
+            wm_class: "org.mozilla.Firefox".into(),
+            comment: "Browse the web".into(),
+        };
+        let json = serde_json::to_string(&entry).expect("AppEntry serialises");
+        assert!(json.contains("\"name\":\"Firefox\""));
+        assert!(json.contains("\"wm_class\":\"org.mozilla.Firefox\""));
+        assert!(json.contains("\"comment\":\"Browse the web\""));
+
+        // Schema must compile and contain expected field names.
+        let schema = schema_for!(bridge_core::AppEntry);
+        let schema_json = serde_json::to_string(&schema).expect("schema serialises");
+        assert!(schema_json.contains("name"), "schema missing 'name' field");
+        assert!(
+            schema_json.contains("wm_class"),
+            "schema missing 'wm_class' field"
+        );
+    }
+
+    #[cfg(feature = "mcp")]
+    #[test]
+    fn app_entry_omits_empty_comment() {
+        let entry = bridge_core::AppEntry {
+            name: "App".into(),
+            wm_class: "app".into(),
+            comment: String::new(),
+        };
+        let json = serde_json::to_string(&entry).expect("AppEntry serialises");
+        // skip_serializing_if = "String::is_empty" should omit the comment field.
+        assert!(!json.contains("comment"), "empty comment should be omitted");
     }
 }

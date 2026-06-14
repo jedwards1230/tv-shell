@@ -58,18 +58,20 @@ subprocesses (auth checked first).
 
 ## MCP tools (`mcp.rs`)
 
-12 tools over streamable-HTTP at `/mcp`. The 3 dev tools are gated by
+14 tools over streamable-HTTP at `/mcp`. The 3 dev tools are gated by
 `GAME_SHELL_MCP_DEV` (any non-empty value) — when unset they return a clear error
 instead of acting (registered unconditionally; rmcp can't yet register
 conditionally, `mcp.rs:413`).
 
 | Tool | Params | Annotation | Maps to |
 |------|--------|------------|---------|
-| `send_intent` | `name` | write | any intent (vocab below) |
+| `shell_action` | `name` (bare verb only) | write | bare intent from closed vocab |
 | `navigate` | `key` (up/down/left/right/select/back) | write | `Control::Key` |
-| `open_settings` | `page` (slug) | write | `settings:<page>` |
+| `open_settings` | `page` (`SettingsPage` enum) | write | `settings:<page>` |
 | `open_overlay` | `target` (volume/network/session) | write | `overlay:<target>` |
 | `launch_app` | `wm_class` (StartupWMClass) | write | `app:<wm_class>` |
+| `list_apps` | — | read-only | XDG `.desktop` scan → `[{name,wm_class,comment}]` |
+| `get_ui_state` | — | read-only | Hyprland active window + quickshell focus |
 | `take_screenshot` | `flash` (bool) | read-only | `grim` → PNG content |
 | `get_status` | — | read-only | typed `StatusInfo` JSON (output schema) |
 | `get_logs` | `lines` (≤1000), `filter` | read-only | tail `/tmp/qs-log.txt` |
@@ -78,8 +80,17 @@ conditionally, `mcp.rs:413`).
 | `dev_build` 🔒 | — | destructive | build + install binary (~15–60 s) |
 | `dev_restart_daemon` 🔒 | — | destructive | re-exec daemon (connection drops) |
 
-🔒 = requires `GAME_SHELL_MCP_DEV`. Prefer the typed sugar tools (`open_settings`,
-`open_overlay`, `launch_app`) over raw `send_intent` deep-links.
+🔒 = requires `GAME_SHELL_MCP_DEV`.
+
+**Tool design:**
+- `shell_action` accepts only bare verbs from the closed vocabulary (`home`,
+  `home-tap`, `home-hold`, `menu`, `settings`, `power`). Deep-links are rejected
+  at the MCP layer — use `open_settings` / `open_overlay` / `launch_app` instead.
+- `open_settings.page` is a typed `SettingsPage` enum (not a free string).
+- `get_ui_state` reports compositor-level window focus (class + title + whether
+  quickshell is focused) — NOT QML-internal state. Use `take_screenshot` for
+  in-shell view state.
+- `list_apps` makes `launch_app` discoverable without guessing `wm_class` values.
 
 `GAME_SHELL_MCP_ALLOWED_HOSTS` (comma-separated `host[:port]`) sets the rmcp Host
 allowlist (loopback always allowed; a concrete bind IP is auto-added; a wildcard

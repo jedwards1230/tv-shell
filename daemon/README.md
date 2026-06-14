@@ -59,7 +59,7 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `session_env.rs` | Session-environment self-discovery + `daemon.env` loading (resolves `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`) |
 | `bridge_core.rs` | Shared action logic for the HTTP bridge and MCP server (intent dispatch, screenshot, status, log read) |
 | `http.rs` | LAN HTTP/1.1 control bridge (`GAME_SHELL_HTTP_BIND`) — `POST /intent`, `POST /key`, `GET /screenshot`, `/dev/*` |
-| `mcp.rs` | MCP server (`GAME_SHELL_MCP_BIND`, `--features mcp`) — 12 tools over streamable-HTTP at `/mcp` |
+| `mcp.rs` | MCP server (`GAME_SHELL_MCP_BIND`, `--features mcp`) — 14 tools over streamable-HTTP at `/mcp` |
 | `ipc.rs` | Unix-socket server, `broadcast` event fan-out, D-Bus command routing |
 | `main.rs` | Runtime wiring + signals + D-Bus actor spawn |
 
@@ -173,7 +173,7 @@ bearer token and a single action core (`bridge_core.rs`):
   listener — `POST /intent/<name>`, `POST /key/<name>`, `GET /screenshot`, and the
   `/dev/*` routes (status/logs/deploy/build/restart-shell/restart-daemon).
 - **MCP server** (`mcp.rs`, `GAME_SHELL_MCP_BIND`, `--features mcp`): the official
-  `rmcp` 1.7.0 SDK over streamable-HTTP at `/mcp`, exposing 12 tools (the dev tools
+  `rmcp` 1.7.0 SDK over streamable-HTTP at `/mcp`, exposing 14 tools (the dev tools
   gated by `GAME_SHELL_MCP_DEV`). Feature-gated only, not OS-gated — compiles on
   macOS.
 
