@@ -539,6 +539,11 @@ pub async fn serve(
         session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
     };
 
+    // Treat an empty token as no token at all, so an operator who sets
+    // GAME_SHELL_HTTP_TOKEN="" can never accidentally satisfy the auth check —
+    // it fails closed (rejects all) instead of accepting `Bearer ` (empty).
+    let token = token.filter(|t| !t.is_empty());
+
     let dev_enabled = std::env::var("GAME_SHELL_MCP_DEV")
         .map(|v| !v.is_empty())
         .unwrap_or(false);

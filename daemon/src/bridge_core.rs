@@ -140,20 +140,17 @@ pub struct StatusInfo {
 pub async fn get_status() -> StatusInfo {
     let root = crate::session_env::install_root();
 
-    let sha = {
-        let out = tokio::process::Command::new("git")
-            .args([
-                "-C",
-                root.to_str().unwrap_or("."),
-                "rev-parse",
-                "--short",
-                "HEAD",
-            ])
-            .output()
-            .await;
-        match out {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_owned(),
-            _ => "unknown".to_owned(),
+    let sha = match root.to_str() {
+        None => "unknown".to_owned(),
+        Some(root_str) => {
+            let out = tokio::process::Command::new("git")
+                .args(["-C", root_str, "rev-parse", "--short", "HEAD"])
+                .output()
+                .await;
+            match out {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+                _ => "unknown".to_owned(),
+            }
         }
     };
 
@@ -256,7 +253,9 @@ pub async fn dev_deploy(git_ref: Option<&str>) -> Result<String, String> {
 
     tracing::info!("dev/deploy: ref={r} root={}", root.display());
 
-    let root_str = root.to_str().unwrap_or(".");
+    let root_str = root
+        .to_str()
+        .ok_or("install root path is not valid UTF-8")?;
 
     // Fetch
     let (ok, out) = git_run(&root, &["-C", root_str, "fetch", "origin", "--prune"]).await;

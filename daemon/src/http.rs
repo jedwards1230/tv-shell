@@ -616,6 +616,10 @@ pub async fn serve(
     shutdown: tokio_util::sync::CancellationToken,
     reexec_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
+    // Treat an empty token as no token at all, so GAME_SHELL_HTTP_TOKEN="" fails
+    // closed (rejects all) rather than accepting an empty `Bearer ` credential.
+    let token = token.filter(|t| !t.is_empty());
+
     if !auth_enabled {
         tracing::warn!(
             "http bridge: AUTH DISABLED (GAME_SHELL_HTTP_AUTH_ENABLED=0) — \
