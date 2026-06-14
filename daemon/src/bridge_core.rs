@@ -565,13 +565,13 @@ pub async fn get_ui_state() -> UiState {
             // quickshell registers as class "quickshell" in Hyprland.
             c.eq_ignore_ascii_case("quickshell")
         });
-        return UiState {
+        UiState {
             quickshell_focused,
             active_window_class: class,
             active_window_title: title,
             shell_running,
             platform_note: None,
-        };
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
