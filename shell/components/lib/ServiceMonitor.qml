@@ -63,15 +63,15 @@ Item {
     // scroll into view, etc.).
     signal updated
 
+    // Pure status setter — set + signal only. Crucially it does NOT kick off a
+    // fetch: doing so from inside `dataReq.onResponseReceived` would re-enter the
+    // same socket mid-reply and race into a spurious `requestFailed`, latching
+    // the status back to `unreachable`. The recovery-refetch lives only on the
+    // health-event path below (broadcast events carry no data payload).
     function _applyStatus(next) {
         if (next === mon.status)
             return;
-        let wasOk = mon.status === "ok";
         mon.status = next;
-        // Recovered → fetch data right away rather than waiting up to a full
-        // interval for the next tick.
-        if (next === "ok" && !wasOk && mon.dataCommand !== "")
-            dataReq.request(mon.dataCommand);
         mon.updated();
     }
 
@@ -89,8 +89,15 @@ Item {
                 return;
             try {
                 let o = JSON.parse(line.slice(7));
-                if (o.service === mon.healthKey && typeof o.status === "string")
+                if (o.service === mon.healthKey && typeof o.status === "string") {
+                    let wasOk = mon.ok;
                     mon._applyStatus(o.status);
+                    // Recovered via a (payload-less) health event → fetch fresh
+                    // data now rather than waiting for the next poll tick. Safe
+                    // here: not re-entrant with a data reply.
+                    if (o.status === "ok" && !wasOk && mon.dataCommand !== "")
+                        dataReq.request(mon.dataCommand);
+                }
             } catch (e) {
                 // Malformed event — ignore, keep last status.
             }
