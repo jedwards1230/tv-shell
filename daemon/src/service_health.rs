@@ -134,7 +134,11 @@ pub async fn probe_plex() -> ServiceStatus {
         None => ServiceStatus::Disabled,
         Some((base, token)) => {
             let url = format!("{base}/identity");
-            probe_get(&url, &[("X-Plex-Token", &token), ("Accept", "application/json")]).await
+            probe_get(
+                &url,
+                &[("X-Plex-Token", &token), ("Accept", "application/json")],
+            )
+            .await
         }
     }
 }

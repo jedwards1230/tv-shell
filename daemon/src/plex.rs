@@ -67,8 +67,11 @@ pub async fn handle_plex_hubs() -> String {
     // even unauthenticated, so its HTTP status is a clean reachability signal
     // (and still 503s through a proxy when the backend pod is down).
     let identity = format!("{base}/identity");
-    let status =
-        probe_get(&identity, &[("X-Plex-Token", &token), ("Accept", "application/json")]).await;
+    let status = probe_get(
+        &identity,
+        &[("X-Plex-Token", &token), ("Accept", "application/json")],
+    )
+    .await;
     if status != ServiceStatus::Ok {
         return json!({ "status": status.as_str(), "onDeck": [], "recentlyAdded": [] }).to_string();
     }
