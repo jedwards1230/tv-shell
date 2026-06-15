@@ -98,9 +98,9 @@ Item {
                     if (o.status === "ok" && !wasOk && mon.dataCommand !== "")
                         dataReq.request(mon.dataCommand);
                 }
-            } catch (e) {
-                // Malformed event — ignore, keep last status.
-            }
+            } catch (e)
+            // Malformed event — ignore, keep last status.
+            {}
         }
     }
 
