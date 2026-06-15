@@ -39,7 +39,8 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | A8 | App-view substates | apps view, host discovering/offline | "Discovering apps…" / "Offline or no apps found" |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
 | A10 | Controller battery glyph | wireless pad connected reporting charge | 🔋+% beside QuickActions; ⚡ when charging; crimson ≤15%; hidden when only wired pads or none (#100) |
-| A11 | Plex widget — On Deck + Recently Added | below Now Playing when `GAME_SHELL_PLEX_*` env is set and Settings ▸ Widgets ▸ Plex is on | two poster rows (`PlexWidget`); On Deck cards show a resume progress bar; collapses to zero height when disabled/empty |
+| A11 | Plex widget — On Deck + Recently Added | below Now Playing when `GAME_SHELL_PLEX_*` env is set and Settings ▸ Widgets ▸ Plex is on | two poster rows (`PlexWidget`); On Deck cards show a resume progress bar; collapses to zero height when disabled (unconfigured) or healthy-but-empty |
+| A11b | Plex widget — server-down notice | as A11 but with the Plex server unreachable (down / 5xx) | `ServiceStatusNotice`: red dot + "Plex unavailable" / "The server isn't responding right now" — the graceful degraded state instead of a silent collapse (service-health bus) |
 
 ## B. Context menus / popovers
 | # | View | How to reach |
