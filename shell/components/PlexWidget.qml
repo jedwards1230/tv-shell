@@ -62,6 +62,22 @@ ColumnLayout {
     readonly property var firstRow: _hasOnDeck ? onDeckRow : recentRow
     readonly property var lastRow: _hasRecent ? recentRow : onDeckRow
 
+    // === Home-tile focus contract (mirrors NavigableRow) ===
+    // `canFocus` is the load-bearing distinction the host needs: the widget can
+    // be `visible` yet hold NO focusable row — the degraded "server down" state
+    // shows only the (non-focusable) ServiceStatusNotice. Neighbours/helpers must
+    // treat that as "skip me", or pressing B would strand focus on an invisible
+    // poster row and the stick goes dead.
+    readonly property bool canFocus: visible && (root._hasOnDeck || root._hasRecent)
+    readonly property bool regionFocused: rowFocused
+
+    function focusFirstChild() {
+        if (!root.canFocus)
+            return false;
+        root.firstRow.forceActiveFocus();
+        return true;
+    }
+
     // === Poster geometry (shared by every card so rows align) ===
     readonly property int posterW: Math.round(Theme.cardWidth * 0.62)
     readonly property int posterH: Math.round(posterW * 1.5)
