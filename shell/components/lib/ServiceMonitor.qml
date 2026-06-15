@@ -40,11 +40,6 @@ Item {
     // broadcast-mode data refresh.
     property int dataIntervalMs: 60000
 
-    // Broadcast mode only: skip the data poll while the service is known to be
-    // down, so we don't hammer an unreachable server. No effect in poll mode
-    // (status comes from the poll itself, so it must always run).
-    property bool pollWhenOkOnly: true
-
     // Host gate for the data poll — set false to pause polling (e.g. while the
     // widget is hidden, or the card's host is offline / a stream is live). The
     // broadcast subscription stays connected regardless; only the timer pauses.
@@ -124,8 +119,13 @@ Item {
         onRequestFailed: mon._applyStatus("unreachable")
     }
 
-    // Periodic data refresh / poll. In broadcast mode it only runs while healthy
-    // (pollWhenOkOnly); in poll mode it always runs (that's the status source).
+    // Periodic data refresh / poll. The reply carries `status`, so this poll is
+    // the self-healing floor in BOTH modes: even if a broadcast event is missed
+    // (the daemon emits health on change, so a late subscriber can sit on a
+    // stale/wrong status) the next poll re-fetches and corrects within one
+    // interval. The broadcast subscription is the fast-path on top, not the only
+    // source. Skip only when the service is unconfigured (`disabled`) — there's
+    // nothing to fetch and the poller will broadcast if config ever appears.
     Timer {
         interval: mon.dataIntervalMs
         running: mon.active && mon.dataCommand !== ""
@@ -134,7 +134,7 @@ Item {
         // rather than waiting a full interval.
         triggeredOnStart: true
         onTriggered: {
-            if (mon.healthKey !== "" && mon.pollWhenOkOnly && !mon.ok)
+            if (mon.disabled)
                 return;
             dataReq.request(mon.dataCommand);
         }
