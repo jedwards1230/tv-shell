@@ -79,7 +79,14 @@ FocusScope {
             if (regions[i] && regions[i].regionFocused)
                 return;
         }
-        root._focusFirstVisibleRow();
+        // Defer one tick before re-anchoring: this also fires from
+        // onRunningWindowsChanged, which can land mid-Repeater-rebuild where
+        // appViewRepeater.itemAt() is briefly null/stale. Letting the rebuild
+        // settle first means we re-anchor onto the right region, not a fallback.
+        Qt.callLater(function () {
+            if (root.activeFocus)
+                root._focusFirstVisibleRow();
+        });
     }
 
     // Safety net: a one-shot restart on focus-gain isn't enough — focus can be

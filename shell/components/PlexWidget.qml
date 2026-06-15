@@ -74,8 +74,15 @@ ColumnLayout {
     function focusFirstChild() {
         if (!root.canFocus)
             return false;
-        root.firstRow.forceActiveFocus();
-        return true;
+        // canFocus already implies a visible firstRow (both derive from
+        // _hasOnDeck/_hasRecent), but validate explicitly so a future refactor
+        // can never land focus on an invisible poster row.
+        let row = root.firstRow;
+        if (row && row.visible) {
+            row.forceActiveFocus();
+            return true;
+        }
+        return false;
     }
 
     // === Poster geometry (shared by every card so rows align) ===
