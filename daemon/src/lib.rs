@@ -21,6 +21,10 @@ pub mod notifications;
 // Cross-platform: stateless reqwest + JSON, like `health` (Sunshine).
 pub mod plex;
 pub mod protocol;
+// Generic remote-service health: shared probe + status vocabulary + background
+// poller that broadcasts `health:<json>` events. Cross-platform (reqwest + tokio
+// timer), like `plex`/`health`.
+pub mod service_health;
 pub mod recents;
 pub mod state;
 pub mod system;

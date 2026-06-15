@@ -1,13 +1,20 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 // Home-screen Plex widget (#plex-widget): two controller-navigable poster rows —
 // "On Deck" (continue-watching / up-next) and "Recently Added" — fed by the
 // daemon's `plex-hubs` IPC. The daemon owns the Plex server URL + token (from
 // its env) and bakes ready-to-load tokenized art URLs into the reply, so this
 // widget never sees a credential. It mirrors MediaWidget's role: it sits in the
-// home-screen vertical focus chain via previousRow/nextRow and collapses to zero
-// height when Plex is unconfigured or both hubs are empty.
+// home-screen vertical focus chain via previousRow/nextRow.
+//
+// Health-aware (service-health bus): a `ServiceMonitor` keyed on "plex" tracks
+// reachability from the daemon's health events, so the widget can tell three
+// states apart instead of one: unconfigured ⇒ collapse to zero height; reachable
+// with items ⇒ show the poster rows; reachable-but-empty ⇒ collapse; configured
+// but the server is down (`unreachable`/`error`) ⇒ show a graceful
+// `ServiceStatusNotice` rather than silently vanishing.
 //
 // Focus wiring contract (the host uses these): the two sub-rows are the real
 // focus targets. `firstRow`/`lastRow` resolve to the first/last *visible* row so
@@ -39,17 +46,17 @@ ColumnLayout {
     spacing: Units.spacingMD
 
     // === Data (populated from `plex-hubs`) ===
-    property bool _enabled: false
     property var onDeckItems: []
     property var recentItems: []
 
     readonly property bool _hasOnDeck: onDeckItems.length > 0
     readonly property bool _hasRecent: recentItems.length > 0
 
-    // Collapse entirely when toggled off, disabled, or empty — keeps the home
-    // layout unchanged when there's nothing to show (same contract as a missing
-    // player / target).
-    visible: root.widgetEnabled && root._enabled && (root._hasOnDeck || root._hasRecent)
+    // Show when configured: poster rows while healthy + non-empty, or the
+    // degraded notice while the server is down. Collapse to zero height when the
+    // widget is toggled off, Plex is unconfigured (`disabled`), or it's healthy
+    // but has nothing to show — keeping the home layout unchanged.
+    visible: root.widgetEnabled && (plexMon.degraded || (plexMon.ok && (root._hasOnDeck || root._hasRecent)))
 
     // First/last *visible* sub-row, for the host's neighbour wiring.
     readonly property var firstRow: _hasOnDeck ? onDeckRow : recentRow
@@ -61,34 +68,35 @@ ColumnLayout {
     readonly property int plexRowHeight: posterH + Math.round(Theme.fontSmall * 1.4 + Theme.fontCaption * 1.4 + Units.spacingSM * 2)
 
     function refresh() {
-        hubsClient.request("plex-hubs");
+        plexMon.refresh();
     }
 
-    SocketClient {
-        id: hubsClient
-        onResponseReceived: line => {
-            try {
-                let data = JSON.parse(line);
-                root._enabled = data.enabled === true;
-                root.onDeckItems = data.onDeck || [];
-                root.recentItems = data.recentlyAdded || [];
-            } catch (e) {
-                // Malformed reply — leave the last good data in place.
-                console.log("PlexWidget: bad plex-hubs reply: " + e);
+    // Health + data source. `healthKey: "plex"` adopts the daemon's broadcast
+    // health status; `dataCommand: "plex-hubs"` fetches the hubs (primed on
+    // start, refreshed every 60s while healthy, re-fetched on recovery). Items
+    // are cleared whenever Plex isn't `ok` so a transient outage hides the rows
+    // and surfaces the notice rather than showing stale posters.
+    ServiceMonitor {
+        id: plexMon
+        healthKey: "plex"
+        dataCommand: "plex-hubs"
+        dataIntervalMs: 60000
+        onUpdated: {
+            if (plexMon.ok && plexMon.data) {
+                root.onDeckItems = plexMon.data.onDeck || [];
+                root.recentItems = plexMon.data.recentlyAdded || [];
+            } else {
+                root.onDeckItems = [];
+                root.recentItems = [];
             }
         }
-        // Daemon down / not yet up: keep whatever we have; the timer retries.
-        onRequestFailed: {}
     }
 
-    // Poll on start, then refresh periodically so a newly-added title or an
-    // advanced watch position shows up without a restart.
-    Timer {
-        interval: 60000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: root.refresh()
+    // Graceful "server down" placeholder — visible only for unreachable/error.
+    ServiceStatusNotice {
+        Layout.fillWidth: true
+        serviceName: "Plex"
+        status: plexMon.status
     }
 
     // === On Deck ===

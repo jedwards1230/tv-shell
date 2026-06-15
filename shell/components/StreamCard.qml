@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import "lib"
 
 BaseCard {
     id: root
@@ -40,12 +41,11 @@ BaseCard {
 
     // Resolve the running app name via the daemon's `sunshine-status` IPC command
     // (see docs/IPC_PROTOCOL.md) + the local Moonlight config. The daemon owns the
-    // Sunshine /serverinfo HTTPS fetch and returns {online,paired,currentApp,...},
-    // where currentApp is the busy game id (or "" when idle). Phase 8 (#97) moved
-    // the Unix-socket call onto SocketClient and the game-id -> friendly-name
-    // resolution onto MoonlightConf, preserving the prior contract (idle / a
-    // resolved name / "Unknown App").
-    property bool _checkInFlight: false
+    // Sunshine /serverinfo HTTPS fetch and returns {status,online,paired,currentApp,...},
+    // where currentApp is the busy game id (or "" when idle). The per-card poll
+    // runs through a `ServiceMonitor` (poll mode, on the shared service-health
+    // vocabulary); the game-id -> friendly-name resolution stays in MoonlightConf,
+    // preserving the prior contract (idle / a resolved name / "Unknown App").
     property string _pendingGameId: ""
 
     MoonlightConf {
@@ -58,63 +58,41 @@ BaseCard {
                 root.activeAppName = name !== "" ? name : "Unknown App";
                 root._pendingGameId = "";
             }
-            root._checkInFlight = false;
         }
     }
 
-    SocketClient {
-        id: sessionCheck
-        onResponseReceived: line => {
-            try {
-                let data = JSON.parse(line);
-                let gameId = String(data.currentApp || "");
-                if (gameId === "" || gameId === "0") {
-                    root.hasActiveSession = false;
-                    root.activeAppName = "";
-                    root._checkInFlight = false;
-                    return;
-                }
-                // Busy: resolve the id to a name. Try the cached map first; if it
-                // is empty/unloaded, (re)read the conf and resolve in onLoaded.
-                let name = moonlightConf.nameFor(gameId);
-                if (name !== "" || moonlightConf._loaded) {
-                    root.hasActiveSession = true;
-                    root.activeAppName = name !== "" ? name : "Unknown App";
-                    root._checkInFlight = false;
-                } else {
-                    root._pendingGameId = gameId;
-                    moonlightConf.load();
-                }
-            } catch (e) {
-                // Treat a malformed reply as idle (matches the old fallback).
+    // Sunshine session poll. Poll mode (no healthKey): every 10s while the card
+    // is idle and its host pings, fetch `sunshine-status` and resolve the busy
+    // game id to a friendly name. `active` gates polling exactly as the old
+    // hand-rolled Timer did; anything other than an `ok` reply is treated as
+    // idle (offline / unreachable / malformed), matching the prior fallback.
+    ServiceMonitor {
+        id: sessionMon
+        dataCommand: "sunshine-status " + (root.target.host || "127.0.0.1") + " " + (root.target.sunshinePort || "47990")
+        dataIntervalMs: 10000
+        active: root.shellState === "idle" && root.isOnline
+        onUpdated: {
+            if (!sessionMon.ok || !sessionMon.data) {
                 root.hasActiveSession = false;
                 root.activeAppName = "";
-                root._checkInFlight = false;
-            }
-        }
-        onRequestFailed: {
-            root.hasActiveSession = false;
-            root.activeAppName = "";
-            root._checkInFlight = false;
-        }
-    }
-
-    Timer {
-        interval: 10000
-        running: root.shellState === "idle" && root.isOnline
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            if (root._checkInFlight)
                 return;
-            let host = root.target.host || "127.0.0.1";
-            let port = root.target.sunshinePort || "47990";
-            root._checkInFlight = true;
-            root._pendingGameId = "";
-            // Ask the daemon for the Sunshine session state (one compact JSON
-            // line), then resolve the busy game id to a friendly name from the
-            // local Moonlight.conf via MoonlightConf — exactly as before.
-            sessionCheck.request("sunshine-status " + host + " " + port);
+            }
+            let gameId = String(sessionMon.data.currentApp || "");
+            if (gameId === "" || gameId === "0") {
+                root.hasActiveSession = false;
+                root.activeAppName = "";
+                return;
+            }
+            // Busy: resolve the id to a name. Try the cached map first; if it is
+            // empty/unloaded, (re)read the conf and resolve in onLoaded.
+            let name = moonlightConf.nameFor(gameId);
+            if (name !== "" || moonlightConf._loaded) {
+                root.hasActiveSession = true;
+                root.activeAppName = name !== "" ? name : "Unknown App";
+            } else {
+                root._pendingGameId = gameId;
+                moonlightConf.load();
+            }
         }
     }
 

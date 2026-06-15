@@ -117,6 +117,18 @@ fn main() -> anyhow::Result<()> {
             });
         }
 
+        // Remote-service health poller: probes always-on services (Plex) on a
+        // timer and broadcasts `health:<json>` events on the global bus so the
+        // shell's widgets can render a graceful "server unavailable" state.
+        // Fire-and-forget like the actors above — never panics, emits nothing
+        // for unconfigured services.
+        {
+            let health_events = events_tx.clone();
+            tokio::spawn(async move {
+                game_shell_input::service_health::run(health_events).await;
+            });
+        }
+
         // Initialize the controller DB state once at startup. The IPC server
         // shares it across connections (Arc<RwLock<_>>).
         let db_state: SharedControllerDbState =
