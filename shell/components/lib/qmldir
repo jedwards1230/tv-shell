@@ -10,6 +10,8 @@ LabeledTextInput 1.0 LabeledTextInput.qml
 PreferenceRow 1.0 PreferenceRow.qml
 ReadonlyInfoCard 1.0 ReadonlyInfoCard.qml
 SectionHeader 1.0 SectionHeader.qml
+ServiceMonitor 1.0 ServiceMonitor.qml
+ServiceStatusNotice 1.0 ServiceStatusNotice.qml
 SettingsButtonGroup 1.0 SettingsButtonGroup.qml
 SettingsListRow 1.0 SettingsListRow.qml
 SettingsDropdown 1.0 SettingsDropdown.qml

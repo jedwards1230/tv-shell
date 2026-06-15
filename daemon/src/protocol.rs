@@ -706,6 +706,15 @@ pub enum Event {
     /// not baked into the PNG). The QML `ScreenshotFlash` overlay paints a
     /// brief white vignette. Wire: `screenshot:flash`.
     ScreenshotFlash,
+
+    // --- Remote-service health ---
+    /// A remote service's reachability changed (or its initial state at poll
+    /// startup). Payload is a compact JSON object
+    /// `{"service":<name>,"status":"ok"|"disabled"|"unreachable"|"error"}`,
+    /// built by [`crate::service_health::health_json`]. Emitted by the health
+    /// poller; the QML `ServiceMonitor` filters the `health:` prefix and matches
+    /// on `service`. Wire: `health:<json>`.
+    ServiceHealth(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -756,6 +765,7 @@ impl fmt::Display for Event {
             Event::CecPower(json) => write!(f, "cec:power:{json}"),
             Event::ConfigChanged => f.write_str("config:changed"),
             Event::ScreenshotFlash => f.write_str("screenshot:flash"),
+            Event::ServiceHealth(json) => write!(f, "health:{json}"),
         }
     }
 }

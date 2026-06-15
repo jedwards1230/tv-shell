@@ -47,8 +47,21 @@ impl ServerInfo {
     }
 
     /// Render as the compact-JSON `sunshine-status` reply body.
+    ///
+    /// Carries the shared [`crate::service_health::ServiceStatus`] `status` token
+    /// (mapped from `online`) alongside the legacy `online`/`paired`/`currentApp`
+    /// fields, so the QML `ServiceMonitor` reads the same vocabulary as the Plex
+    /// widget. The Sunshine serverinfo port is unauthenticated, so a failed fetch
+    /// is always treated as `unreachable` rather than `error`.
     pub fn to_json(&self) -> String {
+        use crate::service_health::ServiceStatus;
+        let status = if self.online {
+            ServiceStatus::Ok
+        } else {
+            ServiceStatus::Unreachable
+        };
         json!({
+            "status": status.as_str(),
             "online": self.online,
             "paired": self.paired,
             "currentApp": self.current_app,
@@ -128,15 +141,12 @@ pub async fn sunshine_status(host: &str, port: &str) -> String {
     }
 }
 
-/// Perform the HTTPS GET against `/serverinfo`. Builds a one-shot client that
-/// accepts Sunshine's self-signed cert (rustls). Returns the response body text.
+/// Perform the HTTPS GET against `/serverinfo`. Uses the shared health client
+/// ([`crate::service_health::build_client`]) which accepts Sunshine's self-signed
+/// cert. Returns the response body text.
 async fn fetch_serverinfo(host: &str, port: &str) -> Result<String, reqwest::Error> {
     let url = format!("https://{host}:{port}/serverinfo");
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(5))
-        .connect_timeout(std::time::Duration::from_secs(3))
-        .build()?;
+    let client = crate::service_health::build_client()?;
     let resp = client.get(&url).send().await?.error_for_status()?;
     resp.text().await
 }
@@ -230,10 +240,10 @@ mod tests {
 
     #[test]
     fn json_shape_offline() {
-        // preserve_order: online,paired,currentApp,httpsPort.
+        // preserve_order: status,online,paired,currentApp,httpsPort.
         assert_eq!(
             ServerInfo::offline().to_json(),
-            r#"{"online":false,"paired":false,"currentApp":"","httpsPort":0}"#
+            r#"{"status":"unreachable","online":false,"paired":false,"currentApp":"","httpsPort":0}"#
         );
     }
 
@@ -241,7 +251,7 @@ mod tests {
     fn json_shape_busy() {
         assert_eq!(
             parse_serverinfo(BUSY).to_json(),
-            r#"{"online":true,"paired":true,"currentApp":"881448767","httpsPort":47984}"#
+            r#"{"status":"ok","online":true,"paired":true,"currentApp":"881448767","httpsPort":47984}"#
         );
     }
 }

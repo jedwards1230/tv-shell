@@ -979,11 +979,12 @@ actor round-trip), so it works on every platform, including a non-Linux build.
 **Response:** A compact single-line JSON **object**:
 
 ```json
-{"online":true,"paired":true,"currentApp":"881448767","httpsPort":47990}
+{"status":"ok","online":true,"paired":true,"currentApp":"881448767","httpsPort":47990}
 ```
 
 | Field | Type | Notes |
 |-------|------|-------|
+| `status` | string | Shared service-health vocabulary (see [Service health](#service-health)). `ok` ⇔ `online:true`; `unreachable` otherwise (the serverinfo port is unauthenticated, so failures are never `error`) |
 | `online` | bool | The host responded with a parseable `/serverinfo` document |
 | `paired` | bool | `<PairStatus>1</PairStatus>` — this client is paired with the host |
 | `currentApp` | string | Id of the app currently streaming, or `""` when idle. Busy only when `<state>` ends in `SERVER_BUSY` **and** `<currentgame>` is a non-zero id |
@@ -993,7 +994,7 @@ A host that is unreachable / times out / returns a non-2xx or non-serverinfo
 body degrades to the offline object (the command does not error):
 
 ```json
-{"online":false,"paired":false,"currentApp":"","httpsPort":0}
+{"status":"unreachable","online":false,"paired":false,"currentApp":"","httpsPort":0}
 ```
 
 | Condition | Response |
@@ -1024,19 +1025,16 @@ directly without ever seeing the credential.
 Reply (compact single-line JSON):
 
 ```json
-{"enabled":true,
+{"status":"ok",
  "onDeck":[{"title":"Dexter","subtitle":"S6 · E2 · Once Upon a Time...","kind":"episode","art":"https://…","progress":0.0}],
  "recentlyAdded":[{"title":"Skyfall","subtitle":"2012","kind":"movie","art":"https://…","progress":0.05}]}
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `enabled` | `false` when `GAME_SHELL_PLEX_URL`/`GAME_SHELL_PLEX_TOKEN` are unset — the widget then hides itself |
-| `onDeck` / `recentlyAdded` | up to 16 / 24 items; each `{title,subtitle,kind,art,progress}` |
+| `status` | Shared service-health vocabulary (see [Service health](#service-health)): `disabled` (env unset — widget collapses), `ok`, `unreachable` (server down / 5xx — widget shows a notice), or `error` (auth/4xx). A lightweight `/identity` probe decides reachability **before** the hubs are fetched, so a down server is distinct from an empty library |
+| `onDeck` / `recentlyAdded` | up to 16 / 24 items; each `{title,subtitle,kind,art,progress}`. Empty unless `status` is `ok` |
 | `progress` | 0..1 resume position (On Deck partially-watched items); 0 otherwise |
-
-A disabled or unreachable server degrades to `{"enabled":false,…}` / empty hubs
-rather than erroring.
 
 ### Moonlight local-config "forget" (creds-free unpair)
 
@@ -1799,18 +1797,50 @@ existing `get-config` command (one re-read path, no inline JSON concerns).
 | Event | Trigger | Payload |
 |-------|---------|---------|
 | `config:changed` | `settings.json` was modified by an external writer | _(none)_ |
+| `health:<json>` | A remote service's reachability changed (or its initial state at poll startup) | `{"service":<name>,"status":<status>}` |
 
-Example wire line:
+Example wire lines:
 
 ```
 config:changed
+health:{"service":"plex","status":"unreachable"}
 ```
+
+See [Service health](#service-health) for the `status` vocabulary and the poller
+that emits `health:*`.
 
 > **QML wiring**: `SettingsStore.qml` subscribes to this event via its
 > `configWatch` `SocketClient` (subscribe mode). On receipt it calls
 > `store.load()` (the same `get-config` path used at startup), re-applying all
 > QML-owned keys (`themeMode`, `streamingViewMode`, `controllerDebug`,
 > `rumbleEnabled`, `reduceMotion`, `textScale`) and `keyBindings` live.
+
+## Service health
+
+A shared vocabulary for "is this remote service reachable?", used by both the
+per-request replies (`plex-hubs`, `sunshine-status`) and the `health:<json>`
+broadcast events. It exists so widgets can tell a **down server** apart from
+**no data** — a failed fetch is no longer indistinguishable from an empty result.
+
+| `status` | Meaning | Widget UX |
+|----------|---------|-----------|
+| `disabled` | Not configured (no URL/token) | Collapse silently |
+| `ok` | Reachable and serving | Show data |
+| `unreachable` | Configured but not answering — transport error, timeout, or 5xx (e.g. a reverse proxy's `503 no available server` when the backend is down) | Show a "server unavailable" notice |
+| `error` | Reached but rejected — auth failure / 4xx | Show a "check configuration" notice |
+
+Mapping (daemon `service_health::classify_code`): `2xx`/`3xx` → `ok`; `5xx` →
+`unreachable`; transport failure → `unreachable`; other `4xx` → `error`.
+
+The daemon's **health poller** (`service_health::run`) probes always-on services
+(currently Plex, via a lightweight `GET /identity`) every 60s and broadcasts a
+`health:<json>` event **on change**. Per-instance services (Sunshine, per stream
+card) are polled on demand and carry the same `status` in their reply rather than
+through the poller. On the QML side the `ServiceMonitor` lib component consumes
+either source and exposes `status`/`ok`/`degraded`/`disabled`; `ServiceStatusNotice`
+renders the degraded states. Because the poller emits on change, a late subscriber
+can miss the current state — so `ServiceMonitor` also re-polls the per-request
+command each interval as a self-healing floor, with the broadcast as the fast path.
 
 ## Default Button Mappings
 

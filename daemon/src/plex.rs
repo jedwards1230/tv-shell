@@ -10,11 +10,14 @@
 //! - `GAME_SHELL_PLEX_URL`   — server base, e.g. `https://plex.lilbro.cloud`
 //! - `GAME_SHELL_PLEX_TOKEN` — an `X-Plex-Token`
 //!
-//! When either is unset/empty the command returns `{"enabled":false,…}` so the
-//! widget collapses to nothing (same graceful-disable contract as a missing
-//! `targets.json`). The token lives only in the daemon's environment; QML never
-//! reads it — the daemon bakes ready-to-load tokenized art URLs into the reply,
-//! so the shell just binds them to `Image.source`.
+//! The reply carries a `status` field from the shared [`crate::service_health`]
+//! vocabulary (`disabled`/`ok`/`unreachable`/`error`) so the widget can tell a
+//! down server apart from an empty library — a lightweight `/identity` probe
+//! decides reachability before the hubs are fetched. When unconfigured the
+//! command returns `{"status":"disabled",…}` so the widget collapses to nothing.
+//! The token lives only in the daemon's environment; QML never reads it — the
+//! daemon bakes ready-to-load tokenized art URLs into the reply, so the shell
+//! just binds them to `Image.source`.
 //!
 //! The response *parser* ([`parse_items`]) is a pure function, unit-tested on
 //! every platform; only the live fetch needs a reachable server.
@@ -29,7 +32,10 @@ const RECENT_LIMIT: usize = 24;
 
 /// Resolve `(base_url, token)` from the environment, or `None` when the widget
 /// is unconfigured. Trailing slash on the base is trimmed so URL joins are clean.
-fn config() -> Option<(String, String)> {
+///
+/// `pub(crate)` so [`crate::service_health`] reuses the exact same resolution
+/// for its reachability probe — one source of truth for "is Plex configured?".
+pub(crate) fn config() -> Option<(String, String)> {
     let base = std::env::var("GAME_SHELL_PLEX_URL").ok()?;
     let token = std::env::var("GAME_SHELL_PLEX_TOKEN").ok()?;
     let base = base.trim().trim_end_matches('/').to_string();
@@ -40,14 +46,35 @@ fn config() -> Option<(String, String)> {
     Some((base, token))
 }
 
-/// IPC entry point for `plex-hubs`. Fetches both hubs concurrently and returns
-/// `{"enabled":bool,"onDeck":[…],"recentlyAdded":[…]}`. A disabled or
-/// unreachable server degrades to empty arrays rather than erroring — the widget
-/// just hides itself.
+/// IPC entry point for `plex-hubs`. Returns
+/// `{"status":<status>,"onDeck":[…],"recentlyAdded":[…]}` where `status` is the
+/// shared [`ServiceStatus`] vocabulary.
+///
+/// A lightweight `/identity` reachability probe runs first: only on `Ok` are the
+/// two hubs fetched, so a down server (`unreachable`/`error`) yields empty hubs
+/// *with a status the widget can render*, rather than empty arrays that look
+/// identical to a genuinely-empty-but-healthy library. Unconfigured ⇒
+/// `disabled` (widget collapses).
 pub async fn handle_plex_hubs() -> String {
+    use crate::service_health::{probe_get, ServiceStatus};
+
     let Some((base, token)) = config() else {
-        return json!({ "enabled": false, "onDeck": [], "recentlyAdded": [] }).to_string();
+        return json!({ "status": ServiceStatus::Disabled.as_str(), "onDeck": [], "recentlyAdded": [] })
+            .to_string();
     };
+
+    // Reachability gate — see the doc comment. `/identity` is small and serves
+    // even unauthenticated, so its HTTP status is a clean reachability signal
+    // (and still 503s through a proxy when the backend pod is down).
+    let identity = format!("{base}/identity");
+    let status = probe_get(
+        &identity,
+        &[("X-Plex-Token", &token), ("Accept", "application/json")],
+    )
+    .await;
+    if status != ServiceStatus::Ok {
+        return json!({ "status": status.as_str(), "onDeck": [], "recentlyAdded": [] }).to_string();
+    }
 
     let (on_deck, recent) = tokio::join!(
         fetch_hub(&base, &token, "/library/onDeck", ON_DECK_LIMIT),
@@ -55,7 +82,7 @@ pub async fn handle_plex_hubs() -> String {
     );
 
     json!({
-        "enabled": true,
+        "status": ServiceStatus::Ok.as_str(),
         "onDeck": on_deck,
         "recentlyAdded": recent,
     })
