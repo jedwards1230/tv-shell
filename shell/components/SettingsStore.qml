@@ -48,6 +48,8 @@ Item {
     property string widgetPlexSize: "medium"      // "small" (compact posters) | "medium"
     property bool widgetRecentEnabled: true       // Recent (running + recents app cards) widget
     property string widgetRecentSize: "medium"    // "small" (compact) | "medium" (full app cards)
+    property bool widgetMoonlightEnabled: true    // Moonlight (servers rail → quick stream) widget
+    property string widgetMoonlightSize: "medium" // "small" (icon-only rail) | "medium" (named cards)
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
     property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
     property bool nightLightEnabled: false       // drives hyprsunset
@@ -115,6 +117,10 @@ Item {
                     store.widgetRecentEnabled = obj.widgetRecentEnabled;
                 if (typeof obj.widgetRecentSize === "string")
                     store.widgetRecentSize = obj.widgetRecentSize;
+                if (typeof obj.widgetMoonlightEnabled === "boolean")
+                    store.widgetMoonlightEnabled = obj.widgetMoonlightEnabled;
+                if (typeof obj.widgetMoonlightSize === "string")
+                    store.widgetMoonlightSize = obj.widgetMoonlightSize;
                 if (typeof obj.textScale === "number")
                     store.textScale = obj.textScale;
                 if (typeof obj.hdrEnabled === "boolean")
@@ -184,6 +190,8 @@ Item {
             "widgetPlexSize": store.widgetPlexSize,
             "widgetRecentEnabled": store.widgetRecentEnabled,
             "widgetRecentSize": store.widgetRecentSize,
+            "widgetMoonlightEnabled": store.widgetMoonlightEnabled,
+            "widgetMoonlightSize": store.widgetMoonlightSize,
             "textScale": store.textScale,
             "hdrEnabled": store.hdrEnabled,
             "nightLightEnabled": store.nightLightEnabled,
@@ -275,6 +283,16 @@ Item {
 
     function setWidgetRecentSize(size) {
         widgetRecentSize = size;
+        save();
+    }
+
+    function setWidgetMoonlightEnabled(enabled) {
+        widgetMoonlightEnabled = enabled;
+        save();
+    }
+
+    function setWidgetMoonlightSize(size) {
+        widgetMoonlightSize = size;
         save();
     }
 

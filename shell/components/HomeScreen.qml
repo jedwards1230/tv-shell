@@ -43,6 +43,8 @@ FocusScope {
         return best;
     }
 
+    signal streamRequested(var target)
+    signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
     signal appFocusRequested(string address)
     signal appCloseRequested(string address)
@@ -57,7 +59,7 @@ FocusScope {
     // Ordered focusable regions, top→bottom. Both Now-Playing renderers are
     // listed; the hidden one reports focusFirstChild()===false and is skipped.
     function _contentRegions() {
-        return [nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry];
+        return [moonlightWidget, nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry];
     }
 
     function _reanchorFocusIfNeeded() {
@@ -412,12 +414,32 @@ FocusScope {
                 }
             }
 
+            // === Moonlight widget (servers rail → quick stream) ===
+            MoonlightWidget {
+                id: moonlightWidget
+                Layout.fillWidth: true
+                widgetEnabled: Theme.widgetMoonlightEnabled
+                size: Theme.widgetMoonlightSize
+                targets: root.targets
+                shellState: root.shellState
+                previousRow: statusIcons
+                nextRow: root._npActive
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
+                onStreamRequested: target => root.streamRequested(target)
+                onStreamQuitRequested: target => root.streamQuitRequested(target)
+                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
+                onContextRequested: root._moonlightContext()
+            }
+
             // === Now Playing — small (strip) renderer ===
             NowPlayingStrip {
                 id: nowPlayingStrip
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "small"
-                previousRow: statusIcons
+                previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
                 nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
                 onEscaped: {
                     root.userActivity();
@@ -432,7 +454,7 @@ FocusScope {
                 id: nowPlayingCard
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "medium"
-                previousRow: statusIcons
+                previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
                 nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
                 onEscaped: {
                     root.userActivity();
@@ -629,6 +651,34 @@ FocusScope {
                 Layout.bottomMargin: 16
             }
         }
+    }
+
+    // Moonlight server context menu (Resume / Quit a live session). Mirrors the
+    // Library's stream-card context behavior, positioned over the focused card.
+    function _moonlightContext() {
+        if (!moonlightWidget.currentHasSession || !moonlightWidget.currentCard || !moonlightWidget.currentTarget)
+            return;
+        let target = moonlightWidget.currentTarget;
+        let card = moonlightWidget.currentCard;
+        let pos = card.mapToItem(root, card.width / 2, 0);
+        popoverMenu.targetX = pos.x;
+        popoverMenu.targetY = pos.y;
+        popoverMenu.actions = [
+            {
+                label: "Resume",
+                action: function () {
+                    root.streamRequested(target);
+                }
+            },
+            {
+                label: "Quit Stream",
+                action: function () {
+                    root.streamQuitRequested(target);
+                }
+            }
+        ];
+        popoverMenu.opened = true;
+        popoverMenu.forceActiveFocus();
     }
 
     // Shared Now-Playing context-menu opener (quit the player).

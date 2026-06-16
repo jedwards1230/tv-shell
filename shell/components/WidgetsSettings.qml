@@ -13,7 +13,7 @@ FocusScope {
     implicitHeight: mainCol.implicitHeight + 2 * Theme.padding
 
     function focusFirst() {
-        nowPlayingToggle.forceActiveFocus();
+        moonlightToggle.forceActiveFocus();
     }
 
     readonly property var _sizeOptions: [
@@ -34,6 +34,86 @@ FocusScope {
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: Units.spacingLG
+
+        // ===== Moonlight =====
+        Rectangle {
+            Layout.fillWidth: true
+            radius: 16
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.surfaceBorder
+            implicitHeight: moonlightCol.implicitHeight + root._cardPad * 2
+
+            ColumnLayout {
+                id: moonlightCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: root._cardPad
+                spacing: Units.spacingMD
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Units.spacingMD
+
+                    Text {
+                        text: "Moonlight"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FocusButton {
+                        id: moonlightToggle
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Theme.widgetMoonlightEnabled ? "Enabled" : "Disabled"
+                        fillActive: Theme.widgetMoonlightEnabled
+                        fillColor: Theme.sidebarActive
+                        onActivated: SettingsStore.setWidgetMoonlightEnabled(!Theme.widgetMoonlightEnabled)
+                        KeyNavigation.down: Theme.widgetMoonlightEnabled ? moonlightSize : nowPlayingToggle
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Your Moonlight game-streaming servers — pick one to start streaming. Small = an icon-only online rail; Medium = cards with the server name. The full per-host app list still lives in All Apps."
+                    font.pixelSize: Theme.fontCaption
+                    color: Theme.textMuted
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Theme.widgetMoonlightEnabled
+                    spacing: Units.spacingLG
+
+                    Text {
+                        text: "Size"
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    SettingsButtonGroup {
+                        id: moonlightSize
+                        Layout.fillWidth: false
+                        Layout.alignment: Qt.AlignVCenter
+                        options: root._sizeOptions
+                        isCurrentOption: function (opt) {
+                            return opt.value === Theme.widgetMoonlightSize;
+                        }
+                        onValueSelected: opt => SettingsStore.setWidgetMoonlightSize(opt.value)
+                        KeyNavigation.up: moonlightToggle
+                        KeyNavigation.down: nowPlayingToggle
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+        }
 
         // ===== Now Playing =====
         Rectangle {
@@ -73,6 +153,7 @@ FocusScope {
                         fillActive: Theme.widgetSpotifyEnabled
                         fillColor: Theme.sidebarActive
                         onActivated: SettingsStore.setWidgetSpotifyEnabled(!Theme.widgetSpotifyEnabled)
+                        KeyNavigation.up: Theme.widgetMoonlightEnabled ? moonlightSize : moonlightToggle
                         KeyNavigation.down: Theme.widgetSpotifyEnabled ? nowPlayingSize : plexToggle
                     }
                 }

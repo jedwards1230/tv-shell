@@ -190,6 +190,8 @@ FocusScope {
         runningWindows: root.runningWindows
         pads: root.pads
 
+        onStreamRequested: target => root.streamRequested(target)
+        onStreamQuitRequested: target => root.streamQuitRequested(target)
         onAppLaunchRequested: app => root.appLaunchRequested(app)
         onAppFocusRequested: address => root.appFocusRequested(address)
         onAppCloseRequested: address => root.appCloseRequested(address)

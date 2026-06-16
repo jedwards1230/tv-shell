@@ -70,6 +70,8 @@ Item {
     readonly property string widgetPlexSize: SettingsStore.widgetPlexSize
     readonly property bool widgetRecentEnabled: SettingsStore.widgetRecentEnabled
     readonly property string widgetRecentSize: SettingsStore.widgetRecentSize
+    readonly property bool widgetMoonlightEnabled: SettingsStore.widgetMoonlightEnabled
+    readonly property string widgetMoonlightSize: SettingsStore.widgetMoonlightSize
     property int _currentHour: new Date().getHours()
 
     // === Auto theme schedule (#231, persisted via SettingsStore) ===
