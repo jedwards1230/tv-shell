@@ -2,30 +2,32 @@ import QtQuick
 import QtQuick.Layouts
 import "lib"
 
-// Home-screen Plex widget: two controller-navigable poster rows — "On Deck"
-// (continue-watching) and "Recently Added" — fed by the daemon's `plex-hubs`
-// IPC. A standardized home widget (#249): honors a `size` (small | medium) that
-// scales the poster footprint, and its Recently Added row carries **dynamic
-// filter chips** (All / Movies / TV / Music) that only appear for categories
-// actually present — a library with no music never shows a Music pill.
+// Home-screen Plex widget (#249) — ONE poster row with a segmented header that
+// flips between "Up Next" (continue-watching / On Deck) and "Recently Added"
+// (new arrivals), fed by the daemon's `plex-hubs` IPC. Apple-TV-style: a single
+// prominent row, not two stacked rows. The segment control appears only when
+// BOTH segments have content (otherwise the lone segment's name is just a
+// header). `size` reformats the row (not a scale):
+//   small  = poster-only rail (caption band removed) — glanceable
+//   medium = posters + title/subtitle captions + resume bars (default)
+// (A "large" featured-backdrop hero is a planned follow-up — it needs 16:9
+// backdrop art the daemon doesn't return yet.)
 //
-// Health-aware (service-health bus): a `ServiceMonitor` keyed on "plex" tells
-// three states apart — unconfigured/empty ⇒ collapse; reachable with items ⇒
-// poster rows; configured but down ⇒ a graceful `ServiceStatusNotice`.
+// Health-aware: a `ServiceMonitor` keyed on "plex" collapses the widget when
+// unconfigured/empty and shows a graceful `ServiceStatusNotice` when the server
+// is down.
 //
 // Focus contract (host uses these): `firstRow`/`lastRow` resolve to the first/
-// last *visible* internal region (On Deck row, chips, Recently Added row); the
-// internal chain lets NavigableRow/FilterChips skip a hidden region.
+// last *visible* internal region (segment chips, poster row); the internal chain
+// lets NavigableRow/FilterChips skip a hidden region.
 ColumnLayout {
     id: root
 
     property Item previousRow: null
     property Item nextRow: null
     property bool widgetEnabled: true
-    // Standardized widget size: "small" (compact posters) | "medium".
+    // "small" | "medium" (large = future hero).
     property string size: "medium"
-
-    readonly property bool rowFocused: onDeckRow.activeFocus || recentRow.activeFocus || chips.activeFocus
 
     signal escaped
     signal openPlexRequested
@@ -40,98 +42,34 @@ ColumnLayout {
     readonly property bool _hasOnDeck: onDeckItems.length > 0
     readonly property bool _hasRecent: recentItems.length > 0
 
-    // === Recently Added category filter (dynamic chips) ===
-    property string _recentFilter: "all"
-
-    readonly property var _categories: {
-        let cats = {
-            "movie": false,
-            "tv": false,
-            "music": false
-        };
-        for (let i = 0; i < recentItems.length; i++) {
-            let k = (recentItems[i].kind || "").toLowerCase();
-            if (k === "movie")
-                cats.movie = true;
-            else if (k === "episode" || k === "season" || k === "show")
-                cats.tv = true;
-            else if (k === "album" || k === "track")
-                cats.music = true;
-        }
-        return cats;
-    }
-    readonly property var _chipOptions: {
-        let o = [
-            {
-                "label": "All",
-                "value": "all"
-            }
-        ];
-        if (_categories.movie)
+    // === Segment (Up Next vs Recently Added) ===
+    property string _segment: "ondeck"
+    readonly property var _segmentOptions: {
+        let o = [];
+        if (_hasOnDeck)
             o.push({
-                "label": "Movies",
-                "value": "movie"
+                "label": "Up Next",
+                "value": "ondeck"
             });
-        if (_categories.tv)
+        if (_hasRecent)
             o.push({
-                "label": "TV",
-                "value": "tv"
-            });
-        if (_categories.music)
-            o.push({
-                "label": "Music",
-                "value": "music"
+                "label": "Recently Added",
+                "value": "recent"
             });
         return o;
     }
-    // Chips only earn their place when there's more than one category to pick
-    // between (All + ≥2 real categories) — otherwise filtering is a no-op.
-    readonly property bool _chipsVisible: _hasRecent && _chipOptions.length > 2
+    // Show the toggle only when there's a genuine choice (both segments present).
+    readonly property bool _showSegmentControl: _segmentOptions.length > 1
+    readonly property string _segmentName: _segment === "ondeck" ? "Up Next" : "Recently Added"
+    readonly property var _activeItems: _segment === "ondeck" ? onDeckItems : recentItems
 
-    readonly property var _filteredRecent: {
-        if (_recentFilter === "all")
-            return recentItems;
-        return recentItems.filter(function (it) {
-            let k = (it.kind || "").toLowerCase();
-            if (_recentFilter === "movie")
-                return k === "movie";
-            if (_recentFilter === "tv")
-                return k === "episode" || k === "season" || k === "show";
-            if (_recentFilter === "music")
-                return k === "album" || k === "track";
-            return true;
-        });
-    }
-
-    // Drop a stale filter when its category disappears on a data refresh (so the
-    // chip highlight and the rendered list never disagree).
-    onRecentItemsChanged: {
-        var cats = {
-            "all": true,
-            "movie": false,
-            "tv": false,
-            "music": false
-        };
-        for (var i = 0; i < root.recentItems.length; i++) {
-            var k = (root.recentItems[i].kind || "").toLowerCase();
-            if (k === "movie")
-                cats.movie = true;
-            else if (k === "episode" || k === "season" || k === "show")
-                cats.tv = true;
-            else if (k === "album" || k === "track")
-                cats.music = true;
-        }
-        if (!cats[root._recentFilter])
-            root._recentFilter = "all";
-    }
+    readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
     visible: root.widgetEnabled && (plexMon.degraded || (plexMon.ok && (root._hasOnDeck || root._hasRecent)))
 
-    // First/last *visible* internal region, for the host's neighbour wiring.
-    readonly property var firstRow: _hasOnDeck ? onDeckRow : (_chipsVisible ? chips : recentRow)
-    readonly property var lastRow: (_filteredRecent.length > 0) ? recentRow : (_chipsVisible ? chips : onDeckRow)
-
     // === Home-tile focus contract ===
+    readonly property var firstRow: _showSegmentControl ? segmentChips : posterRow
+    readonly property var lastRow: posterRow
     readonly property bool canFocus: visible && (root._hasOnDeck || root._hasRecent)
     readonly property bool regionFocused: rowFocused
 
@@ -149,11 +87,13 @@ ColumnLayout {
         return false;
     }
 
-    // === Poster geometry (scaled by size; shared by every card so rows align) ===
-    readonly property real _posterScale: root.size === "small" ? 0.46 : 0.62
+    // === Poster geometry (reflow by size) ===
+    readonly property real _posterScale: root.size === "small" ? 0.50 : 0.62
+    readonly property bool _showCaption: root.size !== "small"
     readonly property int posterW: Math.round(Theme.cardWidth * _posterScale)
     readonly property int posterH: Math.round(posterW * 1.5)
-    readonly property int plexRowHeight: posterH + Math.round(Theme.fontSmall * 1.4 + Theme.fontCaption * 1.4 + Units.spacingSM * 2)
+    readonly property int _captionBand: Math.round(Theme.fontSmall * 1.4 + Theme.fontCaption * 1.4 + Units.spacingSM * 2)
+    readonly property int plexRowHeight: posterH + (_showCaption ? _captionBand : 0)
 
     function refresh() {
         plexMon.refresh();
@@ -172,6 +112,11 @@ ColumnLayout {
                 root.onDeckItems = [];
                 root.recentItems = [];
             }
+            // Keep the active segment on something that has content.
+            if (root._segment === "ondeck" && !root._hasOnDeck && root._hasRecent)
+                root._segment = "recent";
+            else if (root._segment === "recent" && !root._hasRecent && root._hasOnDeck)
+                root._segment = "ondeck";
         }
     }
 
@@ -181,72 +126,38 @@ ColumnLayout {
         status: plexMon.status
     }
 
-    // === On Deck ===
-    Text {
-        visible: root._hasOnDeck
-        text: "On Deck"
-        font.pixelSize: Theme.fontTitle
-        font.bold: true
-        color: Theme.textPrimary
-    }
-
-    NavigableRow {
-        id: onDeckRow
-        visible: root._hasOnDeck
-        Layout.fillWidth: true
-        Layout.preferredHeight: root.plexRowHeight
-        keyNavigationWraps: true
-        previousRow: root.previousRow
-        nextRow: root._chipsVisible ? chips : recentRow
-        model: root.onDeckItems
-        onActiveFocusChanged: if (activeFocus)
-            root.ensureVisibleRequested(this)
-        onActivated: root.openPlexRequested()
-        onEscaped: root.escaped()
-
-        delegate: PlexCard {
-            required property int index
-            required property var modelData
-            posterWidth: root.posterW
-            posterHeight: root.posterH
-            title: modelData.title || ""
-            subtitle: modelData.subtitle || ""
-            art: modelData.art || ""
-            progress: modelData.progress || 0
-            focus: index === onDeckRow.currentIndex
-            onActivated: root.openPlexRequested()
-        }
-    }
-
-    // === Recently Added (header + dynamic filter chips) ===
+    // === Header: segment control (or single-segment label) ===
     RowLayout {
-        visible: root._hasRecent
         Layout.fillWidth: true
+        visible: root._hasOnDeck || root._hasRecent
         spacing: Units.spacingXL
 
+        // Single-segment header label (when only one segment has content).
         Text {
-            text: "Recently Added"
+            visible: !root._showSegmentControl
+            text: root._segmentName
             font.pixelSize: Theme.fontTitle
             font.bold: true
             color: Theme.textPrimary
             Layout.alignment: Qt.AlignVCenter
         }
 
+        // Segment toggle (Up Next | Recently Added) when both have content.
         FilterChips {
-            id: chips
-            visible: root._chipsVisible
+            id: segmentChips
+            visible: root._showSegmentControl
             Layout.alignment: Qt.AlignVCenter
-            options: root._chipOptions
+            options: root._segmentOptions
             currentIndex: {
-                for (var i = 0; i < root._chipOptions.length; i++) {
-                    if (root._chipOptions[i].value === root._recentFilter)
+                for (var i = 0; i < root._segmentOptions.length; i++) {
+                    if (root._segmentOptions[i].value === root._segment)
                         return i;
                 }
                 return 0;
             }
-            previousRow: root._hasOnDeck ? onDeckRow : root.previousRow
-            nextRow: recentRow
-            onFilterChanged: value => root._recentFilter = value
+            previousRow: root.previousRow
+            nextRow: posterRow
+            onFilterChanged: value => root._segment = value
             onEscaped: root.escaped()
         }
 
@@ -255,15 +166,16 @@ ColumnLayout {
         }
     }
 
+    // === The one poster row (shows the active segment) ===
     NavigableRow {
-        id: recentRow
-        visible: root._filteredRecent.length > 0
+        id: posterRow
+        visible: root._activeItems.length > 0
         Layout.fillWidth: true
         Layout.preferredHeight: root.plexRowHeight
         keyNavigationWraps: true
-        previousRow: root._chipsVisible ? chips : (root._hasOnDeck ? onDeckRow : root.previousRow)
+        previousRow: root._showSegmentControl ? segmentChips : root.previousRow
         nextRow: root.nextRow
-        model: root._filteredRecent
+        model: root._activeItems
         onActiveFocusChanged: if (activeFocus)
             root.ensureVisibleRequested(this)
         onActivated: root.openPlexRequested()
@@ -274,11 +186,12 @@ ColumnLayout {
             required property var modelData
             posterWidth: root.posterW
             posterHeight: root.posterH
+            showCaption: root._showCaption
             title: modelData.title || ""
             subtitle: modelData.subtitle || ""
             art: modelData.art || ""
             progress: modelData.progress || 0
-            focus: index === recentRow.currentIndex
+            focus: index === posterRow.currentIndex
             onActivated: root.openPlexRequested()
         }
     }

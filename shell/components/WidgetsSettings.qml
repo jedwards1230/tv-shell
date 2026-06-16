@@ -161,7 +161,7 @@ FocusScope {
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: "On Deck (continue watching) and Recently Added poster rows. Recently Added shows category filter chips when more than one media type is present. Size scales the posters."
+                    text: "Up Next (continue watching) and Recently Added in one row — flip between them on the row itself. Small = a poster-only rail; Medium = posters with titles and resume bars."
                     font.pixelSize: Theme.fontCaption
                     color: Theme.textMuted
                 }
@@ -242,7 +242,7 @@ FocusScope {
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: "Running and recently-launched apps as a row of cards. Size scales the cards."
+                    text: "Running and recently-launched apps. Small = icon-only tiles; Medium = icon + name cards."
                     font.pixelSize: Theme.fontCaption
                     color: Theme.textMuted
                 }

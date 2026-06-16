@@ -7,6 +7,9 @@ Item {
     height: Theme.cardHeight
 
     property string label: ""
+    // Icon-only mode (small size): hide the name/label row so the card collapses
+    // to a centered icon tile. The label still feeds Accessible.name.
+    property bool iconOnly: false
     // True when this card represents a currently-running window — renders an
     // ember status dot beside the name.
     property bool running: false
@@ -83,8 +86,9 @@ Item {
             }
 
             RowLayout {
+                visible: !root.iconOnly
                 Layout.fillWidth: true
-                Layout.preferredHeight: Theme.fontSmall * 1.3
+                Layout.preferredHeight: root.iconOnly ? 0 : Theme.fontSmall * 1.3
                 spacing: 6
 
                 // Running indicator — ember dot beside the name. Ember

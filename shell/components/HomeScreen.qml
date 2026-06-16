@@ -27,8 +27,9 @@ FocusScope {
     // recents dedup + focus wiring). Both instances exist; one is visible.
     readonly property var _npActive: Theme.widgetSpotifySize === "small" ? nowPlayingStrip : nowPlayingCard
 
-    // Recent (apps) card scale by size.
-    readonly property real _recentScale: Theme.widgetRecentSize === "small" ? 0.78 : 1.0
+    // Recent (apps) size: small = icon-only square tiles (label dropped),
+    // medium = full icon + label cards. A reformat, not a scale.
+    readonly property bool _recentSmall: Theme.widgetRecentSize === "small"
 
     readonly property var _batteryPad: {
         var best = null;
@@ -470,7 +471,7 @@ FocusScope {
                 id: recentRow
                 visible: Theme.widgetRecentEnabled && root._recentModel.length > 0
                 Layout.fillWidth: true
-                Layout.preferredHeight: visible ? Math.round(Theme.rowHeight * root._recentScale) : 0
+                Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
                 previousRow: plexWidget.canFocus ? plexWidget.lastRow : root._npActive
                 nextRow: allAppsEntry
@@ -481,8 +482,9 @@ FocusScope {
                 delegate: AppCard {
                     required property int index
                     required property var modelData
-                    height: Math.round(Theme.cardHeight * root._recentScale)
-                    width: Math.round(Theme.cardWidth * root._recentScale)
+                    iconOnly: root._recentSmall
+                    width: root._recentSmall ? Theme.cardHeight : Theme.cardWidth
+                    height: Theme.cardHeight
                     app: modelData
                     running: modelData.running === true
                     focus: index === recentRow.currentIndex
