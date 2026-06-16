@@ -154,8 +154,8 @@ focused at all, so its `Keys` handlers can't fire over a running app — only th
 PanelWindow (Exclusive keyboard focus)
 └── ShellLayout  (FocusScope, id: layout — root._layout)
     ├── HomeScreen        (visible & focus only in idle, no overlay/Library open)
-    │   └── focusable regions  (NowPlayingStrip, Continue rail, New-on-Plex
-    │       chips + rail, All Apps entry — one ordered focus list)
+    │   └── home widgets  (Now-Playing [strip|card], Plex [On Deck + Recently
+    │       Added + chips], Recent apps, All Apps entry — one ordered focus list)
     ├── LibraryScreen     (secondary browse surface, z:30 — Moonlight rows +
     │                      Applications; opened from the home "All Apps" entry)
     ├── SettingsPanel     (Rectangle — NOT a FocusScope; sidebar + Loader page)
@@ -204,8 +204,8 @@ synchronous `forceActiveFocus()` can be immediately stolen back by a sibling's
   Used after a drawer/overlay/panel closes.
 - **`Qt.callLater`** — `HomeScreen.focusDefaultPosition()` and
   `ShellLayout.focusDefaultPosition()` defer one event-loop tick so layout +
-  declarative focus bindings settle first; otherwise `continueRow`'s `focus:`
-  binding can steal focus after a row's `forceActiveFocus()`. This is the
+  declarative focus bindings settle first; otherwise a row's `focus:` binding
+  can steal focus after another row's `forceActiveFocus()`. This is the
   **"defer focus to after the FocusScope is realized"** rule.
 
 `SettingsPanel` is a plain `Rectangle`, not a `FocusScope` — so its helpers call
@@ -216,28 +216,29 @@ When a QAM popover (Volume/Network) closes, `_returnFocusAfterOverlay()` routes
 focus back to the nav drawer's quick-actions row if the drawer is still open
 underneath, else falls back to `homeFocusTimer`.
 
-### Home-tile focus contract (widgets + rows are one list)
+### Home-widget focus contract (one ordered list)
 
-The home screen's content is a vertical chain of **focusable regions** — the
-slim now-playing strip, the Continue rail, the New-on-Plex filter chips + rail,
-and the All Apps entry. Every region implements a small duck-typed contract so
-`HomeScreen` can drive focus from a single ordered list rather than hardcoding
-each region by name:
+The home screen is a stack of **standardized widgets** (#249), each reading its
+own `enabled` + `size` from `SettingsStore` (via `Theme`) and implementing one
+duck-typed contract so `HomeScreen` drives focus from a single ordered list
+rather than hardcoding each widget by name:
 
 | Member | Meaning |
 |--------|---------|
-| `visible` | region occupies layout space |
-| `regionFocused` | this region currently holds focus (`activeFocus`) |
-| `focusFirstChild()` | focus this region's first *selectable* child; returns `false` when it has none (hidden, empty, or a filtered-empty rail) |
+| `visible` | widget occupies layout space (off when disabled or empty) |
+| `regionFocused` | this widget currently holds focus (`activeFocus`) |
+| `focusFirstChild()` | focus its first *selectable* child; returns `false` when it has none (disabled, hidden, empty, or a filtered-empty row) |
 
 `HomeScreen._contentRegions()` returns these in top→bottom order —
-`[nowPlaying, continueRow, newChips, newRow, allAppsEntry]` — and the three
-focus helpers iterate it. The always-present **All Apps entry** is the
-guaranteed non-stranding B-landing fallback when every rail above it is empty.
-The full browse catalog (Moonlight servers / per-host app-view / the complete
-Applications list) lives in `LibraryScreen`, which keeps its own identical
-region chain and `focusDefaultPosition()`, reached via the All Apps entry and
-dismissed with B. The three home focus helpers:
+`[nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry]` — and
+the three focus helpers iterate it. Now-Playing has two size renderers
+(`small` = `NowPlayingStrip`, `medium` = `MediaWidget`); only the size-matching
+one is visible, the other reports `focusFirstChild()===false`. The always-present
+**All Apps entry** is the guaranteed non-stranding B-landing fallback when every
+widget above it is empty. The full browse catalog (Moonlight servers / per-host
+app-view / the complete Applications list) lives in `LibraryScreen`, which keeps
+its own identical region chain and `focusDefaultPosition()`, reached via the All
+Apps entry and dismissed with B. The three home focus helpers:
 
 - **`focusDefaultPosition()`** (the B / "back to home" handler) — snap
   `scrollView.contentY = 0`, then focus the first region whose
@@ -248,15 +249,16 @@ dismissed with B. The three home focus helpers:
 - **`_reanchorFocusIfNeeded()`** (150 ms safety-net timer) — if HomeScreen holds
   focus but no region reports `regionFocused`, re-anchor via the same list.
 
-Adding a new home widget/tile is therefore "insert it into `_contentRegions()`
-and wire its `previousRow`/`nextRow`" — no edits to the focus helpers. Each
-region's `previousRow`/`nextRow` points at its immediate neighbour; the
-`NavigableRow`/`FilterChips` up/down walkers follow that chain and skip any
-neighbour whose `visible` is false, so an empty Continue rail or a
-filtered-empty New rail is transparently stepped over. Plex data + health is
-owned by the non-visual `PlexHubsProvider` (On Deck → Continue, Recently Added →
-New rail); when the server is unreachable both rails collapse and an inline
-`ServiceStatusNotice` renders in their place.
+Adding a new home widget is therefore "implement the contract + `enabled`/`size`,
+insert it into `_contentRegions()`, wire its `previousRow`/`nextRow`, and add a
+block to the Widgets settings page" — no edits to the focus helpers. Each region's
+`previousRow`/`nextRow` points at its immediate neighbour; the `NavigableRow`/
+`FilterChips` up/down walkers follow that chain and skip any neighbour whose
+`visible` is false, so a disabled widget or a filtered-empty row is transparently
+stepped over. The **Plex** widget owns its own `plex-hubs` `ServiceMonitor` (On
+Deck + Recently Added rows, the latter with dynamic category chips); when the
+server is unreachable the rows collapse and an inline `ServiceStatusNotice`
+renders in their place.
 
 ---
 

@@ -30,15 +30,16 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 ## A. Home screen — states & rows
 | # | View | How to reach | Notes |
 |---|------|--------------|-------|
-| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions, slim Now-Playing strip, Continue rail, New-on-Plex rail + chips, All Apps entry |
-| A2 | Continue rail | apps running / recents present | merged running (ember dot) + recents + Plex On Deck in one poster rail (`ContinueCard`); art → centered icon → letter fallback |
-| A3 | Now-Playing strip | MPRIS player active | slim transport strip (`NowPlayingStrip`); collapses when nothing plays |
-| A4 | New on Plex + chips | Plex healthy with Recently Added | `[All][Movies][TV][Music]` `FilterChips` over a poster rail; chips re-filter live on item `kind` |
+| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions, then the enabled standardized widgets: Now Playing, Plex (On Deck + Recently Added), Recent apps, All Apps entry |
+| A2 | Now Playing — medium | MPRIS active, size = medium (default) | `MediaWidget` card: cover art + progress bar + transport row |
+| A3 | Now Playing — small | MPRIS active, size = small (Settings ▸ Widgets) | `NowPlayingStrip` slim strip; both sizes collapse when nothing plays |
+| A4 | Plex Recently Added — dynamic chips | Plex healthy, ≥2 media categories present | `FilterChips` show All + only categories present (no Music pill on a music-less library); re-filter live on item `kind` |
+| A4b | Widgets settings — per-widget size | Settings ▸ Widgets | each widget: enable toggle → revealed Small/Medium size selector; size hidden when disabled |
 | A5 | All Apps entry | always present | single tile; A → opens the Library surface (A12) |
 | A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on the All Apps entry (never strands) |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
 | A10 | Controller battery glyph | wireless pad connected reporting charge | 🔋+% beside QuickActions; ⚡ when charging; crimson ≤15%; hidden when only wired pads or none (#100) |
-| A11 | Plex On Deck + Recently Added | `GAME_SHELL_PLEX_*` env set and Settings ▸ Widgets ▸ Plex on | On Deck → Continue rail (resume bar); Recently Added → New rail; data via non-visual `PlexHubsProvider` |
+| A11 | Plex widget — On Deck + Recently Added | `GAME_SHELL_PLEX_*` env set and Settings ▸ Widgets ▸ Plex on | two poster rows (`PlexWidget`), size-scaled (small/medium); On Deck shows a resume bar; Recently Added carries the dynamic chips (A4) |
 | A11b | Plex server-down notice | as A11 but Plex unreachable (down / 5xx) | inline `ServiceStatusNotice`: "Plex unavailable" — both Plex rails collapse, focus chain still walks (service-health bus) |
 
 ## A12. Library — secondary browse surface
