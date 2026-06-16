@@ -1,35 +1,40 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
+// Home screen — the redesigned "glance + jump back in" overview (#249). One job:
+// surface what's happening now and let you resume it. The full browse catalog
+// (every Moonlight target + all local apps) lives in the secondary LibraryScreen,
+// reached via the "All Apps" entry. Vertical layout, top→bottom:
+//   hero → Now-Playing strip → Continue rail → New-on-Plex rail (+ chips) → All Apps
+// All focus flows off ONE ordered _contentRegions() list (the duck-typed
+// home-tile contract: visible / regionFocused / focusFirstChild) so adding a
+// region is "insert it + wire previousRow/nextRow".
 FocusScope {
     id: root
 
     property var targets: []
     property string shellState: "idle"
 
-    // False when the no-streaming provider is active — collapses all streaming
-    // rows and removes them from the focus chain (pure app-launcher mode).
-    readonly property bool _streamingActive: StreamProviders.active.providerId !== "none"
-
     property var runningWindows: []
     property var pads: []
 
+    // New-on-Plex rail filter (chip selection): all | movie | tv | music.
+    property string _newFilter: "all"
+
     // Lowest-charge pad that actually reports a battery (batteryLevel >= 0).
-    // null when no wireless pad is reporting — the glyph hides entirely.
     readonly property var _batteryPad: {
         var best = null;
         for (var i = 0; i < root.pads.length; i++) {
             var p = root.pads[i];
             if (p.batteryLevel < 0)
-                continue; // wired / no battery reported
+                continue;
             if (best === null || p.batteryLevel < best.batteryLevel)
                 best = p;
         }
         return best;
     }
 
-    signal streamRequested(var target)
-    signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
     signal appFocusRequested(string address)
     signal appCloseRequested(string address)
@@ -38,37 +43,24 @@ FocusScope {
     signal powerRequested
     signal networkRequested(var anchorRect)
     signal volumeRequested(var anchorRect)
-    // Emitted on user-initiated navigation (B-press / Escaped) so the shell
-    // root can reset the auto-suspend idle timer. Keeps HomeScreen decoupled
-    // from shell.qml's timer implementation.
+    // Open the secondary Library (full app + streaming catalog).
+    signal libraryRequested
+    // Emitted on user-initiated navigation (B-press / Escaped) so the shell root
+    // can reset the auto-suspend idle timer.
     signal userActivity
 
-    // Ordered list of focusable home content regions, top→bottom, matching the
-    // visual column order. Every entry implements the home-tile focus contract
-    // (`visible`, `regionFocused`, `focusFirstChild()`) — NavigableRow,
-    // MediaWidget, and PlexWidget all do. The focus helpers below
-    // (default-position, first-visible, re-anchor) iterate THIS list instead of
-    // hardcoding per-widget branches, so adding a new widget/tile is "insert it
-    // here + wire its previousRow/nextRow". Excludes the QuickActions status bar
-    // (never a B-landing target). moonlightRow and the app-view rows are
-    // mutually exclusive (servers vs apps mode); each reports itself
-    // non-focusable in the other mode, so listing both is safe.
+    // Ordered focusable home content regions, top→bottom. Every entry implements
+    // the home-tile focus contract (visible / regionFocused / focusFirstChild).
+    // Excludes the QuickActions status bar (never a B-landing target). The New
+    // chips + row and the Continue rail self-report non-focusable when empty, so
+    // listing them unconditionally is safe.
     function _contentRegions() {
-        let regions = [mediaWidget, plexWidget, mergedRow, moonlightRow];
-        for (let i = 0; i < appViewRepeater.count; i++) {
-            let item = appViewRepeater.itemAt(i);
-            if (item && item.navigableRow)
-                regions.push(item.navigableRow);
-        }
-        regions.push(appsRow);
-        return regions;
+        return [nowPlaying, continueRow, newChips, newRow, allAppsEntry];
     }
 
     // Re-anchor controller focus to a region whenever HomeScreen holds focus but
-    // no region does. Otherwise directional input has nothing to act on and the
-    // stick goes dead until the mouse re-anchors focus (forceActiveFocus on
-    // hover). Returns silently when a region (or the status bar / popover) is
-    // already focused.
+    // no region does (otherwise the stick goes dead). Returns silently when a
+    // region / status bar / popover already holds focus.
     function _reanchorFocusIfNeeded() {
         if (!root.activeFocus)
             return;
@@ -79,20 +71,12 @@ FocusScope {
             if (regions[i] && regions[i].regionFocused)
                 return;
         }
-        // Defer one tick before re-anchoring: this also fires from
-        // onRunningWindowsChanged, which can land mid-Repeater-rebuild where
-        // appViewRepeater.itemAt() is briefly null/stale. Letting the rebuild
-        // settle first means we re-anchor onto the right region, not a fallback.
         Qt.callLater(function () {
             if (root.activeFocus)
                 root._focusFirstVisibleRow();
         });
     }
 
-    // Safety net: a one-shot restart on focus-gain isn't enough — focus can be
-    // lost from a row WHILE HomeScreen keeps focus (a delegate rebuild on a
-    // model change destroys the focused card), which fires no activeFocus
-    // signal. Poll on a low interval while focused so any drop self-heals fast.
     Timer {
         id: _ensureRowFocusTimer
         interval: 150
@@ -102,8 +86,6 @@ FocusScope {
         onTriggered: root._reanchorFocusIfNeeded()
     }
 
-    // Re-check immediately (next tick, after delegates rebuild) whenever the
-    // running-window model changes — the most common trigger for a dropped card.
     onRunningWindowsChanged: Qt.callLater(root._reanchorFocusIfNeeded)
 
     function launchApp(app) {
@@ -111,8 +93,7 @@ FocusScope {
         RecentsTracker.recordLaunch(app);
     }
 
-    // === Media-widget "Open app" support ===
-    // Normalize for lenient identifier matching (mirrors WindowMatcher).
+    // === Now-Playing "Open app" support ===
     function _mediaNorm(s) {
         return (s || "").toLowerCase().replace(/[-_.]/g, "");
     }
@@ -122,9 +103,8 @@ FocusScope {
         return exec.split(/\s/)[0].split("/").pop().toLowerCase();
     }
 
-    // True when a merged-row entry corresponds to the MPRIS player the media
-    // widget is already showing — matched by desktop-entry / identity against
-    // the entry's windowClass, exec basename, or name.
+    // True when a Continue-rail app entry corresponds to the MPRIS player the
+    // now-playing strip already shows — matched by desktop-entry / identity.
     function _entryIsActivePlayer(entry, desktopEntry, identity) {
         var de = (desktopEntry || "").toLowerCase();
         var id = (identity || "").toLowerCase();
@@ -146,10 +126,6 @@ FocusScope {
         return false;
     }
 
-    // Resolve the MPRIS player back to a launchable app object so it can be
-    // opened full-screen. Prefer a real discovered desktop app (gives a proper
-    // exec to launch if it isn't already running); otherwise synthesize enough
-    // for WindowMatcher to focus an existing window.
     function _resolveMediaApp(desktopEntry, identity) {
         var apps = AppDiscoveryManager.applications || [];
         var de = (desktopEntry || "").toLowerCase();
@@ -182,9 +158,7 @@ FocusScope {
         root.launchApp(app);
     }
 
-    // Open the local Plex app (e.g. Plex HTPC) when a Plex widget card is
-    // activated. Resolves the first discovered app whose name/wmClass/exec
-    // mentions "plex"; a no-op (with a log line) if none is installed.
+    // Open the local Plex app when a Plex card is activated.
     function openPlexApp() {
         var apps = AppDiscoveryManager.applications || [];
         for (var i = 0; i < apps.length; i++) {
@@ -196,50 +170,7 @@ FocusScope {
                 return;
             }
         }
-        console.log("PlexWidget: no Plex app found to launch");
-    }
-
-    // Moonlight app discovery lives in MoonlightProvider now; HomeScreen only
-    // decides WHEN to (re)discover based on the active view mode.
-    Timer {
-        id: appDiscoveryTimer
-        interval: 60000
-        running: Theme.streamingViewMode === "apps"
-        repeat: true
-        onTriggered: StreamProviders.active.discoverApps()
-    }
-
-    onTargetsChanged: {
-        if (Theme.streamingViewMode === "apps" && root.targets.length > 0)
-            StreamProviders.active.discoverApps();
-    }
-
-    Connections {
-        target: Theme
-        function onStreamingViewModeChanged() {
-            if (Theme.streamingViewMode === "apps" && root.targets.length > 0)
-                StreamProviders.active.discoverApps();
-        }
-    }
-
-    function _appViewRowItem(idx) {
-        if (idx < 0 || idx >= appViewRepeater.count)
-            return null;
-        var item = appViewRepeater.itemAt(idx);
-        return item ? item.navigableRow : null;
-    }
-
-    // First visible NavigableRow below the now-playing widget. Used as the
-    // media widget's Down target and as the focus fallback when the media
-    // widget is hidden.
-    function _firstContentRow() {
-        var row = mergedRow;
-        while (row) {
-            if (row.visible)
-                return row;
-            row = (row.nextRow !== undefined) ? row.nextRow : null;
-        }
-        return appsRow;
+        console.log("HomeScreen: no Plex app found to launch");
     }
 
     function _focusFirstVisibleRow() {
@@ -251,22 +182,12 @@ FocusScope {
     }
 
     // === Default focus target (B-button on home screen) ===
-    // The canonical landing position: the first focusable content region's first
-    // child (now-playing widget > Plex > recents > streaming rows > apps), with
-    // the view snapped back to the top so the hero clock/date header is visible.
-    // Exposed so shell.qml / screensaver hook can attach later (issue #156).
-    // Qt.callLater defers the focus assignment one event-loop tick so that
-    // declarative focus: bindings that fire synchronously during onEscaped
-    // cannot steal focus back after this function sets it.
+    // First focusable region's first child, view snapped to the top so the hero
+    // clock/date is visible. Qt.callLater defers one tick so declarative focus
+    // bindings can't steal focus back after this sets it.
     function focusDefaultPosition() {
         Qt.callLater(function () {
-            // Snap the home view back to the top so the hero clock/date header
-            // is visible again. The Flickable's Behavior on contentY animates this.
             scrollView.contentY = 0;
-            // First region that can actually take focus wins. focusFirstChild()
-            // returns false for a hidden/empty region (e.g. a degraded Plex
-            // widget showing only its "server down" notice), so B never strands
-            // focus on an invisible row.
             var regions = root._contentRegions();
             for (var i = 0; i < regions.length; i++) {
                 if (regions[i] && regions[i].focusFirstChild())
@@ -275,70 +196,47 @@ FocusScope {
         });
     }
 
-    // === Merged row model (running windows + recents) ===
-    //
-    // Produces a single sorted list:
-    //   1. One card per running WINDOW, sorted most-recently-focused first
-    //      (Hyprland focusHistoryId; 0 = most recent). Externally-started
-    //      windows are included here too.
-    //   2. Non-running recents (apps with no open window), in recency order.
-    //
-    // A recent whose app has any open window is represented by that window's
-    // card(s) and is not also listed as a separate non-running recent.
-    //
-    // Reactivity: this binding re-evaluates whenever root.runningWindows or
-    // RecentsTracker.recentApps changes, so close→reorder is live.
-    readonly property var _mergedModel: {
+    // === Poster geometry (Continue + New rails share PlexCard's footprint) ===
+    readonly property int posterW: Math.round(Theme.cardWidth * 0.62)
+    readonly property int posterH: Math.round(posterW * 1.5)
+    readonly property int posterRowHeight: posterH + Math.round(Theme.fontSmall * 1.4 + Theme.fontCaption * 1.4 + Units.spacingSM * 2)
+
+    // === Continue model (running windows + recents + Plex On Deck) ===
+    // Running WINDOWS first (most-recently-focused), then non-running recents,
+    // then Plex On Deck appended (no local "last used here" timestamp, so it
+    // can't be interleaved by recency — it tails the rail). Reactive to
+    // runningWindows / RecentsTracker / Plex hubs.
+    readonly property var _continueModel: {
         let running = root.runningWindows || [];
         let recents = RecentsTracker.recentApps || [];
-        // Desktop apps (with icons) for resolving a recent's icon once it is no
-        // longer running. Recents persist only {name,exec,comment}, so a closed
-        // app would otherwise lose its icon and fall back to the letter glyph.
         let allApps = AppDiscoveryManager.applications || [];
 
-        // Build a set of exec basenames / names for running windows so we can
-        // match them against recent app entries (which carry exec/name, not
-        // windowClass). This is intentionally lenient — the same heuristic the
-        // window poller uses for icon/name resolution.
         function execBasename(exec) {
             if (!exec)
                 return "";
             let cmd = exec.split(/\s/)[0];
             return cmd.split("/").pop().toLowerCase();
         }
-
         function normalize(s) {
             return (s || "").toLowerCase().replace(/[-_.]/g, "");
         }
-
         function runningMatchesRecent(win, recent) {
             let cls = (win.windowClass || "").toLowerCase();
             let execBase = execBasename(recent.exec || "");
             let appName = (recent.name || "").toLowerCase();
-
-            // Check window title/name match
             let winName = (win.name || "").toLowerCase();
             if (winName !== "" && winName === appName)
                 return true;
-
-            // Check exec basename match
             if (execBase !== "") {
                 if (cls === execBase || normalize(cls) === normalize(execBase))
                     return true;
                 if (cls !== "" && (execBase.indexOf(cls) >= 0 || cls.indexOf(execBase) >= 0))
                     return true;
             }
-
-            // Check app name against class
             if (appName !== "" && (cls === appName || normalize(cls) === normalize(appName)))
                 return true;
-
             return false;
         }
-
-        // Resolve a recent's icon from the desktop app list (recents don't store
-        // icons). Match by exact app name, else by exec basename, so the icon
-        // stays put after the app's windows close.
         function resolveRecentIcon(rec) {
             let rexec = execBasename(rec.exec || "");
             for (let i = 0; i < allApps.length; i++) {
@@ -351,14 +249,8 @@ FocusScope {
             return rec.icon || "";
         }
 
-        // One entry per running WINDOW (no class collapse). Label by window
-        // title so multiple windows of one app are distinguishable; the icon
-        // stays the app icon (the same glyph repeated per window). Mark any
-        // recent a window represents so it isn't ALSO shown as a non-running
-        // recent card.
         let runningEntries = [];
         let matchedRecentIndices = new Set();
-
         for (let r = 0; r < running.length; r++) {
             let win = running[r];
             for (let j = 0; j < recents.length; j++) {
@@ -376,14 +268,10 @@ FocusScope {
                 focusHistoryId: (win.focusHistoryId !== undefined) ? win.focusHistoryId : 9999
             });
         }
-
-        // Most-recently-focused window first (Hyprland focusHistoryId, 0 = most
-        // recent) so jumping between windows reorders the row live.
         runningEntries.sort(function (a, b) {
             return a.focusHistoryId - b.focusHistoryId;
         });
 
-        // Non-running recents (apps not currently open) follow, in recency order.
         let result = runningEntries.slice();
         for (let k = 0; k < recents.length; k++) {
             if (matchedRecentIndices.has(k))
@@ -401,37 +289,66 @@ FocusScope {
             });
         }
 
-        // Hide the app the media widget is already representing — its card is
-        // redundant while the now-playing widget (with its own "Open" action)
-        // is on screen. Matched by the player's desktop-entry / identity.
-        if (mediaWidget.visible && (mediaWidget.playerDesktopEntry !== "" || mediaWidget.playerIdentity !== "")) {
-            let de = mediaWidget.playerDesktopEntry;
-            let id = mediaWidget.playerIdentity;
+        // Hide the app the now-playing strip already represents.
+        if (nowPlaying.visible && (nowPlaying.playerDesktopEntry !== "" || nowPlaying.playerIdentity !== "")) {
+            let de = nowPlaying.playerDesktopEntry;
+            let id = nowPlaying.playerIdentity;
             result = result.filter(function (e) {
                 return !root._entryIsActivePlayer(e, de, id);
             });
         }
 
-        return result;
-    }
+        // Normalize app entries to the ContinueCard display shape.
+        let out = result.map(function (e) {
+            e.kind = "app";
+            e.title = e.name || "";
+            e.subtitle = "";
+            e.art = "";
+            e.iconSource = e.icon || "";
+            e.progress = 0;
+            return e;
+        });
 
-    // Computed model for app-view rows, re-evaluated when targets or hostApps change
-    property var _appViewRows: {
-        // Explicitly reference both properties so QML re-evaluates this binding
-        let ha = StreamProviders.active.hostApps;
-        let tgts = root.targets;
-        let rows = [];
-        for (let i = 0; i < tgts.length; i++) {
-            let t = tgts[i];
-            let apps = ha[t.host] || [];
-            rows.push({
-                host: t.host,
-                name: t.name,
-                apps: apps,
-                target: t
+        // Append Plex On Deck (continue-watching).
+        let onDeck = plexHubs.onDeckItems || [];
+        for (let m = 0; m < onDeck.length; m++) {
+            let it = onDeck[m];
+            out.push({
+                kind: "plex",
+                title: it.title || "",
+                subtitle: it.subtitle || "",
+                art: it.art || "",
+                iconSource: "",
+                progress: it.progress || 0,
+                running: false
             });
         }
-        return rows;
+        return out;
+    }
+
+    // === New-on-Plex model (Recently Added, chip-filtered by media kind) ===
+    readonly property bool _newSectionVisible: plexHubs.ok && plexHubs.hasRecent
+    readonly property var _newModel: {
+        let items = plexHubs.recentItems || [];
+        let f = root._newFilter;
+        if (f === "all")
+            return items;
+        return items.filter(function (it) {
+            let k = (it.kind || "").toLowerCase();
+            if (f === "movie")
+                return k === "movie";
+            if (f === "tv")
+                return k === "episode" || k === "season" || k === "show";
+            if (f === "music")
+                return k === "album" || k === "track";
+            return true;
+        });
+    }
+
+    // Non-visual Plex data + health provider (On Deck → Continue, Recently Added
+    // → New rail, degraded → the notice below).
+    PlexHubsProvider {
+        id: plexHubs
     }
 
     Flickable {
@@ -476,7 +393,6 @@ FocusScope {
                 Layout.preferredHeight: Units.gridUnit * 9
                 spacing: 32
 
-                // Clock + date (left side)
                 ColumnLayout {
                     spacing: 24
                     Layout.alignment: Qt.AlignVCenter
@@ -521,9 +437,7 @@ FocusScope {
                     Layout.fillWidth: true
                 }
 
-                // Controller battery glance (#100). Non-interactive status indicator —
-                // NOT part of the QuickActions navigable carousel. Shows only when a
-                // wireless pad reports charge; mirrors ControllerSettings glyph/colors.
+                // Controller battery glance (#100) — status indicator, not nav.
                 RowLayout {
                     id: batteryIndicator
                     Layout.alignment: Qt.AlignTop
@@ -532,13 +446,13 @@ FocusScope {
                     visible: root._batteryPad !== null
 
                     Text {
-                        text: "⚡" // charging bolt
+                        text: "⚡"
                         font.pixelSize: Theme.fontTitle
                         color: Theme.warning
                         visible: root._batteryPad !== null && root._batteryPad.batteryCharging === true
                     }
                     Text {
-                        text: "\u{1F50B}" // battery glyph
+                        text: "\u{1F50B}"
                         font.pixelSize: Theme.fontTitle
                         color: Theme.textSecondary
                     }
@@ -550,14 +464,9 @@ FocusScope {
                     }
                 }
 
-                // Status icons (right side)
                 QuickActions {
                     id: statusIcons
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
-                    // B/Escape from the status-icon row must NOT open Settings
-                    // (issue #156 AC1). escapeRequestsSettings: false prevents
-                    // the QuickActions Escape handler from emitting settingsRequested;
-                    // we handle navigation back to home focus ourselves below.
                     escapeRequestsSettings: false
                     onSettingsRequested: root.settingsRequested()
                     onNotificationCenterRequested: root.notificationCenterRequested()
@@ -574,30 +483,23 @@ FocusScope {
                 }
             }
 
-            // === Now Playing (MPRIS) ===
-            // Surfaces the active media player (Spotify desktop, browsers,
-            // any MPRIS-compliant player) with cover art, metadata, progress,
-            // and transport controls (#22). Collapses to zero height when no
-            // player is on the session D-Bus bus, so the home layout is
-            // unchanged when nothing is playing.
-            MediaWidget {
-                id: mediaWidget
+            // === Now Playing (MPRIS) — slim transport strip ===
+            NowPlayingStrip {
+                id: nowPlaying
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetSpotifyEnabled
-                // Sits at the top of the content rows: Up returns to the
-                // status-icon row, Down drops into the first content row.
                 previousRow: statusIcons
-                nextRow: plexWidget.canFocus ? plexWidget.firstRow : root._firstContentRow()
+                nextRow: continueRow
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
                 }
                 onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
                 onContextRequested: {
-                    let p = mediaWidget.player;
+                    let p = nowPlaying.player;
                     if (!p || !p.canQuit)
                         return;
-                    let pos = mediaWidget.mapToItem(root, mediaWidget.width / 2, mediaWidget.height);
+                    let pos = nowPlaying.mapToItem(root, nowPlaying.width / 2, nowPlaying.height);
                     popoverMenu.targetX = pos.x;
                     popoverMenu.targetY = pos.y;
                     popoverMenu.actions = [
@@ -614,66 +516,39 @@ FocusScope {
                 }
             }
 
-            // === Plex (On Deck + Recently Added) ===
-            // Surfaces the Plex server's continue-watching and newest titles as
-            // two poster rows (fed by the daemon's `plex-hubs` IPC). Sits just
-            // below Now Playing and collapses to zero height when Plex is
-            // unconfigured or both hubs are empty.
-            PlexWidget {
-                id: plexWidget
-                Layout.fillWidth: true
-                widgetEnabled: Theme.widgetPlexEnabled
-                previousRow: mediaWidget.visible ? mediaWidget : statusIcons
-                nextRow: root._firstContentRow()
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-                onOpenPlexRequested: root.openPlexApp()
-                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
-            }
-
-            // === Merged Recents + Running Row ===
-            // Running apps are pinned to the front with an ember dot indicator.
-            // Non-running recents follow in recency order. No separate Running row.
+            // === Continue rail ===
             Text {
-                visible: root._mergedModel.length > 0
-                text: "Recent"
+                visible: root._continueModel.length > 0
+                text: "Continue"
                 font.pixelSize: Theme.fontTitle
                 font.bold: true
                 color: Theme.textPrimary
             }
 
             NavigableRow {
-                id: mergedRow
-                visible: root._mergedModel.length > 0
+                id: continueRow
+                visible: root._continueModel.length > 0
                 Layout.fillWidth: true
-                Layout.preferredHeight: visible ? Theme.rowHeight : 0
+                Layout.preferredHeight: visible ? root.posterRowHeight : 0
                 keyNavigationWraps: true
                 focus: visible
-                previousRow: plexWidget.canFocus ? plexWidget.lastRow : mediaWidget
-                nextRow: {
-                    var _ = appViewRepeater.count;
-                    if (!root._streamingActive)
-                        return appsRow;
-                    if (Theme.streamingViewMode === "servers")
-                        return moonlightRow;
-                    return root._appViewRowItem(0) || appsRow;
-                }
-                model: root._mergedModel
+                previousRow: nowPlaying
+                nextRow: newChips
+                model: root._continueModel
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
 
-                delegate: AppCard {
+                delegate: ContinueCard {
                     required property int index
                     required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    app: modelData
-                    running: modelData.running === true
-                    focus: index === mergedRow.currentIndex
+                    posterWidth: root.posterW
+                    posterHeight: root.posterH
+                    entry: modelData
+                    focus: index === continueRow.currentIndex
                     onActivated: {
-                        if (modelData.running === true) {
+                        if (modelData.kind === "plex") {
+                            root.openPlexApp();
+                        } else if (modelData.running === true) {
                             root.appFocusRequested(modelData.address);
                         } else {
                             root.launchApp(modelData);
@@ -682,8 +557,10 @@ FocusScope {
                 }
 
                 onContextRequested: {
-                    if (currentItem && currentIndex >= 0 && currentIndex < root._mergedModel.length) {
-                        let entry = root._mergedModel[currentIndex];
+                    if (currentItem && currentIndex >= 0 && currentIndex < root._continueModel.length) {
+                        let entry = root._continueModel[currentIndex];
+                        if (entry.kind === "plex")
+                            return; // Plex cards have no context actions
                         let pos = currentItem.mapToItem(root, currentItem.width / 2, 0);
                         popoverMenu.targetX = pos.x;
                         popoverMenu.targetY = pos.y;
@@ -724,275 +601,186 @@ FocusScope {
                 }
             }
 
-            // === Moonlight Section (server-view or app-view) ===
+            // === Plex degraded notice (server unreachable) ===
+            ServiceStatusNotice {
+                Layout.fillWidth: true
+                serviceName: "Plex"
+                status: plexHubs.status
+            }
 
-            // Server view: single "Moonlight" row with one card per server
-            Text {
-                visible: root._streamingActive && Theme.streamingViewMode === "servers"
-                text: "Moonlight"
-                font.pixelSize: Theme.fontTitle
-                font.bold: true
-                color: Theme.textPrimary
+            // === New on Plex (Recently Added) ===
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root._newSectionVisible
+                spacing: Units.spacingXL
+
+                Text {
+                    text: "New on Plex"
+                    font.pixelSize: Theme.fontTitle
+                    font.bold: true
+                    color: Theme.textPrimary
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                FilterChips {
+                    id: newChips
+                    Layout.alignment: Qt.AlignVCenter
+                    visible: root._newSectionVisible
+                    options: [
+                        {
+                            label: "All",
+                            value: "all"
+                        },
+                        {
+                            label: "Movies",
+                            value: "movie"
+                        },
+                        {
+                            label: "TV",
+                            value: "tv"
+                        },
+                        {
+                            label: "Music",
+                            value: "music"
+                        }
+                    ]
+                    previousRow: continueRow
+                    nextRow: newRow
+                    onFilterChanged: value => root._newFilter = value
+                    onEscaped: {
+                        root.userActivity();
+                        root.focusDefaultPosition();
+                    }
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                }
             }
 
             NavigableRow {
-                id: moonlightRow
-                visible: root._streamingActive && Theme.streamingViewMode === "servers"
+                id: newRow
+                visible: root._newSectionVisible && root._newModel.length > 0
                 Layout.fillWidth: true
-                Layout.preferredHeight: visible ? Theme.rowHeight : 0
+                Layout.preferredHeight: visible ? root.posterRowHeight : 0
                 keyNavigationWraps: true
-                focus: root._streamingActive && Theme.streamingViewMode === "servers" && !mergedRow.visible
-                previousRow: mergedRow
-                nextRow: appsRow
+                previousRow: newChips
+                nextRow: allAppsEntry
+                model: root._newModel
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
-                model: root.targets
 
-                delegate: StreamCard {
+                delegate: ContinueCard {
                     required property int index
                     required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    target: modelData
-                    shellState: root.shellState
-                    focus: index === moonlightRow.currentIndex
-                    onActivated: root.streamRequested(modelData)
+                    posterWidth: root.posterW
+                    posterHeight: root.posterH
+                    entry: ({
+                            "kind": "plex",
+                            "title": modelData.title || "",
+                            "subtitle": modelData.subtitle || "",
+                            "art": modelData.art || "",
+                            "iconSource": "",
+                            "progress": modelData.progress || 0,
+                            "running": false
+                        })
+                    focus: index === newRow.currentIndex
+                    onActivated: root.openPlexApp()
                 }
 
-                onContextRequested: {
-                    if (currentItem && currentIndex >= 0 && currentIndex < root.targets.length) {
-                        let card = currentItem;
-                        let target = root.targets[currentIndex];
-                        if (card.hasActiveSession) {
-                            let pos = card.mapToItem(root, card.width / 2, 0);
-                            popoverMenu.targetX = pos.x;
-                            popoverMenu.targetY = pos.y;
-                            popoverMenu.actions = [
-                                {
-                                    label: "Resume",
-                                    action: function () {
-                                        root.streamRequested(target);
-                                    }
-                                },
-                                {
-                                    label: "Quit Stream",
-                                    action: function () {
-                                        root.streamQuitRequested(target);
-                                    }
-                                }
-                            ];
-                            popoverMenu.opened = true;
-                            popoverMenu.forceActiveFocus();
-                        }
-                    }
-                }
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
                 }
             }
 
-            // App view: one row per host, each card is an available app
-            Repeater {
-                id: appViewRepeater
-                model: root._streamingActive && Theme.streamingViewMode === "apps" ? root._appViewRows : []
+            // === All Apps entry (→ Library) ===
+            NavigableRow {
+                id: allAppsEntry
+                Layout.fillWidth: true
+                Layout.preferredHeight: Theme.cardHeight
+                model: 1
+                previousRow: newRow
+                onActivated: root.libraryRequested()
+                onActiveFocusChanged: if (activeFocus)
+                    scrollView.ensureVisible(this)
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
 
-                delegate: ColumnLayout {
-                    id: appViewRowDelegate
-                    required property var modelData
+                delegate: Item {
                     required property int index
+                    width: Math.round(Theme.cardWidth * 1.8)
+                    height: Theme.cardHeight
+                    readonly property bool isFocused: (index === allAppsEntry.currentIndex && allAppsEntry.activeFocus && !Theme.mouseMode) || (allAppsMouse.containsMouse && Theme.mouseMode)
+                    z: isFocused ? 10 : 0
 
-                    Layout.fillWidth: true
-                    spacing: contentColumn.spacing
+                    FocusFrame {
+                        anchors.fill: parent
+                        focused: parent.isFocused
 
-                    property var hostData: modelData
-                    property var hostTarget: modelData.target
-                    property var hostAppList: modelData.apps
-                    property alias navigableRow: appViewNavRow
-
-                    RowLayout {
-                        spacing: 12
-
-                        Text {
-                            text: "Moonlight — " + hostData.name
-                            font.pixelSize: Theme.fontTitle
-                            font.bold: true
-                            color: Theme.textPrimary
-                        }
-
-                        // a11y: shape (filled dot vs hollow ring) + text label — state
-                        // is not color-only (colorblind-safe dual cue).
-                        Row {
-                            spacing: Units.spacingSM
-                            Layout.alignment: Qt.AlignVCenter
-
-                            property bool online: hostAppList.length > 0
-
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                radius: 7
-                                // ONLINE: filled dot; OFFLINE: hollow ring — distinct shapes
-                                color: parent.online ? Theme.online : "transparent"
-                                border.width: parent.online ? 0 : 2
-                                border.color: Theme.offline
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
+                        RowLayout {
+                            anchors.centerIn: parent
+                            spacing: Units.spacingLG
 
                             Text {
-                                text: parent.online ? "Online" : "Offline"
-                                font.pixelSize: Theme.fontSmall
-                                color: Theme.textMuted
-                                anchors.verticalCenter: parent.verticalCenter
+                                text: "▦"
+                                font.pixelSize: Units.iconSizeLG
+                                color: Theme.textPrimary
+                            }
+                            ColumnLayout {
+                                spacing: 2
+                                Text {
+                                    text: "All Apps"
+                                    font.pixelSize: Theme.fontTitle
+                                    font.bold: true
+                                    color: Theme.textPrimary
+                                }
+                                Text {
+                                    text: (AppDiscoveryManager.applications ? AppDiscoveryManager.applications.length : 0) + " apps · Moonlight"
+                                    font.pixelSize: Theme.fontCaption
+                                    color: Theme.textMuted
+                                }
                             }
                         }
-                    }
 
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Theme.rowHeight
-
-                        // Offline state
-                        Text {
-                            visible: hostAppList.length === 0 && !StreamProviders.active.discovering
-                            anchors.centerIn: parent
-                            text: "Offline or no apps found"
-                            font.pixelSize: Theme.fontSmall
-                            color: Theme.textMuted
-                        }
-
-                        // Loading state
-                        Text {
-                            visible: hostAppList.length === 0 && StreamProviders.active.discovering
-                            anchors.centerIn: parent
-                            text: "Discovering apps..."
-                            font.pixelSize: Theme.fontSmall
-                            color: Theme.textMuted
-                        }
-
-                        NavigableRow {
-                            id: appViewNavRow
+                        MouseArea {
+                            id: allAppsMouse
                             anchors.fill: parent
-                            visible: hostAppList.length > 0
-                            keyNavigationWraps: true
-                            focus: Theme.streamingViewMode === "apps" && appViewRowDelegate.index === 0 && !mergedRow.visible
-                            onActiveFocusChanged: if (activeFocus)
-                                scrollView.ensureVisible(appViewRowDelegate)
-                            model: hostAppList
-                            previousRow: {
-                                var _ = appViewRepeater.count;
-                                return appViewRowDelegate.index === 0 ? mergedRow : root._appViewRowItem(appViewRowDelegate.index - 1);
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onPositionChanged: mouse => {
+                                let p = mapToItem(null, mouse.x, mouse.y);
+                                Theme.pointerMoved(p.x, p.y);
                             }
-                            nextRow: appViewRowDelegate.index < appViewRepeater.count - 1 ? root._appViewRowItem(appViewRowDelegate.index + 1) : appsRow
-
-                            delegate: StreamCard {
-                                required property int index
-                                required property var modelData
-                                height: Theme.cardHeight
-                                width: Theme.cardWidth
-                                target: hostTarget
-                                appName: modelData
-                                shellState: root.shellState
-                                focus: index === appViewNavRow.currentIndex
-                                onActivated: {
-                                    let t = JSON.parse(JSON.stringify(hostTarget));
-                                    t.app = modelData;
-                                    root.streamRequested(t);
-                                }
-                            }
-
-                            onContextRequested: {
-                                if (currentItem && currentIndex >= 0 && currentIndex < hostAppList.length) {
-                                    let card = currentItem;
-                                    if (card.hasActiveSession) {
-                                        let pos = card.mapToItem(root, card.width / 2, 0);
-                                        popoverMenu.targetX = pos.x;
-                                        popoverMenu.targetY = pos.y;
-                                        let t = JSON.parse(JSON.stringify(hostTarget));
-                                        t.app = hostAppList[currentIndex];
-                                        popoverMenu.actions = [
-                                            {
-                                                label: "Resume",
-                                                action: function () {
-                                                    root.streamRequested(t);
-                                                }
-                                            },
-                                            {
-                                                label: "Quit Stream",
-                                                action: function () {
-                                                    root.streamQuitRequested(t);
-                                                }
-                                            }
-                                        ];
-                                        popoverMenu.opened = true;
-                                        popoverMenu.forceActiveFocus();
-                                    }
-                                }
-                            }
-                            onEscaped: {
-                                root.userActivity();
-                                root.focusDefaultPosition();
+                            onClicked: {
+                                Theme.enterMouseMode();
+                                allAppsEntry.currentIndex = 0;
+                                allAppsEntry.forceActiveFocus();
+                                root.libraryRequested();
                             }
                         }
                     }
-                }
-            }
-
-            // === Applications Row ===
-            Text {
-                text: "Applications"
-                font.pixelSize: Theme.fontTitle
-                font.bold: true
-                color: Theme.textPrimary
-            }
-
-            NavigableRow {
-                id: appsRow
-                Layout.fillWidth: true
-                Layout.preferredHeight: Theme.rowHeight
-                keyNavigationWraps: true
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
-                previousRow: {
-                    if (!root._streamingActive)
-                        return mergedRow;
-                    if (Theme.streamingViewMode === "servers")
-                        return moonlightRow;
-                    return root._appViewRowItem(appViewRepeater.count - 1) || mergedRow;
-                }
-                model: AppDiscoveryManager.applications
-
-                delegate: AppCard {
-                    required property int index
-                    required property var modelData
-                    height: Theme.cardHeight
-                    width: Theme.cardWidth
-                    app: modelData
-                    focus: index === appsRow.currentIndex
-                    onActivated: root.launchApp(modelData)
-                }
-
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
                 }
             }
 
             // === Hint Bar ===
             Text {
                 text: {
-                    if (mergedRow.activeFocus) {
-                        let idx = mergedRow.currentIndex;
-                        let model = root._mergedModel;
+                    if (continueRow.activeFocus) {
+                        let idx = continueRow.currentIndex;
+                        let model = root._continueModel;
+                        if (idx >= 0 && idx < model.length && model[idx].kind === "plex")
+                            return "A: Open  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                         let running = (idx >= 0 && idx < model.length && model[idx].running === true);
-                        // Both running and non-running merged cards have a Y
-                        // context menu (Resume/Quit vs Launch), so advertise it
-                        // for both — only the A label differs.
                         return (running ? "A: Resume" : "A: Launch") + "  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                     }
-                    if (moonlightRow.activeFocus)
-                        return "A: Stream  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
-                    return "A: Launch  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
+                    if (newChips.activeFocus)
+                        return "←→: Filter  |  B: Home  |  ↑↓: Switch Row";
+                    if (allAppsEntry.activeFocus)
+                        return "A: Browse all  |  B: Home  |  ↑↓: Switch Row";
+                    return "A: Select  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                 }
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
@@ -1006,10 +794,6 @@ FocusScope {
         id: popoverMenu
         onClosed: {
             popoverMenu.opened = false;
-            // Restore focus to the first visible row rather than mergedRow
-            // specifically — when opened from Moonlight/app-view with no
-            // running apps or recents, mergedRow is hidden (zero-height) and
-            // focusing it would strand focus on an invisible row.
             root._focusFirstVisibleRow();
         }
     }

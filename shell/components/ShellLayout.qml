@@ -15,6 +15,7 @@ FocusScope {
     property var applications: AppDiscoveryManager.applications
     property var pads: []
     property alias homeScreen: homeScreen
+    property alias libraryScreen: libraryScreen
     property alias settingsPanel: settingsPanel
     property alias navDrawer: navDrawer
     property alias overlay: overlay
@@ -181,19 +182,22 @@ FocusScope {
     HomeScreen {
         id: homeScreen
         anchors.fill: parent
-        visible: root.shellState === "idle"
+        visible: root.shellState === "idle" && !libraryScreen.visible
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
+        focus: root.shellState === "idle" && !libraryScreen.visible && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
 
         runningWindows: root.runningWindows
         pads: root.pads
 
-        onStreamRequested: target => root.streamRequested(target)
-        onStreamQuitRequested: target => root.streamQuitRequested(target)
         onAppLaunchRequested: app => root.appLaunchRequested(app)
         onAppFocusRequested: address => root.appFocusRequested(address)
         onAppCloseRequested: address => root.appCloseRequested(address)
+        onLibraryRequested: {
+            libraryScreen.visible = true;
+            libraryScreen.forceActiveFocus();
+            libraryScreen.focusDefaultPosition();
+        }
         onSettingsRequested: {
             settingsPanel.visible = true;
             settingsPanel.forceActiveFocus();
@@ -214,6 +218,53 @@ FocusScope {
         target: homeScreen
         function onUserActivity() {
             root.userActivity();
+        }
+    }
+
+    // === Library (secondary browse surface, #249) ===
+    // Full app + streaming catalog, opened from the home "All Apps" entry. Sits
+    // over the home screen (which hides while it's visible); B/Escape closes it
+    // and returns focus to home (SettingsPanel-style lifecycle).
+    LibraryScreen {
+        id: libraryScreen
+        anchors.fill: parent
+        visible: false
+        z: 30
+        targets: root.targets
+        shellState: root.shellState
+        focus: libraryScreen.visible
+
+        // Picking anything in the Library launches it and dismisses the surface,
+        // so returning to the shell (idle) lands back on Home, not a stale catalog.
+        onStreamRequested: target => {
+            libraryScreen.visible = false;
+            root.streamRequested(target);
+        }
+        onStreamQuitRequested: target => root.streamQuitRequested(target)
+        onAppLaunchRequested: app => {
+            libraryScreen.visible = false;
+            root.appLaunchRequested(app);
+        }
+        onAppFocusRequested: address => {
+            libraryScreen.visible = false;
+            root.appFocusRequested(address);
+        }
+        onAppCloseRequested: address => root.appCloseRequested(address)
+        onUserActivity: root.userActivity()
+        onClosed: {
+            libraryScreen.visible = false;
+            homeFocusTimer.restart();
+        }
+    }
+
+    // Safety net: if the shell leaves idle for any reason while the Library is
+    // open (e.g. an externally-started stream), drop the surface so it never
+    // floats over a running app.
+    Connections {
+        target: root
+        function onShellStateChanged() {
+            if (root.shellState !== "idle")
+                libraryScreen.visible = false;
         }
     }
 
@@ -243,7 +294,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsPanel.visible)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsPanel.visible || libraryScreen.visible)
                 return;
             homeScreen.forceActiveFocus();
         }
