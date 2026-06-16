@@ -14,10 +14,11 @@ are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 ## Home screen index map (QuickActions, top-right)
 
 `0=Notifications, 1=Settings, 2=Theme toggle, 3=Network, 4=Volume, 5=Power`.
-Left/Right move; Return activates; Down drops focus into the app rows. **Focus does
-not always start on this row** — with running/recent apps present it starts on an
-app card, so press **Up** first to reach the QuickActions row before Left/Right.
-`streamingViewMode` ∈ `"servers"` | `"apps"` toggles two different home layouts.
+Left/Right move; Return activates; Down drops focus into the content regions below.
+**Focus does not always start on this row** — with Continue/New content present it
+starts on a card, so press **Up** first to reach the QuickActions row before
+Left/Right. `streamingViewMode` ∈ `"servers"` | `"apps"` now toggles the two
+**Library** Moonlight layouts (A12), not the home body.
 
 **B (Back / Escape) on the home screen** resets focus to the default landing
 position (top content row, first card). If already at the default position it is a
@@ -29,18 +30,24 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 ## A. Home screen — states & rows
 | # | View | How to reach | Notes |
 |---|------|--------------|-------|
-| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions + rows |
-| A2 | Running row | apps running | `runningWindows.length > 0` |
-| A3 | Recent row | after launching apps | `RecentsTracker.recentApps` |
-| A4 | Moonlight row — "servers" view | `streamingViewMode = servers` | server cards |
-| A5 | App rows — "apps" view | `streamingViewMode = apps` | per-host "Moonlight — \<host\>" rows |
-| A6 | Applications row | local launchers present | `appsRow` |
-| A7 | Empty states | no running / recents / targets | verify layout holds when rows hide |
-| A8 | App-view substates | apps view, host discovering/offline | "Discovering apps…" / "Offline or no apps found" |
+| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions, slim Now-Playing strip, Continue rail, New-on-Plex rail + chips, All Apps entry |
+| A2 | Continue rail | apps running / recents present | merged running (ember dot) + recents + Plex On Deck in one poster rail (`ContinueCard`); art → centered icon → letter fallback |
+| A3 | Now-Playing strip | MPRIS player active | slim transport strip (`NowPlayingStrip`); collapses when nothing plays |
+| A4 | New on Plex + chips | Plex healthy with Recently Added | `[All][Movies][TV][Music]` `FilterChips` over a poster rail; chips re-filter live on item `kind` |
+| A5 | All Apps entry | always present | single tile; A → opens the Library surface (A12) |
+| A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on the All Apps entry (never strands) |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
 | A10 | Controller battery glyph | wireless pad connected reporting charge | 🔋+% beside QuickActions; ⚡ when charging; crimson ≤15%; hidden when only wired pads or none (#100) |
-| A11 | Plex widget — On Deck + Recently Added | below Now Playing when `GAME_SHELL_PLEX_*` env is set and Settings ▸ Widgets ▸ Plex is on | two poster rows (`PlexWidget`); On Deck cards show a resume progress bar; collapses to zero height when disabled (unconfigured) or healthy-but-empty |
-| A11b | Plex widget — server-down notice | as A11 but with the Plex server unreachable (down / 5xx) | `ServiceStatusNotice`: red dot + "Plex unavailable" / "The server isn't responding right now" — the graceful degraded state instead of a silent collapse (service-health bus) |
+| A11 | Plex On Deck + Recently Added | `GAME_SHELL_PLEX_*` env set and Settings ▸ Widgets ▸ Plex on | On Deck → Continue rail (resume bar); Recently Added → New rail; data via non-visual `PlexHubsProvider` |
+| A11b | Plex server-down notice | as A11 but Plex unreachable (down / 5xx) | inline `ServiceStatusNotice`: "Plex unavailable" — both Plex rails collapse, focus chain still walks (service-health bus) |
+
+## A12. Library — secondary browse surface
+| # | View | How to reach | Notes |
+|---|------|--------------|-------|
+| A12 | Library — full | home "All Apps" entry → A | "Library" header + Moonlight section + Applications grid; B returns to Home with focus restored |
+| A12a | Moonlight — "servers" view | Library, `streamingViewMode = servers` | server cards (`StreamCard`) |
+| A12b | Moonlight — "apps" view | Library, `streamingViewMode = apps` | per-host "Moonlight — \<host\>" rows; "Discovering apps…" / "Offline or no apps found" substates |
+| A12c | Applications row | local launchers present | full `AppDiscoveryManager.applications` list |
 
 ## B. Context menus / popovers
 | # | View | How to reach |

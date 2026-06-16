@@ -153,9 +153,11 @@ focused at all, so its `Keys` handlers can't fire over a running app — only th
 ```
 PanelWindow (Exclusive keyboard focus)
 └── ShellLayout  (FocusScope, id: layout — root._layout)
-    ├── HomeScreen        (visible & focus only in idle, no overlay open)
-    │   └── focusable regions  (NavigableRow × N: mergedRow, moonlightRow,
-    │       appsRow, … + widgets MediaWidget / PlexWidget — one focus list)
+    ├── HomeScreen        (visible & focus only in idle, no overlay/Library open)
+    │   └── focusable regions  (NowPlayingStrip, Continue rail, New-on-Plex
+    │       chips + rail, All Apps entry — one ordered focus list)
+    ├── LibraryScreen     (secondary browse surface, z:30 — Moonlight rows +
+    │                      Applications; opened from the home "All Apps" entry)
     ├── SettingsPanel     (Rectangle — NOT a FocusScope; sidebar + Loader page)
     ├── NavigationDrawer  (idle nav drawer, z:50)
     ├── NotificationCenter / ErrorLogViewer (z:60)
@@ -172,7 +174,7 @@ PanelWindow (Exclusive keyboard focus)
 only when nothing else is open:
 
 ```qml
-focus: root.shellState === "idle"
+focus: root.shellState === "idle" && !libraryScreen.visible
        && !settingsPanel.visible && !navDrawer.opened
        && !notificationCenter.opened && !powerOverlay.opened
        && !networkOverlay.opened && !volumeOverlay.opened
@@ -180,7 +182,8 @@ focus: root.shellState === "idle"
 
 | Context (idle) | Focus owner |
 |----------------|-------------|
-| Home screen | A `NavigableRow` inside `HomeScreen` (the home `focus:` binding routes Wayland focus into it) |
+| Home screen | A focus region inside `HomeScreen` (the home `focus:` binding routes Wayland focus into it) |
+| Library open | `LibraryScreen` — its own region chain (Moonlight rows + Applications); B/Escape emits `closed`, `homeFocusTimer` restores Home |
 | Settings panel open | `SettingsPanel` — specifically `sidebarList`, until you `Right`/`Return` into a page |
 | Nav drawer open | `NavigationDrawer` (`navList`, or `drawerActions` quick-actions row) |
 | Notification center | `NotificationCenter` (modal — `event.accepted = true` on every key) |
@@ -201,7 +204,7 @@ synchronous `forceActiveFocus()` can be immediately stolen back by a sibling's
   Used after a drawer/overlay/panel closes.
 - **`Qt.callLater`** — `HomeScreen.focusDefaultPosition()` and
   `ShellLayout.focusDefaultPosition()` defer one event-loop tick so layout +
-  declarative focus bindings settle first; otherwise `moonlightRow`'s `focus:`
+  declarative focus bindings settle first; otherwise `continueRow`'s `focus:`
   binding can steal focus after a row's `forceActiveFocus()`. This is the
   **"defer focus to after the FocusScope is realized"** rule.
 
@@ -216,19 +219,25 @@ underneath, else falls back to `homeFocusTimer`.
 ### Home-tile focus contract (widgets + rows are one list)
 
 The home screen's content is a vertical chain of **focusable regions** — the
-`NavigableRow`s (recents, Moonlight, app-view, apps) *and* the widgets
-(`MediaWidget`, `PlexWidget`). Every region implements a small duck-typed
-contract so `HomeScreen` can drive focus from a single ordered list rather than
-hardcoding each widget by name:
+slim now-playing strip, the Continue rail, the New-on-Plex filter chips + rail,
+and the All Apps entry. Every region implements a small duck-typed contract so
+`HomeScreen` can drive focus from a single ordered list rather than hardcoding
+each region by name:
 
 | Member | Meaning |
 |--------|---------|
 | `visible` | region occupies layout space |
-| `regionFocused` | this region currently holds focus (`activeFocus`, or `rowFocused` for the multi-row Plex widget) |
-| `focusFirstChild()` | focus this region's first *selectable* child; returns `false` when it has none (hidden, empty, or — for `PlexWidget` — `visible` but showing only its non-focusable "server down" notice, i.e. `canFocus === false`) |
+| `regionFocused` | this region currently holds focus (`activeFocus`) |
+| `focusFirstChild()` | focus this region's first *selectable* child; returns `false` when it has none (hidden, empty, or a filtered-empty rail) |
 
-`HomeScreen._contentRegions()` returns these in top→bottom order, and the three
-focus helpers iterate it:
+`HomeScreen._contentRegions()` returns these in top→bottom order —
+`[nowPlaying, continueRow, newChips, newRow, allAppsEntry]` — and the three
+focus helpers iterate it. The always-present **All Apps entry** is the
+guaranteed non-stranding B-landing fallback when every rail above it is empty.
+The full browse catalog (Moonlight servers / per-host app-view / the complete
+Applications list) lives in `LibraryScreen`, which keeps its own identical
+region chain and `focusDefaultPosition()`, reached via the All Apps entry and
+dismissed with B. The three home focus helpers:
 
 - **`focusDefaultPosition()`** (the B / "back to home" handler) — snap
   `scrollView.contentY = 0`, then focus the first region whose
@@ -240,9 +249,14 @@ focus helpers iterate it:
   focus but no region reports `regionFocused`, re-anchor via the same list.
 
 Adding a new home widget/tile is therefore "insert it into `_contentRegions()`
-and wire its `previousRow`/`nextRow`" — no edits to the focus helpers. The
-`previousRow`/`nextRow` neighbour bindings key off `PlexWidget.canFocus` (not
-bare `visible`) so a degraded Plex is skipped in the up/down chain too.
+and wire its `previousRow`/`nextRow`" — no edits to the focus helpers. Each
+region's `previousRow`/`nextRow` points at its immediate neighbour; the
+`NavigableRow`/`FilterChips` up/down walkers follow that chain and skip any
+neighbour whose `visible` is false, so an empty Continue rail or a
+filtered-empty New rail is transparently stepped over. Plex data + health is
+owned by the non-visual `PlexHubsProvider` (On Deck → Continue, Recently Added →
+New rail); when the server is unreachable both rails collapse and an inline
+`ServiceStatusNotice` renders in their place.
 
 ---
 
