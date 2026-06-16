@@ -43,7 +43,11 @@ Item {
     // background/prewarm behaviour. Spotify off ⇒ the player falls back to the
     // running row (the merged-model filter keys on the widget being visible).
     property bool widgetSpotifyEnabled: true      // Now Playing (MPRIS) widget
+    property string widgetSpotifySize: "medium"   // "small" (strip) | "medium" (card + progress)
     property bool widgetPlexEnabled: true         // Plex (On Deck / Recently Added) widget
+    property string widgetPlexSize: "medium"      // "small" (compact posters) | "medium"
+    property bool widgetRecentEnabled: true       // Recent (running + recents app cards) widget
+    property string widgetRecentSize: "medium"    // "small" (compact) | "medium" (full app cards)
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
     property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
     property bool nightLightEnabled: false       // drives hyprsunset
@@ -101,8 +105,16 @@ Item {
                     store.reduceMotion = obj.reduceMotion;
                 if (typeof obj.widgetSpotifyEnabled === "boolean")
                     store.widgetSpotifyEnabled = obj.widgetSpotifyEnabled;
+                if (typeof obj.widgetSpotifySize === "string")
+                    store.widgetSpotifySize = obj.widgetSpotifySize;
                 if (typeof obj.widgetPlexEnabled === "boolean")
                     store.widgetPlexEnabled = obj.widgetPlexEnabled;
+                if (typeof obj.widgetPlexSize === "string")
+                    store.widgetPlexSize = obj.widgetPlexSize;
+                if (typeof obj.widgetRecentEnabled === "boolean")
+                    store.widgetRecentEnabled = obj.widgetRecentEnabled;
+                if (typeof obj.widgetRecentSize === "string")
+                    store.widgetRecentSize = obj.widgetRecentSize;
                 if (typeof obj.textScale === "number")
                     store.textScale = obj.textScale;
                 if (typeof obj.hdrEnabled === "boolean")
@@ -167,7 +179,11 @@ Item {
             "rumbleEnabled": store.rumbleEnabled,
             "reduceMotion": store.reduceMotion,
             "widgetSpotifyEnabled": store.widgetSpotifyEnabled,
+            "widgetSpotifySize": store.widgetSpotifySize,
             "widgetPlexEnabled": store.widgetPlexEnabled,
+            "widgetPlexSize": store.widgetPlexSize,
+            "widgetRecentEnabled": store.widgetRecentEnabled,
+            "widgetRecentSize": store.widgetRecentSize,
             "textScale": store.textScale,
             "hdrEnabled": store.hdrEnabled,
             "nightLightEnabled": store.nightLightEnabled,
@@ -237,8 +253,28 @@ Item {
         save();
     }
 
+    function setWidgetSpotifySize(size) {
+        widgetSpotifySize = size;
+        save();
+    }
+
     function setWidgetPlexEnabled(enabled) {
         widgetPlexEnabled = enabled;
+        save();
+    }
+
+    function setWidgetPlexSize(size) {
+        widgetPlexSize = size;
+        save();
+    }
+
+    function setWidgetRecentEnabled(enabled) {
+        widgetRecentEnabled = enabled;
+        save();
+    }
+
+    function setWidgetRecentSize(size) {
+        widgetRecentSize = size;
         save();
     }
 

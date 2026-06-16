@@ -1,15 +1,19 @@
 import QtQuick
 import QtQuick.Layouts
-import "lib"
 
-// Home screen — the redesigned "glance + jump back in" overview (#249). One job:
-// surface what's happening now and let you resume it. The full browse catalog
-// (every Moonlight target + all local apps) lives in the secondary LibraryScreen,
-// reached via the "All Apps" entry. Vertical layout, top→bottom:
-//   hero → Now-Playing strip → Continue rail → New-on-Plex rail (+ chips) → All Apps
-// All focus flows off ONE ordered _contentRegions() list (the duck-typed
-// home-tile contract: visible / regionFocused / focusFirstChild) so adding a
-// region is "insert it + wire previousRow/nextRow".
+// Home screen — the "glance + jump back in" overview (#249), composed of
+// standardized, individually-toggleable, individually-sized home widgets. The
+// full browse catalog lives in the secondary LibraryScreen (the "All Apps"
+// entry). Vertical layout, top→bottom:
+//   hero → Now-Playing widget → Plex widget → Recent (apps) widget → All Apps
+//
+// Standardized widget model (#249): each widget reads its own `enabled` + `size`
+// from SettingsStore (via Theme) and implements the duck-typed home-tile focus
+// contract (visible / regionFocused / focusFirstChild + previousRow/nextRow), so
+// HomeScreen drives focus from one ordered _contentRegions() list and the
+// Widgets settings page configures each uniformly. Now-Playing has two size
+// renderers — small = NowPlayingStrip, medium = MediaWidget (card + progress);
+// only the size-matching one is visible.
 FocusScope {
     id: root
 
@@ -19,10 +23,13 @@ FocusScope {
     property var runningWindows: []
     property var pads: []
 
-    // New-on-Plex rail filter (chip selection): all | movie | tv | music.
-    property string _newFilter: "all"
+    // The active Now-Playing renderer for the current size (used for the
+    // recents dedup + focus wiring). Both instances exist; one is visible.
+    readonly property var _npActive: Theme.widgetSpotifySize === "small" ? nowPlayingStrip : nowPlayingCard
 
-    // Lowest-charge pad that actually reports a battery (batteryLevel >= 0).
+    // Recent (apps) card scale by size.
+    readonly property real _recentScale: Theme.widgetRecentSize === "small" ? 0.78 : 1.0
+
     readonly property var _batteryPad: {
         var best = null;
         for (var i = 0; i < root.pads.length; i++) {
@@ -43,24 +50,15 @@ FocusScope {
     signal powerRequested
     signal networkRequested(var anchorRect)
     signal volumeRequested(var anchorRect)
-    // Open the secondary Library (full app + streaming catalog).
     signal libraryRequested
-    // Emitted on user-initiated navigation (B-press / Escaped) so the shell root
-    // can reset the auto-suspend idle timer.
     signal userActivity
 
-    // Ordered focusable home content regions, top→bottom. Every entry implements
-    // the home-tile focus contract (visible / regionFocused / focusFirstChild).
-    // Excludes the QuickActions status bar (never a B-landing target). The New
-    // chips + row and the Continue rail self-report non-focusable when empty, so
-    // listing them unconditionally is safe.
+    // Ordered focusable regions, top→bottom. Both Now-Playing renderers are
+    // listed; the hidden one reports focusFirstChild()===false and is skipped.
     function _contentRegions() {
-        return [nowPlaying, continueRow, newChips, newRow, allAppsEntry];
+        return [nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry];
     }
 
-    // Re-anchor controller focus to a region whenever HomeScreen holds focus but
-    // no region does (otherwise the stick goes dead). Returns silently when a
-    // region / status bar / popover already holds focus.
     function _reanchorFocusIfNeeded() {
         if (!root.activeFocus)
             return;
@@ -102,9 +100,6 @@ FocusScope {
             return "";
         return exec.split(/\s/)[0].split("/").pop().toLowerCase();
     }
-
-    // True when a Continue-rail app entry corresponds to the MPRIS player the
-    // now-playing strip already shows — matched by desktop-entry / identity.
     function _entryIsActivePlayer(entry, desktopEntry, identity) {
         var de = (desktopEntry || "").toLowerCase();
         var id = (identity || "").toLowerCase();
@@ -125,7 +120,6 @@ FocusScope {
             return true;
         return false;
     }
-
     function _resolveMediaApp(desktopEntry, identity) {
         var apps = AppDiscoveryManager.applications || [];
         var de = (desktopEntry || "").toLowerCase();
@@ -149,7 +143,6 @@ FocusScope {
             "icon": ""
         };
     }
-
     function openMediaApp(desktopEntry, identity) {
         var app = root._resolveMediaApp(desktopEntry, identity);
         if (!app)
@@ -158,7 +151,6 @@ FocusScope {
         root.launchApp(app);
     }
 
-    // Open the local Plex app when a Plex card is activated.
     function openPlexApp() {
         var apps = AppDiscoveryManager.applications || [];
         for (var i = 0; i < apps.length; i++) {
@@ -181,10 +173,6 @@ FocusScope {
         }
     }
 
-    // === Default focus target (B-button on home screen) ===
-    // First focusable region's first child, view snapped to the top so the hero
-    // clock/date is visible. Qt.callLater defers one tick so declarative focus
-    // bindings can't steal focus back after this sets it.
     function focusDefaultPosition() {
         Qt.callLater(function () {
             scrollView.contentY = 0;
@@ -196,17 +184,8 @@ FocusScope {
         });
     }
 
-    // === Poster geometry (Continue + New rails share PlexCard's footprint) ===
-    readonly property int posterW: Math.round(Theme.cardWidth * 0.62)
-    readonly property int posterH: Math.round(posterW * 1.5)
-    readonly property int posterRowHeight: posterH + Math.round(Theme.fontSmall * 1.4 + Theme.fontCaption * 1.4 + Units.spacingSM * 2)
-
-    // === Continue model (running windows + recents + Plex On Deck) ===
-    // Running WINDOWS first (most-recently-focused), then non-running recents,
-    // then Plex On Deck appended (no local "last used here" timestamp, so it
-    // can't be interleaved by recency — it tails the rail). Reactive to
-    // runningWindows / RecentsTracker / Plex hubs.
-    readonly property var _continueModel: {
+    // === Recent model (running windows + non-running recents) ===
+    readonly property var _recentModel: {
         let running = root.runningWindows || [];
         let recents = RecentsTracker.recentApps || [];
         let allApps = AppDiscoveryManager.applications || [];
@@ -289,66 +268,16 @@ FocusScope {
             });
         }
 
-        // Hide the app the now-playing strip already represents.
-        if (nowPlaying.visible && (nowPlaying.playerDesktopEntry !== "" || nowPlaying.playerIdentity !== "")) {
-            let de = nowPlaying.playerDesktopEntry;
-            let id = nowPlaying.playerIdentity;
+        // Hide the app the active Now-Playing widget already represents.
+        var np = root._npActive;
+        if (np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "")) {
+            let de = np.playerDesktopEntry;
+            let id = np.playerIdentity;
             result = result.filter(function (e) {
                 return !root._entryIsActivePlayer(e, de, id);
             });
         }
-
-        // Normalize app entries to the ContinueCard display shape.
-        let out = result.map(function (e) {
-            e.kind = "app";
-            e.title = e.name || "";
-            e.subtitle = "";
-            e.art = "";
-            e.iconSource = e.icon || "";
-            e.progress = 0;
-            return e;
-        });
-
-        // Append Plex On Deck (continue-watching).
-        let onDeck = plexHubs.onDeckItems || [];
-        for (let m = 0; m < onDeck.length; m++) {
-            let it = onDeck[m];
-            out.push({
-                kind: "plex",
-                title: it.title || "",
-                subtitle: it.subtitle || "",
-                art: it.art || "",
-                iconSource: "",
-                progress: it.progress || 0,
-                running: false
-            });
-        }
-        return out;
-    }
-
-    // === New-on-Plex model (Recently Added, chip-filtered by media kind) ===
-    readonly property bool _newSectionVisible: plexHubs.ok && plexHubs.hasRecent
-    readonly property var _newModel: {
-        let items = plexHubs.recentItems || [];
-        let f = root._newFilter;
-        if (f === "all")
-            return items;
-        return items.filter(function (it) {
-            let k = (it.kind || "").toLowerCase();
-            if (f === "movie")
-                return k === "movie";
-            if (f === "tv")
-                return k === "episode" || k === "season" || k === "show";
-            if (f === "music")
-                return k === "album" || k === "track";
-            return true;
-        });
-    }
-
-    // Non-visual Plex data + health provider (On Deck → Continue, Recently Added
-    // → New rail, degraded → the notice below).
-    PlexHubsProvider {
-        id: plexHubs
+        return result;
     }
 
     Flickable {
@@ -437,7 +366,6 @@ FocusScope {
                     Layout.fillWidth: true
                 }
 
-                // Controller battery glance (#100) — status indicator, not nav.
                 RowLayout {
                     id: batteryIndicator
                     Layout.alignment: Qt.AlignTop
@@ -483,84 +411,92 @@ FocusScope {
                 }
             }
 
-            // === Now Playing (MPRIS) — slim transport strip ===
+            // === Now Playing — small (strip) renderer ===
             NowPlayingStrip {
-                id: nowPlaying
+                id: nowPlayingStrip
                 Layout.fillWidth: true
-                widgetEnabled: Theme.widgetSpotifyEnabled
+                widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "small"
                 previousRow: statusIcons
-                nextRow: continueRow
+                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
                 }
                 onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
-                onContextRequested: {
-                    let p = nowPlaying.player;
-                    if (!p || !p.canQuit)
-                        return;
-                    let pos = nowPlaying.mapToItem(root, nowPlaying.width / 2, nowPlaying.height);
-                    popoverMenu.targetX = pos.x;
-                    popoverMenu.targetY = pos.y;
-                    popoverMenu.actions = [
-                        {
-                            label: "Quit " + (p.identity || "Player"),
-                            action: function () {
-                                if (p.canQuit)
-                                    p.quit();
-                            }
-                        }
-                    ];
-                    popoverMenu.opened = true;
-                    popoverMenu.forceActiveFocus();
-                }
+                onContextRequested: root._mediaContext(nowPlayingStrip)
             }
 
-            // === Continue rail ===
+            // === Now Playing — medium (card + progress) renderer ===
+            MediaWidget {
+                id: nowPlayingCard
+                Layout.fillWidth: true
+                widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "medium"
+                previousRow: statusIcons
+                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
+                onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
+                onContextRequested: root._mediaContext(nowPlayingCard)
+            }
+
+            // === Plex widget (On Deck + Recently Added + dynamic chips) ===
+            PlexWidget {
+                id: plexWidget
+                Layout.fillWidth: true
+                widgetEnabled: Theme.widgetPlexEnabled
+                size: Theme.widgetPlexSize
+                previousRow: root._npActive
+                nextRow: recentRow
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
+                onOpenPlexRequested: root.openPlexApp()
+                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
+            }
+
+            // === Recent (apps) widget ===
             Text {
-                visible: root._continueModel.length > 0
-                text: "Continue"
+                visible: Theme.widgetRecentEnabled && root._recentModel.length > 0
+                text: "Recent"
                 font.pixelSize: Theme.fontTitle
                 font.bold: true
                 color: Theme.textPrimary
             }
 
             NavigableRow {
-                id: continueRow
-                visible: root._continueModel.length > 0
+                id: recentRow
+                visible: Theme.widgetRecentEnabled && root._recentModel.length > 0
                 Layout.fillWidth: true
-                Layout.preferredHeight: visible ? root.posterRowHeight : 0
+                Layout.preferredHeight: visible ? Math.round(Theme.rowHeight * root._recentScale) : 0
                 keyNavigationWraps: true
-                focus: visible
-                previousRow: nowPlaying
-                nextRow: newChips
-                model: root._continueModel
+                previousRow: plexWidget.canFocus ? plexWidget.lastRow : root._npActive
+                nextRow: allAppsEntry
+                model: root._recentModel
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
 
-                delegate: ContinueCard {
+                delegate: AppCard {
                     required property int index
                     required property var modelData
-                    posterWidth: root.posterW
-                    posterHeight: root.posterH
-                    entry: modelData
-                    focus: index === continueRow.currentIndex
+                    height: Math.round(Theme.cardHeight * root._recentScale)
+                    width: Math.round(Theme.cardWidth * root._recentScale)
+                    app: modelData
+                    running: modelData.running === true
+                    focus: index === recentRow.currentIndex
                     onActivated: {
-                        if (modelData.kind === "plex") {
-                            root.openPlexApp();
-                        } else if (modelData.running === true) {
+                        if (modelData.running === true)
                             root.appFocusRequested(modelData.address);
-                        } else {
+                        else
                             root.launchApp(modelData);
-                        }
                     }
                 }
 
                 onContextRequested: {
-                    if (currentItem && currentIndex >= 0 && currentIndex < root._continueModel.length) {
-                        let entry = root._continueModel[currentIndex];
-                        if (entry.kind === "plex")
-                            return; // Plex cards have no context actions
+                    if (currentItem && currentIndex >= 0 && currentIndex < root._recentModel.length) {
+                        let entry = root._recentModel[currentIndex];
                         let pos = currentItem.mapToItem(root, currentItem.width / 2, 0);
                         popoverMenu.targetX = pos.x;
                         popoverMenu.targetY = pos.y;
@@ -601,106 +537,13 @@ FocusScope {
                 }
             }
 
-            // === Plex degraded notice (server unreachable) ===
-            ServiceStatusNotice {
-                Layout.fillWidth: true
-                serviceName: "Plex"
-                status: plexHubs.status
-            }
-
-            // === New on Plex (Recently Added) ===
-            RowLayout {
-                Layout.fillWidth: true
-                visible: root._newSectionVisible
-                spacing: Units.spacingXL
-
-                Text {
-                    text: "New on Plex"
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignVCenter
-                }
-
-                FilterChips {
-                    id: newChips
-                    Layout.alignment: Qt.AlignVCenter
-                    visible: root._newSectionVisible
-                    options: [
-                        {
-                            label: "All",
-                            value: "all"
-                        },
-                        {
-                            label: "Movies",
-                            value: "movie"
-                        },
-                        {
-                            label: "TV",
-                            value: "tv"
-                        },
-                        {
-                            label: "Music",
-                            value: "music"
-                        }
-                    ]
-                    previousRow: continueRow
-                    nextRow: newRow
-                    onFilterChanged: value => root._newFilter = value
-                    onEscaped: {
-                        root.userActivity();
-                        root.focusDefaultPosition();
-                    }
-                }
-
-                Item {
-                    Layout.fillWidth: true
-                }
-            }
-
-            NavigableRow {
-                id: newRow
-                visible: root._newSectionVisible && root._newModel.length > 0
-                Layout.fillWidth: true
-                Layout.preferredHeight: visible ? root.posterRowHeight : 0
-                keyNavigationWraps: true
-                previousRow: newChips
-                nextRow: allAppsEntry
-                model: root._newModel
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
-
-                delegate: ContinueCard {
-                    required property int index
-                    required property var modelData
-                    posterWidth: root.posterW
-                    posterHeight: root.posterH
-                    entry: ({
-                            "kind": "plex",
-                            "title": modelData.title || "",
-                            "subtitle": modelData.subtitle || "",
-                            "art": modelData.art || "",
-                            "iconSource": "",
-                            "progress": modelData.progress || 0,
-                            "running": false
-                        })
-                    focus: index === newRow.currentIndex
-                    onActivated: root.openPlexApp()
-                }
-
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-            }
-
             // === All Apps entry (→ Library) ===
             NavigableRow {
                 id: allAppsEntry
                 Layout.fillWidth: true
                 Layout.preferredHeight: Theme.cardHeight
                 model: 1
-                previousRow: newRow
+                previousRow: recentRow
                 onActivated: root.libraryRequested()
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
@@ -768,16 +611,12 @@ FocusScope {
             // === Hint Bar ===
             Text {
                 text: {
-                    if (continueRow.activeFocus) {
-                        let idx = continueRow.currentIndex;
-                        let model = root._continueModel;
-                        if (idx >= 0 && idx < model.length && model[idx].kind === "plex")
-                            return "A: Open  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
+                    if (recentRow.activeFocus) {
+                        let idx = recentRow.currentIndex;
+                        let model = root._recentModel;
                         let running = (idx >= 0 && idx < model.length && model[idx].running === true);
                         return (running ? "A: Resume" : "A: Launch") + "  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                     }
-                    if (newChips.activeFocus)
-                        return "←→: Filter  |  B: Home  |  ↑↓: Switch Row";
                     if (allAppsEntry.activeFocus)
                         return "A: Browse all  |  B: Home  |  ↑↓: Switch Row";
                     return "A: Select  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
@@ -788,6 +627,27 @@ FocusScope {
                 Layout.bottomMargin: 16
             }
         }
+    }
+
+    // Shared Now-Playing context-menu opener (quit the player).
+    function _mediaContext(widget) {
+        let p = widget.player;
+        if (!p || !p.canQuit)
+            return;
+        let pos = widget.mapToItem(root, widget.width / 2, widget.height);
+        popoverMenu.targetX = pos.x;
+        popoverMenu.targetY = pos.y;
+        popoverMenu.actions = [
+            {
+                label: "Quit " + (p.identity || "Player"),
+                action: function () {
+                    if (p.canQuit)
+                        p.quit();
+                }
+            }
+        ];
+        popoverMenu.opened = true;
+        popoverMenu.forceActiveFocus();
     }
 
     PopoverMenu {

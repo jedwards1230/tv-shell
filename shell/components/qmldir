@@ -39,8 +39,6 @@ Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
 PlexCard 1.0 PlexCard.qml
 PlexWidget 1.0 PlexWidget.qml
-PlexHubsProvider 1.0 PlexHubsProvider.qml
-ContinueCard 1.0 ContinueCard.qml
 NowPlayingStrip 1.0 NowPlayingStrip.qml
 FilterChips 1.0 FilterChips.qml
 LibraryScreen 1.0 LibraryScreen.qml
