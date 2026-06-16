@@ -18,6 +18,23 @@ FocusScope {
 
     readonly property alias listView: listView
 
+    // === Home-tile focus contract ===
+    // Shared duck-typed interface (also implemented by MediaWidget/PlexWidget)
+    // so HomeScreen's focus helpers can drive every home region from one ordered
+    // list instead of per-widget branches. `regionFocused` answers "does this
+    // region currently hold focus?"; `focusFirstChild()` focuses this region's
+    // first selectable child and returns whether it could (false when hidden or
+    // empty), so callers skip a non-focusable region.
+    readonly property bool regionFocused: activeFocus
+
+    function focusFirstChild() {
+        if (!visible || listView.count === 0)
+            return false;
+        listView.currentIndex = 0;
+        forceActiveFocus();
+        return true;
+    }
+
     ListView {
         id: listView
         anchors.fill: parent

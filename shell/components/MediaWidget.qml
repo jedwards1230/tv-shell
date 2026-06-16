@@ -58,6 +58,18 @@ FocusScope {
     readonly property bool hasPlayer: player !== null
     readonly property bool isPlaying: hasPlayer && player.isPlaying
 
+    // === Home-tile focus contract (mirrors NavigableRow) ===
+    // The widget is a single focusable strip, so its "first child" is itself.
+    // regionFocused lets HomeScreen's re-anchor net recognise this region.
+    readonly property bool regionFocused: activeFocus
+
+    function focusFirstChild() {
+        if (!visible)
+            return false;
+        forceActiveFocus();
+        return true;
+    }
+
     // Identifiers used to resolve the player back to its desktop app so we can
     // open it full-screen (and so the host can hide it from the recents row,
     // since the widget already represents it). desktopEntry is the .desktop

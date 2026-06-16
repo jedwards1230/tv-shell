@@ -154,7 +154,8 @@ focused at all, so its `Keys` handlers can't fire over a running app — only th
 PanelWindow (Exclusive keyboard focus)
 └── ShellLayout  (FocusScope, id: layout — root._layout)
     ├── HomeScreen        (visible & focus only in idle, no overlay open)
-    │   └── NavigableRow × N  (mergedRow, moonlightRow, appsRow, …)
+    │   └── focusable regions  (NavigableRow × N: mergedRow, moonlightRow,
+    │       appsRow, … + widgets MediaWidget / PlexWidget — one focus list)
     ├── SettingsPanel     (Rectangle — NOT a FocusScope; sidebar + Loader page)
     ├── NavigationDrawer  (idle nav drawer, z:50)
     ├── NotificationCenter / ErrorLogViewer (z:60)
@@ -211,6 +212,37 @@ synchronous `forceActiveFocus()` can be immediately stolen back by a sibling's
 When a QAM popover (Volume/Network) closes, `_returnFocusAfterOverlay()` routes
 focus back to the nav drawer's quick-actions row if the drawer is still open
 underneath, else falls back to `homeFocusTimer`.
+
+### Home-tile focus contract (widgets + rows are one list)
+
+The home screen's content is a vertical chain of **focusable regions** — the
+`NavigableRow`s (recents, Moonlight, app-view, apps) *and* the widgets
+(`MediaWidget`, `PlexWidget`). Every region implements a small duck-typed
+contract so `HomeScreen` can drive focus from a single ordered list rather than
+hardcoding each widget by name:
+
+| Member | Meaning |
+|--------|---------|
+| `visible` | region occupies layout space |
+| `regionFocused` | this region currently holds focus (`activeFocus`, or `rowFocused` for the multi-row Plex widget) |
+| `focusFirstChild()` | focus this region's first *selectable* child; returns `false` when it has none (hidden, empty, or — for `PlexWidget` — `visible` but showing only its non-focusable "server down" notice, i.e. `canFocus === false`) |
+
+`HomeScreen._contentRegions()` returns these in top→bottom order, and the three
+focus helpers iterate it:
+
+- **`focusDefaultPosition()`** (the B / "back to home" handler) — snap
+  `scrollView.contentY = 0`, then focus the first region whose
+  `focusFirstChild()` succeeds. A region that can't take focus is skipped, so B
+  never strands focus on an invisible row.
+- **`_focusFirstVisibleRow()`** — same walk, used as the QuickActions "Down"
+  target and the post-popover-close landing.
+- **`_reanchorFocusIfNeeded()`** (150 ms safety-net timer) — if HomeScreen holds
+  focus but no region reports `regionFocused`, re-anchor via the same list.
+
+Adding a new home widget/tile is therefore "insert it into `_contentRegions()`
+and wire its `previousRow`/`nextRow`" — no edits to the focus helpers. The
+`previousRow`/`nextRow` neighbour bindings key off `PlexWidget.canFocus` (not
+bare `visible`) so a degraded Plex is skipped in the up/down chain too.
 
 ---
 

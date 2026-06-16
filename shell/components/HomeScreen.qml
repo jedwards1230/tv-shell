@@ -43,22 +43,50 @@ FocusScope {
     // from shell.qml's timer implementation.
     signal userActivity
 
-    // Re-anchor controller focus to a row whenever HomeScreen holds focus but
-    // no row does. Otherwise directional input has nothing to act on and the
+    // Ordered list of focusable home content regions, top→bottom, matching the
+    // visual column order. Every entry implements the home-tile focus contract
+    // (`visible`, `regionFocused`, `focusFirstChild()`) — NavigableRow,
+    // MediaWidget, and PlexWidget all do. The focus helpers below
+    // (default-position, first-visible, re-anchor) iterate THIS list instead of
+    // hardcoding per-widget branches, so adding a new widget/tile is "insert it
+    // here + wire its previousRow/nextRow". Excludes the QuickActions status bar
+    // (never a B-landing target). moonlightRow and the app-view rows are
+    // mutually exclusive (servers vs apps mode); each reports itself
+    // non-focusable in the other mode, so listing both is safe.
+    function _contentRegions() {
+        let regions = [mediaWidget, plexWidget, mergedRow, moonlightRow];
+        for (let i = 0; i < appViewRepeater.count; i++) {
+            let item = appViewRepeater.itemAt(i);
+            if (item && item.navigableRow)
+                regions.push(item.navigableRow);
+        }
+        regions.push(appsRow);
+        return regions;
+    }
+
+    // Re-anchor controller focus to a region whenever HomeScreen holds focus but
+    // no region does. Otherwise directional input has nothing to act on and the
     // stick goes dead until the mouse re-anchors focus (forceActiveFocus on
-    // hover). Returns silently when a row (or the popover/app-view rows) is
+    // hover). Returns silently when a region (or the status bar / popover) is
     // already focused.
     function _reanchorFocusIfNeeded() {
         if (!root.activeFocus)
             return;
-        if (mediaWidget.activeFocus || plexWidget.rowFocused || statusIcons.activeFocus || mergedRow.activeFocus || moonlightRow.activeFocus || appsRow.activeFocus || popoverMenu.activeFocus)
+        if (statusIcons.activeFocus || popoverMenu.activeFocus)
             return;
-        for (let i = 0; i < appViewRepeater.count; i++) {
-            let item = appViewRepeater.itemAt(i);
-            if (item && item.navigableRow && item.navigableRow.activeFocus)
+        let regions = root._contentRegions();
+        for (let i = 0; i < regions.length; i++) {
+            if (regions[i] && regions[i].regionFocused)
                 return;
         }
-        root._focusFirstVisibleRow();
+        // Defer one tick before re-anchoring: this also fires from
+        // onRunningWindowsChanged, which can land mid-Repeater-rebuild where
+        // appViewRepeater.itemAt() is briefly null/stale. Letting the rebuild
+        // settle first means we re-anchor onto the right region, not a fallback.
+        Qt.callLater(function () {
+            if (root.activeFocus)
+                root._focusFirstVisibleRow();
+        });
     }
 
     // Safety net: a one-shot restart on focus-gain isn't enough — focus can be
@@ -215,71 +243,35 @@ FocusScope {
     }
 
     function _focusFirstVisibleRow() {
-        if (mediaWidget.visible) {
-            mediaWidget.forceActiveFocus();
-            return;
-        }
-        if (plexWidget.visible) {
-            plexWidget.firstRow.forceActiveFocus();
-            return;
-        }
-        var row = mergedRow;
-        while (row) {
-            if (row.visible) {
-                row.forceActiveFocus();
+        var regions = root._contentRegions();
+        for (var i = 0; i < regions.length; i++) {
+            if (regions[i] && regions[i].focusFirstChild())
                 return;
-            }
-            row = (row.nextRow !== undefined) ? row.nextRow : null;
         }
     }
 
     // === Default focus target (B-button on home screen) ===
-    // The canonical landing position: top content row, first card.
+    // The canonical landing position: the first focusable content region's first
+    // child (now-playing widget > Plex > recents > streaming rows > apps), with
+    // the view snapped back to the top so the hero clock/date header is visible.
     // Exposed so shell.qml / screensaver hook can attach later (issue #156).
     // Qt.callLater defers the focus assignment one event-loop tick so that
     // declarative focus: bindings that fire synchronously during onEscaped
     // cannot steal focus back after this function sets it.
     function focusDefaultPosition() {
         Qt.callLater(function () {
-            // Now-playing widget owns the top of the column — it is the
-            // canonical landing position whenever a player is active (#22).
-            if (mediaWidget.visible) {
-                scrollView.contentY = 0;
-                mediaWidget.forceActiveFocus();
-                return;
-            }
-            // Plex widget is the next landing priority when nothing is playing.
-            if (plexWidget.visible) {
-                scrollView.contentY = 0;
-                plexWidget.firstRow.forceActiveFocus();
-                return;
-            }
-            var firstRow = null;
-            // Priority order: mergedRow (recents+running) > app-view rows
-            // (apps mode) > moonlightRow (servers mode) > appsRow.
-            if (mergedRow.visible) {
-                firstRow = mergedRow;
-            } else if (root._streamingActive && Theme.streamingViewMode === "apps") {
-                // No recents/running — prefer the first visible app-view row.
-                for (var i = 0; i < appViewRepeater.count; i++) {
-                    var item = appViewRepeater.itemAt(i);
-                    if (item && item.navigableRow && item.navigableRow.visible) {
-                        firstRow = item.navigableRow;
-                        break;
-                    }
-                }
-            } else if (root._streamingActive && Theme.streamingViewMode === "servers" && moonlightRow.visible) {
-                firstRow = moonlightRow;
-            }
-            if (!firstRow)
-                firstRow = appsRow;
             // Snap the home view back to the top so the hero clock/date header
-            // is visible again. The Flickable's Behavior on contentY animates this smoothly.
+            // is visible again. The Flickable's Behavior on contentY animates this.
             scrollView.contentY = 0;
-            if (Window.activeFocusItem === firstRow && firstRow.currentIndex === 0)
-                return;
-            firstRow.currentIndex = 0;
-            firstRow.forceActiveFocus();
+            // First region that can actually take focus wins. focusFirstChild()
+            // returns false for a hidden/empty region (e.g. a degraded Plex
+            // widget showing only its "server down" notice), so B never strands
+            // focus on an invisible row.
+            var regions = root._contentRegions();
+            for (var i = 0; i < regions.length; i++) {
+                if (regions[i] && regions[i].focusFirstChild())
+                    return;
+            }
         });
     }
 
@@ -595,7 +587,7 @@ FocusScope {
                 // Sits at the top of the content rows: Up returns to the
                 // status-icon row, Down drops into the first content row.
                 previousRow: statusIcons
-                nextRow: plexWidget.visible ? plexWidget.firstRow : root._firstContentRow()
+                nextRow: plexWidget.canFocus ? plexWidget.firstRow : root._firstContentRow()
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
@@ -659,7 +651,7 @@ FocusScope {
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
                 focus: visible
-                previousRow: plexWidget.visible ? plexWidget.lastRow : mediaWidget
+                previousRow: plexWidget.canFocus ? plexWidget.lastRow : mediaWidget
                 nextRow: {
                     var _ = appViewRepeater.count;
                     if (!root._streamingActive)
