@@ -90,17 +90,29 @@ FocusScope {
     onRunningWindowsChanged: Qt.callLater(root._reanchorFocusIfNeeded)
 
     // Pre-discover Moonlight apps so the home Y-menu profile picker is populated
-    // on the first press (the provider runs `moonlight list` per host). Fires once
-    // targets are known and again if they change; discoverApps() self-guards
-    // against re-entrancy.
-    Component.onCompleted: if (StreamProviders.active.targets.length > 0)
-        StreamProviders.active.discoverApps()
+    // on the first press (the provider runs `moonlight list` per host). Re-run
+    // ONLY when the host SET changes — not when a target's `app` (default profile)
+    // changes via the Y-menu "set default". discoverApps() clears hostApps while
+    // it re-queries, so re-running it on our own setHostApp write would blank the
+    // picker mid-rebuild and collapse it to the empty-state fallback.
+    property string _discoveredHosts: ""
+    function _maybeDiscoverApps() {
+        let ts = StreamProviders.active.targets || [];
+        if (ts.length === 0)
+            return;
+        let hosts = ts.map(t => t.host).sort().join(",");
+        if (hosts === root._discoveredHosts)
+            return;
+        root._discoveredHosts = hosts;
+        StreamProviders.active.discoverApps();
+    }
+
+    Component.onCompleted: root._maybeDiscoverApps()
 
     Connections {
         target: StreamProviders.active
         function onTargetsChanged() {
-            if (StreamProviders.active.targets.length > 0)
-                StreamProviders.active.discoverApps();
+            root._maybeDiscoverApps();
         }
     }
 
