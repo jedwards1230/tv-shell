@@ -89,6 +89,21 @@ FocusScope {
 
     onRunningWindowsChanged: Qt.callLater(root._reanchorFocusIfNeeded)
 
+    // Pre-discover Moonlight apps so the home Y-menu profile picker is populated
+    // on the first press (the provider runs `moonlight list` per host). Fires once
+    // targets are known and again if they change; discoverApps() self-guards
+    // against re-entrancy.
+    Component.onCompleted: if (StreamProviders.active.targets.length > 0)
+        StreamProviders.active.discoverApps()
+
+    Connections {
+        target: StreamProviders.active
+        function onTargetsChanged() {
+            if (StreamProviders.active.targets.length > 0)
+                StreamProviders.active.discoverApps();
+        }
+    }
+
     function launchApp(app) {
         root.appLaunchRequested(app);
         RecentsTracker.recordLaunch(app);
@@ -736,27 +751,60 @@ FocusScope {
     // Moonlight server context menu (Resume / Quit a live session). Mirrors the
     // Library's stream-card context behavior, positioned over the focused card.
     function _moonlightContext() {
-        if (!moonlightWidget.currentHasSession || !moonlightWidget.currentCard || !moonlightWidget.currentTarget)
-            return;
         let target = moonlightWidget.currentTarget;
         let card = moonlightWidget.currentCard;
+        if (!target || !card)
+            return;
         let pos = card.mapToItem(root, card.width / 2, 0);
         popoverMenu.targetX = pos.x;
         popoverMenu.targetY = pos.y;
-        popoverMenu.actions = [
-            {
+
+        let actions = [];
+        // Live-session controls first (A on the card resumes the default; these
+        // mirror that for an in-progress stream).
+        if (moonlightWidget.currentHasSession) {
+            actions.push({
                 label: "Resume",
                 action: function () {
                     root.streamRequested(target);
                 }
-            },
-            {
+            });
+            actions.push({
                 label: "Quit Stream",
                 action: function () {
                     root.streamQuitRequested(target);
                 }
-            }
-        ];
+            });
+        }
+        // Profile picker — stream a SPECIFIC app on this host. Each entry clones
+        // the host target and overrides `.app` (same pattern as the Library apps
+        // view); `hostApps` is filled by the provider's `moonlight list`. A on the
+        // card streams the host default; this is how you pick a different profile.
+        let host = target.host || "";
+        let apps = (StreamProviders.active.hostApps && StreamProviders.active.hostApps[host]) ? StreamProviders.active.hostApps[host] : [];
+        for (let i = 0; i < apps.length; i++) {
+            let appName = apps[i];
+            actions.push({
+                label: (appName === target.app ? "● " : "") + appName,
+                action: function () {
+                    let t = JSON.parse(JSON.stringify(target));
+                    t.app = appName;
+                    root.streamRequested(t);
+                }
+            });
+        }
+        if (apps.length === 0) {
+            // Not discovered yet (or host offline): offer the default launch and
+            // kick discovery so the next open lists the profiles.
+            actions.push({
+                label: "Stream " + (target.app || "Desktop"),
+                action: function () {
+                    root.streamRequested(target);
+                }
+            });
+            StreamProviders.active.discoverApps();
+        }
+        popoverMenu.actions = actions;
         popoverMenu.opened = true;
         popoverMenu.forceActiveFocus();
     }
