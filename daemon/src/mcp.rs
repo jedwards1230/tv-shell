@@ -81,6 +81,11 @@ pub enum SettingsPage {
     Keybindings,
     /// HDMI-CEC AV control and focus preferences.
     Avcontrol,
+    /// Streaming / Moonlight provider page (shown when a provider is active;
+    /// `streaming` is the fallback slug, else the provider id).
+    Streaming,
+    /// Home-screen widgets (enable/disable + per-widget size).
+    Widgets,
     /// Accessibility (reduce motion, text size).
     Accessibility,
     /// Power management (sleep timer, wake-on-controller).
@@ -99,6 +104,8 @@ impl SettingsPage {
             SettingsPage::Controllers => "controllers",
             SettingsPage::Keybindings => "keybindings",
             SettingsPage::Avcontrol => "avcontrol",
+            SettingsPage::Streaming => "streaming",
+            SettingsPage::Widgets => "widgets",
             SettingsPage::Accessibility => "accessibility",
             SettingsPage::Power => "power",
             SettingsPage::System => "system",
@@ -968,6 +975,8 @@ mod tests {
             (SettingsPage::Controllers, "controllers"),
             (SettingsPage::Keybindings, "keybindings"),
             (SettingsPage::Avcontrol, "avcontrol"),
+            (SettingsPage::Streaming, "streaming"),
+            (SettingsPage::Widgets, "widgets"),
             (SettingsPage::Accessibility, "accessibility"),
             (SettingsPage::Power, "power"),
             (SettingsPage::System, "system"),
@@ -987,6 +996,8 @@ mod tests {
             "controllers",
             "keybindings",
             "avcontrol",
+            "streaming",
+            "widgets",
             "accessibility",
             "power",
             "system",
@@ -1023,6 +1034,8 @@ mod tests {
             "controllers",
             "keybindings",
             "avcontrol",
+            "streaming",
+            "widgets",
             "accessibility",
             "power",
             "system",
