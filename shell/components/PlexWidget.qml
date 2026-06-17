@@ -160,6 +160,8 @@ ColumnLayout {
             onFilterChanged: value => root._segment = value
             onActionTriggered: value => root.openPlexRequested()
             onEscaped: root.escaped()
+            onActiveFocusChanged: if (activeFocus)
+                root.ensureVisibleRequested(this)
         }
 
         Item {

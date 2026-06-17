@@ -523,6 +523,8 @@ FocusScope {
                 }
                 onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
                 onContextRequested: root._mediaContext(nowPlayingStrip)
+                onActiveFocusChanged: if (activeFocus)
+                    scrollView.ensureVisible(this)
             }
 
             // === Now Playing — medium (card + progress) renderer ===
@@ -538,6 +540,8 @@ FocusScope {
                 }
                 onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
                 onContextRequested: root._mediaContext(nowPlayingCard)
+                onActiveFocusChanged: if (activeFocus)
+                    scrollView.ensureVisible(this)
             }
 
             // === Plex widget (On Deck + Recently Added + dynamic chips) ===
