@@ -489,8 +489,10 @@ FocusScope {
     }
 
     // ===================== L2 — Moonlight server management =====================
-    // Wired in increment 2 — embeds MoonlightSettings here. Placeholder for now
-    // so the list → config → servers nav + B-back ladder can be verified first.
+    // Embeds the full MoonlightSettings surface (pair/unpair/remove/add, status).
+    // It's a self-contained FocusScope with its own focusFirst(); B at its server
+    // list bubbles up to root._back() (no root Escape handler of its own), popping
+    // L2 → L1. This is the surface demoted out of the sidebar (increment 3).
     Loader {
         id: serversLoader
         visible: root._showServers
@@ -498,49 +500,11 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        sourceComponent: serversPlaceholderComp
+        sourceComponent: moonlightServersComp
     }
 
     Component {
-        id: serversPlaceholderComp
-        FocusScope {
-            id: sp
-            implicitHeight: spCol.implicitHeight + 2 * Theme.padding
-            function focusFirst() {
-                spBack.forceActiveFocus();
-            }
-            ColumnLayout {
-                id: spCol
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: Theme.padding
-                spacing: Units.spacingLG
-                Text {
-                    text: "Manage servers"
-                    font.pixelSize: Theme.fontTitle
-                    font.bold: true
-                    color: Theme.textPrimary
-                }
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: "Server management moves here (increment 2)."
-                    font.pixelSize: Theme.fontCaption
-                    color: Theme.textMuted
-                }
-                FocusButton {
-                    id: spBack
-                    text: "Back"
-                    onActivated: root._back()
-                }
-                Item {
-                    Layout.fillHeight: true
-                }
-                HintBar {
-                    text: "B: Back to Moonlight"
-                }
-            }
-        }
+        id: moonlightServersComp
+        MoonlightSettings {}
     }
 }
