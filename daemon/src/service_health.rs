@@ -27,10 +27,10 @@ use serde_json::json;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
-/// How long between health polls for an always-on service. Matches the shell's
-/// historical Plex-widget refresh cadence so behaviour is unchanged in volume,
-/// only in correctness.
-const POLL_INTERVAL: Duration = Duration::from_secs(60);
+/// How long between health polls for an always-on service. Kept in sync with the
+/// shell's Plex-widget refresh cadence (ServiceMonitor.dataIntervalMs) so a
+/// recovered service is reflected within one interval.
+const POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Standard probe timeouts. A health probe should fail *fast* — a hung server
 /// is "unreachable" for UX purposes well before a human would wait.

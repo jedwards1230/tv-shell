@@ -115,7 +115,7 @@ ColumnLayout {
         id: plexMon
         healthKey: "plex"
         dataCommand: "plex-hubs"
-        dataIntervalMs: 60000
+        dataIntervalMs: 30000  // matches daemon service_health POLL_INTERVAL
         onUpdated: {
             if (plexMon.ok && plexMon.data) {
                 root.onDeckItems = plexMon.data.onDeck || [];
