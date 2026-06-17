@@ -39,6 +39,18 @@ FocusScope {
         Qt.callLater(_focusCurrentLevel);
     }
 
+    // Entry point for a deep-link routed by SettingsPanel (e.g. the demoted
+    // "moonlight"/"streaming" slug → Moonlight ▸ Manage servers). Sets the full
+    // nav stack so the B-back ladder unwinds servers → config → list correctly.
+    function applyDeepTarget(t) {
+        if (t === "moonlight-servers") {
+            _lastListId = "moonlight";
+            _activeWidget = "moonlight";
+            _showServers = true;
+            Qt.callLater(_focusCurrentLevel);
+        }
+    }
+
     function _openWidget(id) {
         _showServers = false;
         _activeWidget = id;

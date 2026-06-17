@@ -125,15 +125,10 @@ Rectangle {
                 component: avControlComp
             }
         ];
-        let provider = StreamProviders.active;
-        if (provider.settingsComponent)
-            s.push({
-                id: provider.id || "streaming",
-                name: provider.displayName,
-                iconSource: "icons/moonlight.svg",
-                fallback: "\u{1F319}",
-                component: provider.settingsComponent
-            });
+        // Streaming/Moonlight server management is demoted out of the sidebar —
+        // it now lives under Settings ▸ Widgets ▸ Moonlight ▸ Manage servers.
+        // Deep-links to "moonlight"/"streaming" are rerouted there in
+        // openSectionById() so existing MCP/intent automation keeps working.
         s.push({
             id: "widgets",
             name: "Widgets",
@@ -175,11 +170,21 @@ Rectangle {
         }
     }
 
+    // A deep target to apply once the opened section's page has loaded — used to
+    // route a "moonlight"/"streaming" deep-link onto Widgets ▸ Moonlight ▸ servers
+    // now that streaming has no sidebar entry of its own. "" = no deep target.
+    property string _pendingDeep: ""
+
     Timer {
         id: focusTimer
         interval: 50
         onTriggered: {
-            sidebarList.forceActiveFocus();
+            if (root._pendingDeep !== "" && contentLoader.item && contentLoader.item.applyDeepTarget) {
+                contentLoader.item.applyDeepTarget(root._pendingDeep);
+                root._pendingDeep = "";
+            } else {
+                sidebarList.forceActiveFocus();
+            }
         }
     }
 
@@ -507,10 +512,14 @@ Rectangle {
             currentSection = idx;
             sidebarList.currentIndex = idx;
             contentFlick.contentY = 0;
-            // Move focus straight to the sidebar and return — the root is a plain
-            // Rectangle (not a FocusScope), so a trailing root.forceActiveFocus()
-            // would steal focus back from the sidebar in the already-visible case.
-            sidebarList.forceActiveFocus();
+            // With a deep target pending, let the page load then apply it (which
+            // pulls focus into the page); otherwise focus the sidebar. The root is
+            // a plain Rectangle (not a FocusScope), so a trailing
+            // root.forceActiveFocus() would steal focus back in the visible case.
+            if (root._pendingDeep !== "")
+                focusTimer.restart();
+            else
+                sidebarList.forceActiveFocus();
             return;
         }
         _pendingSection = idx;
@@ -519,12 +528,20 @@ Rectangle {
     }
 
     function openSectionById(id) {
+        // Streaming/Moonlight is demoted out of the sidebar — reroute its
+        // deep-links onto Widgets ▸ Moonlight ▸ Manage servers.
+        let target = id;
+        if (id === "moonlight" || id === "streaming") {
+            target = "widgets";
+            _pendingDeep = "moonlight-servers";
+        }
         for (let i = 0; i < sections.length; i++) {
-            if (sections[i].id === id) {
+            if (sections[i].id === target) {
                 openSection(i);
                 return true;
             }
         }
+        _pendingDeep = "";
         return false;
     }
 
