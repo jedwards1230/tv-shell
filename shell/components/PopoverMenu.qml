@@ -11,7 +11,6 @@ FocusScope {
     property bool opened: false
 
     // Optional footer hint, e.g. "A: Use   X: Set default". Shown when non-empty.
-    property string secondaryHint: ""
 
     property real targetX: 0
     property real targetY: 0
@@ -82,6 +81,19 @@ FocusScope {
                         }
                     }
 
+                    // Group separator: a thin line at the top edge marks the start
+                    // of a new group (e.g. profiles below the stream controls).
+                    Rectangle {
+                        visible: modelData.dividerBefore === true
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: 6
+                        anchors.rightMargin: 6
+                        height: 1
+                        color: Theme.surfaceBorder
+                    }
+
                     Text {
                         anchors.centerIn: parent
                         text: modelData.label
@@ -100,12 +112,15 @@ FocusScope {
                 }
             }
 
+            // Footer hint reflects the SELECTED item (per-item `hint`), so e.g.
+            // "X: Set default" shows only on profile rows, not on Resume/Quit.
             Text {
-                visible: root.secondaryHint !== ""
+                readonly property string _selHint: (root._selectedIndex >= 0 && root._selectedIndex < root.actions.length && root.actions[root._selectedIndex] && root.actions[root._selectedIndex].hint) ? root.actions[root._selectedIndex].hint : ""
+                visible: _selHint !== ""
                 width: menuColumn.width
                 horizontalAlignment: Text.AlignHCenter
                 topPadding: Units.spacingSM
-                text: root.secondaryHint
+                text: _selHint
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
             }

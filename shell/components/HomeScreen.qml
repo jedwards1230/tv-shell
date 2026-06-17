@@ -772,35 +772,42 @@ FocusScope {
         popoverMenu.targetY = pos.y;
 
         let actions = [];
-        // Stream controls first. Offered whenever the host is reachable (not just
-        // when a session is detected) — a stream left running suspends in the
-        // background and the Sunshine session probe can't always see it, so this
-        // is the reliable way to resume or quit it. Resume re-streams (Moonlight
-        // resumes an existing session); Quit Stream ends it.
+        // Group 1 — stream controls (app function). Offered whenever the host is
+        // reachable (not just when a session is detected) — a stream left running
+        // suspends in the background and the Sunshine session probe can't always
+        // see it, so this is the reliable way to resume or quit it. Resume
+        // re-streams (Moonlight resumes an existing session); Quit Stream ends it.
+        // Per-item `hint` keeps the footer correct (no "X: Set default" here).
+        let hasControls = false;
         if (moonlightWidget.currentOnline) {
             actions.push({
                 label: "Resume",
+                hint: "A: Resume",
                 action: function () {
                     root.streamRequested(target);
                 }
             });
             actions.push({
                 label: "Quit Stream",
+                hint: "A: Quit Stream",
                 action: function () {
                     root.streamQuitRequested(target);
                 }
             });
+            hasControls = true;
         }
-        // Profile picker — stream a SPECIFIC app on this host. Each entry clones
-        // the host target and overrides `.app` (same pattern as the Library apps
-        // view); `hostApps` is filled by the provider's `moonlight list`. A on the
-        // card streams the host default; this is how you pick a different profile.
+        // Group 2 — profile picker (active profile). Each entry clones the host
+        // target and overrides `.app` (same pattern as the Library apps view);
+        // `hostApps` is filled by the provider's `moonlight list`. `dividerBefore`
+        // on the first profile draws the line between the two groups.
         let host = target.host || "";
         let apps = (StreamProviders.active.hostApps && StreamProviders.active.hostApps[host]) ? StreamProviders.active.hostApps[host] : [];
         for (let i = 0; i < apps.length; i++) {
             let appName = apps[i];
             actions.push({
                 label: (appName === target.app ? "● " : "") + appName,
+                hint: "A: Stream   X: Set default",
+                dividerBefore: i === 0 && hasControls,
                 // A: stream this profile now (one-off).
                 action: function () {
                     let t = JSON.parse(JSON.stringify(target));
@@ -818,12 +825,13 @@ FocusScope {
                 }
             });
         }
-        popoverMenu.secondaryHint = apps.length > 0 ? "A: Stream   X: Set default" : "";
         if (apps.length === 0) {
             // Not discovered yet (or host offline): offer the default launch and
             // kick discovery so the next open lists the profiles.
             actions.push({
                 label: "Stream " + (target.app || "Desktop"),
+                hint: "A: Stream",
+                dividerBefore: hasControls,
                 action: function () {
                     root.streamRequested(target);
                 }
@@ -860,7 +868,6 @@ FocusScope {
         id: popoverMenu
         onClosed: {
             popoverMenu.opened = false;
-            popoverMenu.secondaryHint = "";
             root._focusFirstVisibleRow();
         }
     }
