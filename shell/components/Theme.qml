@@ -6,9 +6,6 @@ Item {
     // "auto" (time-based), "light", "dark"
     readonly property string themeMode: SettingsStore.themeMode
 
-    // === Moonlight View Mode (persisted via SettingsStore) ===
-    // "servers" (one card per host) or "apps" (one row per host, cards = apps)
-
     // === Input Mode ===
     // true when mouse/right-stick is driving focus, false for controller/D-pad.
     //
