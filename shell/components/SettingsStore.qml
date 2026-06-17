@@ -10,7 +10,7 @@ import QtQuick
 // Process children to do socket I/O.
 //
 // Ownership: the input daemon is the SOLE writer of settings.json. This store
-// holds the QML-relevant keys (themeMode, streamingViewMode, controllerDebug,
+// holds the QML-relevant keys (themeMode, controllerDebug,
 // rumbleEnabled) and hands them to the daemon via `set-config`; the daemon does
 // the
 // read-modify-write, preserving foreign keys it owns (notably keyBindings).
@@ -35,7 +35,6 @@ Item {
     property string themeMode: "dark"             // "auto" | "light" | "dark"
     property int autoThemeDarkStart: 20           // hour (0-23) "auto" flips to dark (#231)
     property int autoThemeLightStart: 7           // hour (0-23) "auto" flips to light (#231)
-    property string streamingViewMode: "servers"  // "servers" | "apps"
     property bool controllerDebug: false
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
     property bool reduceMotion: false             // suppress animations (#109)
@@ -96,11 +95,6 @@ Item {
                     store.autoThemeDarkStart = obj.autoThemeDarkStart;
                 if (typeof obj.autoThemeLightStart === "number" && obj.autoThemeLightStart >= 0 && obj.autoThemeLightStart <= 23)
                     store.autoThemeLightStart = obj.autoThemeLightStart;
-                // Migration: prefer streamingViewMode, fall back to the
-                // legacy moonlightViewMode key for existing settings files.
-                var viewMode = obj.streamingViewMode !== undefined ? obj.streamingViewMode : obj.moonlightViewMode;
-                if (viewMode === "servers" || viewMode === "apps")
-                    store.streamingViewMode = viewMode;
                 if (typeof obj.controllerDebug === "boolean")
                     store.controllerDebug = obj.controllerDebug;
                 if (typeof obj.rumbleEnabled === "boolean")
@@ -172,8 +166,7 @@ Item {
     // The daemon does the read-modify-write, preserving foreign keys (notably
     // daemon-owned keyBindings). The JSON body is built with JSON.stringify and
     // passed as argv to python (not interpolated into the source), so app/enum
-    // values can never break the command string. `moonlightViewMode:null` drops
-    // the legacy key, matching the previous behavior.
+    // values can never break the command string.
     SocketClient {
         id: saveProc
     }
@@ -186,7 +179,6 @@ Item {
             "themeMode": store.themeMode,
             "autoThemeDarkStart": store.autoThemeDarkStart,
             "autoThemeLightStart": store.autoThemeLightStart,
-            "streamingViewMode": store.streamingViewMode,
             "controllerDebug": store.controllerDebug,
             "rumbleEnabled": store.rumbleEnabled,
             "reduceMotion": store.reduceMotion,
@@ -215,8 +207,7 @@ Item {
             "cecFocusOnWake": store.cecFocusOnWake,
             "cecAutoSwitchOnPowerOn": store.cecAutoSwitchOnPowerOn,
             "cecDefaultInput": store.cecDefaultInput,
-            "cecDeviceNames": store.cecDeviceNames,
-            "moonlightViewMode": null
+            "cecDeviceNames": store.cecDeviceNames
         });
         saveProc.request("set-config", body);
     }
@@ -238,13 +229,6 @@ Item {
     function setAutoThemeLightStart(hour) {
         if (hour >= 0 && hour <= 23) {
             autoThemeLightStart = hour;
-            save();
-        }
-    }
-
-    function setStreamingViewMode(mode) {
-        if (mode === "servers" || mode === "apps") {
-            streamingViewMode = mode;
             save();
         }
     }
