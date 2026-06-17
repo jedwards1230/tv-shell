@@ -1,0 +1,198 @@
+import QtQuick
+import QtQuick.Layouts
+import "lib"
+
+// Horizontal chip strip for the home Plex widget (#249). Implements the home-tile
+// focus contract (visible / regionFocused / focusFirstChild) and walks
+// previousRow/nextRow via forceActiveFocus like NavigableRow, so it slots into
+// HomeScreen's _contentRegions() chain and skips hidden neighbours.
+//
+// Two chip kinds coexist in one strip:
+//   • FILTER chips (segments) — Left/Right moves onto one and applies it LIVE
+//     (emits filterChanged); the active filter is `currentIndex` and gets the
+//     crimson "selected" fill.
+//   • ACTION chips (`action: true`) — Left/Right merely focuses them (the active
+//     filter is untouched); A/Return fires `actionTriggered(value)`. They never
+//     become the "selected" filter and take a distinct EMBER focus fill so they
+//     read as a button, not a segment.
+// Focus position (`_focusIndex`) is tracked separately from the selected filter
+// (`currentIndex`) precisely so an action chip can be focused without dropping
+// the active segment.
+FocusScope {
+    id: root
+
+    property var previousRow: null
+    property var nextRow: null
+
+    // [{ label, value, action?: bool }] — value is opaque, handed back via
+    // filterChanged (filter chips) or actionTriggered (action chips).
+    property var options: []
+    // The selected FILTER index (drives the crimson fill). Action chips are
+    // skipped by this; callers bind it to the active segment.
+    property int currentIndex: 0
+
+    signal filterChanged(var value)
+    signal actionTriggered(var value)
+    signal escaped
+
+    // Which chip the D-pad is on. Initialised to the selected filter so entering
+    // the strip lands on the active segment, not a stale action chip.
+    property int _focusIndex: 0
+
+    // === Home-tile focus contract ===
+    readonly property bool regionFocused: activeFocus
+
+    function focusFirstChild() {
+        if (!visible)
+            return false;
+        root._focusIndex = root.currentIndex;
+        forceActiveFocus();
+        return true;
+    }
+
+    implicitWidth: chipRow.implicitWidth
+    implicitHeight: chipRow.implicitHeight
+    Layout.preferredWidth: chipRow.implicitWidth
+    Layout.preferredHeight: chipRow.implicitHeight
+
+    function _isAction(i) {
+        return i >= 0 && i < options.length && options[i].action === true;
+    }
+
+    // Move focus onto chip i. Landing on a filter applies it live; landing on an
+    // action only moves focus (the selected segment is preserved).
+    function _moveTo(i) {
+        if (i < 0 || i >= options.length)
+            return;
+        root._focusIndex = i;
+        if (!root._isAction(i)) {
+            root.currentIndex = i;
+            root.filterChanged(options[i].value);
+        }
+    }
+
+    function _activate() {
+        if (root._isAction(root._focusIndex))
+            root.actionTriggered(options[root._focusIndex].value);
+    }
+
+    Keys.onPressed: event => {
+        switch (event.key) {
+        case Qt.Key_Left:
+            Theme.exitMouseMode();
+            if (root._focusIndex > 0)
+                root._moveTo(root._focusIndex - 1);
+            event.accepted = true;
+            break;
+        case Qt.Key_Right:
+            Theme.exitMouseMode();
+            if (root._focusIndex < root.options.length - 1)
+                root._moveTo(root._focusIndex + 1);
+            event.accepted = true;
+            break;
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            Theme.exitMouseMode();
+            root._activate();
+            event.accepted = true;
+            break;
+        case Qt.Key_Up:
+            Theme.exitMouseMode();
+            {
+                var up = root.previousRow;
+                while (up) {
+                    if (up.visible) {
+                        up.forceActiveFocus();
+                        event.accepted = true;
+                        break;
+                    }
+                    up = (up.previousRow !== undefined) ? up.previousRow : null;
+                }
+            }
+            break;
+        case Qt.Key_Down:
+            Theme.exitMouseMode();
+            {
+                var dn = root.nextRow;
+                while (dn) {
+                    if (dn.visible) {
+                        dn.forceActiveFocus();
+                        event.accepted = true;
+                        break;
+                    }
+                    dn = (dn.nextRow !== undefined) ? dn.nextRow : null;
+                }
+            }
+            break;
+        case Qt.Key_Escape:
+        case Qt.Key_B:
+            if (event.key === Qt.Key_B && event.modifiers)
+                break;
+            root.escaped();
+            event.accepted = true;
+            break;
+        }
+    }
+
+    RowLayout {
+        id: chipRow
+        spacing: Units.spacingMD
+
+        Repeater {
+            model: root.options
+
+            delegate: Rectangle {
+                id: chip
+                required property var modelData
+                required property int index
+                readonly property bool isAction: modelData.action === true
+                // Only filter chips can be the "selected" segment.
+                readonly property bool isCurrent: !isAction && index === root.currentIndex
+                readonly property bool isFocused: root.activeFocus && !Theme.mouseMode && index === root._focusIndex
+
+                implicitWidth: chipLabel.implicitWidth + Units.spacingLG * 2
+                implicitHeight: chipLabel.implicitHeight + Units.spacingSM * 2
+                radius: height / 2
+                // Action chips read as buttons: ember focus fill (palette's
+                // secondary-interactive colour), not the segment crimson.
+                color: isAction ? (isFocused ? Theme.ember : Theme.surface) : (isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface)
+                border.width: isFocused ? Units.borderMedium : Units.borderThin
+                border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 150
+                    }
+                }
+
+                Text {
+                    id: chipLabel
+                    anchors.centerIn: parent
+                    text: chip.modelData.label
+                    font.pixelSize: Theme.fontBody
+                    font.bold: true
+                    color: (chip.isCurrent || (chip.isAction && chip.isFocused)) ? Theme.textOnDark : Theme.textPrimary
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onPositionChanged: mouse => {
+                        let p = mapToItem(null, mouse.x, mouse.y);
+                        Theme.pointerMoved(p.x, p.y);
+                    }
+                    onClicked: {
+                        Theme.enterMouseMode();
+                        root.forceActiveFocus();
+                        root._focusIndex = chip.index;
+                        if (chip.isAction)
+                            root.actionTriggered(chip.modelData.value);
+                        else
+                            root._moveTo(chip.index);
+                    }
+                }
+            }
+        }
+    }
+}

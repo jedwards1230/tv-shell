@@ -2,45 +2,35 @@ import QtQuick
 import QtQuick.Layouts
 import "lib"
 
-// Home-screen Plex widget (#plex-widget): two controller-navigable poster rows —
-// "On Deck" (continue-watching / up-next) and "Recently Added" — fed by the
-// daemon's `plex-hubs` IPC. The daemon owns the Plex server URL + token (from
-// its env) and bakes ready-to-load tokenized art URLs into the reply, so this
-// widget never sees a credential. It mirrors MediaWidget's role: it sits in the
-// home-screen vertical focus chain via previousRow/nextRow.
+// Home-screen Plex widget (#249) — ONE poster row with a segmented header that
+// flips between "Up Next" (continue-watching / On Deck) and "Recently Added"
+// (new arrivals), fed by the daemon's `plex-hubs` IPC. Apple-TV-style: a single
+// prominent row, not two stacked rows. The segment control appears only when
+// BOTH segments have content (otherwise the lone segment's name is just a
+// header). `size` reformats the row (not a scale):
+//   small  = poster-only rail (caption band removed) — glanceable
+//   medium = posters + title/subtitle captions + resume bars (default)
+// (A "large" featured-backdrop hero is a planned follow-up — it needs 16:9
+// backdrop art the daemon doesn't return yet.)
 //
-// Health-aware (service-health bus): a `ServiceMonitor` keyed on "plex" tracks
-// reachability from the daemon's health events, so the widget can tell three
-// states apart instead of one: unconfigured ⇒ collapse to zero height; reachable
-// with items ⇒ show the poster rows; reachable-but-empty ⇒ collapse; configured
-// but the server is down (`unreachable`/`error`) ⇒ show a graceful
-// `ServiceStatusNotice` rather than silently vanishing.
+// Health-aware: a `ServiceMonitor` keyed on "plex" collapses the widget when
+// unconfigured/empty and shows a graceful `ServiceStatusNotice` when the server
+// is down.
 //
-// Focus wiring contract (the host uses these): the two sub-rows are the real
-// focus targets. `firstRow`/`lastRow` resolve to the first/last *visible* row so
-// the host can point its neighbours at the right edge of the widget; the
-// internal chain (onDeckRow <-> recentRow) lets NavigableRow skip a hidden row.
+// Focus contract (host uses these): `firstRow`/`lastRow` resolve to the first/
+// last *visible* internal region (segment chips, poster row); the internal chain
+// lets NavigableRow/FilterChips skip a hidden region.
 ColumnLayout {
     id: root
 
-    // Outer vertical-chain neighbours (set by the host).
     property Item previousRow: null
     property Item nextRow: null
-
-    // Home-screen widget toggle (Settings ▸ Widgets). When false the widget is
-    // hidden and collapses to zero height.
     property bool widgetEnabled: true
-
-    // True while either poster row holds focus. The host's focus safety-net
-    // (_reanchorFocusIfNeeded) checks this so it doesn't yank focus back out of
-    // the Plex rows (they aren't NavigableRows it knows about directly).
-    readonly property bool rowFocused: onDeckRow.activeFocus || recentRow.activeFocus
+    // "small" | "medium" (large = future hero).
+    property string size: "medium"
 
     signal escaped
-    // A card was activated — the host opens the Plex app.
     signal openPlexRequested
-    // A sub-row took focus — the host scrolls it into view (the home Flickable
-    // doesn't auto-follow focus).
     signal ensureVisibleRequested(var item)
 
     spacing: Units.spacingMD
@@ -52,53 +42,75 @@ ColumnLayout {
     readonly property bool _hasOnDeck: onDeckItems.length > 0
     readonly property bool _hasRecent: recentItems.length > 0
 
-    // Show when configured: poster rows while healthy + non-empty, or the
-    // degraded notice while the server is down. Collapse to zero height when the
-    // widget is toggled off, Plex is unconfigured (`disabled`), or it's healthy
-    // but has nothing to show — keeping the home layout unchanged.
+    // === Segment (Up Next vs Recently Added) ===
+    property string _segment: "ondeck"
+    readonly property var _segmentOptions: {
+        let o = [];
+        if (_hasOnDeck)
+            o.push({
+                "label": "Up Next",
+                "value": "ondeck"
+            });
+        if (_hasRecent)
+            o.push({
+                "label": "Recently Added",
+                "value": "recent"
+            });
+        return o;
+    }
+    readonly property string _segmentName: _segment === "ondeck" ? "Up Next" : "Recently Added"
+    readonly property var _activeItems: _segment === "ondeck" ? onDeckItems : recentItems
+
+    // Chip strip = the present segments + a trailing "Open Plex" ACTION chip that
+    // launches the app directly (no row view of its own; distinct ember focus
+    // fill via FilterChips). Sentinel value is ignored by the segment handler.
+    readonly property string _openValue: "__open_plex__"
+    readonly property var _chipOptions: {
+        let o = root._segmentOptions.slice();
+        o.push({
+            "label": "Open Plex",
+            "value": root._openValue,
+            "action": true
+        });
+        return o;
+    }
+
+    readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
+
     visible: root.widgetEnabled && (plexMon.degraded || (plexMon.ok && (root._hasOnDeck || root._hasRecent)))
 
-    // First/last *visible* sub-row, for the host's neighbour wiring.
-    readonly property var firstRow: _hasOnDeck ? onDeckRow : recentRow
-    readonly property var lastRow: _hasRecent ? recentRow : onDeckRow
-
-    // === Home-tile focus contract (mirrors NavigableRow) ===
-    // `canFocus` is the load-bearing distinction the host needs: the widget can
-    // be `visible` yet hold NO focusable row — the degraded "server down" state
-    // shows only the (non-focusable) ServiceStatusNotice. Neighbours/helpers must
-    // treat that as "skip me", or pressing B would strand focus on an invisible
-    // poster row and the stick goes dead.
+    // === Home-tile focus contract ===
+    readonly property var firstRow: segmentChips
+    readonly property var lastRow: posterRow
     readonly property bool canFocus: visible && (root._hasOnDeck || root._hasRecent)
     readonly property bool regionFocused: rowFocused
 
     function focusFirstChild() {
         if (!root.canFocus)
             return false;
-        // canFocus already implies a visible firstRow (both derive from
-        // _hasOnDeck/_hasRecent), but validate explicitly so a future refactor
-        // can never land focus on an invisible poster row.
-        let row = root.firstRow;
-        if (row && row.visible) {
-            row.forceActiveFocus();
+        let r = root.firstRow;
+        if (r && r.visible) {
+            if (r.focusFirstChild)
+                r.focusFirstChild();
+            else
+                r.forceActiveFocus();
             return true;
         }
         return false;
     }
 
-    // === Poster geometry (shared by every card so rows align) ===
-    readonly property int posterW: Math.round(Theme.cardWidth * 0.62)
+    // === Poster geometry (reflow by size) ===
+    readonly property real _posterScale: root.size === "small" ? 0.50 : 0.62
+    readonly property bool _showCaption: root.size !== "small"
+    readonly property int posterW: Math.round(Theme.cardWidth * _posterScale)
     readonly property int posterH: Math.round(posterW * 1.5)
-    readonly property int plexRowHeight: posterH + Math.round(Theme.fontSmall * 1.4 + Theme.fontCaption * 1.4 + Units.spacingSM * 2)
+    readonly property int _captionBand: Math.round(Theme.fontSmall * 1.4 + Theme.fontCaption * 1.4 + Units.spacingSM * 2)
+    readonly property int plexRowHeight: posterH + (_showCaption ? _captionBand : 0)
 
     function refresh() {
         plexMon.refresh();
     }
 
-    // Health + data source. `healthKey: "plex"` adopts the daemon's broadcast
-    // health status; `dataCommand: "plex-hubs"` fetches the hubs (primed on
-    // start, refreshed every 60s while healthy, re-fetched on recovery). Items
-    // are cleared whenever Plex isn't `ok` so a transient outage hides the rows
-    // and surfaces the notice rather than showing stale posters.
     ServiceMonitor {
         id: plexMon
         healthKey: "plex"
@@ -112,71 +124,59 @@ ColumnLayout {
                 root.onDeckItems = [];
                 root.recentItems = [];
             }
+            // Keep the active segment on something that has content.
+            if (root._segment === "ondeck" && !root._hasOnDeck && root._hasRecent)
+                root._segment = "recent";
+            else if (root._segment === "recent" && !root._hasRecent && root._hasOnDeck)
+                root._segment = "ondeck";
         }
     }
 
-    // Graceful "server down" placeholder — visible only for unreachable/error.
     ServiceStatusNotice {
         Layout.fillWidth: true
         serviceName: "Plex"
         status: plexMon.status
     }
 
-    // === On Deck ===
-    Text {
-        visible: root._hasOnDeck
-        text: "On Deck"
-        font.pixelSize: Theme.fontTitle
-        font.bold: true
-        color: Theme.textPrimary
-    }
-
-    NavigableRow {
-        id: onDeckRow
-        visible: root._hasOnDeck
+    // === Header: segment chips + trailing "Open Plex" action chip ===
+    RowLayout {
         Layout.fillWidth: true
-        Layout.preferredHeight: root.plexRowHeight
-        keyNavigationWraps: true
-        previousRow: root.previousRow
-        nextRow: recentRow
-        model: root.onDeckItems
-        onActiveFocusChanged: if (activeFocus)
-            root.ensureVisibleRequested(this)
-        onActivated: root.openPlexRequested()
-        onEscaped: root.escaped()
+        visible: root._hasOnDeck || root._hasRecent
+        spacing: Units.spacingXL
 
-        delegate: PlexCard {
-            required property int index
-            required property var modelData
-            posterWidth: root.posterW
-            posterHeight: root.posterH
-            title: modelData.title || ""
-            subtitle: modelData.subtitle || ""
-            art: modelData.art || ""
-            progress: modelData.progress || 0
-            focus: index === onDeckRow.currentIndex
-            onActivated: root.openPlexRequested()
+        FilterChips {
+            id: segmentChips
+            Layout.alignment: Qt.AlignVCenter
+            options: root._chipOptions
+            currentIndex: {
+                for (var i = 0; i < root._segmentOptions.length; i++) {
+                    if (root._segmentOptions[i].value === root._segment)
+                        return i;
+                }
+                return 0;
+            }
+            previousRow: root.previousRow
+            nextRow: posterRow
+            onFilterChanged: value => root._segment = value
+            onActionTriggered: value => root.openPlexRequested()
+            onEscaped: root.escaped()
+        }
+
+        Item {
+            Layout.fillWidth: true
         }
     }
 
-    // === Recently Added ===
-    Text {
-        visible: root._hasRecent
-        text: "Recently Added"
-        font.pixelSize: Theme.fontTitle
-        font.bold: true
-        color: Theme.textPrimary
-    }
-
+    // === The one poster row (shows the active segment) ===
     NavigableRow {
-        id: recentRow
-        visible: root._hasRecent
+        id: posterRow
+        visible: root._activeItems.length > 0
         Layout.fillWidth: true
         Layout.preferredHeight: root.plexRowHeight
         keyNavigationWraps: true
-        previousRow: onDeckRow
+        previousRow: segmentChips
         nextRow: root.nextRow
-        model: root.recentItems
+        model: root._activeItems
         onActiveFocusChanged: if (activeFocus)
             root.ensureVisibleRequested(this)
         onActivated: root.openPlexRequested()
@@ -187,11 +187,12 @@ ColumnLayout {
             required property var modelData
             posterWidth: root.posterW
             posterHeight: root.posterH
+            showCaption: root._showCaption
             title: modelData.title || ""
             subtitle: modelData.subtitle || ""
             art: modelData.art || ""
             progress: modelData.progress || 0
-            focus: index === recentRow.currentIndex
+            focus: index === posterRow.currentIndex
             onActivated: root.openPlexRequested()
         }
     }

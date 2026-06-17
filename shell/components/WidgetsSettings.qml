@@ -2,70 +2,358 @@ import QtQuick
 import QtQuick.Layouts
 import "lib"
 
-// Widgets settings page — toggle home-screen widgets (the optional UI cards
-// shown above the app/streaming rows) on and off. Toggling only hides the UI
-// component; it has no effect on any background/prewarm behaviour.
-//
-// Spotify (Now Playing): when off, the active media player is no longer
-// represented by the widget, so it falls back to the home-screen running row
-// (the merged-model filter keys on the widget being visible).
-// Plex (On Deck / Recently Added): when off, the two poster rows are hidden.
+// Widgets settings page — standardized per-widget configuration (#249). Each
+// home widget is one bordered **card** grouping its controls together: a title
+// row (name + Enabled toggle), a description, and — only when enabled — a Size
+// selector. Cards are visually distinct (surface fill + border + consistent
+// internal padding) so the three widgets read as three groups, not a flat list.
+// Enable/size persist via SettingsStore; the home screen reads them via Theme.
 FocusScope {
     id: root
     implicitHeight: mainCol.implicitHeight + 2 * Theme.padding
 
     function focusFirst() {
-        spotifyScope.forceActiveFocus();
+        moonlightToggle.forceActiveFocus();
     }
+
+    readonly property var _sizeOptions: [
+        {
+            "label": "Small",
+            "value": "small"
+        },
+        {
+            "label": "Medium",
+            "value": "medium"
+        }
+    ]
+
+    readonly property int _cardPad: Units.spacingLG
 
     ColumnLayout {
         id: mainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
-        // === Now Playing (Spotify) ===
-        SectionHeader {
-            text: "Now Playing"
-        }
+        // ===== Moonlight =====
+        Rectangle {
+            Layout.fillWidth: true
+            radius: 16
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.surfaceBorder
+            implicitHeight: moonlightCol.implicitHeight + root._cardPad * 2
 
-        PreferenceRow {
-            label: "Show the Now Playing widget"
-            description: "Cover art, track info, and transport controls for the active media player. When off, the player appears in the Recent/running row instead."
+            ColumnLayout {
+                id: moonlightCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: root._cardPad
+                spacing: Units.spacingMD
 
-            FocusButton {
-                id: spotifyScope
-                KeyNavigation.down: plexScope
-                text: Theme.widgetSpotifyEnabled ? "Enabled" : "Disabled"
-                fillActive: Theme.widgetSpotifyEnabled
-                fillColor: Theme.sidebarActive
-                onActivated: SettingsStore.setWidgetSpotifyEnabled(!Theme.widgetSpotifyEnabled)
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Units.spacingMD
+
+                    Text {
+                        text: "Moonlight"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FocusButton {
+                        id: moonlightToggle
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Theme.widgetMoonlightEnabled ? "Enabled" : "Disabled"
+                        fillActive: Theme.widgetMoonlightEnabled
+                        fillColor: Theme.sidebarActive
+                        onActivated: SettingsStore.setWidgetMoonlightEnabled(!Theme.widgetMoonlightEnabled)
+                        KeyNavigation.down: Theme.widgetMoonlightEnabled ? moonlightSize : nowPlayingToggle
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Your Moonlight game-streaming servers — pick one to start streaming. Small = an icon-only online rail; Medium = cards with the server name. The full per-host app list still lives in All Apps."
+                    font.pixelSize: Theme.fontCaption
+                    color: Theme.textMuted
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Theme.widgetMoonlightEnabled
+                    spacing: Units.spacingLG
+
+                    Text {
+                        text: "Size"
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    SettingsButtonGroup {
+                        id: moonlightSize
+                        Layout.fillWidth: false
+                        Layout.alignment: Qt.AlignVCenter
+                        options: root._sizeOptions
+                        isCurrentOption: function (opt) {
+                            return opt.value === Theme.widgetMoonlightSize;
+                        }
+                        onValueSelected: opt => SettingsStore.setWidgetMoonlightSize(opt.value)
+                        KeyNavigation.up: moonlightToggle
+                        KeyNavigation.down: nowPlayingToggle
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
             }
         }
 
-        // Divider
+        // ===== Now Playing =====
         Rectangle {
             Layout.fillWidth: true
-            height: 1
-            color: Theme.surfaceBorder
+            radius: 16
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.surfaceBorder
+            implicitHeight: nowPlayingCol.implicitHeight + root._cardPad * 2
+
+            ColumnLayout {
+                id: nowPlayingCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: root._cardPad
+                spacing: Units.spacingMD
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Units.spacingMD
+
+                    Text {
+                        text: "Now Playing"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FocusButton {
+                        id: nowPlayingToggle
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Theme.widgetSpotifyEnabled ? "Enabled" : "Disabled"
+                        fillActive: Theme.widgetSpotifyEnabled
+                        fillColor: Theme.sidebarActive
+                        onActivated: SettingsStore.setWidgetSpotifyEnabled(!Theme.widgetSpotifyEnabled)
+                        KeyNavigation.up: Theme.widgetMoonlightEnabled ? moonlightSize : moonlightToggle
+                        KeyNavigation.down: Theme.widgetSpotifyEnabled ? nowPlayingSize : plexToggle
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Cover art, track info, and transport controls for the active media player. Small is a slim strip; Medium is a taller card with a progress bar. When off, the player appears in the Recent row instead."
+                    font.pixelSize: Theme.fontCaption
+                    color: Theme.textMuted
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Theme.widgetSpotifyEnabled
+                    spacing: Units.spacingLG
+
+                    Text {
+                        text: "Size"
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    SettingsButtonGroup {
+                        id: nowPlayingSize
+                        Layout.fillWidth: false
+                        Layout.alignment: Qt.AlignVCenter
+                        options: root._sizeOptions
+                        isCurrentOption: function (opt) {
+                            return opt.value === Theme.widgetSpotifySize;
+                        }
+                        onValueSelected: opt => SettingsStore.setWidgetSpotifySize(opt.value)
+                        KeyNavigation.up: nowPlayingToggle
+                        KeyNavigation.down: plexToggle
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+            }
         }
 
-        // === Plex ===
-        SectionHeader {
-            text: "Plex"
+        // ===== Plex =====
+        Rectangle {
+            Layout.fillWidth: true
+            radius: 16
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.surfaceBorder
+            implicitHeight: plexCol.implicitHeight + root._cardPad * 2
+
+            ColumnLayout {
+                id: plexCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: root._cardPad
+                spacing: Units.spacingMD
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Units.spacingMD
+
+                    Text {
+                        text: "Plex"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FocusButton {
+                        id: plexToggle
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Theme.widgetPlexEnabled ? "Enabled" : "Disabled"
+                        fillActive: Theme.widgetPlexEnabled
+                        fillColor: Theme.sidebarActive
+                        onActivated: SettingsStore.setWidgetPlexEnabled(!Theme.widgetPlexEnabled)
+                        KeyNavigation.up: Theme.widgetSpotifyEnabled ? nowPlayingSize : nowPlayingToggle
+                        KeyNavigation.down: Theme.widgetPlexEnabled ? plexSize : recentToggle
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Up Next (continue watching) and Recently Added in one row — flip between them, or jump straight into the Plex app, from the pills on the row. Small = a poster-only rail; Medium = posters with titles and resume bars."
+                    font.pixelSize: Theme.fontCaption
+                    color: Theme.textMuted
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Theme.widgetPlexEnabled
+                    spacing: Units.spacingLG
+
+                    Text {
+                        text: "Size"
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    SettingsButtonGroup {
+                        id: plexSize
+                        Layout.fillWidth: false
+                        Layout.alignment: Qt.AlignVCenter
+                        options: root._sizeOptions
+                        isCurrentOption: function (opt) {
+                            return opt.value === Theme.widgetPlexSize;
+                        }
+                        onValueSelected: opt => SettingsStore.setWidgetPlexSize(opt.value)
+                        KeyNavigation.up: plexToggle
+                        KeyNavigation.down: recentToggle
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+            }
         }
 
-        PreferenceRow {
-            label: "Show the Plex widget"
-            description: "On Deck (continue watching) and Recently Added poster rows from your Plex server."
+        // ===== Recent (apps) =====
+        Rectangle {
+            Layout.fillWidth: true
+            radius: 16
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.surfaceBorder
+            implicitHeight: recentCol.implicitHeight + root._cardPad * 2
 
-            FocusButton {
-                id: plexScope
-                KeyNavigation.up: spotifyScope
-                text: Theme.widgetPlexEnabled ? "Enabled" : "Disabled"
-                fillActive: Theme.widgetPlexEnabled
-                fillColor: Theme.sidebarActive
-                onActivated: SettingsStore.setWidgetPlexEnabled(!Theme.widgetPlexEnabled)
+            ColumnLayout {
+                id: recentCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: root._cardPad
+                spacing: Units.spacingMD
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Units.spacingMD
+
+                    Text {
+                        text: "Recent"
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FocusButton {
+                        id: recentToggle
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Theme.widgetRecentEnabled ? "Enabled" : "Disabled"
+                        fillActive: Theme.widgetRecentEnabled
+                        fillColor: Theme.sidebarActive
+                        onActivated: SettingsStore.setWidgetRecentEnabled(!Theme.widgetRecentEnabled)
+                        KeyNavigation.up: Theme.widgetPlexEnabled ? plexSize : plexToggle
+                        KeyNavigation.down: Theme.widgetRecentEnabled ? recentSize : recentToggle
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Running and recently-launched apps. Small = icon-only tiles; Medium = icon + name cards."
+                    font.pixelSize: Theme.fontCaption
+                    color: Theme.textMuted
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Theme.widgetRecentEnabled
+                    spacing: Units.spacingLG
+
+                    Text {
+                        text: "Size"
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    SettingsButtonGroup {
+                        id: recentSize
+                        Layout.fillWidth: false
+                        Layout.alignment: Qt.AlignVCenter
+                        options: root._sizeOptions
+                        isCurrentOption: function (opt) {
+                            return opt.value === Theme.widgetRecentSize;
+                        }
+                        onValueSelected: opt => SettingsStore.setWidgetRecentSize(opt.value)
+                        KeyNavigation.up: recentToggle
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
             }
         }
 

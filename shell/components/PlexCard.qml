@@ -16,6 +16,11 @@ Item {
     // 0..1 resume position; >0 paints the bottom progress bar.
     property real progress: 0
 
+    // Poster-only mode (small size): hide the title/subtitle caption band so the
+    // card collapses to just the poster (+ resume bar). The host row sizes itself
+    // to match. Title still feeds Accessible.name.
+    property bool showCaption: true
+
     // Poster geometry (set by the host row so all cards match).
     property int posterWidth: Math.round(Theme.cardWidth * 0.62)
     property int posterHeight: Math.round(posterWidth * 1.5)
@@ -25,7 +30,7 @@ Item {
     signal activated
 
     width: posterWidth
-    height: posterHeight + captionCol.implicitHeight + Units.spacingSM
+    height: posterHeight + (root.showCaption ? captionCol.implicitHeight + Units.spacingSM : 0)
 
     Accessible.role: Accessible.Button
     Accessible.name: root.title + (root.subtitle !== "" ? ", " + root.subtitle : "")
@@ -112,6 +117,7 @@ Item {
         // === Caption ===
         ColumnLayout {
             id: captionCol
+            visible: root.showCaption
             Layout.preferredWidth: root.posterWidth
             Layout.alignment: Qt.AlignHCenter
             spacing: 2

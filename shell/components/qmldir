@@ -39,6 +39,10 @@ Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
 PlexCard 1.0 PlexCard.qml
 PlexWidget 1.0 PlexWidget.qml
+NowPlayingStrip 1.0 NowPlayingStrip.qml
+MoonlightWidget 1.0 MoonlightWidget.qml
+FilterChips 1.0 FilterChips.qml
+LibraryScreen 1.0 LibraryScreen.qml
 WidgetsSettings 1.0 WidgetsSettings.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
 KeyBindingsSettings 1.0 KeyBindingsSettings.qml
