@@ -11,8 +11,13 @@ BaseCard {
     property string shellState: "idle"
     property bool hasActiveSession: false
     property string activeAppName: ""
+    // When true (home server cards), append the default profile (`target.app`)
+    // to the server name — e.g. "Desktop — Steam Big Picture" — so the card shows
+    // what A launches. Suppressed when the profile matches the name (no
+    // "Desktop — Desktop"). Per-app Library cards (appName set) are unaffected.
+    property bool showProfile: false
 
-    label: root.appName !== "" ? root.appName : (root.target.name || "Unknown")
+    label: root.appName !== "" ? root.appName : ((root.target.name || "Unknown") + (root.showProfile && root.target.app && root.target.app !== root.target.name ? " — " + root.target.app : ""))
 
     // activeAppName comes from the remote Sunshine server — sanitize before it
     // reaches the AT-SPI description: strip control chars and cap length so a

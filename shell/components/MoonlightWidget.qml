@@ -96,6 +96,7 @@ ColumnLayout {
             width: root._cardW
             height: Theme.cardHeight
             target: modelData
+            showProfile: !root._iconOnly
             shellState: root.shellState
             focus: index === serverRow.currentIndex
             onActivated: root.streamRequested(modelData)
