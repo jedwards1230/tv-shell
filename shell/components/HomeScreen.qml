@@ -772,9 +772,12 @@ FocusScope {
         popoverMenu.targetY = pos.y;
 
         let actions = [];
-        // Live-session controls first (A on the card resumes the default; these
-        // mirror that for an in-progress stream).
-        if (moonlightWidget.currentHasSession) {
+        // Stream controls first. Offered whenever the host is reachable (not just
+        // when a session is detected) — a stream left running suspends in the
+        // background and the Sunshine session probe can't always see it, so this
+        // is the reliable way to resume or quit it. Resume re-streams (Moonlight
+        // resumes an existing session); Quit Stream ends it.
+        if (moonlightWidget.currentOnline) {
             actions.push({
                 label: "Resume",
                 action: function () {
