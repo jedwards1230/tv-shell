@@ -172,6 +172,9 @@ ColumnLayout {
         id: posterRow
         visible: root._activeItems.length > 0
         Layout.fillWidth: true
+        // Extra breathing room between the chip strip and the posters (on top of
+        // the ColumnLayout spacing) so the pills don't crowd the row below.
+        Layout.topMargin: Units.spacingMD
         Layout.preferredHeight: root.plexRowHeight
         keyNavigationWraps: true
         previousRow: segmentChips

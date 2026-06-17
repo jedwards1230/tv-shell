@@ -39,6 +39,11 @@ FocusScope {
     // the strip lands on the active segment, not a stale action chip.
     property int _focusIndex: 0
 
+    // True while the D-pad cursor sits on an ACTION chip. Suppresses the
+    // selected-segment crimson fill so a focused action chip and the active
+    // segment are never both filled at once — only one chip fills at a time.
+    readonly property bool _actionFocused: activeFocus && !Theme.mouseMode && _isAction(_focusIndex)
+
     // === Home-tile focus contract ===
     readonly property bool regionFocused: activeFocus
 
@@ -149,13 +154,16 @@ FocusScope {
                 // Only filter chips can be the "selected" segment.
                 readonly property bool isCurrent: !isAction && index === root.currentIndex
                 readonly property bool isFocused: root.activeFocus && !Theme.mouseMode && index === root._focusIndex
+                // Crimson selected fill — hidden while the cursor is on an action
+                // chip so it and the focused action chip are never both filled.
+                readonly property bool showSelectedFill: isCurrent && !root._actionFocused
 
                 implicitWidth: chipLabel.implicitWidth + Units.spacingLG * 2
                 implicitHeight: chipLabel.implicitHeight + Units.spacingSM * 2
                 radius: height / 2
                 // Action chips read as buttons: ember focus fill (palette's
                 // secondary-interactive colour), not the segment crimson.
-                color: isAction ? (isFocused ? Theme.ember : Theme.surface) : (isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface)
+                color: isAction ? (isFocused ? Theme.ember : Theme.surface) : (showSelectedFill ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface)
                 border.width: isFocused ? Units.borderMedium : Units.borderThin
                 border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
@@ -171,7 +179,7 @@ FocusScope {
                     text: chip.modelData.label
                     font.pixelSize: Theme.fontBody
                     font.bold: true
-                    color: (chip.isCurrent || (chip.isAction && chip.isFocused)) ? Theme.textOnDark : Theme.textPrimary
+                    color: (chip.showSelectedFill || (chip.isAction && chip.isFocused)) ? Theme.textOnDark : Theme.textPrimary
                 }
 
                 MouseArea {
