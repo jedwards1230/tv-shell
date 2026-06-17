@@ -187,6 +187,32 @@ FocusScope {
                         }
                         onValueSelected: opt => SettingsStore.setWidgetSpotifySize(opt.value)
                         KeyNavigation.up: nowPlayingToggle
+                        KeyNavigation.down: nowPlayingHide
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Theme.widgetSpotifyEnabled
+                    spacing: Units.spacingLG
+
+                    Text {
+                        text: "Hide from Recent"
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    FocusButton {
+                        id: nowPlayingHide
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Theme.widgetSpotifyHideFromRecent ? "Hidden" : "Shown"
+                        fillActive: Theme.widgetSpotifyHideFromRecent
+                        fillColor: Theme.sidebarActive
+                        onActivated: SettingsStore.setWidgetSpotifyHideFromRecent(!Theme.widgetSpotifyHideFromRecent)
+                        KeyNavigation.up: nowPlayingSize
                         KeyNavigation.down: plexToggle
                     }
                     Item {
@@ -234,7 +260,7 @@ FocusScope {
                         fillActive: Theme.widgetPlexEnabled
                         fillColor: Theme.sidebarActive
                         onActivated: SettingsStore.setWidgetPlexEnabled(!Theme.widgetPlexEnabled)
-                        KeyNavigation.up: Theme.widgetSpotifyEnabled ? nowPlayingSize : nowPlayingToggle
+                        KeyNavigation.up: Theme.widgetSpotifyEnabled ? nowPlayingHide : nowPlayingToggle
                         KeyNavigation.down: Theme.widgetPlexEnabled ? plexSize : recentToggle
                     }
                 }
@@ -268,6 +294,32 @@ FocusScope {
                         }
                         onValueSelected: opt => SettingsStore.setWidgetPlexSize(opt.value)
                         KeyNavigation.up: plexToggle
+                        KeyNavigation.down: plexHide
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Theme.widgetPlexEnabled
+                    spacing: Units.spacingLG
+
+                    Text {
+                        text: "Hide from Recent"
+                        font.pixelSize: Theme.fontBody
+                        color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    FocusButton {
+                        id: plexHide
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Theme.widgetPlexHideFromRecent ? "Hidden" : "Shown"
+                        fillActive: Theme.widgetPlexHideFromRecent
+                        fillColor: Theme.sidebarActive
+                        onActivated: SettingsStore.setWidgetPlexHideFromRecent(!Theme.widgetPlexHideFromRecent)
+                        KeyNavigation.up: plexSize
                         KeyNavigation.down: recentToggle
                     }
                     Item {
@@ -315,7 +367,7 @@ FocusScope {
                         fillActive: Theme.widgetRecentEnabled
                         fillColor: Theme.sidebarActive
                         onActivated: SettingsStore.setWidgetRecentEnabled(!Theme.widgetRecentEnabled)
-                        KeyNavigation.up: Theme.widgetPlexEnabled ? plexSize : plexToggle
+                        KeyNavigation.up: Theme.widgetPlexEnabled ? plexHide : plexToggle
                         KeyNavigation.down: Theme.widgetRecentEnabled ? recentSize : recentToggle
                     }
                 }
