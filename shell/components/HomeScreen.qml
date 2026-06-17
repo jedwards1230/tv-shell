@@ -796,6 +796,10 @@ FocusScope {
                 secondaryAction: function () {
                     StreamProviders.active.setHostApp(target.host, appName);
                     NotificationManager.info("moonlight", "Default profile set", appName + " — A on the card now launches it");
+                    // Rebuild the (still-open) menu so the ● marker moves to the new
+                    // default live. Deferred so the targets binding chain (provider →
+                    // ShellLayout → widget → currentTarget) settles before the rebuild.
+                    Qt.callLater(root._moonlightContext);
                 }
             });
         }
