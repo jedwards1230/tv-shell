@@ -320,30 +320,6 @@ FocusScope {
         }
     }
 
-    // A labeled row: caption on the left, a control supplied by the caller.
-    component LabeledRow: RowLayout {
-        id: lr
-        property string caption: ""
-        default property alias body: bodyHolder.data
-        Layout.fillWidth: true
-        spacing: Units.spacingLG
-        Text {
-            text: lr.caption
-            font.pixelSize: Theme.fontBody
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignVCenter
-        }
-        Item {
-            id: bodyHolder
-            Layout.alignment: Qt.AlignVCenter
-            implicitWidth: childrenRect.width
-            implicitHeight: childrenRect.height
-        }
-        Item {
-            Layout.fillWidth: true
-        }
-    }
-
     Component {
         id: moonlightConfigComp
         ConfigPage {
@@ -362,15 +338,26 @@ FocusScope {
                 onActivated: SettingsStore.setWidgetMoonlightEnabled(!Theme.widgetMoonlightEnabled)
                 KeyNavigation.down: mSize
             }
-            LabeledRow {
-                caption: "Size"
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Units.spacingLG
+                Text {
+                    text: "Size"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 SettingsButtonGroup {
                     id: mSize
+                    Layout.alignment: Qt.AlignVCenter
                     options: root._sizeOptions
                     isCurrentOption: opt => opt.value === Theme.widgetMoonlightSize
                     onValueSelected: opt => SettingsStore.setWidgetMoonlightSize(opt.value)
                     KeyNavigation.up: mEnabled
                     KeyNavigation.down: mManage
+                }
+                Item {
+                    Layout.fillWidth: true
                 }
             }
             FocusButton {
@@ -401,26 +388,48 @@ FocusScope {
                 onActivated: SettingsStore.setWidgetSpotifyEnabled(!Theme.widgetSpotifyEnabled)
                 KeyNavigation.down: npSize
             }
-            LabeledRow {
-                caption: "Size"
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Units.spacingLG
+                Text {
+                    text: "Size"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 SettingsButtonGroup {
                     id: npSize
+                    Layout.alignment: Qt.AlignVCenter
                     options: root._sizeOptions
                     isCurrentOption: opt => opt.value === Theme.widgetSpotifySize
                     onValueSelected: opt => SettingsStore.setWidgetSpotifySize(opt.value)
                     KeyNavigation.up: npEnabled
                     KeyNavigation.down: npHide
                 }
+                Item {
+                    Layout.fillWidth: true
+                }
             }
-            LabeledRow {
-                caption: "Hide from Recent"
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Units.spacingLG
+                Text {
+                    text: "Hide from Recent"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 FocusButton {
                     id: npHide
+                    Layout.alignment: Qt.AlignVCenter
                     text: Theme.widgetSpotifyHideFromRecent ? "Hidden" : "Shown"
                     fillActive: Theme.widgetSpotifyHideFromRecent
                     fillColor: Theme.sidebarActive
                     onActivated: SettingsStore.setWidgetSpotifyHideFromRecent(!Theme.widgetSpotifyHideFromRecent)
                     KeyNavigation.up: npSize
+                }
+                Item {
+                    Layout.fillWidth: true
                 }
             }
         }
@@ -444,26 +453,48 @@ FocusScope {
                 onActivated: SettingsStore.setWidgetPlexEnabled(!Theme.widgetPlexEnabled)
                 KeyNavigation.down: pSize
             }
-            LabeledRow {
-                caption: "Size"
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Units.spacingLG
+                Text {
+                    text: "Size"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 SettingsButtonGroup {
                     id: pSize
+                    Layout.alignment: Qt.AlignVCenter
                     options: root._sizeOptions
                     isCurrentOption: opt => opt.value === Theme.widgetPlexSize
                     onValueSelected: opt => SettingsStore.setWidgetPlexSize(opt.value)
                     KeyNavigation.up: pEnabled
                     KeyNavigation.down: pHide
                 }
+                Item {
+                    Layout.fillWidth: true
+                }
             }
-            LabeledRow {
-                caption: "Hide from Recent"
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Units.spacingLG
+                Text {
+                    text: "Hide from Recent"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 FocusButton {
                     id: pHide
+                    Layout.alignment: Qt.AlignVCenter
                     text: Theme.widgetPlexHideFromRecent ? "Hidden" : "Shown"
                     fillActive: Theme.widgetPlexHideFromRecent
                     fillColor: Theme.sidebarActive
                     onActivated: SettingsStore.setWidgetPlexHideFromRecent(!Theme.widgetPlexHideFromRecent)
                     KeyNavigation.up: pSize
+                }
+                Item {
+                    Layout.fillWidth: true
                 }
             }
         }
@@ -487,14 +518,25 @@ FocusScope {
                 onActivated: SettingsStore.setWidgetRecentEnabled(!Theme.widgetRecentEnabled)
                 KeyNavigation.down: rSize
             }
-            LabeledRow {
-                caption: "Size"
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Units.spacingLG
+                Text {
+                    text: "Size"
+                    font.pixelSize: Theme.fontBody
+                    color: Theme.textSecondary
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 SettingsButtonGroup {
                     id: rSize
+                    Layout.alignment: Qt.AlignVCenter
                     options: root._sizeOptions
                     isCurrentOption: opt => opt.value === Theme.widgetRecentSize
                     onValueSelected: opt => SettingsStore.setWidgetRecentSize(opt.value)
                     KeyNavigation.up: rEnabled
+                }
+                Item {
+                    Layout.fillWidth: true
                 }
             }
         }
