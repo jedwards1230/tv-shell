@@ -450,7 +450,6 @@ ShellRoot {
                 runningAppClass: appLifecycle.runningAppClass
                 overlayDrawerOpen: root.overlayDrawerOpen
                 avSystemOn: avController.systemOn
-                avWaking: avController.waking
                 onApplicationsChanged: root._applications = applications
                 onStreamRequested: target => {
                     root.state = "launching";

@@ -10,7 +10,6 @@ FocusScope {
     property string runningAppClass: ""
     property bool overlayDrawerOpen: false
     property bool avSystemOn: false
-    property bool avWaking: false
 
     property var applications: AppDiscoveryManager.applications
     property var pads: []
@@ -483,14 +482,6 @@ FocusScope {
         Keys.onEscapePressed: {
             root.overlayDrawerClosed();
         }
-    }
-
-    // --- AV Wake Overlay ---
-    DimmedBackdrop {
-        visible: root.avWaking
-        z: 40
-        dimLevel: 0.7
-        message: "Waking AV System..."
     }
 
     Connections {
