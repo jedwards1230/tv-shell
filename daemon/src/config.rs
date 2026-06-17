@@ -50,8 +50,8 @@ pub const EV_REL: u16 = 0x02;
 // Gamepad buttons
 pub const BTN_SOUTH: u16 = 0x130; // BTN_A
 pub const BTN_EAST: u16 = 0x131; // BTN_B
-pub const BTN_NORTH: u16 = 0x133; // BTN_X (kernel) -> "Y" face
-pub const BTN_WEST: u16 = 0x134; // BTN_Y (kernel) -> "X" face
+pub const BTN_NORTH: u16 = 0x133; // BTN_X (kernel) -> "X" face
+pub const BTN_WEST: u16 = 0x134; // BTN_Y (kernel) -> "Y" face
 pub const BTN_TL: u16 = 0x136;
 pub const BTN_TR: u16 = 0x137;
 pub const BTN_TL2: u16 = 0x138;
@@ -73,6 +73,7 @@ pub const KEY_BACKSPACE: u16 = 14;
 pub const KEY_TAB: u16 = 15;
 pub const KEY_Q: u16 = 16;
 pub const KEY_A: u16 = 30;
+pub const KEY_X: u16 = 45;
 pub const KEY_ENTER: u16 = 28;
 pub const KEY_LEFTCTRL: u16 = 29;
 pub const KEY_LEFTSHIFT: u16 = 42;
@@ -166,8 +167,9 @@ pub struct Binding {
 /// Default bindings, in canonical order. `BTN_MODE` (Home) is intentionally
 /// absent: it is handled directly to broadcast `intent:home-tap`/`intent:home-hold`
 /// rather than mapped to a key (mapping `KEY_HOMEPAGE` would leak to focused
-/// apps). The legacy IPC doc lists a `drawer` action — that is stale; the
-/// Python daemon and the QML `remappableActions` both use exactly these four.
+/// apps). The legacy IPC doc lists a `drawer` action — that is stale. `altSelect`
+/// is the "Y" face (BTN_WEST) and `altAction` the "X" face (BTN_NORTH); the QML
+/// `remappableActions` mirrors this set.
 pub fn default_bindings() -> Vec<Binding> {
     vec![
         Binding {
@@ -182,7 +184,7 @@ pub fn default_bindings() -> Vec<Binding> {
         },
         Binding {
             action: "altSelect",
-            button: BTN_NORTH,
+            button: BTN_WEST,
             key: KEY_TAB,
         },
         Binding {
@@ -190,11 +192,21 @@ pub fn default_bindings() -> Vec<Binding> {
             button: BTN_START,
             key: KEY_ENTER,
         },
+        // Secondary face button ("X" face). The shell uses KEY_X as a per-context
+        // secondary action (e.g. the home Moonlight Y-menu "set default profile").
+        Binding {
+            action: "altAction",
+            button: BTN_NORTH,
+            key: KEY_X,
+        },
     ]
 }
 
 pub fn is_default_action(action: &str) -> bool {
-    matches!(action, "select" | "back" | "altSelect" | "confirm")
+    matches!(
+        action,
+        "select" | "back" | "altSelect" | "confirm" | "altAction"
+    )
 }
 
 /// Buttons that may be assigned to an action via `set-binding`.
@@ -262,8 +274,8 @@ pub fn button_display_name(code: u16) -> Option<&'static str> {
     Some(match code {
         BTN_SOUTH => "A",
         BTN_EAST => "B",
-        BTN_NORTH => "Y",
-        BTN_WEST => "X",
+        BTN_NORTH => "X",
+        BTN_WEST => "Y",
         BTN_TL => "LB",
         BTN_TR => "RB",
         BTN_TL2 => "LT",
@@ -829,10 +841,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_bindings_are_the_four_canonical_actions() {
+    fn default_bindings_are_the_canonical_actions() {
         let b = default_bindings();
         let actions: Vec<&str> = b.iter().map(|x| x.action).collect();
-        assert_eq!(actions, ["select", "back", "altSelect", "confirm"]);
+        assert_eq!(
+            actions,
+            ["select", "back", "altSelect", "confirm", "altAction"]
+        );
         // No `drawer`, BTN_MODE not bound.
         assert!(!b.iter().any(|x| x.button == BTN_MODE));
     }
@@ -900,7 +915,7 @@ mod tests {
         assert_eq!(by("select"), BTN_NORTH);
         assert_eq!(by("back"), BTN_TR);
         assert_eq!(by("confirm"), BTN_START); // unchanged (BTN_LEFT not remappable)
-        assert_eq!(by("altSelect"), BTN_NORTH); // default unchanged
+        assert_eq!(by("altSelect"), BTN_WEST); // default unchanged (Y face)
     }
 
     #[test]
@@ -925,7 +940,7 @@ mod tests {
         let out = build_settings_json(None, &default_bindings());
         assert_eq!(
             out,
-            r#"{"keyBindings":{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}}"#
+            r#"{"keyBindings":{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_WEST","confirm":"BTN_START","altAction":"BTN_NORTH"}}"#
         );
     }
 
@@ -1281,7 +1296,7 @@ mod tests {
         use std::collections::HashMap;
 
         let global = default_bindings();
-        // Default: select=BTN_SOUTH, back=BTN_EAST, altSelect=BTN_NORTH, confirm=BTN_START
+        // Default: select=BTN_SOUTH, back=BTN_EAST, altSelect=BTN_WEST, confirm=BTN_START, altAction=BTN_NORTH
 
         // No overrides: global mapping
         assert_eq!(
@@ -1292,8 +1307,18 @@ mod tests {
             resolve_button_key(&global, None, None, BTN_EAST),
             Some(KEY_ESC) // back -> Esc
         );
+        // altSelect lives on the "Y" face (BTN_WEST) -> Tab
+        assert_eq!(
+            resolve_button_key(&global, None, None, BTN_WEST),
+            Some(KEY_TAB)
+        );
+        // altAction lives on the "X" face (BTN_NORTH) -> KEY_X
+        assert_eq!(
+            resolve_button_key(&global, None, None, BTN_NORTH),
+            Some(KEY_X)
+        );
         // A button not assigned to any action -> None
-        assert_eq!(resolve_button_key(&global, None, None, BTN_WEST), None);
+        assert_eq!(resolve_button_key(&global, None, None, BTN_THUMBL), None);
 
         // Player override: remap select from BTN_SOUTH to BTN_TL (LB).
         // BTN_TL is remappable and not used by any default action.

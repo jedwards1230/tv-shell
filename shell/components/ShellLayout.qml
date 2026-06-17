@@ -534,7 +534,12 @@ FocusScope {
         property bool showingInput: false
 
         readonly property string currentInput: {
-            if (currentCombo !== "" && currentKeys !== "")
+            // A gamepad button and the key it synthesizes both surface here —
+            // currentCombo from the daemon `buttons:` stream, currentKeys from the
+            // Wayland Keys capture. When a face button's synthesized key isn't
+            // consumed by a focused handler (e.g. the X face → BTN "X" + KEY_X "X"),
+            // both panes read the same label; don't print it twice.
+            if (currentCombo !== "" && currentKeys !== "" && currentCombo !== currentKeys)
                 return currentCombo + " + " + currentKeys;
             return currentCombo !== "" ? currentCombo : currentKeys;
         }

@@ -4,8 +4,13 @@ import QtQuick.Layouts
 FocusScope {
     id: root
 
+    // Each action: { label, action, secondaryAction? }. `action` fires on A/Return
+    // (and closes); optional `secondaryAction` fires on the X face and keeps the
+    // menu open (e.g. "set default" without dismissing).
     property var actions: []
     property bool opened: false
+
+    // Optional footer hint, e.g. "A: Use   X: Set default". Shown when non-empty.
 
     property real targetX: 0
     property real targetY: 0
@@ -76,6 +81,19 @@ FocusScope {
                         }
                     }
 
+                    // Group separator: a thin line at the top edge marks the start
+                    // of a new group (e.g. profiles below the stream controls).
+                    Rectangle {
+                        visible: modelData.dividerBefore === true
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: 6
+                        anchors.rightMargin: 6
+                        height: 1
+                        color: Theme.surfaceBorder
+                    }
+
                     Text {
                         anchors.centerIn: parent
                         text: modelData.label
@@ -93,6 +111,19 @@ FocusScope {
                     }
                 }
             }
+
+            // Footer hint reflects the SELECTED item (per-item `hint`), so e.g.
+            // "X: Set default" shows only on profile rows, not on Resume/Quit.
+            Text {
+                readonly property string _selHint: (root._selectedIndex >= 0 && root._selectedIndex < root.actions.length && root.actions[root._selectedIndex] && root.actions[root._selectedIndex].hint) ? root.actions[root._selectedIndex].hint : ""
+                visible: _selHint !== ""
+                width: menuColumn.width
+                horizontalAlignment: Text.AlignHCenter
+                topPadding: Units.spacingSM
+                text: _selHint
+                font.pixelSize: Theme.fontHint
+                color: Theme.textMuted
+            }
         }
     }
 
@@ -100,6 +131,12 @@ FocusScope {
         if (idx >= 0 && idx < actions.length && actions[idx].action)
             actions[idx].action();
         root.closed();
+    }
+
+    // Fire an item's optional secondary (X) action WITHOUT closing the menu.
+    function _secondaryItem(idx) {
+        if (idx >= 0 && idx < actions.length && actions[idx].secondaryAction)
+            actions[idx].secondaryAction();
     }
 
     Keys.onUpPressed: {
@@ -116,5 +153,12 @@ FocusScope {
     Keys.onTabPressed: event => {
         root.closed();
         event.accepted = true;
+    }
+    // X face (daemon altAction → KEY_X) = the per-item secondary action.
+    Keys.onPressed: event => {
+        if (event.key === Qt.Key_X) {
+            root._secondaryItem(root._selectedIndex);
+            event.accepted = true;
+        }
     }
 }

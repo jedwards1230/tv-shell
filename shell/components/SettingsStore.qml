@@ -10,7 +10,7 @@ import QtQuick
 // Process children to do socket I/O.
 //
 // Ownership: the input daemon is the SOLE writer of settings.json. This store
-// holds the QML-relevant keys (themeMode, streamingViewMode, controllerDebug,
+// holds the QML-relevant keys (themeMode, controllerDebug,
 // rumbleEnabled) and hands them to the daemon via `set-config`; the daemon does
 // the
 // read-modify-write, preserving foreign keys it owns (notably keyBindings).
@@ -35,7 +35,6 @@ Item {
     property string themeMode: "dark"             // "auto" | "light" | "dark"
     property int autoThemeDarkStart: 20           // hour (0-23) "auto" flips to dark (#231)
     property int autoThemeLightStart: 7           // hour (0-23) "auto" flips to light (#231)
-    property string streamingViewMode: "servers"  // "servers" | "apps"
     property bool controllerDebug: false
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
     property bool reduceMotion: false             // suppress animations (#109)
@@ -44,8 +43,10 @@ Item {
     // running row (the merged-model filter keys on the widget being visible).
     property bool widgetSpotifyEnabled: true      // Now Playing (MPRIS) widget
     property string widgetSpotifySize: "medium"   // "small" (strip) | "medium" (card + progress)
+    property bool widgetSpotifyHideFromRecent: true // hide the active player's app from the Recent row
     property bool widgetPlexEnabled: true         // Plex (On Deck / Recently Added) widget
     property string widgetPlexSize: "medium"      // "small" (compact posters) | "medium"
+    property bool widgetPlexHideFromRecent: true  // hide the Plex app from the Recent row
     property bool widgetRecentEnabled: true       // Recent (running + recents app cards) widget
     property string widgetRecentSize: "medium"    // "small" (compact) | "medium" (full app cards)
     property bool widgetMoonlightEnabled: true    // Moonlight (servers rail → quick stream) widget
@@ -94,11 +95,6 @@ Item {
                     store.autoThemeDarkStart = obj.autoThemeDarkStart;
                 if (typeof obj.autoThemeLightStart === "number" && obj.autoThemeLightStart >= 0 && obj.autoThemeLightStart <= 23)
                     store.autoThemeLightStart = obj.autoThemeLightStart;
-                // Migration: prefer streamingViewMode, fall back to the
-                // legacy moonlightViewMode key for existing settings files.
-                var viewMode = obj.streamingViewMode !== undefined ? obj.streamingViewMode : obj.moonlightViewMode;
-                if (viewMode === "servers" || viewMode === "apps")
-                    store.streamingViewMode = viewMode;
                 if (typeof obj.controllerDebug === "boolean")
                     store.controllerDebug = obj.controllerDebug;
                 if (typeof obj.rumbleEnabled === "boolean")
@@ -109,10 +105,14 @@ Item {
                     store.widgetSpotifyEnabled = obj.widgetSpotifyEnabled;
                 if (typeof obj.widgetSpotifySize === "string")
                     store.widgetSpotifySize = obj.widgetSpotifySize;
+                if (typeof obj.widgetSpotifyHideFromRecent === "boolean")
+                    store.widgetSpotifyHideFromRecent = obj.widgetSpotifyHideFromRecent;
                 if (typeof obj.widgetPlexEnabled === "boolean")
                     store.widgetPlexEnabled = obj.widgetPlexEnabled;
                 if (typeof obj.widgetPlexSize === "string")
                     store.widgetPlexSize = obj.widgetPlexSize;
+                if (typeof obj.widgetPlexHideFromRecent === "boolean")
+                    store.widgetPlexHideFromRecent = obj.widgetPlexHideFromRecent;
                 if (typeof obj.widgetRecentEnabled === "boolean")
                     store.widgetRecentEnabled = obj.widgetRecentEnabled;
                 if (typeof obj.widgetRecentSize === "string")
@@ -166,8 +166,7 @@ Item {
     // The daemon does the read-modify-write, preserving foreign keys (notably
     // daemon-owned keyBindings). The JSON body is built with JSON.stringify and
     // passed as argv to python (not interpolated into the source), so app/enum
-    // values can never break the command string. `moonlightViewMode:null` drops
-    // the legacy key, matching the previous behavior.
+    // values can never break the command string.
     SocketClient {
         id: saveProc
     }
@@ -180,14 +179,15 @@ Item {
             "themeMode": store.themeMode,
             "autoThemeDarkStart": store.autoThemeDarkStart,
             "autoThemeLightStart": store.autoThemeLightStart,
-            "streamingViewMode": store.streamingViewMode,
             "controllerDebug": store.controllerDebug,
             "rumbleEnabled": store.rumbleEnabled,
             "reduceMotion": store.reduceMotion,
             "widgetSpotifyEnabled": store.widgetSpotifyEnabled,
             "widgetSpotifySize": store.widgetSpotifySize,
+            "widgetSpotifyHideFromRecent": store.widgetSpotifyHideFromRecent,
             "widgetPlexEnabled": store.widgetPlexEnabled,
             "widgetPlexSize": store.widgetPlexSize,
+            "widgetPlexHideFromRecent": store.widgetPlexHideFromRecent,
             "widgetRecentEnabled": store.widgetRecentEnabled,
             "widgetRecentSize": store.widgetRecentSize,
             "widgetMoonlightEnabled": store.widgetMoonlightEnabled,
@@ -207,8 +207,7 @@ Item {
             "cecFocusOnWake": store.cecFocusOnWake,
             "cecAutoSwitchOnPowerOn": store.cecAutoSwitchOnPowerOn,
             "cecDefaultInput": store.cecDefaultInput,
-            "cecDeviceNames": store.cecDeviceNames,
-            "moonlightViewMode": null
+            "cecDeviceNames": store.cecDeviceNames
         });
         saveProc.request("set-config", body);
     }
@@ -230,13 +229,6 @@ Item {
     function setAutoThemeLightStart(hour) {
         if (hour >= 0 && hour <= 23) {
             autoThemeLightStart = hour;
-            save();
-        }
-    }
-
-    function setStreamingViewMode(mode) {
-        if (mode === "servers" || mode === "apps") {
-            streamingViewMode = mode;
             save();
         }
     }
@@ -266,6 +258,11 @@ Item {
         save();
     }
 
+    function setWidgetSpotifyHideFromRecent(enabled) {
+        widgetSpotifyHideFromRecent = enabled;
+        save();
+    }
+
     function setWidgetPlexEnabled(enabled) {
         widgetPlexEnabled = enabled;
         save();
@@ -273,6 +270,11 @@ Item {
 
     function setWidgetPlexSize(size) {
         widgetPlexSize = size;
+        save();
+    }
+
+    function setWidgetPlexHideFromRecent(enabled) {
+        widgetPlexHideFromRecent = enabled;
         save();
     }
 

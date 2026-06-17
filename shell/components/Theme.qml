@@ -6,10 +6,6 @@ Item {
     // "auto" (time-based), "light", "dark"
     readonly property string themeMode: SettingsStore.themeMode
 
-    // === Moonlight View Mode (persisted via SettingsStore) ===
-    // "servers" (one card per host) or "apps" (one row per host, cards = apps)
-    readonly property string streamingViewMode: SettingsStore.streamingViewMode
-
     // === Input Mode ===
     // true when mouse/right-stick is driving focus, false for controller/D-pad.
     //
@@ -66,8 +62,10 @@ Item {
     // === Home-screen widget toggles (persisted via SettingsStore) ===
     readonly property bool widgetSpotifyEnabled: SettingsStore.widgetSpotifyEnabled
     readonly property string widgetSpotifySize: SettingsStore.widgetSpotifySize
+    readonly property bool widgetSpotifyHideFromRecent: SettingsStore.widgetSpotifyHideFromRecent
     readonly property bool widgetPlexEnabled: SettingsStore.widgetPlexEnabled
     readonly property string widgetPlexSize: SettingsStore.widgetPlexSize
+    readonly property bool widgetPlexHideFromRecent: SettingsStore.widgetPlexHideFromRecent
     readonly property bool widgetRecentEnabled: SettingsStore.widgetRecentEnabled
     readonly property string widgetRecentSize: SettingsStore.widgetRecentSize
     readonly property bool widgetMoonlightEnabled: SettingsStore.widgetMoonlightEnabled

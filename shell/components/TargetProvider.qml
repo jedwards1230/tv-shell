@@ -28,6 +28,10 @@ Item {
     function loadTargets() {
     }
 
+    // Persist a new default app for a host (no-op in the base/no-streaming mode).
+    function setHostApp(host, app) {
+    }
+
     // Discover available apps for every known host (populates hostApps).
     function discoverApps() {
     }

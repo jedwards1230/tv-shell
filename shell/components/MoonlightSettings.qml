@@ -409,10 +409,13 @@ FocusScope {
         }
     }
 
-    // viewModeRow is a RowLayout but has Keys handlers, so it is a valid focus
-    // target. Focus entry is driven by SettingsPanel via focusFirst() on Right.
+    // Focus entry is driven by SettingsPanel via focusFirst() on Right. The
+    // server list is the first focusable; fall back to the Add button when empty.
     function focusFirst() {
-        viewModeRow.forceActiveFocus();
+        if (serverList.count > 0)
+            serverList.forceActiveFocus();
+        else
+            addBtnScope.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -420,127 +423,6 @@ FocusScope {
         anchors.fill: parent
         anchors.margins: Theme.padding
         spacing: 32
-
-        // === Display Mode Toggle ===
-        SectionHeader {
-            text: "Display Mode"
-        }
-
-        RowLayout {
-            id: viewModeRow
-            Layout.alignment: Qt.AlignHCenter
-            spacing: 24
-
-            property int focusIndex: Theme.streamingViewMode === "apps" ? 1 : 0
-
-            Keys.onLeftPressed: event => {
-                // At the leftmost card, let Left bubble to SettingsPanel so it
-                // returns focus to the sidebar instead of being swallowed.
-                if (focusIndex > 0)
-                    focusIndex--;
-                else
-                    event.accepted = false;
-            }
-            Keys.onRightPressed: {
-                if (focusIndex < 1)
-                    focusIndex++;
-            }
-            Keys.onReturnPressed: {
-                SettingsStore.setStreamingViewMode(focusIndex === 0 ? "servers" : "apps");
-            }
-            Keys.onDownPressed: {
-                if (serverList.count > 0)
-                    serverList.forceActiveFocus();
-                else
-                    addBtnScope.forceActiveFocus();
-            }
-
-            Repeater {
-                model: [
-                    {
-                        id: "servers",
-                        label: "Servers",
-                        desc: "One card per host"
-                    },
-                    {
-                        id: "apps",
-                        label: "Apps",
-                        desc: "Per-host app rows"
-                    }
-                ]
-
-                Rectangle {
-                    required property var modelData
-                    required property int index
-                    width: 340
-                    height: 180
-                    radius: Theme.cardRadius
-                    color: Theme.surface
-                    border.width: Theme.streamingViewMode === modelData.id ? 3 : 2
-                    border.color: Theme.streamingViewMode === modelData.id ? Theme.focusBorder : (viewModeRow.focusIndex === index && viewModeRow.activeFocus ? Theme.focusBorder : Theme.surfaceBorder)
-
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 150
-                        }
-                    }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: parent.radius
-                        color: Theme.surfaceHover
-                        visible: viewModeRow.focusIndex === index && viewModeRow.activeFocus && Theme.streamingViewMode !== modelData.id
-                    }
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 24
-                        spacing: 8
-
-                        Item {
-                            Layout.fillHeight: true
-                        }
-
-                        Text {
-                            text: modelData.label
-                            font.pixelSize: Theme.fontBody
-                            font.bold: true
-                            color: Theme.textPrimary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-
-                        Text {
-                            text: modelData.desc
-                            font.pixelSize: Theme.fontCaption
-                            color: Theme.textSecondary
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-
-                        Item {
-                            Layout.fillHeight: true
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            viewModeRow.focusIndex = index;
-                            viewModeRow.forceActiveFocus();
-                            SettingsStore.setStreamingViewMode(modelData.id);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Divider
-        Rectangle {
-            Layout.fillWidth: true
-            height: 2
-            color: Theme.surfaceBorder
-        }
 
         SectionHeader {
             text: "Streaming Servers"
@@ -810,11 +692,13 @@ FocusScope {
                     actionCol++;
             }
 
-            Keys.onUpPressed: {
+            Keys.onUpPressed: event => {
+                // Server list is the top focusable now; let Up bubble to the
+                // SettingsPanel so it returns focus to the sidebar.
                 if (currentIndex > 0)
                     currentIndex--;
                 else
-                    viewModeRow.forceActiveFocus();
+                    event.accepted = false;
             }
 
             Keys.onDownPressed: {

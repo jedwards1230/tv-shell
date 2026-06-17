@@ -89,6 +89,33 @@ FocusScope {
 
     onRunningWindowsChanged: Qt.callLater(root._reanchorFocusIfNeeded)
 
+    // Pre-discover Moonlight apps so the home Y-menu profile picker is populated
+    // on the first press (the provider runs `moonlight list` per host). Re-run
+    // ONLY when the host SET changes — not when a target's `app` (default profile)
+    // changes via the Y-menu "set default". discoverApps() clears hostApps while
+    // it re-queries, so re-running it on our own setHostApp write would blank the
+    // picker mid-rebuild and collapse it to the empty-state fallback.
+    property string _discoveredHosts: ""
+    function _maybeDiscoverApps() {
+        let ts = StreamProviders.active.targets || [];
+        if (ts.length === 0)
+            return;
+        let hosts = ts.map(t => t.host).sort().join(",");
+        if (hosts === root._discoveredHosts)
+            return;
+        root._discoveredHosts = hosts;
+        StreamProviders.active.discoverApps();
+    }
+
+    Component.onCompleted: root._maybeDiscoverApps()
+
+    Connections {
+        target: StreamProviders.active
+        function onTargetsChanged() {
+            root._maybeDiscoverApps();
+        }
+    }
+
     function launchApp(app) {
         root.appLaunchRequested(app);
         RecentsTracker.recordLaunch(app);
@@ -192,6 +219,72 @@ FocusScope {
         });
     }
 
+    // === Data-driven widget catalog (#249 follow-up) ===
+    // One descriptor per home widget, pairing its identity + persisted config
+    // (enabled / size) with its live `region` and — for widgets that shadow a
+    // running window — a generalized `hideFromRecent` capability (matcher +
+    // user toggle). HomeScreen drives Recent-row suppression and the Widgets
+    // settings page from this list instead of bespoke per-widget code; adding a
+    // shadowing widget is just another descriptor entry. `configSurface` names
+    // a Settings deep-link target for widgets needing richer config (Moonlight
+    // server management). The focus chain (previousRow/nextRow) and
+    // _contentRegions() stay hand-wired by design — the descriptor is additive
+    // metadata, not a focus rewrite (the duck-typed walk is fragile; see #249).
+    readonly property var _widgets: [
+        {
+            "id": "moonlight",
+            "name": "Moonlight",
+            "region": moonlightWidget,
+            "enabled": Theme.widgetMoonlightEnabled,
+            "size": Theme.widgetMoonlightSize,
+            "hideFromRecent": null,
+            "configSurface": {
+                "settingsId": "moonlight"
+            }
+        },
+        {
+            "id": "nowplaying",
+            "name": "Now Playing",
+            "region": root._npActive,
+            "enabled": Theme.widgetSpotifyEnabled,
+            "size": Theme.widgetSpotifySize,
+            "hideFromRecent": {
+                "capable": true,
+                "enabled": Theme.widgetSpotifyHideFromRecent,
+                // true ⇒ this Recent entry is the player the widget represents.
+                "matches": function (e) {
+                    var np = root._npActive;
+                    return np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "") && root._entryIsActivePlayer(e, np.playerDesktopEntry, np.playerIdentity);
+                }
+            },
+            "configSurface": null
+        },
+        {
+            "id": "plex",
+            "name": "Plex",
+            "region": plexWidget,
+            "enabled": Theme.widgetPlexEnabled,
+            "size": Theme.widgetPlexSize,
+            "hideFromRecent": {
+                "capable": true,
+                "enabled": Theme.widgetPlexHideFromRecent,
+                "matches": function (e) {
+                    return plexWidget.visible && root._entryIsPlex(e);
+                }
+            },
+            "configSurface": null
+        },
+        {
+            "id": "recent",
+            "name": "Recent",
+            "region": recentRow,
+            "enabled": Theme.widgetRecentEnabled,
+            "size": Theme.widgetRecentSize,
+            "hideFromRecent": null,
+            "configSurface": null
+        }
+    ]
+
     // === Recent model (running windows + non-running recents) ===
     readonly property var _recentModel: {
         let running = root.runningWindows || [];
@@ -276,22 +369,19 @@ FocusScope {
             });
         }
 
-        // Hide the app the active Now-Playing widget already represents.
-        var np = root._npActive;
-        if (np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "")) {
-            let de = np.playerDesktopEntry;
-            let id = np.playerIdentity;
-            result = result.filter(function (e) {
-                return !root._entryIsActivePlayer(e, de, id);
-            });
-        }
-
-        // Hide the Plex app when the Plex widget is on-screen representing it
-        // (same idea as suppressing the active player above).
-        if (plexWidget.visible) {
-            result = result.filter(function (e) {
-                return !root._entryIsPlex(e);
-            });
+        // Hide apps that an on-screen widget already represents — generalized
+        // hide-from-Recent, driven by the widget descriptors. A descriptor opts
+        // in via hideFromRecent.capable and the user keeps it on via .enabled;
+        // .matches(entry) returns true for the entry to suppress.
+        let widgets = root._widgets;
+        for (let w = 0; w < widgets.length; w++) {
+            let h = widgets[w].hideFromRecent;
+            if (h && h.capable && h.enabled) {
+                let matches = h.matches;
+                result = result.filter(function (e) {
+                    return !matches(e);
+                });
+            }
         }
         return result;
     }
@@ -460,6 +550,8 @@ FocusScope {
                 }
                 onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
                 onContextRequested: root._mediaContext(nowPlayingStrip)
+                onActiveFocusChanged: if (activeFocus)
+                    scrollView.ensureVisible(this)
             }
 
             // === Now Playing — medium (card + progress) renderer ===
@@ -475,6 +567,8 @@ FocusScope {
                 }
                 onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
                 onContextRequested: root._mediaContext(nowPlayingCard)
+                onActiveFocusChanged: if (activeFocus)
+                    scrollView.ensureVisible(this)
             }
 
             // === Plex widget (On Deck + Recently Added + dynamic chips) ===
@@ -669,27 +763,82 @@ FocusScope {
     // Moonlight server context menu (Resume / Quit a live session). Mirrors the
     // Library's stream-card context behavior, positioned over the focused card.
     function _moonlightContext() {
-        if (!moonlightWidget.currentHasSession || !moonlightWidget.currentCard || !moonlightWidget.currentTarget)
-            return;
         let target = moonlightWidget.currentTarget;
         let card = moonlightWidget.currentCard;
+        if (!target || !card)
+            return;
         let pos = card.mapToItem(root, card.width / 2, 0);
         popoverMenu.targetX = pos.x;
         popoverMenu.targetY = pos.y;
-        popoverMenu.actions = [
-            {
+
+        let actions = [];
+        // Group 1 — stream controls (app function). Offered whenever the host is
+        // reachable (not just when a session is detected) — a stream left running
+        // suspends in the background and the Sunshine session probe can't always
+        // see it, so this is the reliable way to resume or quit it. Resume
+        // re-streams (Moonlight resumes an existing session); Quit Stream ends it.
+        // Per-item `hint` keeps the footer correct (no "X: Set default" here).
+        let hasControls = false;
+        if (moonlightWidget.currentOnline) {
+            actions.push({
                 label: "Resume",
+                hint: "A: Resume",
                 action: function () {
                     root.streamRequested(target);
                 }
-            },
-            {
+            });
+            actions.push({
                 label: "Quit Stream",
+                hint: "A: Quit Stream",
                 action: function () {
                     root.streamQuitRequested(target);
                 }
-            }
-        ];
+            });
+            hasControls = true;
+        }
+        // Group 2 — profile picker (active profile). Each entry clones the host
+        // target and overrides `.app` (same pattern as the Library apps view);
+        // `hostApps` is filled by the provider's `moonlight list`. `dividerBefore`
+        // on the first profile draws the line between the two groups.
+        let host = target.host || "";
+        let apps = (StreamProviders.active.hostApps && StreamProviders.active.hostApps[host]) ? StreamProviders.active.hostApps[host] : [];
+        for (let i = 0; i < apps.length; i++) {
+            let appName = apps[i];
+            actions.push({
+                label: (appName === target.app ? "● " : "") + appName,
+                hint: "A: Stream   X: Set default",
+                dividerBefore: i === 0 && hasControls,
+                // A: stream this profile now (one-off).
+                action: function () {
+                    let t = JSON.parse(JSON.stringify(target));
+                    t.app = appName;
+                    root.streamRequested(t);
+                },
+                // X: make this the host's default (what A on the card launches).
+                secondaryAction: function () {
+                    StreamProviders.active.setHostApp(target.host, appName);
+                    NotificationManager.info("moonlight", "Default profile set", appName + " — A on the card now launches it");
+                    // Rebuild the (still-open) menu so the ● marker moves to the new
+                    // default live. Deferred so the targets binding chain (provider →
+                    // ShellLayout → widget → currentTarget) settles before the rebuild.
+                    Qt.callLater(root._moonlightContext);
+                }
+            });
+        }
+        if (apps.length === 0) {
+            // Not discovered yet (or host offline): offer the default launch and
+            // kick discovery so the next open lists the profiles.
+            actions.push({
+                label: "Stream " + (target.app || "Desktop"),
+                hint: "A: Stream",
+                dividerBefore: hasControls,
+                action: function () {
+                    root.streamRequested(target);
+                }
+            });
+            StreamProviders.active.discoverApps();
+        }
+        popoverMenu.actions = actions;
         popoverMenu.opened = true;
         popoverMenu.forceActiveFocus();
     }

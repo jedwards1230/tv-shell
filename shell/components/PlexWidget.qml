@@ -115,7 +115,7 @@ ColumnLayout {
         id: plexMon
         healthKey: "plex"
         dataCommand: "plex-hubs"
-        dataIntervalMs: 60000
+        dataIntervalMs: 30000  // matches daemon service_health POLL_INTERVAL
         onUpdated: {
             if (plexMon.ok && plexMon.data) {
                 root.onDeckItems = plexMon.data.onDeck || [];
@@ -160,6 +160,10 @@ ColumnLayout {
             onFilterChanged: value => root._segment = value
             onActionTriggered: value => root.openPlexRequested()
             onEscaped: root.escaped()
+            // Defer so the Flickable geometry is settled (the widget may have been
+            // hidden — Plex down — and just re-revealed) before we scroll to it.
+            onActiveFocusChanged: if (activeFocus)
+                Qt.callLater(() => root.ensureVisibleRequested(segmentChips))
         }
 
         Item {
@@ -172,13 +176,16 @@ ColumnLayout {
         id: posterRow
         visible: root._activeItems.length > 0
         Layout.fillWidth: true
+        // Extra breathing room between the chip strip and the posters (on top of
+        // the ColumnLayout spacing) so the pills don't crowd the row below.
+        Layout.topMargin: Units.spacingMD
         Layout.preferredHeight: root.plexRowHeight
         keyNavigationWraps: true
         previousRow: segmentChips
         nextRow: root.nextRow
         model: root._activeItems
         onActiveFocusChanged: if (activeFocus)
-            root.ensureVisibleRequested(this)
+            Qt.callLater(() => root.ensureVisibleRequested(posterRow))
         onActivated: root.openPlexRequested()
         onEscaped: root.escaped()
 

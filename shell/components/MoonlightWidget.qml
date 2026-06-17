@@ -57,6 +57,11 @@ ColumnLayout {
     readonly property var currentTarget: (serverRow.currentIndex >= 0 && serverRow.currentIndex < root.targets.length) ? root.targets[serverRow.currentIndex] : null
     readonly property Item currentCard: serverRow.currentItem
     readonly property bool currentHasSession: serverRow.currentItem ? serverRow.currentItem.hasActiveSession === true : false
+    // Host reachable (ping). Used to gate the Resume/Quit stream controls: a
+    // stream left running suspends in the background, and the Sunshine session
+    // probe (currentHasSession) can't always see it, so "is the host up" is the
+    // reliable signal for offering stream management.
+    readonly property bool currentOnline: serverRow.currentItem ? serverRow.currentItem.isOnline === true : false
 
     function focusFirstChild() {
         if (!root.canFocus)
@@ -96,6 +101,7 @@ ColumnLayout {
             width: root._cardW
             height: Theme.cardHeight
             target: modelData
+            showProfile: !root._iconOnly
             shellState: root.shellState
             focus: index === serverRow.currentIndex
             onActivated: root.streamRequested(modelData)

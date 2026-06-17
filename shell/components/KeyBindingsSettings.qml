@@ -41,6 +41,13 @@ FocusScope {
             description: "Confirm / enter"
         },
         {
+            action: "altAction",
+            label: "Secondary Action",
+            keys: ["X"],
+            category: "Navigation",
+            description: "Context secondary (e.g. set default profile)"
+        },
+        {
             action: "up",
             label: "Navigate Up",
             keys: ["D-Pad Up"],
@@ -141,7 +148,7 @@ FocusScope {
     ]
 
     // Actions that can be remapped via daemon IPC
-    property var remappableActions: ["select", "back", "altSelect", "confirm"]
+    property var remappableActions: ["select", "back", "altSelect", "confirm", "altAction"]
 
     // Capture state
     property int editingIndex: -1
@@ -156,10 +163,10 @@ FocusScope {
             "BTN_GAMEPAD": "A",
             "BTN_EAST": "B",
             "BTN_B": "B",
-            "BTN_NORTH": "Y",
-            "BTN_X": "Y",
-            "BTN_WEST": "X",
-            "BTN_Y": "X",
+            "BTN_NORTH": "X",
+            "BTN_X": "X",
+            "BTN_WEST": "Y",
+            "BTN_Y": "Y",
             "BTN_TL": "LB",
             "BTN_TR": "RB",
             "BTN_SELECT": "Back",
@@ -173,8 +180,9 @@ FocusScope {
     property var defaultBindingMap: ({
             "select": "BTN_SOUTH",
             "back": "BTN_EAST",
-            "altSelect": "BTN_NORTH",
+            "altSelect": "BTN_WEST",
             "confirm": "BTN_START",
+            "altAction": "BTN_NORTH",
             "drawer": "BTN_MODE"
         })
 
