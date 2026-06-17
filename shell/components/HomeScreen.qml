@@ -154,6 +154,11 @@ FocusScope {
         root.launchApp(app);
     }
 
+    function _entryIsPlex(entry) {
+        var hay = ((entry.name || "") + " " + (entry.windowClass || "") + " " + (entry.exec || "")).toLowerCase();
+        return hay.indexOf("plex") !== -1;
+    }
+
     function openPlexApp() {
         var apps = AppDiscoveryManager.applications || [];
         for (var i = 0; i < apps.length; i++) {
@@ -278,6 +283,14 @@ FocusScope {
             let id = np.playerIdentity;
             result = result.filter(function (e) {
                 return !root._entryIsActivePlayer(e, de, id);
+            });
+        }
+
+        // Hide the Plex app when the Plex widget is on-screen representing it
+        // (same idea as suppressing the active player above).
+        if (plexWidget.visible) {
+            result = result.filter(function (e) {
+                return !root._entryIsPlex(e);
             });
         }
         return result;

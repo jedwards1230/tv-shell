@@ -2,25 +2,42 @@ import QtQuick
 import QtQuick.Layouts
 import "lib"
 
-// Horizontal filter-chip strip for the home "New on Plex" rail (#249). Unlike
-// the settings SettingsButtonGroup (declarative KeyNavigation), this implements
-// the home-tile focus contract (visible / regionFocused / focusFirstChild) and
-// walks previousRow/nextRow via forceActiveFocus like NavigableRow, so it slots
-// into HomeScreen's _contentRegions() chain and skips hidden neighbours.
-// Left/Right move the active chip and apply the filter live; Up/Down leave the
-// strip; B/Escape bubbles up.
+// Horizontal chip strip for the home Plex widget (#249). Implements the home-tile
+// focus contract (visible / regionFocused / focusFirstChild) and walks
+// previousRow/nextRow via forceActiveFocus like NavigableRow, so it slots into
+// HomeScreen's _contentRegions() chain and skips hidden neighbours.
+//
+// Two chip kinds coexist in one strip:
+//   • FILTER chips (segments) — Left/Right moves onto one and applies it LIVE
+//     (emits filterChanged); the active filter is `currentIndex` and gets the
+//     crimson "selected" fill.
+//   • ACTION chips (`action: true`) — Left/Right merely focuses them (the active
+//     filter is untouched); A/Return fires `actionTriggered(value)`. They never
+//     become the "selected" filter and take a distinct EMBER focus fill so they
+//     read as a button, not a segment.
+// Focus position (`_focusIndex`) is tracked separately from the selected filter
+// (`currentIndex`) precisely so an action chip can be focused without dropping
+// the active segment.
 FocusScope {
     id: root
 
     property var previousRow: null
     property var nextRow: null
 
-    // [{ label, value }] — value is opaque, handed back via filterChanged.
+    // [{ label, value, action?: bool }] — value is opaque, handed back via
+    // filterChanged (filter chips) or actionTriggered (action chips).
     property var options: []
+    // The selected FILTER index (drives the crimson fill). Action chips are
+    // skipped by this; callers bind it to the active segment.
     property int currentIndex: 0
 
     signal filterChanged(var value)
+    signal actionTriggered(var value)
     signal escaped
+
+    // Which chip the D-pad is on. Initialised to the selected filter so entering
+    // the strip lands on the active segment, not a stale action chip.
+    property int _focusIndex: 0
 
     // === Home-tile focus contract ===
     readonly property bool regionFocused: activeFocus
@@ -28,6 +45,7 @@ FocusScope {
     function focusFirstChild() {
         if (!visible)
             return false;
+        root._focusIndex = root.currentIndex;
         forceActiveFocus();
         return true;
     }
@@ -37,25 +55,45 @@ FocusScope {
     Layout.preferredWidth: chipRow.implicitWidth
     Layout.preferredHeight: chipRow.implicitHeight
 
-    function _select(i) {
+    function _isAction(i) {
+        return i >= 0 && i < options.length && options[i].action === true;
+    }
+
+    // Move focus onto chip i. Landing on a filter applies it live; landing on an
+    // action only moves focus (the selected segment is preserved).
+    function _moveTo(i) {
         if (i < 0 || i >= options.length)
             return;
-        root.currentIndex = i;
-        root.filterChanged(options[i].value);
+        root._focusIndex = i;
+        if (!root._isAction(i)) {
+            root.currentIndex = i;
+            root.filterChanged(options[i].value);
+        }
+    }
+
+    function _activate() {
+        if (root._isAction(root._focusIndex))
+            root.actionTriggered(options[root._focusIndex].value);
     }
 
     Keys.onPressed: event => {
         switch (event.key) {
         case Qt.Key_Left:
             Theme.exitMouseMode();
-            if (root.currentIndex > 0)
-                root._select(root.currentIndex - 1);
+            if (root._focusIndex > 0)
+                root._moveTo(root._focusIndex - 1);
             event.accepted = true;
             break;
         case Qt.Key_Right:
             Theme.exitMouseMode();
-            if (root.currentIndex < root.options.length - 1)
-                root._select(root.currentIndex + 1);
+            if (root._focusIndex < root.options.length - 1)
+                root._moveTo(root._focusIndex + 1);
+            event.accepted = true;
+            break;
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            Theme.exitMouseMode();
+            root._activate();
             event.accepted = true;
             break;
         case Qt.Key_Up:
@@ -107,13 +145,17 @@ FocusScope {
                 id: chip
                 required property var modelData
                 required property int index
-                readonly property bool isCurrent: index === root.currentIndex
-                readonly property bool isFocused: root.activeFocus && !Theme.mouseMode && index === root.currentIndex
+                readonly property bool isAction: modelData.action === true
+                // Only filter chips can be the "selected" segment.
+                readonly property bool isCurrent: !isAction && index === root.currentIndex
+                readonly property bool isFocused: root.activeFocus && !Theme.mouseMode && index === root._focusIndex
 
                 implicitWidth: chipLabel.implicitWidth + Units.spacingLG * 2
                 implicitHeight: chipLabel.implicitHeight + Units.spacingSM * 2
                 radius: height / 2
-                color: isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface
+                // Action chips read as buttons: ember focus fill (palette's
+                // secondary-interactive colour), not the segment crimson.
+                color: isAction ? (isFocused ? Theme.ember : Theme.surface) : (isCurrent ? Theme.sidebarActive : isFocused ? Theme.surfaceHover : Theme.surface)
                 border.width: isFocused ? Units.borderMedium : Units.borderThin
                 border.color: isFocused ? Theme.focusBorder : Theme.surfaceBorder
 
@@ -129,7 +171,7 @@ FocusScope {
                     text: chip.modelData.label
                     font.pixelSize: Theme.fontBody
                     font.bold: true
-                    color: chip.isCurrent ? Theme.textOnDark : Theme.textPrimary
+                    color: (chip.isCurrent || (chip.isAction && chip.isFocused)) ? Theme.textOnDark : Theme.textPrimary
                 }
 
                 MouseArea {
@@ -143,7 +185,11 @@ FocusScope {
                     onClicked: {
                         Theme.enterMouseMode();
                         root.forceActiveFocus();
-                        root._select(chip.index);
+                        root._focusIndex = chip.index;
+                        if (chip.isAction)
+                            root.actionTriggered(chip.modelData.value);
+                        else
+                            root._moveTo(chip.index);
                     }
                 }
             }

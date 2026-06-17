@@ -58,17 +58,29 @@ ColumnLayout {
             });
         return o;
     }
-    // Show the toggle only when there's a genuine choice (both segments present).
-    readonly property bool _showSegmentControl: _segmentOptions.length > 1
     readonly property string _segmentName: _segment === "ondeck" ? "Up Next" : "Recently Added"
     readonly property var _activeItems: _segment === "ondeck" ? onDeckItems : recentItems
+
+    // Chip strip = the present segments + a trailing "Open Plex" ACTION chip that
+    // launches the app directly (no row view of its own; distinct ember focus
+    // fill via FilterChips). Sentinel value is ignored by the segment handler.
+    readonly property string _openValue: "__open_plex__"
+    readonly property var _chipOptions: {
+        let o = root._segmentOptions.slice();
+        o.push({
+            "label": "Open Plex",
+            "value": root._openValue,
+            "action": true
+        });
+        return o;
+    }
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
     visible: root.widgetEnabled && (plexMon.degraded || (plexMon.ok && (root._hasOnDeck || root._hasRecent)))
 
     // === Home-tile focus contract ===
-    readonly property var firstRow: _showSegmentControl ? segmentChips : posterRow
+    readonly property var firstRow: segmentChips
     readonly property var lastRow: posterRow
     readonly property bool canFocus: visible && (root._hasOnDeck || root._hasRecent)
     readonly property bool regionFocused: rowFocused
@@ -126,28 +138,16 @@ ColumnLayout {
         status: plexMon.status
     }
 
-    // === Header: segment control (or single-segment label) ===
+    // === Header: segment chips + trailing "Open Plex" action chip ===
     RowLayout {
         Layout.fillWidth: true
         visible: root._hasOnDeck || root._hasRecent
         spacing: Units.spacingXL
 
-        // Single-segment header label (when only one segment has content).
-        Text {
-            visible: !root._showSegmentControl
-            text: root._segmentName
-            font.pixelSize: Theme.fontTitle
-            font.bold: true
-            color: Theme.textPrimary
-            Layout.alignment: Qt.AlignVCenter
-        }
-
-        // Segment toggle (Up Next | Recently Added) when both have content.
         FilterChips {
             id: segmentChips
-            visible: root._showSegmentControl
             Layout.alignment: Qt.AlignVCenter
-            options: root._segmentOptions
+            options: root._chipOptions
             currentIndex: {
                 for (var i = 0; i < root._segmentOptions.length; i++) {
                     if (root._segmentOptions[i].value === root._segment)
@@ -158,6 +158,7 @@ ColumnLayout {
             previousRow: root.previousRow
             nextRow: posterRow
             onFilterChanged: value => root._segment = value
+            onActionTriggered: value => root.openPlexRequested()
             onEscaped: root.escaped()
         }
 
@@ -173,7 +174,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: root.plexRowHeight
         keyNavigationWraps: true
-        previousRow: root._showSegmentControl ? segmentChips : root.previousRow
+        previousRow: segmentChips
         nextRow: root.nextRow
         model: root._activeItems
         onActiveFocusChanged: if (activeFocus)

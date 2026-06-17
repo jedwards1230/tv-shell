@@ -242,7 +242,7 @@ FocusScope {
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: "Up Next (continue watching) and Recently Added in one row — flip between them on the row itself. Small = a poster-only rail; Medium = posters with titles and resume bars."
+                    text: "Up Next (continue watching) and Recently Added in one row — flip between them, or jump straight into the Plex app, from the pills on the row. Small = a poster-only rail; Medium = posters with titles and resume bars."
                     font.pixelSize: Theme.fontCaption
                     color: Theme.textMuted
                 }
