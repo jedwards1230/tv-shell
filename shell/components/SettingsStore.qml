@@ -44,8 +44,10 @@ Item {
     // running row (the merged-model filter keys on the widget being visible).
     property bool widgetSpotifyEnabled: true      // Now Playing (MPRIS) widget
     property string widgetSpotifySize: "medium"   // "small" (strip) | "medium" (card + progress)
+    property bool widgetSpotifyHideFromRecent: true // hide the active player's app from the Recent row
     property bool widgetPlexEnabled: true         // Plex (On Deck / Recently Added) widget
     property string widgetPlexSize: "medium"      // "small" (compact posters) | "medium"
+    property bool widgetPlexHideFromRecent: true  // hide the Plex app from the Recent row
     property bool widgetRecentEnabled: true       // Recent (running + recents app cards) widget
     property string widgetRecentSize: "medium"    // "small" (compact) | "medium" (full app cards)
     property bool widgetMoonlightEnabled: true    // Moonlight (servers rail → quick stream) widget
@@ -109,10 +111,14 @@ Item {
                     store.widgetSpotifyEnabled = obj.widgetSpotifyEnabled;
                 if (typeof obj.widgetSpotifySize === "string")
                     store.widgetSpotifySize = obj.widgetSpotifySize;
+                if (typeof obj.widgetSpotifyHideFromRecent === "boolean")
+                    store.widgetSpotifyHideFromRecent = obj.widgetSpotifyHideFromRecent;
                 if (typeof obj.widgetPlexEnabled === "boolean")
                     store.widgetPlexEnabled = obj.widgetPlexEnabled;
                 if (typeof obj.widgetPlexSize === "string")
                     store.widgetPlexSize = obj.widgetPlexSize;
+                if (typeof obj.widgetPlexHideFromRecent === "boolean")
+                    store.widgetPlexHideFromRecent = obj.widgetPlexHideFromRecent;
                 if (typeof obj.widgetRecentEnabled === "boolean")
                     store.widgetRecentEnabled = obj.widgetRecentEnabled;
                 if (typeof obj.widgetRecentSize === "string")
@@ -186,8 +192,10 @@ Item {
             "reduceMotion": store.reduceMotion,
             "widgetSpotifyEnabled": store.widgetSpotifyEnabled,
             "widgetSpotifySize": store.widgetSpotifySize,
+            "widgetSpotifyHideFromRecent": store.widgetSpotifyHideFromRecent,
             "widgetPlexEnabled": store.widgetPlexEnabled,
             "widgetPlexSize": store.widgetPlexSize,
+            "widgetPlexHideFromRecent": store.widgetPlexHideFromRecent,
             "widgetRecentEnabled": store.widgetRecentEnabled,
             "widgetRecentSize": store.widgetRecentSize,
             "widgetMoonlightEnabled": store.widgetMoonlightEnabled,
@@ -266,6 +274,11 @@ Item {
         save();
     }
 
+    function setWidgetSpotifyHideFromRecent(enabled) {
+        widgetSpotifyHideFromRecent = enabled;
+        save();
+    }
+
     function setWidgetPlexEnabled(enabled) {
         widgetPlexEnabled = enabled;
         save();
@@ -273,6 +286,11 @@ Item {
 
     function setWidgetPlexSize(size) {
         widgetPlexSize = size;
+        save();
+    }
+
+    function setWidgetPlexHideFromRecent(enabled) {
+        widgetPlexHideFromRecent = enabled;
         save();
     }
 

@@ -192,6 +192,72 @@ FocusScope {
         });
     }
 
+    // === Data-driven widget catalog (#249 follow-up) ===
+    // One descriptor per home widget, pairing its identity + persisted config
+    // (enabled / size) with its live `region` and — for widgets that shadow a
+    // running window — a generalized `hideFromRecent` capability (matcher +
+    // user toggle). HomeScreen drives Recent-row suppression and the Widgets
+    // settings page from this list instead of bespoke per-widget code; adding a
+    // shadowing widget is just another descriptor entry. `configSurface` names
+    // a Settings deep-link target for widgets needing richer config (Moonlight
+    // server management). The focus chain (previousRow/nextRow) and
+    // _contentRegions() stay hand-wired by design — the descriptor is additive
+    // metadata, not a focus rewrite (the duck-typed walk is fragile; see #249).
+    readonly property var _widgets: [
+        {
+            "id": "moonlight",
+            "name": "Moonlight",
+            "region": moonlightWidget,
+            "enabled": Theme.widgetMoonlightEnabled,
+            "size": Theme.widgetMoonlightSize,
+            "hideFromRecent": null,
+            "configSurface": {
+                "settingsId": "moonlight"
+            }
+        },
+        {
+            "id": "nowplaying",
+            "name": "Now Playing",
+            "region": root._npActive,
+            "enabled": Theme.widgetSpotifyEnabled,
+            "size": Theme.widgetSpotifySize,
+            "hideFromRecent": {
+                "capable": true,
+                "enabled": Theme.widgetSpotifyHideFromRecent,
+                // true ⇒ this Recent entry is the player the widget represents.
+                "matches": function (e) {
+                    var np = root._npActive;
+                    return np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "") && root._entryIsActivePlayer(e, np.playerDesktopEntry, np.playerIdentity);
+                }
+            },
+            "configSurface": null
+        },
+        {
+            "id": "plex",
+            "name": "Plex",
+            "region": plexWidget,
+            "enabled": Theme.widgetPlexEnabled,
+            "size": Theme.widgetPlexSize,
+            "hideFromRecent": {
+                "capable": true,
+                "enabled": Theme.widgetPlexHideFromRecent,
+                "matches": function (e) {
+                    return plexWidget.visible && root._entryIsPlex(e);
+                }
+            },
+            "configSurface": null
+        },
+        {
+            "id": "recent",
+            "name": "Recent",
+            "region": recentRow,
+            "enabled": Theme.widgetRecentEnabled,
+            "size": Theme.widgetRecentSize,
+            "hideFromRecent": null,
+            "configSurface": null
+        }
+    ]
+
     // === Recent model (running windows + non-running recents) ===
     readonly property var _recentModel: {
         let running = root.runningWindows || [];
@@ -276,22 +342,19 @@ FocusScope {
             });
         }
 
-        // Hide the app the active Now-Playing widget already represents.
-        var np = root._npActive;
-        if (np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "")) {
-            let de = np.playerDesktopEntry;
-            let id = np.playerIdentity;
-            result = result.filter(function (e) {
-                return !root._entryIsActivePlayer(e, de, id);
-            });
-        }
-
-        // Hide the Plex app when the Plex widget is on-screen representing it
-        // (same idea as suppressing the active player above).
-        if (plexWidget.visible) {
-            result = result.filter(function (e) {
-                return !root._entryIsPlex(e);
-            });
+        // Hide apps that an on-screen widget already represents — generalized
+        // hide-from-Recent, driven by the widget descriptors. A descriptor opts
+        // in via hideFromRecent.capable and the user keeps it on via .enabled;
+        // .matches(entry) returns true for the entry to suppress.
+        let widgets = root._widgets;
+        for (let w = 0; w < widgets.length; w++) {
+            let h = widgets[w].hideFromRecent;
+            if (h && h.capable && h.enabled) {
+                let matches = h.matches;
+                result = result.filter(function (e) {
+                    return !matches(e);
+                });
+            }
         }
         return result;
     }

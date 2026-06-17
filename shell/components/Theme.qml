@@ -66,8 +66,10 @@ Item {
     // === Home-screen widget toggles (persisted via SettingsStore) ===
     readonly property bool widgetSpotifyEnabled: SettingsStore.widgetSpotifyEnabled
     readonly property string widgetSpotifySize: SettingsStore.widgetSpotifySize
+    readonly property bool widgetSpotifyHideFromRecent: SettingsStore.widgetSpotifyHideFromRecent
     readonly property bool widgetPlexEnabled: SettingsStore.widgetPlexEnabled
     readonly property string widgetPlexSize: SettingsStore.widgetPlexSize
+    readonly property bool widgetPlexHideFromRecent: SettingsStore.widgetPlexHideFromRecent
     readonly property bool widgetRecentEnabled: SettingsStore.widgetRecentEnabled
     readonly property string widgetRecentSize: SettingsStore.widgetRecentSize
     readonly property bool widgetMoonlightEnabled: SettingsStore.widgetMoonlightEnabled
