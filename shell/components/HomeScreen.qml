@@ -786,13 +786,20 @@ FocusScope {
             let appName = apps[i];
             actions.push({
                 label: (appName === target.app ? "● " : "") + appName,
+                // A: stream this profile now (one-off).
                 action: function () {
                     let t = JSON.parse(JSON.stringify(target));
                     t.app = appName;
                     root.streamRequested(t);
+                },
+                // X: make this the host's default (what A on the card launches).
+                secondaryAction: function () {
+                    StreamProviders.active.setHostApp(target.host, appName);
+                    NotificationManager.info("moonlight", "Default profile set", appName + " — A on the card now launches it");
                 }
             });
         }
+        popoverMenu.secondaryHint = apps.length > 0 ? "A: Stream   X: Set default" : "";
         if (apps.length === 0) {
             // Not discovered yet (or host offline): offer the default launch and
             // kick discovery so the next open lists the profiles.
@@ -834,6 +841,7 @@ FocusScope {
         id: popoverMenu
         onClosed: {
             popoverMenu.opened = false;
+            popoverMenu.secondaryHint = "";
             root._focusFirstVisibleRow();
         }
     }

@@ -160,8 +160,10 @@ ColumnLayout {
             onFilterChanged: value => root._segment = value
             onActionTriggered: value => root.openPlexRequested()
             onEscaped: root.escaped()
+            // Defer so the Flickable geometry is settled (the widget may have been
+            // hidden — Plex down — and just re-revealed) before we scroll to it.
             onActiveFocusChanged: if (activeFocus)
-                root.ensureVisibleRequested(this)
+                Qt.callLater(() => root.ensureVisibleRequested(segmentChips))
         }
 
         Item {
@@ -183,7 +185,7 @@ ColumnLayout {
         nextRow: root.nextRow
         model: root._activeItems
         onActiveFocusChanged: if (activeFocus)
-            root.ensureVisibleRequested(this)
+            Qt.callLater(() => root.ensureVisibleRequested(posterRow))
         onActivated: root.openPlexRequested()
         onEscaped: root.escaped()
 

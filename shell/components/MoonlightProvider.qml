@@ -19,6 +19,39 @@ TargetProvider {
         loadProc.running = true;
     }
 
+    // Persist a new default `app` for the target matching `host` (the home Y-menu
+    // "set default" / X action). Writes targets.json via tee + stdin so the value
+    // can never break out into a shell command (mirrors MoonlightSettings' write),
+    // then reloads so the home widget reflects the change. Local `targets` is
+    // updated optimistically so the ● default marker moves on the next open.
+    property string _pendingTargetsJson: "[]"
+    function setHostApp(host, app) {
+        let updated = JSON.parse(JSON.stringify(provider.targets));
+        let changed = false;
+        for (let i = 0; i < updated.length; i++) {
+            if (updated[i].host === host) {
+                updated[i].app = app;
+                changed = true;
+            }
+        }
+        if (!changed)
+            return;
+        provider.targets = updated;
+        provider._pendingTargetsJson = JSON.stringify(updated);
+        saveTargetsProc.running = true;
+    }
+
+    Process {
+        id: saveTargetsProc
+        stdinEnabled: true
+        command: ["tee", Paths.targetsPath]
+        onStarted: {
+            write(provider._pendingTargetsJson);
+            stdinEnabled = false; // close stdin -> tee writes the file and exits
+        }
+        onExited: provider.loadTargets()
+    }
+
     function buildLaunchArgs(target) {
         let args = ["env", "QT_QPA_PLATFORM=wayland", "LIBVA_DRIVER_NAME=radeonsi", "moonlight", "stream", target.host, target.app];
         if (target.resolution === "3840x2160")
