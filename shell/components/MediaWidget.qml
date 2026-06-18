@@ -210,16 +210,9 @@ MprisPlayerBase {
                         }
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 0;
                             if (root._canOpen)
                                 root.openAppRequested(root.playerDesktopEntry, root.playerIdentity);
@@ -262,16 +255,9 @@ MprisPlayerBase {
                         onPaint: root._paintSkip(getContext("2d"), width, height, iconColor, -1)
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 1;
                             if (root._canPrev)
                                 root.player.previous();
@@ -361,16 +347,9 @@ MprisPlayerBase {
                         }
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 2;
                             if (root._canToggle)
                                 root.player.togglePlaying();
@@ -413,16 +392,9 @@ MprisPlayerBase {
                         onPaint: root._paintSkip(getContext("2d"), width, height, iconColor, 1)
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 3;
                             if (root._canNext)
                                 root.player.next();
