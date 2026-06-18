@@ -5,9 +5,10 @@ import "../components/lib"
 
 // Widgets settings — list-first IA (controller-friendly). The page is a flat
 // list of widget rows (L0): one focus stop each, A toggles enable in place,
-// Right/X drills into that widget's config sub-page (L1: Size, Hide-from-Recent,
+// X drills into that widget's config sub-page (L1: Size, Hide-from-Recent,
 // and — Moonlight only — Manage servers, which drills into the embedded server
-// management surface at L2). Internal B steps back one level; only at the list
+// management surface at L2). Directional keys never drill — they move the
+// highlight only. Internal B steps back one level; only at the list
 // does B bubble to SettingsApp (→ sidebar → Home). This keeps the frequent
 // on/off task at one focus stop instead of scrolling past every widget's config.
 FocusScope {
@@ -143,9 +144,11 @@ FocusScope {
         Layout.fillWidth: true
         implicitHeight: 80
 
+        // A/Return quick-toggles enable; X opens the config sub-page. Right is
+        // deliberately NOT a drill — directional keys move the highlight only, so
+        // the cursor can't chain into a sub-view by accident (B backs out a level).
         Keys.onReturnPressed: rowScope.toggled()
         Keys.onEnterPressed: rowScope.toggled()
-        Keys.onRightPressed: rowScope.drilled()
         Keys.onPressed: event => {
             if (event.key === Qt.Key_X && !event.modifiers) {
                 rowScope.drilled();
@@ -383,8 +386,9 @@ FocusScope {
             FocusButton {
                 id: mManage
                 text: "Manage servers  ›"
+                // A/Return opens it; Right is not a drill (directional moves the
+                // highlight only — consistent with the widget list above).
                 onActivated: root._openServers()
-                Keys.onRightPressed: root._openServers()
                 KeyNavigation.up: mSize
             }
         }

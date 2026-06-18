@@ -237,10 +237,12 @@ Rectangle {
                 anchors.fill: parent
                 spacing: 0
 
-                // Settings title — plain text, no colored bar
+                // Settings title — plain text, no colored bar.
+                // Layout.preferredHeight (not bare height) — a bare `height` is
+                // ignored inside a ColumnLayout, collapsing the title to zero.
                 Item {
                     Layout.fillWidth: true
-                    height: Theme.statusBarHeight
+                    Layout.preferredHeight: Theme.statusBarHeight
 
                     Text {
                         anchors.left: parent.left
