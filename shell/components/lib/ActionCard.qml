@@ -32,7 +32,7 @@ FocusScope {
 
     signal activated
 
-    implicitWidth: 340
+    implicitWidth: Math.round(Units.gridUnit * 6.3)
     implicitHeight: 120
 
     activeFocusOnTab: true

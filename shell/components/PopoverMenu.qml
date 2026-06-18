@@ -41,7 +41,7 @@ FocusScope {
 
     Rectangle {
         id: menuPanel
-        width: 300
+        width: Math.round(Units.gridUnit * 5.56)
         height: menuColumn.implicitHeight + 16
         radius: Theme.cardRadius
         color: Theme.surface
@@ -71,7 +71,7 @@ FocusScope {
                     required property var modelData
                     required property int index
                     width: menuColumn.width
-                    height: 52
+                    height: Math.round(Units.gridUnit * 0.96)
                     radius: 10
                     color: index === root._selectedIndex ? Theme.surfaceHover : "transparent"
 
