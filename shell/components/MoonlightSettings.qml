@@ -409,7 +409,7 @@ FocusScope {
         }
     }
 
-    // Focus entry is driven by SettingsPanel via focusFirst() on Right. The
+    // Focus entry is driven by SettingsApp via focusFirst() on Right. The
     // server list is the first focusable; fall back to the Add button when empty.
     function focusFirst() {
         if (serverList.count > 0)
@@ -694,7 +694,7 @@ FocusScope {
 
             Keys.onUpPressed: event => {
                 // Server list is the top focusable now; let Up bubble to the
-                // SettingsPanel so it returns focus to the sidebar.
+                // SettingsApp so it returns focus to the sidebar.
                 if (currentIndex > 0)
                     currentIndex--;
                 else

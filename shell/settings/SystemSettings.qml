@@ -3,7 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
-import "lib"
+import "../components"
+import "../components/lib"
 
 // System/About page (#128): displays OS, kernel, hostname, and uptime, plus a
 // storage free-space readout (folded in from the former standalone Storage

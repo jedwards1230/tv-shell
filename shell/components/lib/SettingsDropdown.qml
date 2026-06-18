@@ -15,7 +15,7 @@ import "../"
 //       KeyNavigation.down: siblingBelow
 //   }
 //
-// The component is a FocusScope so SettingsPanel's Flickable scroll-follow
+// The component is a FocusScope so SettingsApp's Flickable scroll-follow
 // (which tracks activeFocusItem) continues to work.  The internal ListView
 // does NOT fill the height — it clips to the expanding FocusScope so there
 // is no inner scroll viewport breaking the outer one.

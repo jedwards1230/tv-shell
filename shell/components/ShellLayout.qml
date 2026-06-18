@@ -1,5 +1,6 @@
 import Quickshell.Io
 import QtQuick
+import "../settings"
 
 FocusScope {
     id: root
@@ -15,7 +16,7 @@ FocusScope {
     property var pads: []
     property alias homeScreen: homeScreen
     property alias libraryScreen: libraryScreen
-    property alias settingsPanel: settingsPanel
+    property alias settingsApp: settingsApp
     property alias navDrawer: navDrawer
     property alias overlay: overlay
     property alias notificationCenter: notificationCenter
@@ -54,7 +55,7 @@ FocusScope {
     // recentsRow.forceActiveFocus() is called inside focusDefaultPosition().
     function focusDefaultPosition() {
         Qt.callLater(function () {
-            if (!homeScreen.visible || settingsPanel.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened || sessionQam.opened)
+            if (!homeScreen.visible || settingsApp.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened || sessionQam.opened)
                 return;
             homeScreen.forceActiveFocus();
             homeScreen.focusDefaultPosition();
@@ -184,7 +185,7 @@ FocusScope {
         visible: root.shellState === "idle" && !libraryScreen.visible
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !libraryScreen.visible && !settingsPanel.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
+        focus: root.shellState === "idle" && !libraryScreen.visible && !settingsApp.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
 
         runningWindows: root.runningWindows
         pads: root.pads
@@ -199,10 +200,7 @@ FocusScope {
             libraryScreen.forceActiveFocus();
             libraryScreen.focusDefaultPosition();
         }
-        onSettingsRequested: {
-            settingsPanel.visible = true;
-            settingsPanel.forceActiveFocus();
-        }
+        onSettingsRequested: settingsApp.open()
         onNetworkRequested: anchorRect => networkOverlay.openAt(anchorRect)
         onVolumeRequested: anchorRect => volumeOverlay.openAt(anchorRect)
         onNotificationCenterRequested: {
@@ -225,7 +223,7 @@ FocusScope {
     // === Library (secondary browse surface, #249) ===
     // Full app + streaming catalog, opened from the home "All Apps" entry. Sits
     // over the home screen (which hides while it's visible); B/Escape closes it
-    // and returns focus to home (SettingsPanel-style lifecycle).
+    // and returns focus to home (SettingsApp-style lifecycle).
     LibraryScreen {
         id: libraryScreen
         anchors.fill: parent
@@ -269,11 +267,11 @@ FocusScope {
         }
     }
 
-    SettingsPanel {
-        id: settingsPanel
+    SettingsApp {
+        id: settingsApp
         anchors.fill: parent
         onClosed: {
-            settingsPanel.visible = false;
+            settingsApp.close();
             homeFocusTimer.restart();
         }
     }
@@ -295,7 +293,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsPanel.visible || libraryScreen.visible)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsApp.visible || libraryScreen.visible)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -317,8 +315,7 @@ FocusScope {
         visible: root.shellState === "idle"
         onSettingsRequested: {
             navDrawer.opened = false;
-            settingsPanel.visible = true;
-            settingsPanel.forceActiveFocus();
+            settingsApp.open();
         }
         onNotificationCenterRequested: {
             navDrawer.opened = false;
@@ -339,7 +336,7 @@ FocusScope {
         }
         onHomeSelected: {
             navDrawer.opened = false;
-            settingsPanel.visible = false;
+            settingsApp.close();
             homeFocusTimer.restart();
         }
         onClosed: {
@@ -450,8 +447,7 @@ FocusScope {
             onSettingsRequested: {
                 root.overlayDrawerClosed();
                 root.returnToShellRequested();
-                settingsPanel.visible = true;
-                settingsPanel.forceActiveFocus();
+                settingsApp.open();
             }
             onNotificationCenterRequested: {
                 root.returnToShellRequested();

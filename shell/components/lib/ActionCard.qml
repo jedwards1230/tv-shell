@@ -5,7 +5,7 @@ import "../"
 // Colored-fill action card used in PowerSettings (Sleep/Restart/Shutdown)
 // and AVControlSettings (Wake AV/Sleep AV/Switch Input). 7× duplication.
 //
-// Root MUST be FocusScope so SettingsPanel scroll-follow works.
+// Root MUST be FocusScope so SettingsApp scroll-follow works.
 // KeyNavigation wiring stays at the call site — the component cannot
 // encapsulate cross-sibling navigation.
 //

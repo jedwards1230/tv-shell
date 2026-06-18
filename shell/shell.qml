@@ -183,8 +183,7 @@ ShellRoot {
         onIntentSettings: {
             root.userActivityDetected();
             if (root.state === "idle" && root._layout) {
-                root._layout.settingsPanel.visible = true;
-                root._layout.settingsPanel.forceActiveFocus();
+                root._layout.settingsApp.open();
             }
         }
         onIntentPower: {
@@ -200,7 +199,7 @@ ShellRoot {
         onIntentSettingsPage: page => {
             root.userActivityDetected();
             if (root.state === "idle" && root._layout) {
-                let ok = root._layout.settingsPanel.openSectionById(page);
+                let ok = root._layout.settingsApp.openPage(page);
                 if (!ok)
                     console.log("shell: unknown settings page deep-link:", page);
             }
@@ -362,7 +361,7 @@ ShellRoot {
             root._layout.overlay.hide();
             root._layout.sessionDialog.opened = false;
             root._layout.navDrawer.opened = false;
-            root._layout.settingsPanel.visible = false;
+            root._layout.settingsApp.close();
             root._layout.notificationCenter.opened = false;
             root._layout.powerOverlay.opened = false;
             root._layout.focusHome();
@@ -377,7 +376,7 @@ ShellRoot {
         launchOverlayTimeout.stop();
         if (root._layout) {
             root._layout.overlay.hide();
-            root._layout.settingsPanel.visible = false;
+            root._layout.settingsApp.close();
             root._layout.powerOverlay.opened = false;
             root._layout.focusHome();
         }
@@ -397,7 +396,7 @@ ShellRoot {
             root.returnToShell();
         } else if (root.state === "idle" && root._layout) {
             root._layout.navDrawer.opened = false;
-            root._layout.settingsPanel.visible = false;
+            root._layout.settingsApp.close();
             root._layout.notificationCenter.opened = false;
             root._layout.powerOverlay.opened = false;
             root._layout.focusHome();

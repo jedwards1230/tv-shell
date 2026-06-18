@@ -1,13 +1,14 @@
 import QtQuick
 import QtQuick.Layouts
-import "lib"
+import "../components"
+import "../components/lib"
 
 // Widgets settings — list-first IA (controller-friendly). The page is a flat
 // list of widget rows (L0): one focus stop each, A toggles enable in place,
 // Right/X drills into that widget's config sub-page (L1: Size, Hide-from-Recent,
 // and — Moonlight only — Manage servers, which drills into the embedded server
 // management surface at L2). Internal B steps back one level; only at the list
-// does B bubble to SettingsPanel (→ sidebar → Home). This keeps the frequent
+// does B bubble to SettingsApp (→ sidebar → Home). This keeps the frequent
 // on/off task at one focus stop instead of scrolling past every widget's config.
 FocusScope {
     id: root
@@ -31,7 +32,7 @@ FocusScope {
         }
     ]
 
-    // SettingsPanel calls this on section entry (Right from sidebar). Always
+    // SettingsApp calls this on section entry (Right from sidebar). Always
     // reset to the list level so re-entry is predictable.
     function focusFirst() {
         _activeWidget = "";
@@ -39,7 +40,7 @@ FocusScope {
         Qt.callLater(_focusCurrentLevel);
     }
 
-    // Entry point for a deep-link routed by SettingsPanel (e.g. the demoted
+    // Entry point for a deep-link routed by SettingsApp (e.g. the demoted
     // "moonlight"/"streaming" slug → Moonlight ▸ Manage servers). Sets the full
     // nav stack so the B-back ladder unwinds servers → config → list correctly.
     function applyDeepTarget(t) {
@@ -68,7 +69,7 @@ FocusScope {
     property bool _returnFocusManage: false
 
     // Step back one internal level. Returns true if handled (so B/Escape is
-    // consumed); false at the list level (so it bubbles to SettingsPanel).
+    // consumed); false at the list level (so it bubbles to SettingsApp).
     function _back() {
         if (_showServers) {
             _showServers = false;

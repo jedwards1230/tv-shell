@@ -1,11 +1,12 @@
 import QtQuick
 import QtQuick.Layouts
-import "lib"
+import "../components"
+import "../components/lib"
 
 // Accessibility settings page (#109, #110).
 // Controller-first: A/Return toggles Reduce Motion; A/Return on the Text Size
 // selector opens the dropdown (same open-on-A rule as audio output dropdown).
-// Left/B from here returns focus to the SettingsPanel sidebar.
+// Left/B from here returns focus to the SettingsApp sidebar.
 FocusScope {
     id: root
     implicitHeight: a11yMainCol.implicitHeight + 2 * Theme.padding
