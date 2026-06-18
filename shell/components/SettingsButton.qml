@@ -37,12 +37,12 @@ Rectangle {
 
     Behavior on color {
         ColorAnimation {
-            duration: 150
+            duration: Theme.reduceMotion ? 0 : 150
         }
     }
     Behavior on border.color {
         ColorAnimation {
-            duration: 150
+            duration: Theme.reduceMotion ? 0 : 150
         }
     }
 

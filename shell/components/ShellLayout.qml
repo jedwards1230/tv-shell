@@ -1,5 +1,6 @@
 import Quickshell.Io
 import QtQuick
+import "lib"
 
 FocusScope {
     id: root

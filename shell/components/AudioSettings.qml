@@ -26,12 +26,13 @@ FocusScope {
 
     // --- Shared audio controller ---
 
-    AudioController {
-        id: audioCtl
-        onSinksChanged: {
+    Connections {
+        target: AudioController
+
+        function onSinksChanged() {
             // Mirror sinks/defaultSinkIndex onto root for the UI.
-            root.sinks = audioCtl.sinks;
-            root.defaultSinkIndex = audioCtl.defaultSinkIndex;
+            root.sinks = AudioController.sinks;
+            root.defaultSinkIndex = AudioController.defaultSinkIndex;
             // Re-apply persisted default once on first populate.
             if (!root._reapplied && SettingsStore.defaultSink !== "") {
                 root._reapplied = true;
@@ -41,9 +42,16 @@ FocusScope {
             // Refresh format info after sink list updates.
             getFormat.running = true;
         }
-        onVolumeChanged: root.volume = audioCtl.volume
-        onMutedChanged: root.muted = audioCtl.muted
-        onSinkSwitched: sinkId => {
+
+        function onVolumeChanged() {
+            root.volume = AudioController.volume;
+        }
+
+        function onMutedChanged() {
+            root.muted = AudioController.muted;
+        }
+
+        function onSinkSwitched(sinkId) {
             // After switching, read the node.name to persist it.
             readNodeName.pendingSinkId = sinkId;
             readNodeName.running = true;
@@ -81,7 +89,7 @@ FocusScope {
         command: ["bash", "-c", "[ -z \"$GAME_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$GAME_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$GAME_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
         onExited: {
             // Refresh the list so UI reflects the re-applied default
-            audioCtl.refresh();
+            AudioController.refresh();
         }
     }
 
@@ -175,7 +183,7 @@ FocusScope {
         command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
         onExited: {
             // Refresh everything: new default sink, format, and active profile.
-            audioCtl.refresh();
+            AudioController.refresh();
             getFormat.running = true;
             listProfiles.running = true;
         }
@@ -252,7 +260,7 @@ FocusScope {
     }
 
     Component.onCompleted: {
-        audioCtl.refresh();
+        AudioController.refresh();
         getFormat.running = true;
         listProfiles.running = true;
     }
@@ -263,7 +271,7 @@ FocusScope {
     onVisibleChanged: {
         if (visible) {
             root._reapplied = false;
-            audioCtl.refresh();
+            AudioController.refresh();
             getFormat.running = true;
             listProfiles.running = true;
         } else if (root.anyChannelActive) {
@@ -299,7 +307,7 @@ FocusScope {
                 KeyNavigation.right: volUpScope
                 KeyNavigation.down: muteScope
                 text: "  -  "
-                onActivated: audioCtl.setVolumeLevel(audioCtl.volume - 5)
+                onActivated: AudioController.setVolumeLevel(AudioController.volume - 5)
             }
 
             // Volume bar
@@ -316,7 +324,7 @@ FocusScope {
                 KeyNavigation.left: volDownScope
                 KeyNavigation.down: muteScope
                 text: "  +  "
-                onActivated: audioCtl.setVolumeLevel(audioCtl.volume + 5)
+                onActivated: AudioController.setVolumeLevel(AudioController.volume + 5)
             }
         }
 
@@ -325,7 +333,7 @@ FocusScope {
             KeyNavigation.up: volDownScope
             KeyNavigation.down: sinkDropdownScope
             text: root.muted ? "Unmute" : "Mute"
-            onActivated: audioCtl.toggleMuteState()
+            onActivated: AudioController.toggleMuteState()
         }
 
         // Output device dropdown
@@ -346,7 +354,7 @@ FocusScope {
                 return item.name;
             }
             onItemSelected: function (item) {
-                audioCtl.setDefaultSinkById(item.id);
+                AudioController.setDefaultSinkById(item.id);
             }
 
             KeyNavigation.up: muteScope
