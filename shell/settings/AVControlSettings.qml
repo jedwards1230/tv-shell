@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
-import "lib"
+import "../components"
+import "../components/lib"
 
 // AV Control settings — rewritten (#16) to consume the daemon's `cec-*` IPC
 // instead of shelling out to cec-ctl / cec-client / living-room-cec. The daemon
@@ -25,13 +26,13 @@ import "lib"
 // the daemon is built without `--features cec` (or libcec is absent at runtime)
 // every cec-* command replies error:* and this panel shows an unavailable card.
 //
-// Root MUST be a FocusScope (not Item) so SettingsPanel's
+// Root MUST be a FocusScope (not Item) so SettingsApp's
 // contentLoader.item.forceActiveFocus() delegates focus into the focus:true
 // child (wakeScope). A plain Item swallows focus and the page becomes
 // unnavigable when entered via the Right d-pad.
 FocusScope {
     id: root
-    // SettingsPanel sizes the scroll pane from item.implicitHeight; without this
+    // SettingsApp sizes the scroll pane from item.implicitHeight; without this
     // the pane height is 0 and lower controls become unreachable (mirror the
     // other settings pages). Derived from the content column's implicit size.
     implicitHeight: avMainCol.implicitHeight + 2 * Theme.padding
@@ -495,7 +496,7 @@ FocusScope {
             }
 
             // Device rows as a Repeater of per-row FocusScopes (not a ListView):
-            // each row becomes its own activeFocusItem so SettingsPanel's outer
+            // each row becomes its own activeFocusItem so SettingsApp's outer
             // contentFlick scrolls the WHOLE page to follow focus down the rows
             // (the Focus Preferences section slides up out of view). A ListView
             // holds focus as one tall item, so moving currentIndex never changed

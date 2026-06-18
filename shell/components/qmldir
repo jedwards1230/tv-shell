@@ -14,23 +14,14 @@ StreamCard 1.0 StreamCard.qml
 QuickActions 1.0 QuickActions.qml
 QuickActionButton 1.0 QuickActionButton.qml
 StreamOverlay 1.0 StreamOverlay.qml
-SettingsPanel 1.0 SettingsPanel.qml
 SettingsButton 1.0 SettingsButton.qml
 SettingsEmptyState 1.0 SettingsEmptyState.qml
 SettingsList 1.0 SettingsList.qml
 HomeScreen 1.0 HomeScreen.qml
-AudioSettings 1.0 AudioSettings.qml
-BluetoothSettings 1.0 BluetoothSettings.qml
-NetworkSettings 1.0 NetworkSettings.qml
-DisplaySettings 1.0 DisplaySettings.qml
-PowerSettings 1.0 PowerSettings.qml
 MoonlightSettings 1.0 MoonlightSettings.qml
-AccessibilitySettings 1.0 AccessibilitySettings.qml
-AVControlSettings 1.0 AVControlSettings.qml
 BaseCard 1.0 BaseCard.qml
 FocusFrame 1.0 FocusFrame.qml
 AppCard 1.0 AppCard.qml
-ControllerSettings 1.0 ControllerSettings.qml
 MarqueeText 1.0 MarqueeText.qml
 MediaWidget 1.0 MediaWidget.qml
 DimmedBackdrop 1.0 DimmedBackdrop.qml
@@ -43,9 +34,7 @@ NowPlayingStrip 1.0 NowPlayingStrip.qml
 MoonlightWidget 1.0 MoonlightWidget.qml
 FilterChips 1.0 FilterChips.qml
 LibraryScreen 1.0 LibraryScreen.qml
-WidgetsSettings 1.0 WidgetsSettings.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
-KeyBindingsSettings 1.0 KeyBindingsSettings.qml
 HyprctlClients 1.0 HyprctlClients.qml
 AVController 1.0 AVController.qml
 AudioController 1.0 AudioController.qml
@@ -54,6 +43,7 @@ SocketClient 1.0 SocketClient.qml
 InputManager 1.0 InputManager.qml
 AppLifecycleManager 1.0 AppLifecycleManager.qml
 StreamManager 1.0 StreamManager.qml
+ScreenManager 1.0 ScreenManager.qml
 ShellLayout 1.0 ShellLayout.qml
 singleton NotificationManager 1.0 NotificationManager.qml
 singleton NetworkManager 1.0 NetworkManager.qml
@@ -68,7 +58,6 @@ PowerOverlay 1.0 PowerOverlay.qml
 VolumeOverlay 1.0 VolumeOverlay.qml
 NetworkOverlay 1.0 NetworkOverlay.qml
 SessionQAM 1.0 SessionQAM.qml
-SystemSettings 1.0 SystemSettings.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 SessionDialog 1.0 SessionDialog.qml
 ScreenshotFlash 1.0 ScreenshotFlash.qml

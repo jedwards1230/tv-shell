@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import "lib"
+import "../components"
+import "../components/lib"
 
 // IPC protocol: see docs/IPC_PROTOCOL.md
 // Commands used: status, grab, release, list-input-devices, get-pads,

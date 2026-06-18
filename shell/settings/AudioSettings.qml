@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
-import "lib"
+import "../components"
+import "../components/lib"
 
 FocusScope {
     id: root
@@ -258,7 +259,7 @@ FocusScope {
     }
 
     // Refresh when section becomes visible. Do NOT grab focus here — focus
-    // entry is driven explicitly by SettingsPanel via focusFirst() on Right,
+    // entry is driven explicitly by SettingsApp via focusFirst() on Right,
     // so swapping to this page with A leaves focus on the sidebar.
     onVisibleChanged: {
         if (visible) {

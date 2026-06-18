@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
-import "lib"
+import "../components"
+import "../components/lib"
 
 // Bluetooth settings — rewired (Phase 3) to talk to the input daemon's D-Bus
 // (bluer) backbone over the Unix socket instead of shelling out to

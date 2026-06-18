@@ -3,7 +3,7 @@ import QtQuick
 // Base contract for a streaming backend (Moonlight, Sunshine-direct, etc.).
 //
 // This is a duck-typed "interface": consumers (HomeScreen, StreamManager,
-// SettingsPanel) talk to whatever StreamProviders.active points at via these
+// SettingsApp) talk to whatever StreamProviders.active points at via these
 // members. The base itself is a valid NO-STREAMING provider — an empty
 // targets list, no settings section, and no-op launch/quit — so selecting it
 // turns game-shell into a pure app launcher with no null-guards at call sites.

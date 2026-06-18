@@ -4,7 +4,7 @@ import QtQuick
 // Holds the available streaming providers and exposes the active one.
 //
 // `active` is what the rest of the shell consumes (HomeScreen rows,
-// StreamManager launch args, SettingsPanel section). Flipping
+// StreamManager launch args, SettingsApp section). Flipping
 // `streamingEnabled` to false swaps in the empty base TargetProvider, which
 // collapses all streaming UI — the no-streaming mode — without any call-site
 // changes.
