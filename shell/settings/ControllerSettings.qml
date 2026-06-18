@@ -316,7 +316,7 @@ FocusScope {
         id: ctrlMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         // === Connected Controllers (fleet — player slot + battery) ===
         SectionHeader {
@@ -338,7 +338,7 @@ FocusScope {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.preferredHeight: 96
-                    radius: 16
+                    radius: Units.radiusMD
                     color: Theme.surface
                     border.width: 2
                     border.color: Theme.surfaceBorder
@@ -491,7 +491,7 @@ FocusScope {
                 required property var modelData
                 width: controllerList.width
                 height: 180
-                radius: 16
+                radius: Units.radiusMD
                 color: controllerList.currentIndex === index && controllerList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -520,7 +520,7 @@ FocusScope {
                     }
 
                     RowLayout {
-                        spacing: 32
+                        spacing: Units.spacingLG
 
                         Text {
                             text: "Device: " + modelData.path
@@ -538,7 +538,7 @@ FocusScope {
                         Rectangle {
                             Layout.preferredHeight: 28
                             Layout.preferredWidth: grabbedLabel.implicitWidth + 24
-                            radius: 8
+                            radius: Units.radiusSM
                             color: Theme.sidebarActive
                             visible: modelData.grabbed === true
 

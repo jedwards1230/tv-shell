@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib"
 
 // Home screen — the "glance + jump back in" overview (#249), composed of
 // standardized, individually-toggleable, individually-sized home widgets. The
@@ -740,7 +741,8 @@ FocusScope {
             }
 
             // === Hint Bar ===
-            Text {
+            HintBar {
+                muted: true
                 text: {
                     if (recentRow.activeFocus) {
                         let idx = recentRow.currentIndex;
@@ -752,9 +754,6 @@ FocusScope {
                         return "A: Browse all  |  B: Home  |  ↑↓: Switch Row";
                     return "A: Select  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                 }
-                font.pixelSize: Theme.fontHint
-                color: Theme.textMuted
-                Layout.alignment: Qt.AlignHCenter
                 Layout.bottomMargin: 16
             }
         }

@@ -276,7 +276,7 @@ FocusScope {
         id: avMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         // Header with status
         RowLayout {
@@ -376,7 +376,7 @@ FocusScope {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 200
-            radius: 24
+            radius: Units.radiusLG
             color: Theme.surface
             border.width: 2
             border.color: Theme.surfaceBorder
@@ -424,7 +424,7 @@ FocusScope {
 
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 32
+                spacing: Units.spacingLG
 
                 // Wake AV
                 ActionCard {

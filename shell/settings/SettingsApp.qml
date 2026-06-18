@@ -210,6 +210,11 @@ Rectangle {
     // now that streaming has no sidebar entry of its own. "" = no deep target.
     property string _pendingDeep: ""
 
+    // Set by Return on the sidebar so the page is entered (focusFirst) once its
+    // Loader has swapped in — see contentLoader.onLoaded. Entering a page is gated
+    // on A: Right no longer crosses into the page, and Left no longer backs out.
+    property bool _pendingEnter: false
+
     Timer {
         id: focusTimer
         interval: 50
@@ -230,17 +235,19 @@ Rectangle {
         // Left sidebar
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 560
+            Layout.preferredWidth: Units.sidebarWidth
             color: Theme.surface
 
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 0
 
-                // Settings title — plain text, no colored bar
+                // Settings title — plain text, no colored bar.
+                // Layout.preferredHeight (not bare height) — a bare `height` is
+                // ignored inside a ColumnLayout, collapsing the title to zero.
                 Item {
                     Layout.fillWidth: true
-                    height: Theme.statusBarHeight
+                    Layout.preferredHeight: Theme.statusBarHeight
 
                     Text {
                         anchors.left: parent.left
@@ -267,7 +274,7 @@ Rectangle {
                         required property int index
                         required property var modelData
                         width: sidebarList.width
-                        height: 100
+                        height: Units.settingsRowHeight
                         color: {
                             if (root.currentSection === index)
                                 return Theme.sidebarActive;
@@ -314,7 +321,7 @@ Rectangle {
                                     visible: status === Image.Ready
                                     layer.enabled: status === Image.Ready
                                     layer.effect: ColorOverlay {
-                                        color: root.currentSection === index ? Theme.textPrimary : Theme.textSecondary
+                                        color: root.currentSection === index ? Theme.textOnDark : Theme.textSecondary
                                     }
                                 }
 
@@ -322,7 +329,7 @@ Rectangle {
                                     anchors.centerIn: parent
                                     text: modelData.fallback
                                     font.pixelSize: Theme.fontBody
-                                    color: root.currentSection === index ? Theme.textPrimary : Theme.textSecondary
+                                    color: root.currentSection === index ? Theme.textOnDark : Theme.textSecondary
                                     horizontalAlignment: Text.AlignHCenter
                                     visible: secIcon.status !== Image.Ready
                                 }
@@ -332,7 +339,7 @@ Rectangle {
                                 text: modelData.name
                                 font.pixelSize: Theme.fontBody
                                 font.bold: root.currentSection === index
-                                color: root.currentSection === index ? Theme.textPrimary : Theme.textSecondary
+                                color: root.currentSection === index ? Theme.textOnDark : Theme.textSecondary
                                 Layout.fillWidth: true
                             }
                         }
@@ -360,27 +367,26 @@ Rectangle {
                         }
                     }
 
+                    // A (Return) is the single gate INTO a page: it loads the
+                    // highlighted section (if not already shown) and enters it,
+                    // focusing the page's first control. If the section is already
+                    // shown, enter directly; otherwise flag _pendingEnter and let
+                    // contentLoader.onLoaded enter once the Loader has swapped (the
+                    // "defer focus until the FocusScope is realized" rule). Every
+                    // page exposes focusFirst() (its real first interactive
+                    // element) — a bare root forceActiveFocus() dead-ends on the
+                    // several pages whose root isn't a focus:true key handler.
                     Keys.onReturnPressed: {
-                        root.currentSection = currentIndex;
+                        if (root.currentSection === currentIndex) {
+                            if (contentLoader.item && contentLoader.item.focusFirst)
+                                contentLoader.item.focusFirst();
+                        } else {
+                            root._pendingEnter = true;
+                            root.currentSection = currentIndex;
+                        }
                     }
 
-                    // Right is a pure focus-shifter into the currently open
-                    // page — it must NOT swap which section is shown. Swapping
-                    // waits for A (Return). This lets you move the sidebar
-                    // cursor away from the open page and still fall back into
-                    // that page on right, instead of force-opening the hovered
-                    // item's submenu.
-                    //
-                    // Every page exposes focusFirst() which focuses its real
-                    // first interactive element. We call that instead of a bare
-                    // forceActiveFocus() on the page root, because root-level
-                    // focus only delegates correctly when the root points
-                    // focus:true at a real key-handling item — several pages
-                    // don't, and would dead-end on a silent layout.
-                    Keys.onRightPressed: {
-                        if (contentLoader.item && contentLoader.item.focusFirst)
-                            contentLoader.item.focusFirst();
-                    }
+                    // Right does NOT cross into the page — entering is gated on A.
 
                     Keys.onUpPressed: {
                         if (currentIndex > 0)
@@ -403,7 +409,7 @@ Rectangle {
                 // Back hint
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 80
+                    height: Units.settingsHintHeight
                     color: Theme.surfaceHover
 
                     Text {
@@ -516,7 +522,16 @@ Rectangle {
                         width: contentFlick.width
                         height: Math.max(item ? item.implicitHeight : 0, contentFlick.height)
                         sourceComponent: root.sections[root.currentSection].component
-                        onLoaded: contentFlick.contentY = 0
+                        onLoaded: {
+                            contentFlick.contentY = 0;
+                            // Return-to-enter: the page just swapped in, so focus
+                            // its first control now that the Loader has realized it.
+                            if (root._pendingEnter) {
+                                root._pendingEnter = false;
+                                if (item && item.focusFirst)
+                                    item.focusFirst();
+                            }
+                        }
                     }
                 }
 
@@ -584,11 +599,9 @@ Rectangle {
         sidebarList.forceActiveFocus();
     }
 
-    Keys.onLeftPressed: {
-        if (!sidebarList.activeFocus) {
-            returnToSidebar();
-        }
-    }
+    // Left does NOT back out of a page — backing out is gated on B/Escape
+    // (page → sidebar → Home). Left is left to the focused control for in-row
+    // movement, matching the "directional keys don't cross boundaries" model.
 
     Keys.onPressed: event => {
         if (event.key === Qt.Key_B && !event.modifiers) {

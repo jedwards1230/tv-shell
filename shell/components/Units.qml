@@ -29,4 +29,11 @@ Item {
     readonly property int iconSizeMD: Math.round(gridUnit * 1.19)
     readonly property int iconSizeLG: Math.round(gridUnit * 2.22)
     readonly property int iconSizeXL: Math.round(gridUnit * 4.44)
+
+    // Settings-panel chrome — previously hardcoded to the 4K reference (560/100/
+    // 80 px). Expressed off gridUnit so the panel scales on non-4K screens; the
+    // multipliers are chosen to land on the original pixel values at 2160p.
+    readonly property int sidebarWidth: Math.round(gridUnit * 10.37)
+    readonly property int settingsRowHeight: Math.round(gridUnit * 1.85)
+    readonly property int settingsHintHeight: Math.round(gridUnit * 1.48)
 }

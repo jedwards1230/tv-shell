@@ -23,7 +23,7 @@ Rectangle {
             visible: pill.showDot
             Layout.preferredWidth: 16
             Layout.preferredHeight: 16
-            radius: 8
+            radius: Units.radiusSM
             color: pill._accent
         }
 

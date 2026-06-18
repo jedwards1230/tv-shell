@@ -195,7 +195,7 @@ FocusScope {
         id: contentColumn
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         SectionHeader {
             text: "Displays"
@@ -232,7 +232,7 @@ FocusScope {
                 required property var modelData
                 width: monitorList.width
                 height: 180
-                radius: 16
+                radius: Units.radiusMD
                 color: monitorList.currentIndex === index && monitorList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -274,7 +274,7 @@ FocusScope {
                     }
 
                     RowLayout {
-                        spacing: 32
+                        spacing: Units.spacingLG
 
                         Text {
                             text: "Resolution: " + modelData.width + "x" + modelData.height
@@ -296,7 +296,7 @@ FocusScope {
                     }
 
                     RowLayout {
-                        spacing: 32
+                        spacing: Units.spacingLG
 
                         Text {
                             text: "Position: " + modelData.x + "," + modelData.y

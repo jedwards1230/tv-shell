@@ -32,7 +32,7 @@ FocusScope {
 
     signal activated
 
-    implicitWidth: 340
+    implicitWidth: Math.round(Units.gridUnit * 6.3)
     implicitHeight: 120
 
     activeFocusOnTab: true
@@ -42,7 +42,7 @@ FocusScope {
 
     Rectangle {
         anchors.fill: parent
-        radius: 24
+        radius: Units.radiusLG
         color: parent.activeFocus ? root.accentColor : Theme.surface
         border.width: parent.activeFocus ? 0 : 2
         border.color: root.restBorderColor

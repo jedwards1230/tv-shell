@@ -306,7 +306,7 @@ FocusScope {
         id: btMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         // Bluetooth section header
         SectionHeader {

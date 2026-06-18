@@ -28,9 +28,10 @@ FocusScope {
     // MOVE focus between rows; they never open the dropdown.
     property int _focusRow: 0
 
-    AudioController {
-        id: audioCtl
-        onSinkCursorSync: idx => {
+    Connections {
+        target: AudioController
+
+        function onSinkCursorSync(idx) {
             root._sinkCursor = idx;
         }
     }
@@ -54,7 +55,7 @@ FocusScope {
             });
             root._outputExpanded = false;
             root._focusRow = 0;
-            audioCtl.refresh();
+            AudioController.refresh();
         }
     }
 
@@ -66,11 +67,11 @@ FocusScope {
                 if (root._sinkCursor > 0)
                     root._sinkCursor--;
             } else if (event.key === Qt.Key_Down) {
-                if (root._sinkCursor < audioCtl.sinks.length - 1)
+                if (root._sinkCursor < AudioController.sinks.length - 1)
                     root._sinkCursor++;
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                if (root._sinkCursor >= 0 && root._sinkCursor < audioCtl.sinks.length) {
-                    audioCtl.setDefaultSinkById(audioCtl.sinks[root._sinkCursor].id);
+                if (root._sinkCursor >= 0 && root._sinkCursor < AudioController.sinks.length) {
+                    AudioController.setDefaultSinkById(AudioController.sinks[root._sinkCursor].id);
                 }
                 root._outputExpanded = false;
             } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
@@ -81,7 +82,7 @@ FocusScope {
             // output dropdown opens on A only (never on a directional key).
             if (event.key === Qt.Key_Down) {
                 // Move focus to the output selector row (if there is one).
-                if (root._focusRow === 0 && audioCtl.sinks.length > 0)
+                if (root._focusRow === 0 && AudioController.sinks.length > 0)
                     root._focusRow = 1;
             } else if (event.key === Qt.Key_Up) {
                 // Move focus back to the volume bar.
@@ -89,22 +90,22 @@ FocusScope {
                     root._focusRow = 0;
             } else if (event.key === Qt.Key_Left) {
                 if (root._focusRow === 0) {
-                    audioCtl.setVolumeLevel(audioCtl.volume - 5);
+                    AudioController.setVolumeLevel(AudioController.volume - 5);
                 }
             } else if (event.key === Qt.Key_Right) {
                 if (root._focusRow === 0) {
-                    audioCtl.setVolumeLevel(audioCtl.volume + 5);
+                    AudioController.setVolumeLevel(AudioController.volume + 5);
                 }
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 if (root._focusRow === 1) {
                     // A on the focused output selector → open the dropdown.
-                    if (audioCtl.sinks.length > 0) {
-                        root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
+                    if (AudioController.sinks.length > 0) {
+                        root._sinkCursor = AudioController.defaultSinkIndex >= 0 ? AudioController.defaultSinkIndex : 0;
                         root._outputExpanded = true;
                     }
                 } else {
                     // A on the volume bar → toggle mute.
-                    audioCtl.toggleMuteState();
+                    AudioController.toggleMuteState();
                 }
             } else if (event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
                 root.opened = false;
@@ -131,8 +132,8 @@ FocusScope {
         // --- Volume bar ---
         VolumeBar {
             Layout.fillWidth: true
-            volume: audioCtl.volume
-            muted: audioCtl.muted
+            volume: AudioController.volume
+            muted: AudioController.muted
             trackHeight: Units.gridUnit * 1.5
             showFocusBorder: root.activeFocus && root._focusRow === 0 && !root._outputExpanded
         }
@@ -141,9 +142,9 @@ FocusScope {
         Text {
             Layout.alignment: Qt.AlignHCenter
             visible: !root._outputExpanded && root._focusRow === 0
-            text: audioCtl.muted ? "A: unmute" : "A: mute"
+            text: AudioController.muted ? "A: unmute" : "A: mute"
             font.pixelSize: Theme.fontHint
-            color: audioCtl.muted ? Theme.warning : Theme.textMuted
+            color: AudioController.muted ? Theme.warning : Theme.textMuted
         }
 
         // --- Output: collapsed current row (default) ---
@@ -152,7 +153,7 @@ FocusScope {
             Layout.fillWidth: true
             height: Units.gridUnit * 1.6
             radius: Units.radiusMD
-            visible: !root._outputExpanded && audioCtl.sinks.length > 0
+            visible: !root._outputExpanded && AudioController.sinks.length > 0
 
             // Highlighted only when the output selector row has focus.
             readonly property bool rowFocused: root.activeFocus && root._focusRow === 1 && !root._outputExpanded
@@ -177,7 +178,7 @@ FocusScope {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Output: " + audioCtl.currentSinkName()
+                    text: "Output: " + AudioController.currentSinkName()
                     font.pixelSize: Theme.fontHint
                     color: Theme.textPrimary
                     elide: Text.ElideRight
@@ -201,9 +202,9 @@ FocusScope {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     // A click opens the dropdown (open-on-click rule).
-                    if (audioCtl.sinks.length > 0) {
+                    if (AudioController.sinks.length > 0) {
                         root._focusRow = 1;
-                        root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
+                        root._sinkCursor = AudioController.defaultSinkIndex >= 0 ? AudioController.defaultSinkIndex : 0;
                         root._outputExpanded = true;
                     }
                 }
@@ -220,7 +221,7 @@ FocusScope {
         }
 
         Repeater {
-            model: root._outputExpanded ? audioCtl.sinks : []
+            model: root._outputExpanded ? AudioController.sinks : []
 
             Rectangle {
                 required property int index
@@ -272,7 +273,7 @@ FocusScope {
                     cursorShape: Qt.PointingHandCursor
                     onEntered: root._sinkCursor = index
                     onClicked: {
-                        audioCtl.setDefaultSinkById(modelData.id);
+                        AudioController.setDefaultSinkById(modelData.id);
                         root._outputExpanded = false;
                     }
                 }

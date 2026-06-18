@@ -59,7 +59,7 @@ Drawer {
         root._outputExpanded = false;
         root._csRow = 0;
         root.opened = true;
-        audioCtl.refresh();
+        AudioController.refresh();
         Qt.callLater(() => contentRoot.forceActiveFocus());
     }
 
@@ -101,9 +101,10 @@ Drawer {
         contentRoot.forceActiveFocus();
     }
 
-    AudioController {
-        id: audioCtl
-        onSinkCursorSync: idx => {
+    Connections {
+        target: AudioController
+
+        function onSinkCursorSync(idx) {
             root._sinkCursor = idx;
         }
     }
@@ -133,11 +134,11 @@ Drawer {
                         if (root._sinkCursor > 0)
                             root._sinkCursor--;
                     } else if (event.key === Qt.Key_Down) {
-                        if (root._sinkCursor < audioCtl.sinks.length - 1)
+                        if (root._sinkCursor < AudioController.sinks.length - 1)
                             root._sinkCursor++;
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        if (root._sinkCursor >= 0 && root._sinkCursor < audioCtl.sinks.length) {
-                            audioCtl.setDefaultSinkById(audioCtl.sinks[root._sinkCursor].id);
+                        if (root._sinkCursor >= 0 && root._sinkCursor < AudioController.sinks.length) {
+                            AudioController.setDefaultSinkById(AudioController.sinks[root._sinkCursor].id);
                         }
                         root._outputExpanded = false;
                     } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Escape || (event.key === Qt.Key_B && !event.modifiers)) {
@@ -146,13 +147,13 @@ Drawer {
                 } else if (root._csRow === 0) {
                     // Volume bar row.
                     if (event.key === Qt.Key_Left) {
-                        audioCtl.setVolumeLevel(audioCtl.volume - 5);
+                        AudioController.setVolumeLevel(AudioController.volume - 5);
                     } else if (event.key === Qt.Key_Right) {
-                        audioCtl.setVolumeLevel(audioCtl.volume + 5);
+                        AudioController.setVolumeLevel(AudioController.volume + 5);
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        audioCtl.toggleMuteState();
+                        AudioController.toggleMuteState();
                     } else if (event.key === Qt.Key_Down) {
-                        if (audioCtl.sinks.length > 0)
+                        if (AudioController.sinks.length > 0)
                             root._csRow = 1;
                     } else if (event.key === Qt.Key_Up) {
                         root._returnToTabs();
@@ -162,8 +163,8 @@ Drawer {
                 } else {
                     // Output selector row.
                     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        if (audioCtl.sinks.length > 0) {
-                            root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
+                        if (AudioController.sinks.length > 0) {
+                            root._sinkCursor = AudioController.defaultSinkIndex >= 0 ? AudioController.defaultSinkIndex : 0;
                             root._outputExpanded = true;
                         }
                     } else if (event.key === Qt.Key_Up) {
@@ -355,7 +356,7 @@ Drawer {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: audioCtl.currentSinkName()
+                                text: AudioController.currentSinkName()
                                 font.pixelSize: Theme.fontBody
                                 color: Theme.textPrimary
                                 elide: Text.ElideRight
@@ -370,7 +371,7 @@ Drawer {
 
                         // Expanded: full sink list.
                         Repeater {
-                            model: root._outputExpanded ? audioCtl.sinks : []
+                            model: root._outputExpanded ? AudioController.sinks : []
                             Rectangle {
                                 required property int index
                                 required property var modelData
@@ -411,7 +412,7 @@ Drawer {
                                     onEntered: root._sinkCursor = index
                                     hoverEnabled: true
                                     onClicked: {
-                                        audioCtl.setDefaultSinkById(modelData.id);
+                                        AudioController.setDefaultSinkById(modelData.id);
                                         root._outputExpanded = false;
                                     }
                                 }
@@ -424,10 +425,10 @@ Drawer {
                         visible: !root._outputExpanded
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            if (audioCtl.sinks.length > 0) {
+                            if (AudioController.sinks.length > 0) {
                                 root._focusRow = 1;
                                 root._csRow = 1;
-                                root._sinkCursor = audioCtl.defaultSinkIndex >= 0 ? audioCtl.defaultSinkIndex : 0;
+                                root._sinkCursor = AudioController.defaultSinkIndex >= 0 ? AudioController.defaultSinkIndex : 0;
                                 root._outputExpanded = true;
                             }
                         }
@@ -443,8 +444,8 @@ Drawer {
                 }
                 VolumeBar {
                     Layout.fillWidth: true
-                    volume: audioCtl.volume
-                    muted: audioCtl.muted
+                    volume: AudioController.volume
+                    muted: AudioController.muted
                     trackHeight: Units.gridUnit * 1.6
                     showFocusBorder: root._focusRow === 1 && root._csRow === 0 && !root._outputExpanded
                 }

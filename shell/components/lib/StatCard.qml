@@ -66,13 +66,13 @@ Rectangle {
             visible: card.barProgress >= 0
             Layout.fillWidth: true
             Layout.preferredHeight: 16
-            radius: 8
+            radius: Units.radiusSM
             color: Theme.surfaceHover
 
             Rectangle {
                 width: parent.width * Math.max(0, Math.min(1, card.barProgress))
                 height: parent.height
-                radius: 8
+                radius: Units.radiusSM
                 color: card.barHighColor
 
                 Behavior on width {

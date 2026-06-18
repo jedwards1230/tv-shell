@@ -422,7 +422,7 @@ FocusScope {
         id: mlMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         SectionHeader {
             text: "Streaming Servers"
@@ -485,7 +485,7 @@ FocusScope {
                     anchors.rightMargin: 32
                     anchors.topMargin: 24
                     anchors.bottomMargin: 24
-                    spacing: 32
+                    spacing: Units.spacingLG
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -514,7 +514,7 @@ FocusScope {
                                 Rectangle {
                                     width: 16
                                     height: 16
-                                    radius: 8
+                                    radius: Units.radiusSM
                                     color: root._statusColor(modelData.host)
                                 }
 
@@ -861,7 +861,7 @@ FocusScope {
 
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 32
+            spacing: Units.spacingLG
 
             FocusButton {
                 id: confirmRemoveYes
@@ -901,7 +901,7 @@ FocusScope {
 
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 32
+            spacing: Units.spacingLG
 
             FocusButton {
                 id: confirmUnpairYes

@@ -24,7 +24,6 @@ FocusFrame 1.0 FocusFrame.qml
 AppCard 1.0 AppCard.qml
 MarqueeText 1.0 MarqueeText.qml
 MediaWidget 1.0 MediaWidget.qml
-DimmedBackdrop 1.0 DimmedBackdrop.qml
 DimOverlay 1.0 DimOverlay.qml
 Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
@@ -37,7 +36,7 @@ LibraryScreen 1.0 LibraryScreen.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
 HyprctlClients 1.0 HyprctlClients.qml
 AVController 1.0 AVController.qml
-AudioController 1.0 AudioController.qml
+singleton AudioController 1.0 AudioController.qml
 AutoSuspendController 1.0 AutoSuspendController.qml
 SocketClient 1.0 SocketClient.qml
 InputManager 1.0 InputManager.qml

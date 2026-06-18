@@ -1,174 +1,17 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Services.Mpris
+import "lib"
 
-// Slim now-playing transport strip for the redesigned home screen (#249). A
-// lighter re-presentation of MediaWidget: the same MPRIS player selection,
-// capability guards, transport actions, and home-tile focus contract, rendered
-// as a single compact row (small art thumb · "title · artist" · Open + Prev /
-// Play-Pause / Next) instead of the full-width card with the big art tile,
-// "Now Playing" label, and progress bar. Sits between the hero and the Continue
-// rail and collapses to zero height when no MPRIS player is on the bus.
-FocusScope {
+// Slim now-playing transport strip for the redesigned home screen (#249) — the
+// small renderer. A lighter re-presentation of the full MediaWidget card: the
+// shared MPRIS selection, capability guards, transport actions, and home-tile
+// focus contract all live in MprisPlayerBase; this file supplies only the
+// compact visual — a single row (small art thumb · "title · artist" · Open +
+// Prev / Play-Pause / Next) instead of the full-width card with big art, the
+// "Now Playing" label, and the progress bar.
+MprisPlayerBase {
     id: root
-
-    // Vertical focus chain neighbours (set by the host).
-    property var previousRow: null
-    property var nextRow: null
-
-    // Home-screen widget toggle (Settings ▸ Widgets ▸ Spotify/media).
-    property bool widgetEnabled: true
-
-    signal escaped
-    signal contextRequested
-    signal openAppRequested(string desktopEntry, string identity)
-
-    // === Active player selection (mirrors MediaWidget) ===
-    readonly property var _players: Mpris.players ? Mpris.players.values : []
-    readonly property var player: {
-        let list = root._players;
-        if (!list || list.length === 0)
-            return null;
-        for (let i = 0; i < list.length; i++) {
-            if (list[i] && list[i].isPlaying)
-                return list[i];
-        }
-        return list[0];
-    }
-
-    readonly property bool hasPlayer: player !== null
-    readonly property bool isPlaying: hasPlayer && player.isPlaying
-
-    // === Home-tile focus contract ===
-    readonly property bool regionFocused: activeFocus
-
-    function focusFirstChild() {
-        if (!visible)
-            return false;
-        forceActiveFocus();
-        return true;
-    }
-
-    readonly property string playerDesktopEntry: hasPlayer && player.desktopEntry ? player.desktopEntry : ""
-    readonly property string playerIdentity: hasPlayer && player.identity ? player.identity : ""
-
-    // Focus index: 0 = Open app, 1 = Prev, 2 = Play/Pause, 3 = Next.
-    property int _btn: 2
-
-    readonly property bool _canPrev: hasPlayer && player.canGoPrevious
-    readonly property bool _canNext: hasPlayer && player.canGoNext
-    readonly property bool _canToggle: hasPlayer && (player.canTogglePlaying || player.canPlay || player.canPause)
-    readonly property bool _canOpen: hasPlayer && (playerDesktopEntry !== "" || playerIdentity !== "")
-
-    readonly property bool _shown: hasPlayer && widgetEnabled
-    implicitHeight: _shown ? card.implicitHeight : 0
-    visible: _shown
-    height: implicitHeight
-
-    // Skip-track glyph (two triangles + bar), centred by construction — the same
-    // Canvas approach MediaWidget uses because the Unicode glyphs won't centre.
-    function _paintSkip(ctx, w, h, color, dir) {
-        ctx.reset();
-        ctx.clearRect(0, 0, w, h);
-        ctx.fillStyle = color;
-        if (dir < 0) {
-            ctx.translate(w, 0);
-            ctx.scale(-1, 1);
-        }
-        const triW = w * 0.36;
-        const triH = h * 0.78;
-        const barW = w * 0.13;
-        const gap = w * 0.04;
-        const totalW = triW * 2 + gap * 2 + barW;
-        let x = (w - totalW) / 2;
-        const ty = (h - triH) / 2;
-        const tri = function (tx) {
-            ctx.beginPath();
-            ctx.moveTo(tx, ty);
-            ctx.lineTo(tx, ty + triH);
-            ctx.lineTo(tx + triW, ty + triH / 2);
-            ctx.closePath();
-            ctx.fill();
-        };
-        tri(x);
-        x += triW + gap;
-        tri(x);
-        x += triW + gap;
-        ctx.fillRect(x, ty, barW, triH);
-    }
-
-    function _activate() {
-        if (!root.hasPlayer)
-            return;
-        switch (root._btn) {
-        case 0:
-            if (root._canOpen)
-                root.openAppRequested(root.playerDesktopEntry, root.playerIdentity);
-            break;
-        case 1:
-            if (root._canPrev)
-                root.player.previous();
-            break;
-        case 2:
-            if (root._canToggle)
-                root.player.togglePlaying();
-            break;
-        case 3:
-            if (root._canNext)
-                root.player.next();
-            break;
-        }
-    }
-
-    Keys.onPressed: event => {
-        switch (event.key) {
-        case Qt.Key_Left:
-            Theme.exitMouseMode();
-            if (root._btn > 0)
-                root._btn--;
-            event.accepted = true;
-            break;
-        case Qt.Key_Right:
-            Theme.exitMouseMode();
-            if (root._btn < 3)
-                root._btn++;
-            event.accepted = true;
-            break;
-        case Qt.Key_Up:
-            Theme.exitMouseMode();
-            if (root.previousRow) {
-                root.previousRow.forceActiveFocus();
-                event.accepted = true;
-            }
-            break;
-        case Qt.Key_Down:
-            Theme.exitMouseMode();
-            if (root.nextRow) {
-                root.nextRow.forceActiveFocus();
-                event.accepted = true;
-            }
-            break;
-        case Qt.Key_Return:
-        case Qt.Key_Enter:
-            Theme.exitMouseMode();
-            root._activate();
-            event.accepted = true;
-            break;
-        case Qt.Key_Tab:
-            Theme.exitMouseMode();
-            if (root.hasPlayer)
-                root.contextRequested();
-            event.accepted = true;
-            break;
-        case Qt.Key_Escape:
-        case Qt.Key_B:
-            if (event.key === Qt.Key_B && event.modifiers)
-                break;
-            root.escaped();
-            event.accepted = true;
-            break;
-        }
-    }
+    contentCard: card
 
     FocusFrame {
         id: card
@@ -279,16 +122,9 @@ FocusScope {
                         }
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 0;
                             if (root._canOpen)
                                 root.openAppRequested(root.playerDesktopEntry, root.playerIdentity);
@@ -331,16 +167,9 @@ FocusScope {
                         onPaint: root._paintSkip(getContext("2d"), width, height, iconColor, -1)
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 1;
                             if (root._canPrev)
                                 root.player.previous();
@@ -422,16 +251,9 @@ FocusScope {
                         }
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 2;
                             if (root._canToggle)
                                 root.player.togglePlaying();
@@ -474,16 +296,9 @@ FocusScope {
                         onPaint: root._paintSkip(getContext("2d"), width, height, iconColor, 1)
                     }
 
-                    MouseArea {
+                    PointerTrackingArea {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onPositionChanged: mouse => {
-                            let p = mapToItem(null, mouse.x, mouse.y);
-                            Theme.pointerMoved(p.x, p.y);
-                        }
-                        onClicked: {
-                            Theme.enterMouseMode();
+                        onActivated: {
                             root._btn = 3;
                             if (root._canNext)
                                 root.player.next();

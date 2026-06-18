@@ -28,7 +28,7 @@ Rectangle {
 
     Layout.fillWidth: true
     implicitHeight: inner.implicitHeight + _margin * 2
-    radius: 16
+    radius: Units.radiusMD
     color: Theme.surface
 
     Item {

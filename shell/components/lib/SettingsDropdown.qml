@@ -40,6 +40,10 @@ FocusScope {
     // Text shown in the collapsed header (caller computes it).
     property string displayText: ""
 
+    // Label appended to the currently-selected row (and shown beside the header
+    // value). Exposed so callers aren't locked to the English "(current)".
+    property string currentLabel: "(current)"
+
     // Called with each modelData item: return true if it is the "current" selection.
     property var isCurrentItem: function (item) {
         return false;
@@ -79,7 +83,7 @@ FocusScope {
         id: header
         width: parent.width
         height: root.headerHeight
-        radius: 16
+        radius: Units.radiusMD
         color: root.activeFocus && !root._open ? Theme.surfaceHover : Theme.surface
         border.width: 2
         border.color: root.activeFocus ? Theme.focusBorder : Theme.surfaceBorder
@@ -110,7 +114,7 @@ FocusScope {
             }
 
             Text {
-                text: "(current)"
+                text: root.currentLabel
                 font.pixelSize: Theme.fontHint
                 color: Theme.textMuted
             }
@@ -183,7 +187,7 @@ FocusScope {
 
             Text {
                 anchors.centerIn: parent
-                text: root.itemLabel(modelData) + (isCurrent ? "  (current)" : "")
+                text: root.itemLabel(modelData) + (isCurrent ? "  " + root.currentLabel : "")
                 font.pixelSize: Theme.fontSmall
                 color: isCurrent ? Theme.textOnDark : Theme.textPrimary
                 elide: Text.ElideRight

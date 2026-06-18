@@ -8,9 +8,11 @@ import "lib"
 // HomeScreen's _contentRegions() chain and skips hidden neighbours.
 //
 // Two chip kinds coexist in one strip:
-//   • FILTER chips (segments) — Left/Right moves onto one and applies it LIVE
-//     (emits filterChanged); the active filter is `currentIndex` and gets the
-//     crimson "selected" fill.
+//   • FILTER chips (segments) — Left/Right moves the cursor onto one (highlight
+//     only, no side effect); A/Return (or click) COMMITS it (emits
+//     filterChanged). The committed filter is `currentIndex` and keeps the
+//     crimson "selected" fill while the cursor roams, so you preview before
+//     applying instead of the segment flipping live under the d-pad.
 //   • ACTION chips (`action: true`) — Left/Right merely focuses them (the active
 //     filter is untouched); A/Return fires `actionTriggered(value)`. They never
 //     become the "selected" filter and take a distinct EMBER focus fill so they
@@ -64,21 +66,23 @@ FocusScope {
         return i >= 0 && i < options.length && options[i].action === true;
     }
 
-    // Move focus onto chip i. Landing on a filter applies it live; landing on an
-    // action only moves focus (the selected segment is preserved).
+    // Move the cursor onto chip i — highlight only. Neither a filter nor an
+    // action fires here; the committed segment (currentIndex, parent-bound) is
+    // untouched until the user presses A (or clicks).
     function _moveTo(i) {
         if (i < 0 || i >= options.length)
             return;
         root._focusIndex = i;
-        if (!root._isAction(i)) {
-            root.currentIndex = i;
-            root.filterChanged(options[i].value);
-        }
     }
 
+    // A / Return commits the focused chip: an action fires actionTriggered, a
+    // filter emits filterChanged. currentIndex stays parent-bound — the caller's
+    // filterChanged handler updates the source segment, which re-drives the fill.
     function _activate() {
         if (root._isAction(root._focusIndex))
             root.actionTriggered(options[root._focusIndex].value);
+        else
+            root.filterChanged(options[root._focusIndex].value);
     }
 
     Keys.onPressed: event => {
@@ -194,10 +198,12 @@ FocusScope {
                         Theme.enterMouseMode();
                         root.forceActiveFocus();
                         root._focusIndex = chip.index;
+                        // Click commits (mouse users expect select-on-click) —
+                        // both kinds fire their signal, mirroring _activate().
                         if (chip.isAction)
                             root.actionTriggered(chip.modelData.value);
                         else
-                            root._moveTo(chip.index);
+                            root.filterChanged(chip.modelData.value);
                     }
                 }
             }
