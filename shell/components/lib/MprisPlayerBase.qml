@@ -59,8 +59,11 @@ FocusScope {
 
     // === Home-tile focus contract (mirrors NavigableRow) ===
     // The widget is a single focusable strip, so its "first child" is itself.
-    // regionFocused lets HomeScreen's re-anchor net recognise this region.
+    // regionFocused lets HomeScreen's re-anchor net recognise this region;
+    // canFocus (true only while shown) lets the vertical-chain walk skip it when
+    // the player/widget is hidden.
     readonly property bool regionFocused: activeFocus
+    readonly property bool canFocus: _shown
 
     function focusFirstChild() {
         if (!visible)

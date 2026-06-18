@@ -19,13 +19,19 @@ FocusScope {
     readonly property alias listView: listView
 
     // === Home-tile focus contract ===
-    // Shared duck-typed interface (also implemented by MediaWidget/PlexWidget)
-    // so HomeScreen's focus helpers can drive every home region from one ordered
-    // list instead of per-widget branches. `regionFocused` answers "does this
-    // region currently hold focus?"; `focusFirstChild()` focuses this region's
-    // first selectable child and returns whether it could (false when hidden or
-    // empty), so callers skip a non-focusable region.
+    // Shared duck-typed interface (also implemented by MprisPlayerBase /
+    // MoonlightWidget / PlexWidget) so HomeScreen's focus helpers can drive every
+    // home region from one ordered list instead of per-widget branches:
+    //   regionFocused : bool   — does this region currently hold focus?
+    //   canFocus      : bool   — does this region have something to focus right now?
+    //   focusFirstChild(): bool — focus the first selectable child; false if it
+    //                             could not (hidden/empty) so callers skip it.
     readonly property bool regionFocused: activeFocus
+
+    // Part of the contract — true only when this row is both shown and non-empty.
+    // The vertical-chain walk (_navigateUp/_navigateDown) skips a neighbour whose
+    // canFocus is false so focus never lands on a visible-but-empty row.
+    readonly property bool canFocus: visible && listView.count > 0
 
     function focusFirstChild() {
         if (!visible || listView.count === 0)
@@ -101,10 +107,17 @@ FocusScope {
         }
     }
 
+    // A neighbour is focusable when its contract `canFocus` is true. Targets that
+    // predate the contract (or non-widget rows like the QuickActions strip)
+    // expose no canFocus, so fall back to plain `visible`.
+    function _focusable(item) {
+        return item.canFocus !== undefined ? item.canFocus : item.visible;
+    }
+
     function _navigateUp() {
         var target = previousRow;
         while (target) {
-            if (target.visible) {
+            if (root._focusable(target)) {
                 target.forceActiveFocus();
                 return;
             }
@@ -115,7 +128,7 @@ FocusScope {
     function _navigateDown() {
         var target = nextRow;
         while (target) {
-            if (target.visible) {
+            if (root._focusable(target)) {
                 target.forceActiveFocus();
                 return;
             }
