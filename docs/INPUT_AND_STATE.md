@@ -251,7 +251,8 @@ Apps entry and dismissed with B. The three home focus helpers:
 
 Adding a new home widget is therefore "implement the contract + `enabled`/`size`,
 insert it into `_contentRegions()`, wire its `previousRow`/`nextRow`, and add a
-block to the Widgets settings page" — no edits to the focus helpers. Each region's
+row + config sub-page to the Widgets settings list (`WidgetsSettings.qml`)" — no
+edits to the focus helpers. Each region's
 `previousRow`/`nextRow` points at its immediate neighbour; the `NavigableRow`/
 `FilterChips` up/down walkers follow that chain and skip any neighbour whose
 `visible` is false, so a disabled widget or a filtered-empty row is transparently
@@ -272,7 +273,7 @@ intents (channel B); the rest are real key events (channel A).
 |---------|-------|-----------|----------|----------|--------------------------------|---------------|
 | **Home screen** (idle) | Move between cards / rows (`NavigableRow`, `KeyNavigation`) | Launch focused stream/app card; activate QuickActions glyph | Reset to default landing position (first card, top row); quiet no-op if already there. **Does NOT open Settings.** | `intent:home-tap` → `toggleMenu()` (nav drawer) | Open nav drawer | `HomeScreen` rows + `QuickActions` `onEscaped`/`focusDefaultPosition`; intents in `shell.qml` |
 | **QuickActions row** (top-right) | Left/Right move glyph; Down drops into rows; Up reaches it | Activate glyph (Notifications/Settings/Theme/Network/Volume/Power) | `focusDefaultPosition()` — `escapeRequestsSettings:false` on this row so B does **not** open Settings (#156) | (as Home screen) | (as Home screen) | `QuickActions.qml` |
-| **Settings panel** | Up/Down move sidebar cursor (page does **not** auto-load); Right enters loaded page controls | Sidebar: `Return` loads focused page (focus stays on sidebar). In a page: activate control | **Hierarchical:** in a page → back to sidebar; on sidebar → close panel, return Home (`page → B → sidebar → B → Home`) | (no special — intents guarded to idle; panel is part of idle) | n/a | `SettingsPanel.Keys.onEscapePressed` / `onLeftPressed` |
+| **Settings panel** | Up/Down move sidebar cursor (page does **not** auto-load); Right enters loaded page controls | Sidebar: `Return` loads focused page (focus stays on sidebar). In a page: activate control | **Hierarchical:** in a page → back to sidebar; on sidebar → close panel, return Home (`page → B → sidebar → B → Home`). The **Widgets** page owns its own internal stack (list → per-widget config → Moonlight servers): it consumes B to pop one level, only bubbling to the panel at the list level (`servers → B → config → B → list → B → sidebar`). | (no special — intents guarded to idle; panel is part of idle) | n/a | `SettingsPanel.Keys.onEscapePressed` / `onLeftPressed`; `WidgetsSettings.Keys.onEscapePressed` for the internal stack |
 | **Nav drawer** (idle) | Up/Down move nav list; Down past end → quick-actions row; Up returns to list | `Return` activates nav item (Home/Settings) or quick-action glyph | Close drawer (`Drawer.Keys.onEscapePressed → closed()`); literal `B` key also closes | n/a (drawer already open) | `toggleMenu()` closes it | `NavigationDrawer`/`Drawer` + `QuickActions` |
 | **Notification center** | Up/Down select entry | `Return` on an error entry → open error log | Close (`opened=false`) | — | — | `NotificationCenter.Keys.onPressed` (modal, consumes all) |
 | **Power overlay** | Left/Right select action | `Return` activate selected power action | `cancelled()` → close | — | — | `PowerOverlay.Keys.onPressed` (modal, consumes all) |

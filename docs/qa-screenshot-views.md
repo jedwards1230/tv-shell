@@ -17,8 +17,7 @@ are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 Left/Right move; Return activates; Down drops focus into the content regions below.
 **Focus does not always start on this row** — with Continue/New content present it
 starts on a card, so press **Up** first to reach the QuickActions row before
-Left/Right. `streamingViewMode` ∈ `"servers"` | `"apps"` now toggles the two
-**Library** Moonlight layouts (A12), not the home body.
+Left/Right.
 
 **B (Back / Escape) on the home screen** resets focus to the default landing
 position (top content row, first card). If already at the default position it is a
@@ -34,7 +33,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | A2 | Now Playing — medium | MPRIS active, size = medium (default) | `MediaWidget` card: cover art + progress bar + transport row |
 | A3 | Now Playing — small | MPRIS active, size = small (Settings ▸ Widgets) | `NowPlayingStrip` slim strip; both sizes collapse when nothing plays |
 | A4 | Plex Recently Added — dynamic chips | Plex healthy, ≥2 media categories present | `FilterChips` show All + only categories present (no Music pill on a music-less library); re-filter live on item `kind` |
-| A4b | Widgets settings — per-widget size | Settings ▸ Widgets | each widget: enable toggle → revealed Small/Medium size selector; size hidden when disabled |
+| A4b | Widgets settings — list + drill-in | Settings ▸ Widgets | list of widget rows (Moonlight/Now Playing/Plex/Recent), each one focus stop: **A** toggles enable in place, **X**/**Right** drills into that widget's config sub-page (Size, Hide-from-Recent, and — Moonlight only — Manage servers ▸ the embedded server list). **B** steps back one level (sub-page → list → sidebar). |
 | A5 | All Apps entry | always present | single tile; A → opens the Library surface (A12) |
 | A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on the All Apps entry (never strands) |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
@@ -46,8 +45,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | # | View | How to reach | Notes |
 |---|------|--------------|-------|
 | A12 | Library — full | home "All Apps" entry → A | "Library" header + Moonlight section + Applications grid; B returns to Home with focus restored |
-| A12a | Moonlight — "servers" view | Library, `streamingViewMode = servers` | server cards (`StreamCard`) |
-| A12b | Moonlight — "apps" view | Library, `streamingViewMode = apps` | per-host "Moonlight — \<host\>" rows; "Discovering apps…" / "Offline or no apps found" substates |
+| A12a | Moonlight — servers | Library | server cards (`StreamCard`); servers-only (the apps-view toggle was removed) |
 | A12c | Applications row | local launchers present | full `AppDiscoveryManager.applications` list |
 
 ## B. Context menus / popovers
@@ -74,7 +72,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | # | View | How to reach / notes |
 |---|------|----------------------|
 | D20 | Settings sidebar (panel open) | QuickActions idx 1 → Return |
-| D21–31 | Pages: Audio, Bluetooth, Network, Display (+Appearance/theme), Controllers, Key Bindings, AV Control, Moonlight, Widgets, Accessibility, Power, System (+Storage) | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. Each page is also directly reachable via `intent settings:<id>` (socket) — id slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`, `keybindings`, `avcontrol`, `widgets`, `accessibility`, `power`, `system` (plus `streaming` or provider id when active). Theme mode selector (auto/light/dark) is part of the **Display** page. Free-space storage readout is part of the **System** page. Display page (#127): now reads monitors via daemon `hypr-monitors` IPC (replaces `hyprctl monitors -j` shell-out); shows live HDR status (read-only, driven by daemon `hdr` field), HDR toggle (persists + applies via `hyprctl keyword monitor` with/without `bitdepth,10,cm,hdr` suffix), separate Refresh Rate dropdown (filters `availableModes` to current resolution), Night Light toggle + color-temperature dropdown (applies via `hyprsunset`, requires hyprsunset), Overscan stepper (persists safe-area pct). |
+| D21–31 | Pages: Audio, Bluetooth, Network, Display (+Appearance/theme), Controllers, Key Bindings, AV Control, Widgets, Accessibility, Power, System (+Storage). **Moonlight server management is no longer a sidebar page** — it's demoted under Widgets ▸ Moonlight ▸ Manage servers; `intent settings:moonlight` / `settings:streaming` reroute there. | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. Each page is also directly reachable via `intent settings:<id>` (socket) — id slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`, `keybindings`, `avcontrol`, `widgets`, `accessibility`, `power`, `system`. `streaming`/`moonlight` reroute to Widgets ▸ Moonlight ▸ Manage servers (no longer a sidebar page). Theme mode selector (auto/light/dark) is part of the **Display** page. Free-space storage readout is part of the **System** page. Display page (#127): now reads monitors via daemon `hypr-monitors` IPC (replaces `hyprctl monitors -j` shell-out); shows live HDR status (read-only, driven by daemon `hdr` field), HDR toggle (persists + applies via `hyprctl keyword monitor` with/without `bitdepth,10,cm,hdr` suffix), separate Refresh Rate dropdown (filters `availableModes` to current resolution), Night Light toggle + color-temperature dropdown (applies via `hyprsunset`, requires hyprsunset), Overscan stepper (persists safe-area pct). |
 | — | Bluetooth — scanning + device list | substate |
 | — | Network — Wi-Fi list / connect | substate |
 | — | Network — gateway/DNS card + test-connection result | substate (net-status now carries `gateway`, `dns`, and per-connection `speed`; page shows a Gateway/DNS read-only card and a Test-connection action with OK/Failed inline result) |
@@ -82,7 +80,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | — | Key Bindings — capture mode ("press a button") | substate |
 | — | AV Control — CEC device info populated | substate — reads `cec-scan` JSON from daemon + subscribes to `cec:device:*`/`cec:power:*` events (#16) |
 | — | AV Control — Focus preference toggles | always-visible "Focus Preferences" section: "Focus TV on startup" (default Off) and "Focus TV on wake from sleep" (default On); render correctly even when CEC is unavailable |
-| — | Moonlight — add/edit server form + servers/apps toggle | substate |
+| — | Moonlight — add/edit server form | substate, reached via Widgets ▸ Moonlight ▸ Manage servers ▸ Add Server |
 | — | Display — each theme mode selected (auto/light/dark) | substate in Display page Appearance section |
 | — | Display — live external reload | QA: edit `~/.config/game-shell/settings.json` over SSH (e.g. flip `themeMode` `dark`→`light`) while the shell is open; confirm the theme switches without a Quickshell restart. The daemon broadcasts `config:changed` and `SettingsStore` re-fetches via `get-config`. No new screenshot view — the existing theme substates cover the visual. |
 | — | Accessibility — Reduce Motion on/off; Text Size Default/Large/Larger | substate |

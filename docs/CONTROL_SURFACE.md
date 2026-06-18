@@ -106,9 +106,16 @@ bind with no override disables Host matching and relies on the token, `mcp.rs:62
 Bare: `home`, `home-tap`, `home-hold`, `menu`, `settings`, `power`. Deep-links:
 `settings:<page-slug>`, `overlay:<volume|network|session>`, `app:<StartupWMClass>`.
 Page slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`,
-`keybindings`, `avcontrol`, `accessibility`, `power`, `system`. Validated by
+`keybindings`, `avcontrol`, `widgets`, `accessibility`, `power`, `system`. Validated by
 `bridge_core::is_valid_intent` (full vocab in `protocol.rs`; unknown `settings:`
 slugs are a graceful QML no-op).
+
+> **Reroute:** `settings:moonlight` and `settings:streaming` are **not** sidebar
+> pages — Moonlight server management is demoted under Widgets. Both slugs open
+> **Settings ▸ Widgets ▸ Moonlight ▸ Manage servers** directly (the QML
+> `SettingsPanel.openSectionById` maps them to the `widgets` section with a pending
+> deep-target). Agents driving the UI should expect the Widgets page (not a
+> "Moonlight" sidebar entry) and the Manage-servers surface in view.
 
 ## `StatusInfo` fields
 
