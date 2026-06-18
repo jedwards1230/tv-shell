@@ -36,7 +36,7 @@ FocusScope {
         id: a11yMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         // === Reduce Motion ===
         SectionHeader {

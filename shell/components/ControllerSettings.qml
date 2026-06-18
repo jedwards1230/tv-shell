@@ -315,7 +315,7 @@ FocusScope {
         id: ctrlMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         // === Connected Controllers (fleet — player slot + battery) ===
         SectionHeader {
@@ -519,7 +519,7 @@ FocusScope {
                     }
 
                     RowLayout {
-                        spacing: 32
+                        spacing: Units.spacingLG
 
                         Text {
                             text: "Device: " + modelData.path

@@ -142,7 +142,7 @@ FocusScope {
         id: netMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         // Connection status
         SectionHeader {

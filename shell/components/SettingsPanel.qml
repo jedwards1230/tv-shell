@@ -195,7 +195,7 @@ Rectangle {
         // Left sidebar
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 560
+            Layout.preferredWidth: Units.sidebarWidth
             color: Theme.surface
 
             ColumnLayout {
@@ -232,7 +232,7 @@ Rectangle {
                         required property int index
                         required property var modelData
                         width: sidebarList.width
-                        height: 100
+                        height: Units.settingsRowHeight
                         color: {
                             if (root.currentSection === index)
                                 return Theme.sidebarActive;
@@ -368,7 +368,7 @@ Rectangle {
                 // Back hint
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 80
+                    height: Units.settingsHintHeight
                     color: Theme.surfaceHover
 
                     Text {

@@ -275,7 +275,7 @@ FocusScope {
         id: avMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         // Header with status
         RowLayout {
@@ -423,7 +423,7 @@ FocusScope {
 
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 32
+                spacing: Units.spacingLG
 
                 // Wake AV
                 ActionCard {

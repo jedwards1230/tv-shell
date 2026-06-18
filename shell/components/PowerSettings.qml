@@ -41,7 +41,7 @@ FocusScope {
                 root.canSuspend = true;
             else if (t === "no")
                 root.canSuspend = false;
-            // "error" leaves the optimistic default untouched.
+        // "error" leaves the optimistic default untouched.
         }
     }
 
@@ -62,7 +62,7 @@ FocusScope {
         id: pwrMainCol
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         SectionHeader {
             text: "Power Settings"
@@ -175,7 +175,7 @@ FocusScope {
         // Power buttons - large and centered
         ColumnLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 32
+            spacing: Units.spacingLG
 
             ActionCard {
                 id: suspendScope
@@ -254,7 +254,7 @@ FocusScope {
 
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 32
+            spacing: Units.spacingLG
 
             FocusButton {
                 id: confirmYesScope

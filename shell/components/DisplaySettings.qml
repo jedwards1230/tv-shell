@@ -194,7 +194,7 @@ FocusScope {
         id: contentColumn
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         SectionHeader {
             text: "Displays"
@@ -273,7 +273,7 @@ FocusScope {
                     }
 
                     RowLayout {
-                        spacing: 32
+                        spacing: Units.spacingLG
 
                         Text {
                             text: "Resolution: " + modelData.width + "x" + modelData.height
@@ -295,7 +295,7 @@ FocusScope {
                     }
 
                     RowLayout {
-                        spacing: 32
+                        spacing: Units.spacingLG
 
                         Text {
                             text: "Position: " + modelData.x + "," + modelData.y

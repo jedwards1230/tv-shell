@@ -269,7 +269,7 @@ FocusScope {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.padding
-        spacing: 32
+        spacing: Units.spacingLG
 
         ListView {
             id: bindingsList
