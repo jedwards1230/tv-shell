@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import "lib"
+import "../components"
+import "../components/lib"
 
 // Binding IPC is routed through the SettingsStore singleton (which respects
 // GAME_SHELL_SOCK). See docs/IPC_PROTOCOL.md.

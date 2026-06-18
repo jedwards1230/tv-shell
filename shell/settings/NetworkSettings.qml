@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
-import "lib"
+import "../components"
+import "../components/lib"
 
 // Network settings — rewired (Phase 3) to read system network state from the
 // input daemon's NetworkManager-over-zbus backbone instead of shelling out to

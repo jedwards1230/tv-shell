@@ -3,7 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 import Qt5Compat.GraphicalEffects
-import "lib"
+import "../components"
+import "../components/lib"
 
 Rectangle {
     id: root
@@ -14,6 +15,40 @@ Rectangle {
 
     property int currentSection: 0
     property int _pendingSection: 0
+
+    // ── Public API ──────────────────────────────────────────────────────────
+    // The only surface shell.qml / ShellLayout should call. The internals
+    // (openSection / openSectionById / visible) stay private impl below; route
+    // navigation through these so the host never reaches into panel state.
+    //   signal closed  — emitted when the user backs out (page → sidebar → here);
+    //                    the host listens for it to return Home.
+
+    // open() — show the panel on its first section, mirroring the fresh-open path
+    // in openSection() (visible=true then forceActiveFocus; onVisibleChanged drives
+    // the focusTimer that lands focus on the sidebar — the root is a plain
+    // Rectangle, so this does not steal focus back).
+    function open() {
+        if (visible) {
+            forceActiveFocus();
+            return;
+        }
+        _pendingSection = 0;
+        visible = true;
+        forceActiveFocus();
+    }
+
+    // openPage(id) — deep-link to a section by slug; returns false for an unknown
+    // id so the caller can log it. Delegates to openSectionById, which also
+    // reroutes the demoted "moonlight"/"streaming" slugs onto Widgets ▸ Moonlight.
+    function openPage(id) {
+        return openSectionById(id);
+    }
+
+    // close() — dismiss without emitting closed() (no user-intent echo); used by
+    // the host's reset paths. Not idle-gated, so it works from any shell state.
+    function close() {
+        visible = false;
+    }
 
     Component {
         id: audioComp

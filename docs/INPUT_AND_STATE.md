@@ -153,12 +153,17 @@ focused at all, so its `Keys` handlers can't fire over a running app — only th
 ```
 PanelWindow (Exclusive keyboard focus)
 └── ShellLayout  (FocusScope, id: layout — root._layout)
+    ├── ScreenManager     (non-visual — routes the Home/Library/Settings layer:
+    │                      push("library"|"settings",…) / popToHome(). Reacts to
+    │                      `closed` signals; never intercepts Escape. Visibility &
+    │                      focus BINDINGS stay declarative on the surfaces below.)
     ├── HomeScreen        (visible & focus only in idle, no overlay/Library open)
     │   └── home widgets  (Now-Playing [strip|card], Plex [On Deck + Recently
     │       Added + chips], Recent apps, All Apps entry — one ordered focus list)
     ├── LibraryScreen     (secondary browse surface, z:30 — Moonlight rows +
     │                      Applications; opened from the home "All Apps" entry)
-    ├── SettingsPanel     (Rectangle — NOT a FocusScope; sidebar + Loader page)
+    ├── SettingsApp     (Rectangle — NOT a FocusScope; sidebar + Loader page;
+    │                      own module shell.settings, public open/openPage/close)
     ├── NavigationDrawer  (idle nav drawer, z:50)
     ├── NotificationCenter / ErrorLogViewer (z:60)
     ├── PowerOverlay      (z:60)
@@ -175,7 +180,7 @@ only when nothing else is open:
 
 ```qml
 focus: root.shellState === "idle" && !libraryScreen.visible
-       && !settingsPanel.visible && !navDrawer.opened
+       && !settingsApp.visible && !navDrawer.opened
        && !notificationCenter.opened && !powerOverlay.opened
        && !networkOverlay.opened && !volumeOverlay.opened
 ```
@@ -184,7 +189,7 @@ focus: root.shellState === "idle" && !libraryScreen.visible
 |----------------|-------------|
 | Home screen | A focus region inside `HomeScreen` (the home `focus:` binding routes Wayland focus into it) |
 | Library open | `LibraryScreen` — its own region chain (Moonlight rows + Applications); B/Escape emits `closed`, `homeFocusTimer` restores Home |
-| Settings panel open | `SettingsPanel` — specifically `sidebarList`, until you `Right`/`Return` into a page |
+| Settings panel open | `SettingsApp` — specifically `sidebarList`, until you `Right`/`Return` into a page |
 | Nav drawer open | `NavigationDrawer` (`navList`, or `drawerActions` quick-actions row) |
 | Notification center | `NotificationCenter` (modal — `event.accepted = true` on every key) |
 | Power overlay | `PowerOverlay` (modal) |
@@ -208,7 +213,7 @@ synchronous `forceActiveFocus()` can be immediately stolen back by a sibling's
   can steal focus after another row's `forceActiveFocus()`. This is the
   **"defer focus to after the FocusScope is realized"** rule.
 
-`SettingsPanel` is a plain `Rectangle`, not a `FocusScope` — so its helpers call
+`SettingsApp` is a plain `Rectangle`, not a `FocusScope` — so its helpers call
 `sidebarList.forceActiveFocus()` directly and **avoid** a trailing
 `root.forceActiveFocus()` that would steal focus back from the sidebar.
 
@@ -273,7 +278,7 @@ intents (channel B); the rest are real key events (channel A).
 |---------|-------|-----------|----------|----------|--------------------------------|---------------|
 | **Home screen** (idle) | Move between cards / rows (`NavigableRow`, `KeyNavigation`) | Launch focused stream/app card; activate QuickActions glyph | Reset to default landing position (first card, top row); quiet no-op if already there. **Does NOT open Settings.** | `intent:home-tap` → `toggleMenu()` (nav drawer) | Open nav drawer | `HomeScreen` rows + `QuickActions` `onEscaped`/`focusDefaultPosition`; intents in `shell.qml` |
 | **QuickActions row** (top-right) | Left/Right move glyph; Down drops into rows; Up reaches it | Activate glyph (Notifications/Settings/Theme/Network/Volume/Power) | `focusDefaultPosition()` — `escapeRequestsSettings:false` on this row so B does **not** open Settings (#156) | (as Home screen) | (as Home screen) | `QuickActions.qml` |
-| **Settings panel** | Up/Down move sidebar cursor (page does **not** auto-load); Right enters loaded page controls | Sidebar: `Return` loads focused page (focus stays on sidebar). In a page: activate control | **Hierarchical:** in a page → back to sidebar; on sidebar → close panel, return Home (`page → B → sidebar → B → Home`). The **Widgets** page owns its own internal stack (list → per-widget config → Moonlight servers): it consumes B to pop one level, only bubbling to the panel at the list level (`servers → B → config → B → list → B → sidebar`). | (no special — intents guarded to idle; panel is part of idle) | n/a | `SettingsPanel.Keys.onEscapePressed` / `onLeftPressed`; `WidgetsSettings.Keys.onEscapePressed` for the internal stack |
+| **Settings panel** | Up/Down move sidebar cursor (page does **not** auto-load); Right enters loaded page controls | Sidebar: `Return` loads focused page (focus stays on sidebar). In a page: activate control | **Hierarchical:** in a page → back to sidebar; on sidebar → close panel, return Home (`page → B → sidebar → B → Home`). The **Widgets** page owns its own internal stack (list → per-widget config → Moonlight servers): it consumes B to pop one level, only bubbling to the panel at the list level (`servers → B → config → B → list → B → sidebar`). | (no special — intents guarded to idle; panel is part of idle) | n/a | `SettingsApp.Keys.onEscapePressed` / `onLeftPressed`; `WidgetsSettings.Keys.onEscapePressed` for the internal stack |
 | **Nav drawer** (idle) | Up/Down move nav list; Down past end → quick-actions row; Up returns to list | `Return` activates nav item (Home/Settings) or quick-action glyph | Close drawer (`Drawer.Keys.onEscapePressed → closed()`); literal `B` key also closes | n/a (drawer already open) | `toggleMenu()` closes it | `NavigationDrawer`/`Drawer` + `QuickActions` |
 | **Notification center** | Up/Down select entry | `Return` on an error entry → open error log | Close (`opened=false`) | — | — | `NotificationCenter.Keys.onPressed` (modal, consumes all) |
 | **Power overlay** | Left/Right select action | `Return` activate selected power action | `cancelled()` → close | — | — | `PowerOverlay.Keys.onPressed` (modal, consumes all) |
@@ -355,13 +360,13 @@ intents. Unknown leaves are a graceful no-op in QML (logged, no crash).
 
 | Intent | Handler | Effect |
 |--------|---------|--------|
-| `settings:<page>` | `onIntentSettingsPage` | `settingsPanel.openSectionById(page)` — page ids below |
+| `settings:<page>` | `onIntentSettingsPage` | `openSettings(page)` → `SettingsApp.openPage` → `openSectionById` — page ids below |
 | `overlay:volume` | `onIntentOverlay` | `volumeOverlay.openAt(null)` |
 | `overlay:network` | `onIntentOverlay` | `networkOverlay.openAt(null)` |
 | `overlay:session` | `onIntentOverlay` | Open the power/session drawer |
 | `app:<wmClass>` | `onIntentApp` | Match `_applications[].wmClass`, then `checkAndLaunchApp` |
 
-**Settings page ids** (order from `SettingsPanel.sections`, `streaming` only when
+**Settings page ids** (order from `SettingsApp.sections`, `streaming` only when
 a provider is configured): `audio`, `bluetooth`, `network`, `display`,
 `controllers`, `keybindings`, `avcontrol`, `streaming` (provider id),
 `accessibility`, `power`, `system`.
@@ -386,7 +391,7 @@ state-guarded.
   only works as a direct Wayland key from the K400 (`ShellLayout.onTabPressed`).
 - **B is Escape.** The gamepad B button arrives as `KEY_ESC`; back-button logic
   is all in `Keys.onEscapePressed` / `Qt.Key_Escape` handlers (plus a literal
-  `Qt.Key_B` fallback for a physical keyboard 'B' in `Drawer`/`SettingsPanel`).
+  `Qt.Key_B` fallback for a physical keyboard 'B' in `Drawer`/`SettingsApp`).
 - **The shell is unfocused over an app/stream.** In `appRunning` (drawer closed),
   `streaming`, `reconnecting`, and `launching`, the shell `PanelWindow` is hidden
   and unfocused — its `Keys` handlers cannot fire. The **intent channel is the

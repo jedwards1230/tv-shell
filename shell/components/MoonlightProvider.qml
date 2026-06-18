@@ -10,7 +10,7 @@ TargetProvider {
     providerId: "moonlight"
     displayName: "Moonlight"
 
-    // Backend-specific settings UI, loaded on demand by SettingsPanel's Loader.
+    // Backend-specific settings UI, loaded on demand by SettingsApp's Loader.
     settingsComponent: Component {
         MoonlightSettings {}
     }

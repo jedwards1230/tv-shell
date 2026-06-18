@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // body now leads with glance/resume content (Continue + New rails); the full
 // browse catalog — every Moonlight server and the complete local Applications
 // list — lives here, one step
-// away behind the home "All Apps" entry. Modeled on SettingsPanel's lifecycle:
+// away behind the home "All Apps" entry. Modeled on SettingsApp's lifecycle:
 // toggled by `visible` from ShellLayout, B/Escape emits `closed`, and it owns a
 // self-contained focus chain over its rows (same list-driven contract as
 // HomeScreen). It re-emits the stream/app intents up to ShellLayout unchanged.

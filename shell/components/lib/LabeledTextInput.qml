@@ -6,7 +6,7 @@ import "../"
 // (Name, Host, App fields — 3× duplication).
 //
 // Root is a FocusScope (per CLAUDE.md: interactive lib/ components must be
-// FocusScopes so SettingsPanel's outer Flickable scroll-follow keeps working).
+// FocusScopes so SettingsApp's outer Flickable scroll-follow keeps working).
 // The inner RowLayout fills the scope; Layout.fillWidth lets the component
 // stretch to its parent ColumnLayout's width the way the old RowLayout root did.
 //
