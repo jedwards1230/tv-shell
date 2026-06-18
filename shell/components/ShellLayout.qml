@@ -44,6 +44,28 @@ FocusScope {
         homeFocusTimer.restart();
     }
 
+    // Secondary-screen router — centralizes the imperative show/hide of Library
+    // and Settings over Home. Visibility/focus bindings stay declarative on the
+    // surfaces themselves (see HomeScreen below); this only routes the actions.
+    ScreenManager {
+        id: screens
+        libraryScreen: libraryScreen
+        settingsApp: settingsApp
+        homeFocusTimer: homeFocusTimer
+    }
+
+    // Host-facing settings API for shell.qml — so shell.qml routes through the
+    // layout (→ router → SettingsApp public API) instead of poking the panel.
+    // openSettings(page) returns the deep-link bool for the unknown-slug log.
+    function openSettings(page) {
+        return screens.push("settings", page ? {
+            page: page
+        } : {});
+    }
+    function closeSettings() {
+        screens.closeSettings();
+    }
+
     // Reset the home screen to its default focus position (first card of the
     // first visible row). Exposed for the future screensaver hook (issue #156);
     // shell.qml's resetToHome() / returnToShell() reset path uses focusHome()
@@ -195,12 +217,8 @@ FocusScope {
         onAppLaunchRequested: app => root.appLaunchRequested(app)
         onAppFocusRequested: address => root.appFocusRequested(address)
         onAppCloseRequested: address => root.appCloseRequested(address)
-        onLibraryRequested: {
-            libraryScreen.visible = true;
-            libraryScreen.forceActiveFocus();
-            libraryScreen.focusDefaultPosition();
-        }
-        onSettingsRequested: settingsApp.open()
+        onLibraryRequested: screens.push("library")
+        onSettingsRequested: screens.push("settings")
         onNetworkRequested: anchorRect => networkOverlay.openAt(anchorRect)
         onVolumeRequested: anchorRect => volumeOverlay.openAt(anchorRect)
         onNotificationCenterRequested: {
@@ -250,30 +268,25 @@ FocusScope {
         }
         onAppCloseRequested: address => root.appCloseRequested(address)
         onUserActivity: root.userActivity()
-        onClosed: {
-            libraryScreen.visible = false;
-            homeFocusTimer.restart();
-        }
+        onClosed: screens.popToHome()
     }
 
-    // Safety net: if the shell leaves idle for any reason while the Library is
-    // open (e.g. an externally-started stream), drop the surface so it never
-    // floats over a running app.
+    // Safety net: if the shell leaves idle for any reason while a secondary
+    // screen is open (e.g. an externally-started stream), drop it so it never
+    // floats over a running app. refocus=false — the state machine owns focus
+    // when not idle.
     Connections {
         target: root
         function onShellStateChanged() {
             if (root.shellState !== "idle")
-                libraryScreen.visible = false;
+                screens.popToHome(false);
         }
     }
 
     SettingsApp {
         id: settingsApp
         anchors.fill: parent
-        onClosed: {
-            settingsApp.close();
-            homeFocusTimer.restart();
-        }
+        onClosed: screens.popToHome()
     }
 
     // When an anchored Volume/Network popover closes, return focus to the nav
@@ -315,7 +328,7 @@ FocusScope {
         visible: root.shellState === "idle"
         onSettingsRequested: {
             navDrawer.opened = false;
-            settingsApp.open();
+            screens.push("settings");
         }
         onNotificationCenterRequested: {
             navDrawer.opened = false;
@@ -336,8 +349,7 @@ FocusScope {
         }
         onHomeSelected: {
             navDrawer.opened = false;
-            settingsApp.close();
-            homeFocusTimer.restart();
+            screens.popToHome();
         }
         onClosed: {
             navDrawer.opened = false;
@@ -447,7 +459,7 @@ FocusScope {
             onSettingsRequested: {
                 root.overlayDrawerClosed();
                 root.returnToShellRequested();
-                settingsApp.open();
+                screens.push("settings");
             }
             onNotificationCenterRequested: {
                 root.returnToShellRequested();

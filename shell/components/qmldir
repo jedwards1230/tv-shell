@@ -43,6 +43,7 @@ SocketClient 1.0 SocketClient.qml
 InputManager 1.0 InputManager.qml
 AppLifecycleManager 1.0 AppLifecycleManager.qml
 StreamManager 1.0 StreamManager.qml
+ScreenManager 1.0 ScreenManager.qml
 ShellLayout 1.0 ShellLayout.qml
 singleton NotificationManager 1.0 NotificationManager.qml
 singleton NetworkManager 1.0 NetworkManager.qml
