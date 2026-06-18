@@ -161,7 +161,7 @@ FocusScope {
                 required property var modelData
                 width: parent ? parent.width : 0
                 height: 96
-                radius: 16
+                radius: Units.radiusMD
                 color: Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -334,7 +334,7 @@ FocusScope {
                 required property var modelData
                 width: wifiList.width
                 height: 96
-                radius: 16
+                radius: Units.radiusMD
                 color: {
                     if (modelData.inUse)
                         return Theme.sidebarActive;

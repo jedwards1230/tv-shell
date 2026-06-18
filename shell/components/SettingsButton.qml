@@ -6,7 +6,7 @@ Rectangle {
     implicitHeight: 96
     width: implicitWidth
     height: implicitHeight
-    radius: 16
+    radius: Units.radiusMD
     color: ((root.activeFocus || root.highlighted) && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode) ? Theme.surfaceHover : Theme.surface
     border.width: (root.activeFocus || root.highlighted) && !Theme.mouseMode ? 3 : 2
     border.color: (root.activeFocus || root.highlighted) && !Theme.mouseMode ? Theme.focusBorder : Theme.surfaceBorder

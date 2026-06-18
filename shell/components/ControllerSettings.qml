@@ -337,7 +337,7 @@ FocusScope {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.preferredHeight: 96
-                    radius: 16
+                    radius: Units.radiusMD
                     color: Theme.surface
                     border.width: 2
                     border.color: Theme.surfaceBorder
@@ -490,7 +490,7 @@ FocusScope {
                 required property var modelData
                 width: controllerList.width
                 height: 180
-                radius: 16
+                radius: Units.radiusMD
                 color: controllerList.currentIndex === index && controllerList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder
@@ -537,7 +537,7 @@ FocusScope {
                         Rectangle {
                             Layout.preferredHeight: 28
                             Layout.preferredWidth: grabbedLabel.implicitWidth + 24
-                            radius: 8
+                            radius: Units.radiusSM
                             color: Theme.sidebarActive
                             visible: modelData.grabbed === true
 

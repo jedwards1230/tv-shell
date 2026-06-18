@@ -79,7 +79,7 @@ FocusScope {
         id: header
         width: parent.width
         height: root.headerHeight
-        radius: 16
+        radius: Units.radiusMD
         color: root.activeFocus && !root._open ? Theme.surfaceHover : Theme.surface
         border.width: 2
         border.color: root.activeFocus ? Theme.focusBorder : Theme.surfaceBorder

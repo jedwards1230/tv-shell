@@ -231,7 +231,7 @@ FocusScope {
                 required property var modelData
                 width: monitorList.width
                 height: 180
-                radius: 16
+                radius: Units.radiusMD
                 color: monitorList.currentIndex === index && monitorList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: Theme.surfaceBorder

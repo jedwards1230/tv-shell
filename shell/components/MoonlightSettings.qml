@@ -514,7 +514,7 @@ FocusScope {
                                 Rectangle {
                                     width: 16
                                     height: 16
-                                    radius: 8
+                                    radius: Units.radiusSM
                                     color: root._statusColor(modelData.host)
                                 }
 

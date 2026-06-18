@@ -323,7 +323,7 @@ FocusScope {
                 required property var modelData
                 width: bindingsList.width
                 height: modelData.action === "drawer" ? 100 : 80
-                radius: 16
+                radius: Units.radiusMD
                 color: bindingsList.currentIndex === index && bindingsList.activeFocus ? Theme.surfaceHover : Theme.surface
                 border.width: 2
                 border.color: {
@@ -383,7 +383,7 @@ FocusScope {
                                 Rectangle {
                                     width: capText.implicitWidth + 24
                                     height: capText.implicitHeight + 16
-                                    radius: 8
+                                    radius: Units.radiusSM
                                     color: Theme.surface
                                     border.width: 2
                                     border.color: Theme.ember
