@@ -62,11 +62,17 @@ FocusScope {
         Qt.callLater(_focusCurrentLevel);
     }
 
+    // Set when popping servers → config so the config sub-page restores focus to
+    // its "Manage servers" control (where the user drilled from) instead of the
+    // first control.
+    property bool _returnFocusManage: false
+
     // Step back one internal level. Returns true if handled (so B/Escape is
     // consumed); false at the list level (so it bubbles to SettingsPanel).
     function _back() {
         if (_showServers) {
             _showServers = false;
+            _returnFocusManage = true;
             Qt.callLater(_focusCurrentLevel);
             return true;
         }
@@ -78,13 +84,21 @@ FocusScope {
         return false;
     }
 
+    // Focus the current level's entry control. Driven by both Qt.callLater (after
+    // a nav state change) and each Loader's onLoaded (covers the case where the
+    // item is created a tick after the state flips) — double-calling is harmless.
     function _focusCurrentLevel() {
         if (_showServers) {
             if (serversLoader.item && serversLoader.item.focusFirst)
                 serversLoader.item.focusFirst();
         } else if (!_atList) {
-            if (configLoader.item && configLoader.item.focusFirst)
-                configLoader.item.focusFirst();
+            if (configLoader.item) {
+                if (_returnFocusManage && configLoader.item.focusManageServers)
+                    configLoader.item.focusManageServers();
+                else if (configLoader.item.focusFirst)
+                    configLoader.item.focusFirst();
+                _returnFocusManage = false;
+            }
         } else {
             _focusListRow(_lastListId);
         }
@@ -258,6 +272,7 @@ FocusScope {
         id: configLoader
         visible: !root._atList && !root._showServers
         active: visible
+        onLoaded: root._focusCurrentLevel()
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -328,6 +343,10 @@ FocusScope {
             blurb: "Your game-streaming servers. Small = an icon-only online rail; Medium = cards with the server name."
             function focusFirst() {
                 mEnabled.forceActiveFocus();
+            }
+            // Restore focus here when returning from the servers sub-page.
+            function focusManageServers() {
+                mManage.forceActiveFocus();
             }
 
             FocusButton {
@@ -551,6 +570,7 @@ FocusScope {
         id: serversLoader
         visible: root._showServers
         active: visible
+        onLoaded: root._focusCurrentLevel()
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
