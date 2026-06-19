@@ -61,8 +61,10 @@ Item {
     width: posterWidth
     height: posterHeight + (root.showCaption ? captionCol.implicitHeight + Units.spacingSM : 0)
 
-    // Dim a locked card so the running game reads as the only live target.
-    opacity: root.locked ? 0.35 : 1.0
+    // Dimming a locked card is done with a dark SCRIM over the poster (below),
+    // NOT card `opacity`: lowering opacity bleeds the theme background through, so
+    // in light mode a disabled card washed out to white. A scrim darkens the
+    // poster the same way in both light and dark mode.
 
     // A locked card is not a pressable button — expose it as a static image so
     // accessibility tooling doesn't advertise an activation that's disabled.
@@ -134,6 +136,17 @@ Item {
                     font.bold: true
                     color: Theme.textMuted
                 }
+
+                // Locked-game scrim — a different game is running, so this card is
+                // disabled. A dark overlay (theme-independent) darkens the poster so
+                // it reads as inactive in both light and dark mode; using card
+                // opacity instead would let the light theme bg show as washed white.
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Units.radiusMD
+                    visible: root.locked
+                    color: Qt.rgba(0, 0, 0, 0.66)
+                }
             }
         }
 
@@ -173,7 +186,9 @@ Item {
                     text: root.title
                     font.pixelSize: Theme.fontSmall
                     font.bold: true
-                    color: Theme.textPrimary
+                    // Mute a locked card's title so it reads disabled, matching the
+                    // poster scrim above.
+                    color: root.locked ? Theme.textMuted : Theme.textPrimary
                 }
             }
         }
