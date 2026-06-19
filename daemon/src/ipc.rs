@@ -8,7 +8,9 @@
 
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
-use crate::{apps, config, controllerdb, health, moonlight, notifications, plex, recents, system};
+use crate::{
+    apps, config, controllerdb, health, moonlight, notifications, plex, recents, steam, system,
+};
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use std::os::unix::fs::PermissionsExt;
@@ -309,6 +311,12 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         // token come from the daemon env. Unconfigured/unreachable degrades to
         // `{"enabled":false,…}` / empty hubs.
         Command::PlexHubs => Some(plex::handle_plex_hubs().await),
+        // Steam library + launch for the home-screen Steam widget. Stateless +
+        // cross-platform like `plex-hubs`; the game-shell-host base URL + token
+        // come from the daemon env. Unconfigured ⇒ `{"status":"disabled",…}`.
+        Command::SteamLibrary => Some(steam::handle_steam_library().await),
+        Command::SteamLaunch(appid) => Some(steam::handle_steam_launch(*appid).await),
+        Command::SteamLaunchUsage => Some(protocol::resp_steam_launch_usage()),
         // Moonlight local-config "forget" — creds-free client-side unpair.
         // Stateless and cross-platform (just edits Moonlight.conf). Missing host
         // routes to `MoonlightForgetUsage`. Runs the blocking file edit off the
@@ -510,6 +518,10 @@ async fn dispatch(
         | Command::SunshineStatusUsage
         // Plex hubs is stateless (consumed by `dispatch_stateless`).
         | Command::PlexHubs
+        // Steam library/launch are stateless (consumed by `dispatch_stateless`).
+        | Command::SteamLibrary
+        | Command::SteamLaunch(_)
+        | Command::SteamLaunchUsage
         // Moonlight forget is stateless (consumed by `dispatch_stateless`).
         | Command::MoonlightForget(_)
         | Command::MoonlightForgetUsage

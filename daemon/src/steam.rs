@@ -1,0 +1,340 @@
+//! Steam library proxy for the home-screen Steam widget.
+//!
+//! Mirrors [`crate::plex`]: a stateless, cross-platform `reqwest` handler served
+//! from `ipc.rs` like `list-apps`, not a Linux-only actor. The shell's
+//! `SteamWidget` polls the `steam-library` IPC command and renders poster cards
+//! for the installed Steam games on the gaming PC; selecting one fires
+//! `steam-launch <appid>` (also handled here) and then starts the existing
+//! Moonlight stream.
+//!
+//! The actual enumeration + launch live in `game-shell-host` (a thin
+//! cross-platform sidecar on the gaming PC). This daemon module just proxies to
+//! that host's `GET /library` / `POST /launch` over HTTP with a bearer token.
+//!
+//! **Config via env** (set in `~/.config/game-shell/daemon.env`):
+//! - `GAME_SHELL_STEAM_URL`   — game-shell-host base, e.g. `http://192.168.8.10:47995`
+//! - `GAME_SHELL_STEAM_TOKEN` — the host's bearer token (`GAME_SHELL_HOST_TOKEN`)
+//!
+//! The reply carries a `status` field from the shared [`crate::service_health`]
+//! vocabulary (`disabled`/`ok`/`unreachable`/`error`) so the widget tells a down
+//! host apart from an empty library. When unconfigured the command returns
+//! `{"status":"disabled",…}` so the widget collapses to nothing. The token lives
+//! only in the daemon's environment; QML never reads it.
+//!
+//! The response *normalizer* ([`normalize_library`]) is a pure function,
+//! unit-tested on every platform; only the live fetch needs a reachable host.
+
+use serde_json::{json, Value};
+
+/// Recently-played rail cap. The rows only show a handful at 4K.
+const RECENT_LIMIT: usize = 12;
+
+/// Resolve `(base_url, token)` from the environment, or `None` when the widget
+/// is unconfigured. Trailing slash on the base is trimmed so URL joins are clean.
+///
+/// `pub(crate)` so [`crate::service_health`] can reuse the same resolution for a
+/// reachability probe — one source of truth for "is Steam configured?".
+pub(crate) fn config() -> Option<(String, String)> {
+    let base = std::env::var("GAME_SHELL_STEAM_URL").ok()?;
+    let token = std::env::var("GAME_SHELL_STEAM_TOKEN").ok()?;
+    let base = base.trim().trim_end_matches('/').to_string();
+    let token = token.trim().to_string();
+    if base.is_empty() || token.is_empty() {
+        return None;
+    }
+    Some((base, token))
+}
+
+/// IPC entry point for `steam-library`. Returns
+/// `{"status":<status>,"recentlyPlayed":[…],"allGames":[…]}` where `status` is
+/// the shared [`crate::service_health::ServiceStatus`] vocabulary.
+///
+/// A lightweight `GET /status` reachability probe runs first; only on `Ok` is the
+/// library fetched, so a down host yields empty rails *with a status the widget
+/// can render*. Unconfigured ⇒ `disabled` (widget collapses).
+pub async fn handle_steam_library() -> String {
+    use crate::service_health::ServiceStatus;
+
+    let Some((base, token)) = config() else {
+        return json!({
+            "status": ServiceStatus::Disabled.as_str(),
+            "recentlyPlayed": [],
+            "allGames": [],
+        })
+        .to_string();
+    };
+
+    // Reachability gate — `/status` is small and authenticated, so its HTTP
+    // status classifies cleanly (401 → Error/bad token, 5xx → Unreachable).
+    let status_url = format!("{base}/status");
+    let probe = crate::service_health::probe_get(
+        &status_url,
+        &[("Authorization", &format!("Bearer {token}"))],
+    )
+    .await;
+    if probe != ServiceStatus::Ok {
+        return json!({
+            "status": probe.as_str(),
+            "recentlyPlayed": [],
+            "allGames": [],
+        })
+        .to_string();
+    }
+
+    match fetch_library(&base, &token).await {
+        Ok(games) => normalize_library(&games),
+        Err(e) => {
+            tracing::debug!("steam-library fetch failed: {e}");
+            json!({
+                "status": ServiceStatus::Unreachable.as_str(),
+                "recentlyPlayed": [],
+                "allGames": [],
+            })
+            .to_string()
+        }
+    }
+}
+
+/// IPC entry point for `steam-launch <appid>`. POSTs `{appid}` to the host's
+/// `/launch` and returns `ok` / `error:*`. The Moonlight stream start stays in
+/// QML — this only kicks off the game on the host.
+pub async fn handle_steam_launch(appid: u32) -> String {
+    let Some((base, token)) = config() else {
+        return crate::protocol::resp_error("steam not configured");
+    };
+    match post_launch(&base, &token, appid).await {
+        Ok(()) => crate::protocol::resp_ok(),
+        Err(e) => {
+            tracing::debug!("steam-launch {appid} failed: {e}");
+            crate::protocol::resp_error(&format!("steam-launch failed: {e}"))
+        }
+    }
+}
+
+/// Error type for a host fetch: a transport failure (`reqwest`) or a body that
+/// did not parse as JSON (`serde_json`).
+#[derive(Debug)]
+enum FetchError {
+    Http(reqwest::Error),
+    Json(serde_json::Error),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::Http(e) => write!(f, "http: {e}"),
+            FetchError::Json(e) => write!(f, "json: {e}"),
+        }
+    }
+}
+
+/// GET `{base}/library` with the bearer token and parse the JSON body. The body
+/// is read as text and parsed via `serde_json` (matching `plex.rs`'s `.text()`
+/// usage — the crate's `reqwest` has no `json` feature).
+async fn fetch_library(base: &str, token: &str) -> Result<Value, FetchError> {
+    let url = format!("{base}/library");
+    let client = crate::service_health::build_client().map_err(FetchError::Http)?;
+    let body = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(FetchError::Http)?
+        .error_for_status()
+        .map_err(FetchError::Http)?
+        .text()
+        .await
+        .map_err(FetchError::Http)?;
+    serde_json::from_str(&body).map_err(FetchError::Json)
+}
+
+/// POST `{base}/launch` with `{appid}` and the bearer token. Any non-2xx is an
+/// error.
+async fn post_launch(base: &str, token: &str, appid: u32) -> Result<(), reqwest::Error> {
+    let url = format!("{base}/launch");
+    let client = crate::service_health::build_client()?;
+    client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(json!({ "appid": appid }).to_string())
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+/// Normalize a `LibraryResponse` (`{games:[…]}`) into the widget's two rails:
+/// `recentlyPlayed` (sorted by `last_played` desc, top [`RECENT_LIMIT`]) and
+/// `allGames` (sorted by name). Pure function — no I/O — so it unit-tests
+/// anywhere. A body with no `games` array yields empty rails (but `status:ok`,
+/// matching an installed-but-empty library).
+pub fn normalize_library(root: &Value) -> String {
+    use crate::service_health::ServiceStatus;
+
+    let games = root.get("games").and_then(|g| g.as_array());
+    let Some(games) = games else {
+        return json!({
+            "status": ServiceStatus::Ok.as_str(),
+            "recentlyPlayed": [],
+            "allGames": [],
+        })
+        .to_string();
+    };
+
+    // Project each entry to the widget shape and keep only installed games (a
+    // partially-downloaded title isn't launchable yet).
+    let mut cards: Vec<Value> = games
+        .iter()
+        .filter(|g| g.get("installed").and_then(|v| v.as_bool()).unwrap_or(true))
+        .map(card)
+        .collect();
+
+    // allGames: by name (case-insensitive).
+    cards.sort_by(|a, b| {
+        let an = a["name"].as_str().unwrap_or("").to_lowercase();
+        let bn = b["name"].as_str().unwrap_or("").to_lowercase();
+        an.cmp(&bn)
+    });
+    let all_games = cards.clone();
+
+    // recentlyPlayed: by last_played desc, drop never-played, cap.
+    let mut recent: Vec<Value> = cards
+        .into_iter()
+        .filter(|c| c["lastPlayed"].as_u64().unwrap_or(0) > 0)
+        .collect();
+    recent.sort_by(|a, b| {
+        let al = a["lastPlayed"].as_u64().unwrap_or(0);
+        let bl = b["lastPlayed"].as_u64().unwrap_or(0);
+        bl.cmp(&al)
+    });
+    recent.truncate(RECENT_LIMIT);
+
+    json!({
+        "status": ServiceStatus::Ok.as_str(),
+        "recentlyPlayed": recent,
+        "allGames": all_games,
+    })
+    .to_string()
+}
+
+/// Map one host `LibraryEntry` to the widget card shape `{appid,name,art,
+/// headerArt,lastPlayed}`. The poster + header art URLs are built daemon-side off
+/// the appid (Steam's CDN serves them publicly, no token), so QML just binds
+/// them to `Image.source` with a header.jpg fallback.
+fn card(entry: &Value) -> Value {
+    let appid = entry.get("appid").and_then(|v| v.as_u64()).unwrap_or(0);
+    let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let last_played = entry.get("last_played").and_then(|v| v.as_u64());
+    json!({
+        "appid": appid,
+        "name": name,
+        "art": library_art_url(appid),
+        "headerArt": header_art_url(appid),
+        "lastPlayed": last_played,
+    })
+}
+
+/// Portrait library poster (600×900). Verified HTTP 200 on Steam's CDN.
+fn library_art_url(appid: u64) -> String {
+    format!("https://steamcdn-a.akamaihd.net/steam/apps/{appid}/library_600x900.jpg")
+}
+
+/// 16:9 header image — the QML fallback when the portrait poster 404s (older
+/// titles may lack `library_600x900`).
+fn header_art_url(appid: u64) -> String {
+    format!("https://steamcdn-a.akamaihd.net/steam/apps/{appid}/header.jpg")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn lib(games: Value) -> Value {
+        json!({ "games": games })
+    }
+
+    fn parse(out: &str) -> Value {
+        serde_json::from_str(out).unwrap()
+    }
+
+    #[test]
+    fn empty_library_is_ok_empty() {
+        let out = parse(&normalize_library(&lib(json!([]))));
+        assert_eq!(out["status"], "ok");
+        assert_eq!(out["recentlyPlayed"].as_array().unwrap().len(), 0);
+        assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn missing_games_array_is_ok_empty() {
+        let out = parse(&normalize_library(&json!({})));
+        assert_eq!(out["status"], "ok");
+        assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn all_games_sorted_by_name_and_art_built() {
+        let out = parse(&normalize_library(&lib(json!([
+            { "appid": 620, "name": "Portal 2", "last_played": 0, "installed": true },
+            { "appid": 400, "name": "Portal", "last_played": 0, "installed": true },
+        ]))));
+        let all = out["allGames"].as_array().unwrap();
+        assert_eq!(all.len(), 2);
+        // Sorted: "Portal" before "Portal 2".
+        assert_eq!(all[0]["name"], "Portal");
+        assert_eq!(all[1]["name"], "Portal 2");
+        // Art URLs built off appid.
+        assert_eq!(
+            all[0]["art"],
+            "https://steamcdn-a.akamaihd.net/steam/apps/400/library_600x900.jpg"
+        );
+        assert_eq!(
+            all[0]["headerArt"],
+            "https://steamcdn-a.akamaihd.net/steam/apps/400/header.jpg"
+        );
+    }
+
+    #[test]
+    fn recently_played_sorted_desc_and_filtered() {
+        let out = parse(&normalize_library(&lib(json!([
+            { "appid": 1, "name": "Old", "last_played": 100, "installed": true },
+            { "appid": 2, "name": "Newest", "last_played": 300, "installed": true },
+            { "appid": 3, "name": "Never", "last_played": 0, "installed": true },
+            { "appid": 4, "name": "Mid", "last_played": 200, "installed": true },
+        ]))));
+        let recent = out["recentlyPlayed"].as_array().unwrap();
+        // Never-played dropped; rest by last_played desc.
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0]["name"], "Newest");
+        assert_eq!(recent[1]["name"], "Mid");
+        assert_eq!(recent[2]["name"], "Old");
+    }
+
+    #[test]
+    fn uninstalled_games_excluded() {
+        let out = parse(&normalize_library(&lib(json!([
+            { "appid": 1, "name": "Installed", "last_played": 0, "installed": true },
+            { "appid": 2, "name": "Downloading", "last_played": 0, "installed": false },
+        ]))));
+        let all = out["allGames"].as_array().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0]["name"], "Installed");
+    }
+
+    #[test]
+    fn recently_played_capped() {
+        let many: Vec<Value> = (0..30)
+            .map(|i| json!({ "appid": i, "name": format!("G{i}"), "last_played": 1000 + i, "installed": true }))
+            .collect();
+        let out = parse(&normalize_library(&lib(json!(many))));
+        assert_eq!(
+            out["recentlyPlayed"].as_array().unwrap().len(),
+            RECENT_LIMIT
+        );
+        // allGames is uncapped.
+        assert_eq!(out["allGames"].as_array().unwrap().len(), 30);
+    }
+}

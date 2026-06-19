@@ -181,6 +181,21 @@ pub enum Command {
     /// `{"enabled":false,…}` / empty hubs rather than erroring.
     PlexHubs,
 
+    /// `steam-library` -> compact JSON `{status,recentlyPlayed:[…],allGames:[…]}`
+    /// for the home-screen Steam widget. Bare command (no body); the
+    /// game-shell-host base URL + token come from the daemon environment
+    /// (`GAME_SHELL_STEAM_URL` / `GAME_SHELL_STEAM_TOKEN`). Stateless +
+    /// cross-platform (`reqwest`), served like `plex-hubs`. Unconfigured ⇒
+    /// `{"status":"disabled",…}`.
+    SteamLibrary,
+
+    /// `steam-launch <appid>` -> launch a Steam game on the host (proxies
+    /// `POST /launch` to game-shell-host). The body is a single numeric appid
+    /// token. Replies `ok` / `error:*`. Stateless + cross-platform.
+    SteamLaunch(u32),
+    /// `steam-launch` with a missing/non-numeric `<appid>` body.
+    SteamLaunchUsage,
+
     // --- Moonlight local-config "forget" (creds-free unpair) ---
     /// `moonlight-forget <host>` -> remove a host from Moonlight's local config
     /// (`Moonlight.conf`) so this client is no longer paired with it. `host` is
@@ -396,6 +411,7 @@ impl Command {
             "power-suspend" => Command::PowerSuspend,
             "power-battery" => Command::PowerBattery,
             "plex-hubs" => Command::PlexHubs,
+            "steam-library" => Command::SteamLibrary,
             // Phase 4 bare commands (no body).
             "hypr-active" => Command::HyprActive,
             "hypr-clients" => Command::HyprClients,
@@ -517,6 +533,20 @@ impl Command {
                             port: port.to_string(),
                         },
                         _ => Command::SunshineStatusUsage,
+                    };
+                }
+                // `steam-launch <appid>`: the body is a single numeric appid
+                // token. A missing/non-numeric body is a usage error.
+                // `command_body` enforces the word boundary so e.g.
+                // `steam-launchX` is not mistaken for the command.
+                if let Some(body) = command_body(cmd, "steam-launch") {
+                    return match body
+                        .split_whitespace()
+                        .next()
+                        .and_then(|t| t.parse::<u32>().ok())
+                    {
+                        Some(appid) => Command::SteamLaunch(appid),
+                        None => Command::SteamLaunchUsage,
                     };
                 }
                 // `moonlight-forget <host>`: a single host token (the IP/hostname
@@ -975,6 +1005,11 @@ pub fn cec_power_json(addr: &str, power_word: &str) -> String {
 /// Usage line for `sunshine-status` issued without a `<host> <port>` body.
 pub fn resp_sunshine_status_usage() -> String {
     "error:usage: sunshine-status <host> <port>".to_string()
+}
+
+/// Usage line for `steam-launch` issued without a numeric `<appid>` body.
+pub fn resp_steam_launch_usage() -> String {
+    "error:usage: steam-launch <appid>".to_string()
 }
 
 /// Usage line for `moonlight-forget` issued without a `<host>` body.
@@ -1631,6 +1666,44 @@ mod tests {
         );
         // Word boundary: `sunshine-statusX` is NOT sunshine-status.
         assert_eq!(Command::parse("sunshine-statusX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_steam_library_bare() {
+        assert_eq!(Command::parse("steam-library"), Command::SteamLibrary);
+        assert_eq!(Command::parse("  steam-library  "), Command::SteamLibrary);
+        // Word boundary: `steam-libraryX` is NOT steam-library.
+        assert_eq!(Command::parse("steam-libraryX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_steam_launch_body() {
+        assert_eq!(
+            Command::parse("steam-launch 730"),
+            Command::SteamLaunch(730)
+        );
+        // Surrounding whitespace is trimmed.
+        assert_eq!(
+            Command::parse("  steam-launch   220  "),
+            Command::SteamLaunch(220)
+        );
+        // Missing appid -> usage.
+        assert_eq!(Command::parse("steam-launch"), Command::SteamLaunchUsage);
+        // Non-numeric appid -> usage.
+        assert_eq!(
+            Command::parse("steam-launch abc"),
+            Command::SteamLaunchUsage
+        );
+        // Word boundary: `steam-launchX` is NOT steam-launch.
+        assert_eq!(Command::parse("steam-launchX"), Command::Unknown);
+    }
+
+    #[test]
+    fn steam_launch_usage_string() {
+        assert_eq!(
+            resp_steam_launch_usage(),
+            "error:usage: steam-launch <appid>"
+        );
     }
 
     #[test]
