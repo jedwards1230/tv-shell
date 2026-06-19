@@ -57,6 +57,10 @@ cec = ["dep:cec-rs", "libcec-sys/static"]
 mcp = ["dep:rmcp", "dep:axum", "dep:base64", "dep:schemars"]
 
 [dependencies]
+# Shared /library wire types (single source of truth for the daemon↔host JSON
+# shape). Pure serde — pulled from the workspace so daemon and host can never
+# drift on the Steam-library schema.
+game-shell-protocol = { workspace = true }
 tokio = { version = "1.40", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"

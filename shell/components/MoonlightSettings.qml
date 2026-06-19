@@ -5,7 +5,21 @@ import "lib"
 
 FocusScope {
     id: root
-    implicitHeight: mlMainCol.implicitHeight + 2 * Theme.padding
+    implicitHeight: mlMainCol.implicitHeight + (root.embedded ? 0 : 2 * Theme.padding)
+
+    // Item to focus when Up is pressed at the top of the server list. Set by the
+    // host page (Widgets ▸ Moonlight inlines this surface below the Size control,
+    // so Up off the first server row returns to that control). When null, Up at
+    // the top bubbles to the parent (e.g. SettingsApp → sidebar) as before.
+    property Item upTarget: null
+
+    // Embedded mode: this surface is inlined inside another page's control column
+    // (Widgets ▸ Moonlight), not standing alone as a full settings page. When true
+    // it drops its own outer padding (so the "Streaming Servers" section aligns
+    // flush with the sibling Size/Enabled controls instead of indenting an extra
+    // Theme.padding) and hides its own HintBar (the host page already shows one),
+    // fixing the double-padding / double-hint that misaligned the inlined layout.
+    property bool embedded: false
 
     property var servers: []
     property bool showAddForm: false
@@ -409,7 +423,8 @@ FocusScope {
         }
     }
 
-    // Focus entry is driven by SettingsApp via focusFirst() on Right. The
+    // Focus entry is driven by focusFirst() — by SettingsApp via Right when this
+    // is a standalone page, or by the host's KeyNavigation.down when inlined. The
     // server list is the first focusable; fall back to the Add button when empty.
     function focusFirst() {
         if (serverList.count > 0)
@@ -418,10 +433,18 @@ FocusScope {
             addBtnScope.forceActiveFocus();
     }
 
+    // When this FocusScope is targeted directly (e.g. KeyNavigation.down: <this>
+    // from the inlined host) it gains activeFocus without any inner control
+    // holding it; route into the first real control so the highlight lands.
+    onActiveFocusChanged: {
+        if (activeFocus && !serverList.activeFocus && !addBtnScope.activeFocus)
+            focusFirst();
+    }
+
     ColumnLayout {
         id: mlMainCol
         anchors.fill: parent
-        anchors.margins: Theme.padding
+        anchors.margins: root.embedded ? 0 : Theme.padding
         spacing: Units.spacingLG
 
         SectionHeader {
@@ -693,12 +716,17 @@ FocusScope {
             }
 
             Keys.onUpPressed: event => {
-                // Server list is the top focusable now; let Up bubble to the
-                // SettingsApp so it returns focus to the sidebar.
-                if (currentIndex > 0)
+                // Within the list, Up moves the cursor. At the top row, hand off to
+                // the host's upTarget if set (inlined under Widgets ▸ Moonlight),
+                // else bubble (event.accepted = false) so a parent like SettingsApp
+                // returns focus to its sidebar.
+                if (currentIndex > 0) {
                     currentIndex--;
-                else
+                } else if (root.upTarget) {
+                    root.upTarget.forceActiveFocus();
+                } else {
                     event.accepted = false;
+                }
             }
 
             Keys.onDownPressed: {
@@ -836,10 +864,14 @@ FocusScope {
         // Absorb remaining vertical space so content top-packs and the hint
         // pins to the bottom (mirrors ControllerSettings.qml).
         Item {
+            visible: !root.embedded
             Layout.fillHeight: true
         }
 
+        // Standalone-only hint; when embedded the host page (Widgets ▸ Moonlight)
+        // already shows its own HintBar, so suppress this to avoid a double bar.
         HintBar {
+            visible: !root.embedded
             text: root.showAddForm ? "Esc: Cancel" : "A: Select  |  Servers are launched from Home"
         }
     }

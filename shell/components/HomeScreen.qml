@@ -201,6 +201,52 @@ FocusScope {
         console.log("HomeScreen: no Plex app found to launch");
     }
 
+    // === Steam launch choreography ===
+    // Select a Steam card →
+    //   1. `steam-launch <appid>` → the host NAVIGATES Big Picture to that game's
+    //      page (it no longer launches the game directly — just moves BPM).
+    //   2. If THIS client is NOT already viewing a stream (`shellState !==
+    //      "streaming"`) → start one stream to the primary target (targets[0]).
+    //      Moonlight RESUMES a host that already has a session, so this both opens
+    //      a fresh stream and reconnects to a resumable one — selecting a game must
+    //      ALWAYS get you onto the screen.
+    //   3. If this client IS already streaming → the nav alone moved the live BPM;
+    //      don't launch a 2nd local Moonlight process.
+    // The gate is THIS client's own `shellState`, NOT the host's session flag
+    // (`moonlightWidget.streaming`, which is true whenever *any* client — e.g. the
+    // laptop — holds a resumable session). Gating on the host flag wrongly blocked
+    // launching/resuming whenever a session existed elsewhere; that flag drives the
+    // session INDICATOR only. Never trigger a `rungameid`-style direct launch.
+    function launchSteamGame(appid) {
+        root.userActivity();
+        // Fire the host-side navigate (fire-and-forget; the reply is just ok/error).
+        steamLaunchReq.request("steam-launch", appid);
+        if (root.shellState === "streaming") {
+            // This client is already in the stream — the nav moved the live BPM.
+            // Don't start a 2nd local Moonlight process.
+            return;
+        }
+        // Not viewing a stream here → start/resume one to the primary target. With
+        // no target configured there's nothing to stream into; the nav still fired.
+        let ts = root.targets || [];
+        if (ts.length > 0)
+            root.streamRequested(ts[0]);
+        else
+            console.log("HomeScreen: steam-launch " + appid + " sent, but no stream target configured");
+    }
+
+    // One-shot socket client for `steam-launch <appid>`. The reply (ok/error) is
+    // logged on failure; the stream start above doesn't gate on it (the navigate
+    // and the stream race, exactly like picking a game in old GameStream).
+    SocketClient {
+        id: steamLaunchReq
+        onResponseReceived: line => {
+            if (line !== "ok")
+                console.log("HomeScreen: steam-launch reply: " + line);
+        }
+        onRequestFailed: console.log("HomeScreen: steam-launch request failed (daemon down?)")
+    }
+
     function _focusFirstVisibleRow() {
         var regions = root._contentRegions();
         for (var i = 0; i < regions.length; i++) {
@@ -536,6 +582,7 @@ FocusScope {
                 onStreamQuitRequested: target => root.streamQuitRequested(target)
                 onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
                 onContextRequested: root._moonlightContext()
+                onGameSelected: appid => root.launchSteamGame(appid)
             }
 
             // === Now Playing — small (strip) renderer ===

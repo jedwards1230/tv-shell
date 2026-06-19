@@ -12,6 +12,16 @@ FocusScope {
     property alias count: listView.count
     property bool keyNavigationWraps: false
 
+    // Optional per-INDEX focusability predicate. `null` (the default) means every
+    // index is focusable — left/right navigation, focus-entry, and the highlight
+    // behave EXACTLY as before (no index is ever skipped), so every existing
+    // NavigableRow (server row, app rows, plex rows) is byte-for-byte unchanged.
+    // When set to a function `(i) => bool`, left/right skip indices that return
+    // false (wrapping correctly), focus-entry lands on the nearest focusable
+    // index, and it's a safe no-op when NO index is focusable. The host supplies
+    // this to lock the row down to a single allowed card (e.g. a running game).
+    property var focusableIndex: null
+
     signal activated
     signal escaped
     signal contextRequested
@@ -36,9 +46,52 @@ FocusScope {
     function focusFirstChild() {
         if (!visible || listView.count === 0)
             return false;
-        listView.currentIndex = 0;
+        var first = root._firstFocusableIndex();
+        if (first < 0)
+            return false;
+        listView.currentIndex = first;
         forceActiveFocus();
         return true;
+    }
+
+    // Is index `i` focusable? `focusableIndex == null` → every index is focusable
+    // (the unchanged default path). Otherwise consult the host predicate.
+    function _indexFocusable(i) {
+        if (root.focusableIndex === null)
+            return true;
+        return root.focusableIndex(i) === true;
+    }
+
+    // First focusable index scanning forward from 0, or -1 if NONE are focusable.
+    function _firstFocusableIndex() {
+        for (var i = 0; i < listView.count; i++) {
+            if (root._indexFocusable(i))
+                return i;
+        }
+        return -1;
+    }
+
+    // Step `currentIndex` by `dir` (-1 left / +1 right) onto the next focusable
+    // index, honoring keyNavigationWraps. No-op if nothing (or only the current
+    // index) is focusable, so a locked row never strands on a disabled card.
+    function _stepFocusable(dir) {
+        var n = listView.count;
+        if (n <= 0)
+            return;
+        var i = listView.currentIndex;
+        for (var step = 0; step < n; step++) {
+            var next = i + dir;
+            if (next < 0 || next >= n) {
+                if (!root.keyNavigationWraps)
+                    return;
+                next = (next + n) % n;
+            }
+            i = next;
+            if (root._indexFocusable(i)) {
+                listView.currentIndex = i;
+                return;
+            }
+        }
     }
 
     ListView {
@@ -64,17 +117,25 @@ FocusScope {
         // the default no-wrap behavior).
         Keys.onLeftPressed: {
             Theme.exitMouseMode();
-            if (listView.currentIndex > 0)
+            // Default (no predicate): the exact original index move. Predicate set:
+            // skip non-focusable indices via _stepFocusable.
+            if (root.focusableIndex !== null) {
+                root._stepFocusable(-1);
+            } else if (listView.currentIndex > 0) {
                 listView.currentIndex--;
-            else if (root.keyNavigationWraps && listView.count > 0)
+            } else if (root.keyNavigationWraps && listView.count > 0) {
                 listView.currentIndex = listView.count - 1;
+            }
         }
         Keys.onRightPressed: {
             Theme.exitMouseMode();
-            if (listView.currentIndex < listView.count - 1)
+            if (root.focusableIndex !== null) {
+                root._stepFocusable(1);
+            } else if (listView.currentIndex < listView.count - 1) {
                 listView.currentIndex++;
-            else if (root.keyNavigationWraps && listView.count > 0)
+            } else if (root.keyNavigationWraps && listView.count > 0) {
                 listView.currentIndex = 0;
+            }
         }
         Keys.onReturnPressed: {
             Theme.exitMouseMode();

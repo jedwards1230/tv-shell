@@ -112,10 +112,11 @@ slugs are a graceful QML no-op).
 
 > **Reroute:** `settings:moonlight` and `settings:streaming` are **not** sidebar
 > pages — Moonlight server management is demoted under Widgets. Both slugs open
-> **Settings ▸ Widgets ▸ Moonlight ▸ Manage servers** directly (the QML
-> `SettingsApp.openSectionById` maps them to the `widgets` section with a pending
-> deep-target). Agents driving the UI should expect the Widgets page (not a
-> "Moonlight" sidebar entry) and the Manage-servers surface in view.
+> the **Settings ▸ Widgets ▸ Moonlight** config page directly (server management
+> is inlined on it), via the QML `SettingsApp.openSectionById` mapping them to the
+> `widgets` section with a pending deep-target. Agents driving the UI should
+> expect the Widgets page (not a "Moonlight" sidebar entry) with the
+> server-management surface in view.
 
 ## `StatusInfo` fields
 

@@ -392,8 +392,11 @@ pub async fn dev_build() -> Result<String, String> {
                 return Err(format!("cargo build failed:\n{tail}"));
             }
 
-            // Install the binary
-            let src = daemon_dir.join("target/release/game-shell-input");
+            // Install the binary. Since the repo is a Cargo workspace, cargo
+            // writes to the workspace-root `target/` (shared target dir) even
+            // when invoked from `daemon/` — so the build output is at
+            // `<root>/target/release/...`, NOT `daemon/target/...`.
+            let src = root.join("target/release/game-shell-input");
             let dst = root.join("bin/game-shell-input");
             let install = tokio::process::Command::new("install")
                 .args(["-m755"])

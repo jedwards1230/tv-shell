@@ -22,6 +22,10 @@ pub mod notifications;
 pub mod plex;
 pub mod protocol;
 pub mod recents;
+// Steam library proxy (steam-library + steam-launch) for the home-screen Steam
+// widget. Cross-platform: stateless reqwest + JSON to the game-shell-host
+// sidecar, like `plex`.
+pub mod steam;
 // Generic remote-service health: shared probe + status vocabulary + background
 // poller that broadcasts `health:<json>` events. Cross-platform (reqwest + tokio
 // timer), like `plex`/`health`.

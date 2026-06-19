@@ -1,0 +1,13 @@
+[package]
+name = "game-shell-protocol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared /library wire types for the game-shell daemon and host (serde only)"
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,40 @@
+"Registry"
+{
+	"HKLM"
+	{
+		"Software"
+		{
+			"Valve"
+			{
+				"Steam"
+				{
+					"SteamPID"		"0"
+				}
+			}
+		}
+	}
+	"HKCU"
+	{
+		"Software"
+		{
+			"Valve"
+			{
+				"Steam"
+				{
+					"language"		"english"
+					"RunningAppID"		"730"
+					"AutoLoginUser"		"someuser"
+					"RememberPassword"		"1"
+					"SourceModInstallPath"		"/home/user/.steam/steam/steamapps/sourcemods"
+					"Apps"
+					{
+						"730"
+						{
+							"Installed"		"1"
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -143,6 +143,20 @@ pub async fn probe_plex() -> ServiceStatus {
     }
 }
 
+/// Probe the Steam host helper (game-shell-host) for reachability. Returns
+/// `Disabled` when unconfigured, otherwise the classification of a lightweight
+/// authenticated `GET /status` (cheaper than the full library fetch; 401 ⇒
+/// Error/bad token, 5xx ⇒ Unreachable).
+pub async fn probe_steam() -> ServiceStatus {
+    match crate::steam::config() {
+        None => ServiceStatus::Disabled,
+        Some((base, token)) => {
+            let url = format!("{base}/status");
+            probe_get(&url, &[("Authorization", &format!("Bearer {token}"))]).await
+        }
+    }
+}
+
 /// Background health poller: probe each always-on service on a timer and emit a
 /// `health:<json>` event whenever its status changes. Fire-and-forget, spawned
 /// alongside the D-Bus actors in `main.rs`; it never panics and degrades to
@@ -156,6 +170,7 @@ pub async fn run(events_tx: broadcast::Sender<Event>) {
     // The first tick fires immediately, so a subscriber present at startup gets
     // the initial status right away.
     let mut last_plex: Option<ServiceStatus> = None;
+    let mut last_steam: Option<ServiceStatus> = None;
 
     loop {
         ticker.tick().await;
@@ -167,6 +182,13 @@ pub async fn run(events_tx: broadcast::Sender<Event>) {
             // shutdown, and a lagged subscriber is the subscriber's problem.
             let _ = events_tx.send(Event::ServiceHealth(health_json("plex", plex)));
             tracing::debug!("health: plex -> {}", plex.as_str());
+        }
+
+        let steam = probe_steam().await;
+        if last_steam != Some(steam) {
+            last_steam = Some(steam);
+            let _ = events_tx.send(Event::ServiceHealth(health_json("steam", steam)));
+            tracing::debug!("health: steam -> {}", steam.as_str());
         }
     }
 }

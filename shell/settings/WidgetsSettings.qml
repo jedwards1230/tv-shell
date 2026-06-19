@@ -5,22 +5,21 @@ import "../components/lib"
 
 // Widgets settings — list-first IA (controller-friendly). The page is a flat
 // list of widget rows (L0): one focus stop each, A toggles enable in place,
-// X drills into that widget's config sub-page (L1: Size, Hide-from-Recent,
-// and — Moonlight only — Manage servers, which drills into the embedded server
-// management surface at L2). Directional keys never drill — they move the
-// highlight only. Internal B steps back one level; only at the list
-// does B bubble to SettingsApp (→ sidebar → Home). This keeps the frequent
-// on/off task at one focus stop instead of scrolling past every widget's config.
+// X drills into that widget's config sub-page (L1: Size, Hide-from-Recent, and
+// — Moonlight only — the full server-management surface inlined below the Size
+// control). Directional keys never drill — they move the highlight only.
+// Internal B steps back one level; only at the list does B bubble to SettingsApp
+// (→ sidebar → Home). Two levels only (list → config); the former L2 servers
+// page was folded into the Moonlight config page. This keeps the frequent on/off
+// task at one focus stop instead of scrolling past every widget's config.
 FocusScope {
     id: root
 
-    // Internal nav state: "" = widget list (L0); a widget id = its config (L1);
-    // _showServers = Moonlight server management (L2, moonlight only).
+    // Internal nav state: "" = widget list (L0); a widget id = its config (L1).
     property string _activeWidget: ""
-    property bool _showServers: false
     readonly property bool _atList: _activeWidget === ""
 
-    implicitHeight: (_atList ? listCol.implicitHeight : (_showServers ? serversLoader.implicitHeight : configLoader.implicitHeight)) + 2 * Theme.padding
+    implicitHeight: (_atList ? listCol.implicitHeight : configLoader.implicitHeight) + 2 * Theme.padding
 
     readonly property var _sizeOptions: [
         {
@@ -33,51 +32,49 @@ FocusScope {
         }
     ]
 
+    // Moonlight has a third size: small = server cards, medium/large = Steam
+    // library posters at two scales (two views of the one widget).
+    readonly property var _moonlightSizeOptions: [
+        {
+            "label": "Small",
+            "value": "small"
+        },
+        {
+            "label": "Medium",
+            "value": "medium"
+        },
+        {
+            "label": "Large",
+            "value": "large"
+        }
+    ]
+
     // SettingsApp calls this on section entry (Right from sidebar). Always
     // reset to the list level so re-entry is predictable.
     function focusFirst() {
         _activeWidget = "";
-        _showServers = false;
         Qt.callLater(_focusCurrentLevel);
     }
 
-    // Entry point for a deep-link routed by SettingsApp (e.g. the demoted
-    // "moonlight"/"streaming" slug → Moonlight ▸ Manage servers). Sets the full
-    // nav stack so the B-back ladder unwinds servers → config → list correctly.
+    // Entry point for a deep-link routed by SettingsApp (the demoted
+    // "moonlight"/"streaming" slug → the Moonlight config page, which now hosts
+    // the server-management surface inline). Opens that page directly.
     function applyDeepTarget(t) {
-        if (t === "moonlight-servers") {
+        if (t === "moonlight") {
             _lastListId = "moonlight";
             _activeWidget = "moonlight";
-            _showServers = true;
             Qt.callLater(_focusCurrentLevel);
         }
     }
 
     function _openWidget(id) {
-        _showServers = false;
         _activeWidget = id;
         Qt.callLater(_focusCurrentLevel);
     }
 
-    function _openServers() {
-        _showServers = true;
-        Qt.callLater(_focusCurrentLevel);
-    }
-
-    // Set when popping servers → config so the config sub-page restores focus to
-    // its "Manage servers" control (where the user drilled from) instead of the
-    // first control.
-    property bool _returnFocusManage: false
-
     // Step back one internal level. Returns true if handled (so B/Escape is
     // consumed); false at the list level (so it bubbles to SettingsApp).
     function _back() {
-        if (_showServers) {
-            _showServers = false;
-            _returnFocusManage = true;
-            Qt.callLater(_focusCurrentLevel);
-            return true;
-        }
         if (!_atList) {
             _activeWidget = "";
             Qt.callLater(_focusCurrentLevel);
@@ -87,20 +84,13 @@ FocusScope {
     }
 
     // Focus the current level's entry control. Driven by both Qt.callLater (after
-    // a nav state change) and each Loader's onLoaded (covers the case where the
-    // item is created a tick after the state flips) — double-calling is harmless.
+    // a nav state change) and the config Loader's onLoaded (covers the case where
+    // the item is created a tick after the state flips) — double-calling is
+    // harmless.
     function _focusCurrentLevel() {
-        if (_showServers) {
-            if (serversLoader.item && serversLoader.item.focusFirst)
-                serversLoader.item.focusFirst();
-        } else if (!_atList) {
-            if (configLoader.item) {
-                if (_returnFocusManage && configLoader.item.focusManageServers)
-                    configLoader.item.focusManageServers();
-                else if (configLoader.item.focusFirst)
-                    configLoader.item.focusFirst();
-                _returnFocusManage = false;
-            }
+        if (!_atList) {
+            if (configLoader.item && configLoader.item.focusFirst)
+                configLoader.item.focusFirst();
         } else {
             _focusListRow(_lastListId);
         }
@@ -274,7 +264,7 @@ FocusScope {
     // ===================== L1 — per-widget config =====================
     Loader {
         id: configLoader
-        visible: !root._atList && !root._showServers
+        visible: !root._atList
         active: visible
         onLoaded: root._focusCurrentLevel()
         anchors.left: parent.left
@@ -344,13 +334,9 @@ FocusScope {
         ConfigPage {
             id: mc
             title: "Moonlight"
-            blurb: "Your game-streaming servers. Small = an icon-only online rail; Medium = cards with the server name."
+            blurb: "Jump into game streaming. Small = your streaming-server cards; Medium and Large = your Steam library as posters (smaller / full size)."
             function focusFirst() {
                 mEnabled.forceActiveFocus();
-            }
-            // Restore focus here when returning from the servers sub-page.
-            function focusManageServers() {
-                mManage.forceActiveFocus();
             }
 
             FocusButton {
@@ -373,23 +359,27 @@ FocusScope {
                 SettingsButtonGroup {
                     id: mSize
                     Layout.alignment: Qt.AlignVCenter
-                    options: root._sizeOptions
+                    options: root._moonlightSizeOptions
                     isCurrentOption: opt => opt.value === Theme.widgetMoonlightSize
                     onValueSelected: opt => SettingsStore.setWidgetMoonlightSize(opt.value)
                     KeyNavigation.up: mEnabled
-                    KeyNavigation.down: mManage
+                    KeyNavigation.down: mServers
                 }
                 Item {
                     Layout.fillWidth: true
                 }
             }
-            FocusButton {
-                id: mManage
-                text: "Manage servers  ›"
-                // A/Return opens it; Right is not a drill (directional moves the
-                // highlight only — consistent with the widget list above).
-                onActivated: root._openServers()
-                KeyNavigation.up: mSize
+
+            // Server management inlined directly on this page (no separate L2
+            // servers page). Down off the Size control enters its server list;
+            // Up off the first server row returns here (upTarget). Stays a
+            // FocusScope so SettingsApp's outer Flickable scroll-follow keeps
+            // tracking the focused control — not wrapped in a self-scrolling list.
+            MoonlightSettings {
+                id: mServers
+                Layout.fillWidth: true
+                embedded: true
+                upTarget: mSize
             }
         }
     }
@@ -564,26 +554,5 @@ FocusScope {
                 }
             }
         }
-    }
-
-    // ===================== L2 — Moonlight server management =====================
-    // Embeds the full MoonlightSettings surface (pair/unpair/remove/add, status).
-    // It's a self-contained FocusScope with its own focusFirst(); B at its server
-    // list bubbles up to root._back() (no root Escape handler of its own), popping
-    // L2 → L1. This is the surface demoted out of the sidebar (increment 3).
-    Loader {
-        id: serversLoader
-        visible: root._showServers
-        active: visible
-        onLoaded: root._focusCurrentLevel()
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        sourceComponent: moonlightServersComp
-    }
-
-    Component {
-        id: moonlightServersComp
-        MoonlightSettings {}
     }
 }

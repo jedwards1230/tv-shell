@@ -69,6 +69,7 @@ Item {
     readonly property bool widgetRecentEnabled: SettingsStore.widgetRecentEnabled
     readonly property string widgetRecentSize: SettingsStore.widgetRecentSize
     readonly property bool widgetMoonlightEnabled: SettingsStore.widgetMoonlightEnabled
+    // "small" (server cards) | "medium" (smaller Steam posters) | "large" (full Steam posters)
     readonly property string widgetMoonlightSize: SettingsStore.widgetMoonlightSize
     property int _currentHour: new Date().getHours()
 

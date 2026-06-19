@@ -1,0 +1,34 @@
+# Virtual workspace manifest for game-shell's Rust crates.
+#
+# Three crates, one lockfile, shared dependency versions:
+#   - daemon/    game-shell-input    — Linux/cec/mcp input daemon (UNTOUCHED machinery)
+#   - host/      game-shell-host     — cross-platform Steam-library sidecar (axum)
+#   - protocol/  game-shell-protocol — shared /library wire types (serde only)
+#
+# Why a workspace (not two independent crates, not one crate w/ two bins): one
+# lockfile + shared dep versions; the `protocol` crate is the single source of
+# truth for the `/library` JSON shape (prevents daemon↔host drift); separate
+# crates keep the host's graph pure-Rust on Win/Mac (the daemon's
+# evdev/zbus/bluer/cec Linux deps never reach it). All cargo commands are
+# `-p`-scoped so neither binary compiles the other.
+[workspace]
+resolver = "2"
+members = ["daemon", "host", "protocol"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "GPL-3.0"
+
+[workspace.dependencies]
+tokio = { version = "1.40", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+axum = "0.8"
+subtle = "2"
+keyvalues-parser = "0.2"
+game-shell-protocol = { path = "protocol" }

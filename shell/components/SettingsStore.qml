@@ -49,8 +49,9 @@ Item {
     property bool widgetPlexHideFromRecent: true  // hide the Plex app from the Recent row
     property bool widgetRecentEnabled: true       // Recent (running + recents app cards) widget
     property string widgetRecentSize: "medium"    // "small" (compact) | "medium" (full app cards)
-    property bool widgetMoonlightEnabled: true    // Moonlight (servers rail → quick stream) widget
-    property string widgetMoonlightSize: "medium" // "small" (icon-only rail) | "medium" (named cards)
+    property bool widgetMoonlightEnabled: true    // Moonlight (unified stream + Steam-library) widget
+    // "small" (server cards) | "medium" (smaller Steam posters) | "large" (full Steam posters)
+    property string widgetMoonlightSize: "medium"
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
     property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
     property bool nightLightEnabled: false       // drives hyprsunset

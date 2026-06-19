@@ -1,0 +1,30 @@
+[package]
+name = "game-shell-host"
+version = "0.1.0"
+edition.workspace = true
+# Not inherited from the workspace (1.75): the host's dep closure (axum/reqwest
+# transitives) pulls edition2024 crates that require Cargo >=1.85.
+rust-version = "1.85"
+license.workspace = true
+description = "Cross-platform game-shell host sidecar: enumerates installed Steam games and launches them via steam://rungameid"
+
+[[bin]]
+name = "game-shell-host"
+path = "src/main.rs"
+
+[dependencies]
+# Pure-Rust, cross-platform graph only — no evdev/cec/zbus. This is the host's
+# whole reason to be a separate crate: it builds clean on Windows/macOS.
+tokio = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# Constant-time bearer-token compare (same policy as the daemon's HTTP bridge).
+subtle = { workspace = true }
+# Pure-Rust Valve KeyValues (VDF/ACF) parser for libraryfolders.vdf +
+# appmanifest_*.acf.
+keyvalues-parser = { workspace = true }
+game-shell-protocol = { workspace = true }
