@@ -257,7 +257,7 @@ fn registry_vdf_path() -> Option<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        return home_dir().map(|h| h.join(".steam/registry.vdf"));
+        home_dir().map(|h| h.join(".steam/registry.vdf"))
     }
 
     #[cfg(not(target_os = "linux"))]
