@@ -36,6 +36,9 @@ case "$ID" in
         ;;
     fedora)
         log "detected Fedora — installing build/runtime deps via dnf"
+        # systemd-devel provides the libudev headers + libudev.pc on Fedora
+        # (there is no separate libudev-devel package) — the daemon's libudev-sys
+        # build needs those plus pkgconf. The cec feature static-links its libcec.
         dnf install -y \
             qt6-qtbase qt6-qtdeclarative qt6-qtwayland \
             wayland-devel \

@@ -18,7 +18,11 @@
 #   --user NAME         User whose ~/.config gets scaffolded and who owns the
 #                       prefix (default: $SUDO_USER, else the invoking user).
 #   --session-dir DIR   Where to write the .desktop (default: /usr/share/wayland-sessions).
-#   --no-build          Skip building the daemon (reuse an existing binary).
+#   --session-exec CMD  Exec= line for the session .desktop (default:
+#                       <prefix>/scripts/game-shell-session.sh). Override when a
+#                       deployment wraps the session (e.g. a site launcher that
+#                       runs site-specific setup before the repo launcher).
+#   --no-build          Skip building the daemon (reuse an existing binary if any).
 #   --features LIST     Cargo features for the daemon (default: cec,mcp).
 #   -h, --help          Show this help.
 #
@@ -28,6 +32,7 @@ set -euo pipefail
 
 PREFIX="/opt/game-shell"
 SESSION_DIR="/usr/share/wayland-sessions"
+SESSION_EXEC=""
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 DO_BUILD=1
 FEATURES="cec,mcp"
@@ -39,19 +44,23 @@ log() { echo "install: $*"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --prefix)      PREFIX="${2:?--prefix needs a value}"; shift 2 ;;
-        --user)        TARGET_USER="${2:?--user needs a value}"; shift 2 ;;
-        --session-dir) SESSION_DIR="${2:?--session-dir needs a value}"; shift 2 ;;
-        --no-build)    DO_BUILD=0; shift ;;
-        --features)    FEATURES="${2:?--features needs a value}"; shift 2 ;;
-        -h|--help)     sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *)             die "unknown argument: $1 (try --help)" ;;
+        --prefix)       PREFIX="${2:?--prefix needs a value}"; shift 2 ;;
+        --user)         TARGET_USER="${2:?--user needs a value}"; shift 2 ;;
+        --session-dir)  SESSION_DIR="${2:?--session-dir needs a value}"; shift 2 ;;
+        --session-exec) SESSION_EXEC="${2:?--session-exec needs a value}"; shift 2 ;;
+        --no-build)     DO_BUILD=0; shift ;;
+        --features)     FEATURES="${2:?--features needs a value}"; shift 2 ;;
+        -h|--help)      sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)              die "unknown argument: $1 (try --help)" ;;
     esac
 done
 
+# Default the session Exec to the repo launcher under the resolved prefix.
+SESSION_EXEC="${SESSION_EXEC:-$PREFIX/scripts/game-shell-session.sh}"
+
 # Resolve the target user's home (works whether or not we're under sudo).
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-[ -n "$TARGET_HOME" ] || die "could not resolve home for user '$TARGET_USER'"
+[ -n "$TARGET_HOME" ] || die "could not resolve home for user '$TARGET_USER' (does the user exist?)"
 CONFIG_DIR="$TARGET_HOME/.config/game-shell"
 QS_LINK="$TARGET_HOME/.config/quickshell/game-shell"
 
@@ -62,13 +71,19 @@ fi
 
 log "prefix=$PREFIX user=$TARGET_USER home=$TARGET_HOME features=$FEATURES"
 
-# 1. Build the daemon (canonical script owns the feature flags / profile).
-if [ "$DO_BUILD" -eq 1 ]; then
-    log "building game-shell-input ..."
-    GAME_SHELL_FEATURES="$FEATURES" "$REPO_ROOT/scripts/build-daemon.sh"
-fi
+# Validate the prefix is creatable up front — don't fail with a cryptic error
+# only after a multi-minute daemon build (read-only FS, missing parent, etc.).
+mkdir -p "$PREFIX" || die "cannot create prefix directory: $PREFIX (check permissions / parent path)"
+
+# 1. Build the daemon (canonical script owns the feature flags / profile). The
+#    workspace builds to the repo-root target/ (see scripts/build-daemon.sh).
 DAEMON_BIN="$REPO_ROOT/target/release/game-shell-input"
-[ -f "$DAEMON_BIN" ] || die "daemon binary not found at $DAEMON_BIN (drop --no-build, or build it first)"
+if [ "$DO_BUILD" -eq 1 ]; then
+    log "building game-shell-input (features=$FEATURES) ..."
+    GAME_SHELL_FEATURES="$FEATURES" "$REPO_ROOT/scripts/build-daemon.sh" || die "daemon build failed"
+    [ -f "$DAEMON_BIN" ] || die "build finished but $DAEMON_BIN is missing"
+    log "daemon build succeeded"
+fi
 
 # 2. Lay down the install tree under $PREFIX. When the repo already lives at the
 #    prefix (the in-place / dev-bridge layout), skip copying source over itself.
@@ -82,7 +97,16 @@ if [ "$REPO_ROOT" != "$PREFIX" ]; then
 else
     log "repo is the prefix — installing in place, no copy"
 fi
-install -m755 "$DAEMON_BIN" "$PREFIX/bin/game-shell-input"
+# Install the freshly built binary. With --no-build and no build artifact (e.g. a
+# python-fallback deploy, or target/ was cleaned after a prior install), leave any
+# already-installed binary in place rather than failing.
+if [ -f "$DAEMON_BIN" ]; then
+    install -m755 "$DAEMON_BIN" "$PREFIX/bin/game-shell-input"
+elif [ -x "$PREFIX/bin/game-shell-input" ]; then
+    log "no build artifact at $DAEMON_BIN — keeping the installed daemon binary"
+else
+    log "WARNING: no daemon binary built or installed (continuing — shell will use any fallback)"
+fi
 
 # 3. Register the Wayland session, rewriting Exec to the resolved prefix.
 install -d -m755 "$SESSION_DIR"
@@ -93,7 +117,7 @@ cat > "$SESSION_FILE" <<EOF
 Type=Application
 Name=Game Shell (Wayland)
 Comment=Quickshell game streaming launcher on Hyprland
-Exec=$PREFIX/scripts/game-shell-session.sh
+Exec=$SESSION_EXEC
 DesktopNames=Hyprland
 EOF
 
@@ -114,9 +138,11 @@ seed daemon.env.example   daemon.env
 seed targets.json.example targets.json
 chmod 600 "$CONFIG_DIR/daemon.env" 2>/dev/null || true
 
-# 5. Hand the prefix + per-user files back to the target user.
-chown -R "$TARGET_USER" "$PREFIX" 2>/dev/null || true
-chown -R "$TARGET_USER" "$CONFIG_DIR" "$(dirname "$QS_LINK")" 2>/dev/null || true
+# 5. Hand the prefix + per-user files back to the target user. Failure here is
+#    fatal — silently leaving the tree root-owned would block the user (and the
+#    dev bridge) from editing or rebuilding later.
+chown -R "$TARGET_USER" "$PREFIX" || die "failed to chown $PREFIX to $TARGET_USER"
+chown -R "$TARGET_USER" "$CONFIG_DIR" "$(dirname "$QS_LINK")" || die "failed to chown config dirs to $TARGET_USER"
 
 log "done. Select 'Game Shell (Wayland)' in your display manager, then log in."
 log "Edit $CONFIG_DIR/daemon.env and targets.json to taste (see docs/INSTALL.md)."
