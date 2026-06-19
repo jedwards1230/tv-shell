@@ -378,6 +378,7 @@ FocusScope {
             MoonlightSettings {
                 id: mServers
                 Layout.fillWidth: true
+                embedded: true
                 upTarget: mSize
             }
         }

@@ -5,13 +5,21 @@ import "lib"
 
 FocusScope {
     id: root
-    implicitHeight: mlMainCol.implicitHeight + 2 * Theme.padding
+    implicitHeight: mlMainCol.implicitHeight + (root.embedded ? 0 : 2 * Theme.padding)
 
     // Item to focus when Up is pressed at the top of the server list. Set by the
     // host page (Widgets ▸ Moonlight inlines this surface below the Size control,
     // so Up off the first server row returns to that control). When null, Up at
     // the top bubbles to the parent (e.g. SettingsApp → sidebar) as before.
     property Item upTarget: null
+
+    // Embedded mode: this surface is inlined inside another page's control column
+    // (Widgets ▸ Moonlight), not standing alone as a full settings page. When true
+    // it drops its own outer padding (so the "Streaming Servers" section aligns
+    // flush with the sibling Size/Enabled controls instead of indenting an extra
+    // Theme.padding) and hides its own HintBar (the host page already shows one),
+    // fixing the double-padding / double-hint that misaligned the inlined layout.
+    property bool embedded: false
 
     property var servers: []
     property bool showAddForm: false
@@ -436,7 +444,7 @@ FocusScope {
     ColumnLayout {
         id: mlMainCol
         anchors.fill: parent
-        anchors.margins: Theme.padding
+        anchors.margins: root.embedded ? 0 : Theme.padding
         spacing: Units.spacingLG
 
         SectionHeader {
@@ -856,10 +864,14 @@ FocusScope {
         // Absorb remaining vertical space so content top-packs and the hint
         // pins to the bottom (mirrors ControllerSettings.qml).
         Item {
+            visible: !root.embedded
             Layout.fillHeight: true
         }
 
+        // Standalone-only hint; when embedded the host page (Widgets ▸ Moonlight)
+        // already shows its own HintBar, so suppress this to avoid a double bar.
         HintBar {
+            visible: !root.embedded
             text: root.showAddForm ? "Esc: Cancel" : "A: Select  |  Servers are launched from Home"
         }
     }
