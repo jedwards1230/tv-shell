@@ -445,6 +445,63 @@ fn serverinfo_is_busy(body: &str) -> bool {
     body.contains("SUNSHINE_SERVER_BUSY")
 }
 
+/// Candidate art filenames inside an appid's `librarycache/<appid>/<hash>/` dir,
+/// in preference order: the 300×450 portrait capsule poster first, then the
+/// 460×215 header as a fallback.
+const ART_CAPSULE: &str = "library_capsule.jpg";
+const ART_HEADER: &str = "library_header.jpg";
+
+/// Resolve the local portrait art file for a Steam `appid` from the on-disk
+/// library cache, or `None` when nothing is cached (or Steam isn't installed).
+///
+/// Steam stores art at
+/// `<steam_root>/appcache/librarycache/<appid>/<hash>/library_capsule.jpg`,
+/// where `<hash>` is an unpredictable 40-char hex subdir (there can be several
+/// per appid). We scan the appid dir's immediate subdirectories for the capsule
+/// (preferred) or header (fallback) and return the first match. The Steam root
+/// is resolved exactly like [`enumerate`] (first existing [`steam_roots`] dir).
+pub fn library_art_path(appid: u32) -> Option<PathBuf> {
+    let steam_root = steam_roots().into_iter().find(|r| r.is_dir())?;
+    let appid_dir = steam_root
+        .join("appcache/librarycache")
+        .join(appid.to_string());
+
+    // Gather the art filenames present across the immediate subdirs, paired with
+    // the absolute path they live at, so the pure picker decides which to use.
+    let mut found: Vec<(&'static str, PathBuf)> = Vec::new();
+    for dirent in std::fs::read_dir(&appid_dir).ok()?.flatten() {
+        let sub = dirent.path();
+        if !sub.is_dir() {
+            continue;
+        }
+        for name in [ART_CAPSULE, ART_HEADER] {
+            let candidate = sub.join(name);
+            if candidate.is_file() {
+                found.push((name, candidate));
+            }
+        }
+    }
+
+    let names: Vec<&str> = found.iter().map(|(n, _)| *n).collect();
+    let pick = pick_art_file(&names)?;
+    found
+        .into_iter()
+        .find(|(n, _)| *n == pick)
+        .map(|(_, path)| path)
+}
+
+/// Pure picker: given the art filenames present across an appid's cache subdirs,
+/// pick the preferred one — capsule over header — or `None` if neither is there.
+/// Factored out of [`library_art_path`] so it's unit-testable without touching
+/// the filesystem.
+fn pick_art_file<'a>(names: &[&'a str]) -> Option<&'a str> {
+    names
+        .iter()
+        .find(|&&n| n == ART_CAPSULE)
+        .or_else(|| names.iter().find(|&&n| n == ART_HEADER))
+        .copied()
+}
+
 /// Is this entry Steam runtime tooling (Proton, Linux Runtime, redistributables)
 /// rather than a real game? Matches known appids and lower-cased name prefixes.
 fn is_runtime(entry: &LibraryEntry) -> bool {
@@ -638,6 +695,29 @@ mod tests {
         // Empty / failed fetch ⇒ not busy.
         assert!(!serverinfo_is_busy(""));
         assert!(!serverinfo_is_busy("HTTP/1.0 404 Not Found"));
+    }
+
+    #[test]
+    fn pick_art_prefers_capsule_over_header() {
+        // Both present (possibly in different subdirs) → capsule wins.
+        assert_eq!(
+            pick_art_file(&["library_header.jpg", "library_capsule.jpg"]),
+            Some("library_capsule.jpg")
+        );
+    }
+
+    #[test]
+    fn pick_art_falls_back_to_header() {
+        assert_eq!(
+            pick_art_file(&["library_header.jpg"]),
+            Some("library_header.jpg")
+        );
+    }
+
+    #[test]
+    fn pick_art_none_when_absent() {
+        assert_eq!(pick_art_file(&[]), None);
+        assert_eq!(pick_art_file(&["icon.jpg", "logo.png"]), None);
     }
 
     #[test]

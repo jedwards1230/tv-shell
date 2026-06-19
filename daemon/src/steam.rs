@@ -85,7 +85,7 @@ pub async fn handle_steam_library() -> String {
     }
 
     match fetch_library(&base, &token).await {
-        Ok(games) => normalize_library(&games, running_appid, streaming),
+        Ok(games) => normalize_library(&games, &base, running_appid, streaming),
         Err(e) => {
             tracing::debug!("steam-library fetch failed: {e}");
             json!({
@@ -229,10 +229,17 @@ async fn post_launch(base: &str, token: &str, appid: u32) -> Result<(), reqwest:
 /// `allGames` (sorted by name). `running_appid` (the host's foreground game, or
 /// `None`) is passed through to the reply's `runningAppid` so the widget can
 /// badge the "Playing" card; `streaming` (whether a stream is active on the host)
-/// is passed through to `streaming`. Pure function — no I/O — so it unit-tests
+/// is passed through to `streaming`. `base` is the host base URL (already
+/// trailing-slash-trimmed by [`config`]) used to build each card's `localArt`
+/// fallback URL (`{base}/art/{appid}`). Pure function — no I/O — so it unit-tests
 /// anywhere. A body with no `games` array yields empty rails (but `status:ok`,
 /// matching an installed-but-empty library).
-pub fn normalize_library(root: &Value, running_appid: Option<u64>, streaming: bool) -> String {
+pub fn normalize_library(
+    root: &Value,
+    base: &str,
+    running_appid: Option<u64>,
+    streaming: bool,
+) -> String {
     use crate::service_health::ServiceStatus;
 
     let running = running_appid.map(Value::from).unwrap_or(Value::Null);
@@ -254,7 +261,7 @@ pub fn normalize_library(root: &Value, running_appid: Option<u64>, streaming: bo
     let mut cards: Vec<Value> = games
         .iter()
         .filter(|g| g.get("installed").and_then(|v| v.as_bool()).unwrap_or(true))
-        .map(card)
+        .map(|g| card(g, base))
         .collect();
 
     // allGames: by name (case-insensitive).
@@ -288,10 +295,12 @@ pub fn normalize_library(root: &Value, running_appid: Option<u64>, streaming: bo
 }
 
 /// Map one host `LibraryEntry` to the widget card shape `{appid,name,art,
-/// headerArt,lastPlayed}`. The poster + header art URLs are built daemon-side off
-/// the appid (Steam's CDN serves them publicly, no token), so QML just binds
-/// them to `Image.source` with a header.jpg fallback.
-fn card(entry: &Value) -> Value {
+/// localArt,headerArt,lastPlayed}`. The `art`/`headerArt` poster + header URLs are
+/// built off the appid against Steam's public CDN (no token), and `localArt`
+/// points at the host's own `/art/{appid}` endpoint (`{base}/art/{appid}`) which
+/// serves the on-disk cache art for titles the CDN is missing — QML uses it as a
+/// fallback between `art` and `headerArt`. All three bind to `Image.source`.
+fn card(entry: &Value, base: &str) -> Value {
     let appid = entry.get("appid").and_then(|v| v.as_u64()).unwrap_or(0);
     let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let last_played = entry.get("last_played").and_then(|v| v.as_u64());
@@ -299,6 +308,7 @@ fn card(entry: &Value) -> Value {
         "appid": appid,
         "name": name,
         "art": library_art_url(appid),
+        "localArt": local_art_url(base, appid),
         "headerArt": header_art_url(appid),
         "lastPlayed": last_played,
     })
@@ -315,10 +325,20 @@ fn header_art_url(appid: u64) -> String {
     format!("https://steamcdn-a.akamaihd.net/steam/apps/{appid}/header.jpg")
 }
 
+/// Local portrait art served by the host's public `/art/{appid}` endpoint. Used
+/// when Steam's CDN lacks library art for a (usually newer) title — the art is
+/// still cached on the gaming PC. `base` is already trailing-slash-trimmed.
+fn local_art_url(base: &str, appid: u64) -> String {
+    format!("{base}/art/{appid}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Host base URL for tests — matches `config()`'s already-trimmed shape.
+    const BASE: &str = "http://host:47995";
 
     fn lib(games: Value) -> Value {
         json!({ "games": games })
@@ -330,7 +350,7 @@ mod tests {
 
     #[test]
     fn empty_library_is_ok_empty() {
-        let out = parse(&normalize_library(&lib(json!([])), None, false));
+        let out = parse(&normalize_library(&lib(json!([])), BASE, None, false));
         assert_eq!(out["status"], "ok");
         assert_eq!(out["recentlyPlayed"].as_array().unwrap().len(), 0);
         assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
@@ -340,7 +360,7 @@ mod tests {
 
     #[test]
     fn missing_games_array_is_ok_empty() {
-        let out = parse(&normalize_library(&json!({}), None, false));
+        let out = parse(&normalize_library(&json!({}), BASE, None, false));
         assert_eq!(out["status"], "ok");
         assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
     }
@@ -351,12 +371,13 @@ mod tests {
             &lib(json!([
                 { "appid": 730, "name": "CS2", "last_played": 0, "installed": true },
             ])),
+            BASE,
             Some(730),
             false,
         ));
         assert_eq!(out["runningAppid"], 730);
         // And passes through on the empty-games path too.
-        let empty = parse(&normalize_library(&json!({}), Some(440), false));
+        let empty = parse(&normalize_library(&json!({}), BASE, Some(440), false));
         assert_eq!(empty["runningAppid"], 440);
     }
 
@@ -367,11 +388,12 @@ mod tests {
             &lib(json!([
                 { "appid": 730, "name": "CS2", "last_played": 0, "installed": true },
             ])),
+            BASE,
             None,
             true,
         ));
         assert_eq!(out["streaming"], true);
-        let empty = parse(&normalize_library(&json!({}), None, true));
+        let empty = parse(&normalize_library(&json!({}), BASE, None, true));
         assert_eq!(empty["streaming"], true);
     }
 
@@ -382,6 +404,7 @@ mod tests {
                 { "appid": 620, "name": "Portal 2", "last_played": 0, "installed": true },
                 { "appid": 400, "name": "Portal", "last_played": 0, "installed": true },
             ])),
+            BASE,
             None,
             false,
         ));
@@ -399,6 +422,9 @@ mod tests {
             all[0]["headerArt"],
             "https://steamcdn-a.akamaihd.net/steam/apps/400/header.jpg"
         );
+        // localArt points at the host's public /art/{appid} endpoint.
+        assert_eq!(all[0]["localArt"], "http://host:47995/art/400");
+        assert_eq!(all[1]["localArt"], "http://host:47995/art/620");
     }
 
     #[test]
@@ -410,6 +436,7 @@ mod tests {
                 { "appid": 3, "name": "Never", "last_played": 0, "installed": true },
                 { "appid": 4, "name": "Mid", "last_played": 200, "installed": true },
             ])),
+            BASE,
             None,
             false,
         ));
@@ -428,6 +455,7 @@ mod tests {
                 { "appid": 1, "name": "Installed", "last_played": 0, "installed": true },
                 { "appid": 2, "name": "Downloading", "last_played": 0, "installed": false },
             ])),
+            BASE,
             None,
             false,
         ));
@@ -441,7 +469,7 @@ mod tests {
         let many: Vec<Value> = (0..30)
             .map(|i| json!({ "appid": i, "name": format!("G{i}"), "last_played": 1000 + i, "installed": true }))
             .collect();
-        let out = parse(&normalize_library(&lib(json!(many)), None, false));
+        let out = parse(&normalize_library(&lib(json!(many)), BASE, None, false));
         assert_eq!(
             out["recentlyPlayed"].as_array().unwrap().len(),
             RECENT_LIMIT

@@ -3,11 +3,17 @@
 //! this one." Moonlight remains the stream engine; this service never touches
 //! Sunshine config, so other Moonlight clients are unaffected.
 //!
-//! Endpoints (all require `Authorization: Bearer <token>`):
-//!   GET  /library  → { games: [LibraryEntry, ...] }   (VDF/ACF enumeration)
-//!   POST /launch   { appid }  → { ok: true }  (navigates Big Picture to the
-//!                                              game's page; the user presses Play)
-//!   GET  /status   → { version, running_appid, streaming }
+//! Endpoints (`/library`, `/launch`, `/status` require `Authorization: Bearer
+//! <token>`; `/art/{appid}` is intentionally PUBLIC — see below):
+//!   GET  /library      → { games: [LibraryEntry, ...] }   (VDF/ACF enumeration)
+//!   POST /launch       { appid }  → { ok: true }  (navigates Big Picture to the
+//!                                                  game's page; user presses Play)
+//!   GET  /status       → { version, running_appid, streaming }
+//!   GET  /art/{appid}  → image/jpeg of the local Steam library art for `appid`,
+//!                        or 404. PUBLIC (no bearer): cover art isn't sensitive
+//!                        and QML's `Image.source` can't send an Authorization
+//!                        header. `appid` is parsed as `u32` (non-numeric ⇒ 404),
+//!                        so no raw string ever reaches a filesystem path.
 //!
 //! Config (env):
 //!   GAME_SHELL_HOST_TOKEN — bearer token. If unset, a random one is generated
@@ -19,8 +25,9 @@ mod launch;
 mod steam;
 
 use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
+    extract::{Path, State},
+    http::{header, HeaderMap, StatusCode},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -59,6 +66,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/library", get(library))
         .route("/launch", post(launch_game))
         .route("/status", get(status))
+        // PUBLIC — no bearer (cover art isn't sensitive; QML's Image.source can't
+        // send an Authorization header). `appid` is typed `u32` so a non-numeric
+        // path segment 404s before any filesystem access.
+        .route("/art/{appid}", get(art))
         .with_state(state);
 
     let addr = format!("{bind}:{port}");
@@ -187,6 +198,29 @@ async fn status(
         "running_appid": running,
         "streaming": streaming,
     })))
+}
+
+/// `GET /art/{appid}` — serve the local Steam portrait library art (capsule,
+/// else header) for `appid` as `image/jpeg`. PUBLIC: no `authorize()` call —
+/// cover art isn't sensitive and QML's `Image.source` can't attach a bearer.
+///
+/// `appid` is extracted as a `u32` by axum's path deserializer, so a non-numeric
+/// or out-of-range segment yields a 404 before this handler runs — a raw,
+/// attacker-controlled string can never be interpolated into a filesystem path.
+/// Missing art (or no Steam root) ⇒ 404. The blocking cache scan + read runs off
+/// the async reactor via `spawn_blocking`, matching `status()`.
+async fn art(Path(appid): Path<u32>) -> impl IntoResponse {
+    let bytes = tokio::task::spawn_blocking(move || {
+        steam::library_art_path(appid).and_then(|p| std::fs::read(p).ok())
+    })
+    .await
+    .ok()
+    .flatten();
+
+    match bytes {
+        Some(bytes) => ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[cfg(test)]
