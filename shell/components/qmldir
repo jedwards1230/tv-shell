@@ -29,6 +29,8 @@ Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
 PlexCard 1.0 PlexCard.qml
 PlexWidget 1.0 PlexWidget.qml
+SteamCard 1.0 SteamCard.qml
+SteamWidget 1.0 SteamWidget.qml
 NowPlayingStrip 1.0 NowPlayingStrip.qml
 MoonlightWidget 1.0 MoonlightWidget.qml
 FilterChips 1.0 FilterChips.qml

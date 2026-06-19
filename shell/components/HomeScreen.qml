@@ -60,7 +60,7 @@ FocusScope {
     // Ordered focusable regions, top→bottom. Both Now-Playing renderers are
     // listed; the hidden one reports focusFirstChild()===false and is skipped.
     function _contentRegions() {
-        return [moonlightWidget, nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry];
+        return [moonlightWidget, nowPlayingStrip, nowPlayingCard, steamWidget, plexWidget, recentRow, allAppsEntry];
     }
 
     function _reanchorFocusIfNeeded() {
@@ -201,6 +201,38 @@ FocusScope {
         console.log("HomeScreen: no Plex app found to launch");
     }
 
+    // === Steam launch choreography ===
+    // Select a Steam card → ask the daemon to launch that game on the host
+    // (`steam-launch <appid>` → game-shell-host's /launch), THEN start the
+    // existing Moonlight stream for the configured target. The stream engine is
+    // unchanged — we reuse the same `streamRequested` path the Moonlight widget
+    // uses; the host-side game launch is the only new step. Targets are the
+    // configured Moonlight hosts; we stream the first one (the single gaming PC).
+    function launchSteamGame(appid) {
+        root.userActivity();
+        // Fire the host-side launch (fire-and-forget; the reply is just ok/error).
+        steamLaunchReq.request("steam-launch", appid);
+        // Start the stream for the configured target. With no target configured
+        // there's nothing to stream into — the launch still fires on the host.
+        let ts = root.targets || [];
+        if (ts.length > 0)
+            root.streamRequested(ts[0]);
+        else
+            console.log("HomeScreen: steam-launch " + appid + " sent, but no stream target configured");
+    }
+
+    // One-shot socket client for `steam-launch <appid>`. The reply (ok/error) is
+    // logged on failure; the stream start above doesn't gate on it (the launch
+    // and the stream race, exactly like picking a game in old GameStream).
+    SocketClient {
+        id: steamLaunchReq
+        onResponseReceived: line => {
+            if (line !== "ok")
+                console.log("HomeScreen: steam-launch reply: " + line);
+        }
+        onRequestFailed: console.log("HomeScreen: steam-launch request failed (daemon down?)")
+    }
+
     function _focusFirstVisibleRow() {
         var regions = root._contentRegions();
         for (var i = 0; i < regions.length; i++) {
@@ -258,6 +290,15 @@ FocusScope {
                     return np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "") && root._entryIsActivePlayer(e, np.playerDesktopEntry, np.playerIdentity);
                 }
             },
+            "configSurface": null
+        },
+        {
+            "id": "steam",
+            "name": "Steam",
+            "region": steamWidget,
+            "enabled": Theme.widgetSteamEnabled,
+            "size": Theme.widgetSteamSize,
+            "hideFromRecent": null,
             "configSurface": null
         },
         {
@@ -544,7 +585,7 @@ FocusScope {
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "small"
                 previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
-                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
+                nextRow: steamWidget.canFocus ? steamWidget.firstRow : (plexWidget.canFocus ? plexWidget.firstRow : recentRow)
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
@@ -561,7 +602,7 @@ FocusScope {
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "medium"
                 previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
-                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
+                nextRow: steamWidget.canFocus ? steamWidget.firstRow : (plexWidget.canFocus ? plexWidget.firstRow : recentRow)
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
@@ -572,13 +613,29 @@ FocusScope {
                     scrollView.ensureVisible(this)
             }
 
+            // === Steam widget (Recently Played + Library posters) ===
+            SteamWidget {
+                id: steamWidget
+                Layout.fillWidth: true
+                widgetEnabled: Theme.widgetSteamEnabled
+                size: Theme.widgetSteamSize
+                previousRow: root._npActive
+                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
+                onEscaped: {
+                    root.userActivity();
+                    root.focusDefaultPosition();
+                }
+                onGameSelected: appid => root.launchSteamGame(appid)
+                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
+            }
+
             // === Plex widget (On Deck + Recently Added + dynamic chips) ===
             PlexWidget {
                 id: plexWidget
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetPlexEnabled
                 size: Theme.widgetPlexSize
-                previousRow: root._npActive
+                previousRow: steamWidget.canFocus ? steamWidget.lastRow : root._npActive
                 nextRow: recentRow
                 onEscaped: {
                     root.userActivity();
@@ -603,7 +660,7 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
-                previousRow: plexWidget.canFocus ? plexWidget.lastRow : root._npActive
+                previousRow: plexWidget.canFocus ? plexWidget.lastRow : (steamWidget.canFocus ? steamWidget.lastRow : root._npActive)
                 nextRow: allAppsEntry
                 model: root._recentModel
                 onActiveFocusChanged: if (activeFocus)
