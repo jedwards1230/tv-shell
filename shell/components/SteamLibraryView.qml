@@ -76,7 +76,14 @@ ColumnLayout {
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
-    visible: steamMon.degraded || (steamMon.ok && (root._hasRecent || root._hasAll))
+    // Stay visible whenever there's something to show or say:
+    //   • last-good items loaded (persisted across a transient poll failure — a
+    //     stream close churns a non-ok `steam-library` poll, which must NOT make
+    //     the games row vanish); OR
+    //   • degraded (`unreachable`/`error`) so the ServiceStatusNotice can render.
+    // Hide only when truly unconfigured (`disabled`) with no data, or after a
+    // successful poll returned an empty library.
+    visible: (root._hasRecent || root._hasAll) || steamMon.degraded
 
     // === Home-tile focus contract ===
     readonly property var firstRow: segmentChips
@@ -115,15 +122,22 @@ ColumnLayout {
         dataIntervalMs: 30000  // matches daemon service_health POLL_INTERVAL
         onUpdated: {
             if (steamMon.ok && steamMon.data) {
+                // Good poll: adopt the fresh library + running-game badge.
                 root.recentItems = steamMon.data.recentlyPlayed || [];
                 root.allItems = steamMon.data.allGames || [];
                 let ra = steamMon.data.runningAppid;
                 root.runningAppid = (typeof ra === "number" && ra > 0) ? ra : -1;
-            } else {
+            } else if (steamMon.disabled) {
+                // Unconfigured (GAME_SHELL_STEAM_URL unset): collapse for real.
                 root.recentItems = [];
                 root.allItems = [];
                 root.runningAppid = -1;
             }
+            // Else — a transient non-ok poll (`unreachable`/`error`/`unknown`,
+            // which a stream-close state churn produces): KEEP the last-good
+            // lists and running-game badge so the games row doesn't vanish. The
+            // next good poll (or recovery refetch) refreshes them.
+
             // Keep the active segment on something that has content.
             if (root._segment === "recent" && !root._hasRecent && root._hasAll)
                 root._segment = "all";
