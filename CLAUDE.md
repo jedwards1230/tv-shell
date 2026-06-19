@@ -139,7 +139,7 @@ under Development).
 The table above reflects the deliberate split: the daemon owns all *reads* of
 system state (D-Bus, Hyprland IPC, Sunshine), while shell-outs remain only for
 write/action commands (`nmcli` join, `wpctl`, `hyprctl dispatch`, `systemctl`).
-**HDMI-CEC** lives in the daemon (`cec-*` IPC, deployed and verified on game-client-1
+**HDMI-CEC** lives in the daemon (`cec-*` IPC, deployed and verified on gaming-client
 with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtime).
 CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
 `cecFocusOnWake` (default `true`), both within the `GAME_SHELL_CEC_LIFECYCLE`
