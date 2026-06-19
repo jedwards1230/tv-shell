@@ -17,9 +17,9 @@ run-name: "Host CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${
 on:
   push:
     branches: [main]
-    paths: ['host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
+    paths: ['Cargo.toml', 'host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
   pull_request:
-    paths: ['host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
+    paths: ['Cargo.toml', 'host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
 
 permissions:
   contents: read

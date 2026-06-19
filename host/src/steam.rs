@@ -190,7 +190,16 @@ pub fn parse_library_folders(text: &str) -> Vec<String> {
 /// the manifest lacks an `appid` (the one field we can't synthesize). Pure
 /// function — unit-tested against a fixture.
 pub fn parse_appmanifest(text: &str) -> Option<LibraryEntry> {
-    let vdf = keyvalues_parser::parse(text).map(Vdf::from).ok()?;
+    // Distinguish a genuinely unparseable (corrupt/truncated) manifest from a
+    // valid one that simply lacks fields: log the VDF error so a bad ACF doesn't
+    // vanish silently, then skip it.
+    let vdf = match keyvalues_parser::parse(text).map(Vdf::from) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!("appmanifest vdf parse failed: {e}");
+            return None;
+        }
+    };
     // The root key is "AppState"; its value is the object with our fields.
     let obj = vdf.value.get_obj()?;
 

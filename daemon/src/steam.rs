@@ -116,7 +116,10 @@ async fn fetch_status(
     let url = format!("{base}/status");
     let client = match crate::service_health::build_client() {
         Ok(c) => c,
-        Err(_) => return (ServiceStatus::Error, None, false),
+        // A client-build failure (TLS init, proxy config) means we couldn't even
+        // attempt the probe — that's Unreachable (transient), not Error (which
+        // means the server reached us and rejected us, e.g. a 401).
+        Err(_) => return (ServiceStatus::Unreachable, None, false),
     };
     let resp = match client
         .get(&url)
@@ -130,6 +133,15 @@ async fn fetch_status(
     };
     let status = classify_code(resp.status().as_u16());
     if status != ServiceStatus::Ok {
+        return (status, None, false);
+    }
+    // Bound the body before reading it: /status is a tiny JSON, so refuse a
+    // response advertising more than 64 KiB — a misconfigured/compromised host
+    // could otherwise stream a huge body into memory (the 6s timeout alone
+    // doesn't cap size). Guards the common Content-Length-bearing case.
+    const MAX_STATUS_BODY: u64 = 64 * 1024;
+    if resp.content_length().is_some_and(|len| len > MAX_STATUS_BODY) {
+        tracing::warn!("steam /status body too large (> {MAX_STATUS_BODY} bytes); ignoring");
         return (status, None, false);
     }
     // Parse the body best-effort; a missing/non-numeric/zero running_appid is
@@ -260,8 +272,13 @@ pub fn normalize_library(
     // partially-downloaded title isn't launchable yet).
     let mut cards: Vec<Value> = games
         .iter()
-        .filter(|g| g.get("installed").and_then(|v| v.as_bool()).unwrap_or(true))
-        .map(|g| card(g, base))
+        // Default a missing `installed` to FALSE (exclude) — safer than letting a
+        // possibly-uninstalled, unlaunchable game through. The host always sends
+        // the field, so this default only ever guards malformed input.
+        .filter(|g| g.get("installed").and_then(|v| v.as_bool()).unwrap_or(false))
+        // filter_map: `card` returns None for a missing/zero appid (an unaddressable
+        // entry) so it's skipped rather than emitted as a broken card.
+        .filter_map(|g| card(g, base))
         .collect();
 
     // allGames: by name (case-insensitive).
@@ -300,18 +317,24 @@ pub fn normalize_library(
 /// points at the host's own `/art/{appid}` endpoint (`{base}/art/{appid}`) which
 /// serves the on-disk cache art for titles the CDN is missing — QML uses it as a
 /// fallback between `art` and `headerArt`. All three bind to `Image.source`.
-fn card(entry: &Value, base: &str) -> Value {
-    let appid = entry.get("appid").and_then(|v| v.as_u64()).unwrap_or(0);
+fn card(entry: &Value, base: &str) -> Option<Value> {
+    // A missing or zero appid can't address Steam's CDN or our /art endpoint, so
+    // skip the entry (filter_map drops the None) rather than emit a broken card
+    // pointing at `.../apps/0/...`.
+    let appid = entry
+        .get("appid")
+        .and_then(|v| v.as_u64())
+        .filter(|&id| id != 0)?;
     let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let last_played = entry.get("last_played").and_then(|v| v.as_u64());
-    json!({
+    Some(json!({
         "appid": appid,
         "name": name,
         "art": library_art_url(appid),
         "localArt": local_art_url(base, appid),
         "headerArt": header_art_url(appid),
         "lastPlayed": last_played,
-    })
+    }))
 }
 
 /// Portrait library poster (600×900). Verified HTTP 200 on Steam's CDN.
@@ -466,7 +489,9 @@ mod tests {
 
     #[test]
     fn recently_played_capped() {
-        let many: Vec<Value> = (0..30)
+        // appids start at 1 — appid 0 is unaddressable and is now skipped, so use
+        // real (non-zero) ids to exercise the cap with a full 30-game library.
+        let many: Vec<Value> = (1..31)
             .map(|i| json!({ "appid": i, "name": format!("G{i}"), "last_played": 1000 + i, "installed": true }))
             .collect();
         let out = parse(&normalize_library(&lib(json!(many)), BASE, None, false));
