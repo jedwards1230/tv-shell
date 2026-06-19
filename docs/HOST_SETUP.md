@@ -50,11 +50,11 @@ openssl rand -hex 16
 
 ## Install path A — Ansible-managed (homelab)
 
-On desktop-1 the host is a managed `systemd --user` unit via the `desktop-common`
+On the gaming host the service is a managed `systemd --user` unit via the `desktop-common`
 role. You don't run anything by hand — set the flags and apply:
 
 ```yaml
-# host_vars/desktop-1.yaml
+# host_vars/gaming-host.yaml
 game_shell_host_enabled: true
 game_shell_host_install_method: fetch          # download the released binary
 game_shell_host_version: "0.1.0"               # the host-v<version> release tag
@@ -103,13 +103,13 @@ firewall to port 47995. See the role for the full variable list.
    ```bash
    # Linux (firewalld)
    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" \
-     source address="192.168.8.0/24" port port="47995" protocol="tcp" accept'
+     source address="192.0.2.0/24" port port="47995" protocol="tcp" accept'
    firewall-cmd --reload
    ```
 
    The `/24` source opens the port to the whole subnet — fine if every host on it
    is trusted. To tighten it, scope the rule to the TV client's IP only (e.g.
-   `source address="192.168.8.50/32"`) so a guest or compromised device on the LAN
+   `source address="192.0.2.50/32"`) so a guest or compromised device on the LAN
    can't reach the control surface.
 
 ---
@@ -126,7 +126,7 @@ GAME_SHELL_STEAM_TOKEN=<same token as GAME_SHELL_HOST_TOKEN>
 
 Restart the daemon to pick it up. In the homelab this is wired by the
 `game_client_common` role (`game_shell_steam_url` / `game_shell_steam_token` in
-`host_vars/game-client-1.yaml`).
+`host_vars/gaming-client.yaml`).
 
 Keep the token private: it's the same secret on both machines in plaintext, so
 store `daemon.env` (and the host env file) `chmod 0600`, keep it out of shell
