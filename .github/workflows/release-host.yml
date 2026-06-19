@@ -1,0 +1,113 @@
+# Per-binary release workflow for the cross-platform host sidecar (host/).
+#
+# Triggered by pushing a `host-v*` tag (e.g. `host-v0.1.0`). Builds
+# `game-shell-host` for Linux (static musl), macOS (arm64 + x86_64), and Windows,
+# then publishes ONE GitHub Release at the tag carrying every binary plus a
+# `checksums.txt`. The Ansible `desktop-common` role fetches the musl binary by
+# this tag (`install_method: fetch`) instead of building it on-host.
+#
+# The host crate is pure Rust (tokio/axum/serde/subtle/keyvalues-parser — no
+# evdev/cec/zbus, no C deps), so every target cross-compiles with nothing but the
+# musl gcc wrapper on the Linux leg. The daemon (game-shell-input) has its own
+# release-input.yml; this workflow is `-p game-shell-host`-scoped and never builds
+# the daemon's Linux-only graph.
+#
+# Tag scheme (see CLAUDE.md › CI): `host-v<semver>` releases the host;
+# `input-v<semver>` releases the daemon. Per-binary tags keep the two artifacts
+# independently versioned within the one monorepo.
+
+name: Release Host
+
+run-name: "Release Host — ${{ github.ref_name }}"
+
+on:
+  push:
+    tags: ['host-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: game-shell-host-x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: game-shell-host-aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: game-shell-host-x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: game-shell-host-x86_64-pc-windows-msvc.exe
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # musl static link needs the musl gcc wrapper; the pure-Rust host needs no
+      # other system deps on any target (incl. the cross-arch darwin leg).
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: release-host-${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release -p game-shell-host --target ${{ matrix.target }}
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp "target/${{ matrix.target }}/release/game-shell-host.exe" "dist/${{ matrix.asset }}"
+          else
+            cp "target/${{ matrix.target }}/release/game-shell-host" "dist/${{ matrix.asset }}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # sha256 over the staged binaries; the Ansible role pins the musl line from
+      # this file to verify the fetched artifact before installing it as root.
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum game-shell-host-* | tee checksums.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
