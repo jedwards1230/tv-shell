@@ -161,7 +161,7 @@ Rectangle {
             }
         ];
         // Streaming/Moonlight server management is demoted out of the sidebar —
-        // it now lives under Settings ▸ Widgets ▸ Moonlight ▸ Manage servers.
+        // it now lives inline on the Settings ▸ Widgets ▸ Moonlight config page.
         // Deep-links to "moonlight"/"streaming" are rerouted there in
         // openSectionById() so existing MCP/intent automation keeps working.
         s.push({
@@ -206,8 +206,9 @@ Rectangle {
     }
 
     // A deep target to apply once the opened section's page has loaded — used to
-    // route a "moonlight"/"streaming" deep-link onto Widgets ▸ Moonlight ▸ servers
-    // now that streaming has no sidebar entry of its own. "" = no deep target.
+    // route a "moonlight"/"streaming" deep-link onto the Widgets ▸ Moonlight
+    // config page now that streaming has no sidebar entry of its own. "" = no
+    // deep target.
     property string _pendingDeep: ""
 
     // Set by Return on the sidebar so the page is entered (focusFirst) once its
@@ -579,11 +580,12 @@ Rectangle {
 
     function openSectionById(id) {
         // Streaming/Moonlight is demoted out of the sidebar — reroute its
-        // deep-links onto Widgets ▸ Moonlight ▸ Manage servers.
+        // deep-links onto the Widgets ▸ Moonlight config page (which now hosts
+        // server management inline).
         let target = id;
         if (id === "moonlight" || id === "streaming") {
             target = "widgets";
-            _pendingDeep = "moonlight-servers";
+            _pendingDeep = "moonlight";
         }
         for (let i = 0; i < sections.length; i++) {
             if (sections[i].id === target) {
