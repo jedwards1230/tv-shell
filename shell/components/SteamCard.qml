@@ -21,8 +21,9 @@ Item {
     property bool showCaption: true
 
     // True when this game is the one currently running on the host (from the
-    // daemon's `runningAppid`, NOT a locally-tracked tap). Shows a "Playing"
-    // badge so the user sees what's live regardless of which client started it.
+    // daemon's `runningAppid`, NOT a locally-tracked tap). Shows an ember running
+    // dot inline with the title (matching the recent-apps row / BaseCard) so the
+    // user sees what's live regardless of which client started it.
     property bool playing: false
 
     // Poster geometry (set by the host row so all cards match).
@@ -44,6 +45,7 @@ Item {
 
     Accessible.role: Accessible.Button
     Accessible.name: root.title
+    Accessible.description: root.playing ? "Running" : ""
     Accessible.focusable: true
     Accessible.onPressAction: root.activated()
 
@@ -108,41 +110,6 @@ Item {
                     font.bold: true
                     color: Theme.textMuted
                 }
-
-                // "Playing" badge — this game is the one live on the host. Dual
-                // cue (● glyph + label), colourblind-safe like StreamCard's LIVE.
-                Rectangle {
-                    id: playingBadge
-                    visible: root.playing
-                    height: Math.round(Theme.fontSmall * 1.8)
-                    radius: height / 2
-                    color: Theme.online
-                    width: playingRow.implicitWidth + Units.spacingMD * 2
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.topMargin: Units.spacingSM
-                    anchors.leftMargin: Units.spacingSM
-
-                    Row {
-                        id: playingRow
-                        anchors.centerIn: parent
-                        spacing: Units.spacingSM
-
-                        Text {
-                            text: "●"
-                            font.pixelSize: Math.round(Theme.fontSmall * 0.7)
-                            color: Theme.textOnDark
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        Text {
-                            text: "Playing"
-                            font.pixelSize: Theme.fontSmall
-                            font.bold: true
-                            color: Theme.textOnDark
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                }
             }
         }
 
@@ -154,14 +121,36 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             spacing: 2
 
-            MarqueeText {
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Theme.fontSmall * 1.3
-                animate: root.isFocused
-                text: root.title
-                font.pixelSize: Theme.fontSmall
-                font.bold: true
-                color: Theme.textPrimary
+                spacing: 6
+
+                // Per-game running indicator — ember dot beside the title,
+                // matching the recent-apps row (BaseCard). Ember (#e06236) is
+                // distinct from the crimson focus ring, so "running" is never
+                // confused with "focused"; dual cue (color + circular shape) is
+                // colourblind-safe. Collapses out of the row when this game isn't
+                // the one live on the host. This is the per-game signal, separate
+                // from the header's session indicator (any stream active at all).
+                Rectangle {
+                    visible: root.playing
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: 8
+                    implicitHeight: 8
+                    radius: 4
+                    color: Theme.ember
+                    Accessible.ignored: true
+                }
+
+                MarqueeText {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Theme.fontSmall * 1.3
+                    animate: root.isFocused
+                    text: root.title
+                    font.pixelSize: Theme.fontSmall
+                    font.bold: true
+                    color: Theme.textPrimary
+                }
             }
         }
     }

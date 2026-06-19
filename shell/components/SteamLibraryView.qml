@@ -90,8 +90,14 @@ ColumnLayout {
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
-    // Data-driven visibility (ANDed with `viewActive` so the parent only decides
-    // WHICH view renders, never clobbers this binding). Stay visible whenever
+    // Data-driven visibility, robust against QML's short-circuit dependency
+    // tracking. `_showable` is a BLOCK binding that reads all three inputs
+    // unconditionally (not a `||` chain) so every dependency is registered; and
+    // `visible` reads both inputs in a block too. The earlier `viewActive && (…)`
+    // form went STALE: `&&` short-circuited so the data deps were never
+    // registered, and the row failed to re-show when the library loaded. ANDed
+    // with `viewActive` (parent decides WHICH view renders) — never set `visible`
+    // from the parent, which would clobber this binding. Stay visible whenever
     // there's something to show or say:
     //   • last-good items loaded (persisted across a transient poll failure — a
     //     stream close churns a non-ok `steam-library` poll, which must NOT make
@@ -99,7 +105,17 @@ ColumnLayout {
     //   • degraded (`unreachable`/`error`) so the ServiceStatusNotice can render.
     // Hide only when truly unconfigured (`disabled`) with no data, or after a
     // successful poll returned an empty library.
-    visible: root.viewActive && ((root._hasRecent || root._hasAll) || steamMon.degraded)
+    readonly property bool _showable: {
+        let r = root._hasRecent;
+        let a = root._hasAll;
+        let deg = steamMon.degraded;
+        return r || a || deg;
+    }
+    visible: {
+        let active = root.viewActive;
+        let show = root._showable;
+        return active && show;
+    }
 
     // === Home-tile focus contract ===
     readonly property var firstRow: segmentChips
@@ -149,15 +165,26 @@ ColumnLayout {
             // a good "ok+21 games" reply could fail to render. Health events
             // (which carry no payload) and the `disabled` clear are handled
             // separately below.
+            // Adopt off the reply's OWN `status` field (carried in the payload),
+            // NOT the broadcast `ok` flag (a concurrent stream start/stop can churn
+            // the broadcast to a transient non-ok while the reply still carries the
+            // full library). Do NOT use `Array.isArray` on the payload arrays — QML
+            // exposes JSON arrays as `QVariantList`, for which `Array.isArray()`
+            // returns false, which silently rejected good 21-game replies.
             let d = steamMon.data;
-            let hasPayload = d && (Array.isArray(d.recentlyPlayed) || Array.isArray(d.allGames));
-            if (hasPayload && !steamMon.disabled) {
-                root.recentItems = d.recentlyPlayed || [];
-                root.allItems = d.allGames || [];
+            if (d && d.status === "ok") {
+                // Guard partial replies: only overwrite a rail when the reply
+                // actually carries it, so a malformed/partial "ok" can never blank
+                // a good row. `runningAppid` / `streaming` always refresh on ok —
+                // they are the per-game and session signals.
+                if (d.recentlyPlayed !== undefined)
+                    root.recentItems = d.recentlyPlayed || [];
+                if (d.allGames !== undefined)
+                    root.allItems = d.allGames || [];
                 let ra = d.runningAppid;
                 root.runningAppid = (typeof ra === "number" && ra > 0) ? ra : -1;
                 root.streaming = d.streaming === true;
-            } else if (steamMon.disabled) {
+            } else if (d && d.status === "disabled") {
                 // Unconfigured (GAME_SHELL_STEAM_URL unset): collapse for real.
                 root.recentItems = [];
                 root.allItems = [];
@@ -167,14 +194,15 @@ ColumnLayout {
             // Else — a payload-less health event or a transient non-ok poll with
             // no data (`unreachable`/`error`/`unknown`, which a stream-close
             // state churn produces): KEEP the last-good lists, running-game
-            // badge, and streaming flag so the games row doesn't vanish. The next
-            // good poll (or recovery refetch) refreshes them.
+            // indicator, and streaming flag so the games row doesn't vanish. The
+            // next good poll (or recovery refetch) refreshes them.
 
             // Keep the active segment on something that has content.
             if (root._segment === "recent" && !root._hasRecent && root._hasAll)
                 root._segment = "all";
             else if (root._segment === "all" && !root._hasAll && root._hasRecent)
                 root._segment = "recent";
+            console.log("STEAMDBG status=" + (d && d.status) + " all=" + root.allItems.length + " recent=" + root.recentItems.length + " running=" + root.runningAppid + " streaming=" + root.streaming + " visible=" + root.visible);
         }
     }
 
