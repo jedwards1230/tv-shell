@@ -1,0 +1,40 @@
+"AppState"
+{
+	"appid"		"730"
+	"Universe"		"1"
+	"LauncherPath"		"/home/user/.local/share/Steam/ubuntu12_32/steam"
+	"name"		"Counter-Strike 2"
+	"StateFlags"		"4"
+	"installdir"		"Counter-Strike Global Offensive"
+	"LastUpdated"		"1699999999"
+	"LastPlayed"		"1700000000"
+	"SizeOnDisk"		"35000000000"
+	"StagingSize"		"0"
+	"buildid"		"12345678"
+	"LastOwner"		"76561197960287930"
+	"UpdateResult"		"0"
+	"BytesToDownload"		"0"
+	"BytesDownloaded"		"0"
+	"BytesToStage"		"0"
+	"BytesStaged"		"0"
+	"TargetBuildID"		"12345678"
+	"AutoUpdateBehavior"		"0"
+	"AllowOtherDownloadsWhileRunning"		"0"
+	"ScheduledAutoUpdate"		"0"
+	"InstalledDepots"
+	{
+		"731"
+		{
+			"manifest"		"1234567890123456789"
+			"size"		"35000000000"
+		}
+	}
+	"UserConfig"
+	{
+		"language"		"english"
+	}
+	"MountedConfig"
+	{
+		"language"		"english"
+	}
+}
