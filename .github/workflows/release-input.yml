@@ -51,11 +51,17 @@ jobs:
       - name: Build (--features cec,mcp)
         run: cargo build --release -p game-shell-input --features cec,mcp
 
+      - name: Stage binary
+        run: |
+          mkdir -p dist
+          cp target/release/game-shell-input dist/game-shell-input-x86_64-unknown-linux-gnu
+
       # Acceptance gate (#179): the static build must NOT dynamically link the
-      # system libcec / libp8-platform — those are bundled into the binary.
+      # system libcec / libp8-platform — those are bundled into the binary. Read
+      # the STAGED artifact so the gate verifies exactly what gets released.
       - name: Assert no system libcec dependency
         run: |
-          BIN=target/release/game-shell-input
+          BIN=dist/game-shell-input-x86_64-unknown-linux-gnu
           echo "ldd $BIN:"
           ldd "$BIN" || true
           if ldd "$BIN" | grep -Eiq 'libcec|libp8-platform'; then
@@ -64,11 +70,9 @@ jobs:
           fi
           echo "OK: no system libcec/libp8-platform dynamic dependency"
 
-      - name: Stage binary + checksums
-        run: |
-          mkdir -p dist
-          cp target/release/game-shell-input dist/game-shell-input-x86_64-unknown-linux-gnu
-          cd dist && sha256sum game-shell-input-* | tee checksums.txt
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum game-shell-input-* | tee checksums.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
