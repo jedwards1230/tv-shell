@@ -166,16 +166,16 @@ async fn launch_game(
 /// per-OS (Linux: scanning `/proc` for Steam's `reaper` `SteamLaunch AppId=<n>`
 /// launcher; Windows: `registry.vdf`'s `RunningAppID`), so it reflects the running
 /// game regardless of how it was started. `running_appid: null` ⇒ nothing running
-/// (or detection found no match). `streaming` is true when an active NVENC encode
-/// session is detected (Linux/NVIDIA; false elsewhere or when `nvidia-smi` is
-/// absent).
+/// (or detection found no match). `streaming` is true when Sunshine reports a live
+/// session (active OR resumable) via its GameStream `serverinfo` state — the same
+/// signal the Moonlight client reads (false when Sunshine is idle or unreachable).
 async fn status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     authorize(&state, &headers)?;
-    // Both probes touch the OS off-band (a `/proc`/VDF read and an `nvidia-smi`
-    // shell-out); keep them off the async reactor.
+    // Both probes touch the OS off-band (a `/proc`/VDF read and a blocking
+    // loopback HTTP GET to Sunshine); keep them off the async reactor.
     let running = tokio::task::spawn_blocking(steam::running_appid)
         .await
         .unwrap_or(None);

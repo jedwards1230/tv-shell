@@ -353,60 +353,74 @@ pub fn parse_running_appid(text: &str) -> Option<u32> {
     raw.trim().parse::<u32>().ok().filter(|&id| id != 0)
 }
 
-/// Whether a Moonlight/Sunshine stream is currently active on this host.
+/// Whether a Moonlight/Sunshine session is currently live on this host —
+/// **active OR resumable** (suspended).
 ///
-/// The verified signal is an **active NVENC encode session**: while streaming,
-/// `nvidia-smi --query-gpu=encoder.stats.sessionCount` reports a count ≥ 1; idle
-/// reports 0. We shell out to `nvidia-smi`, parse the first integer, and report
-/// `count > 0`.
+/// The signal is Sunshine's own GameStream `serverinfo` state, the same thing the
+/// Moonlight client reads: `<state>SUNSHINE_SERVER_BUSY</state>` means an app
+/// session is running and streamable — whether a client is actively connected
+/// (encoding) or the session is paused/resumable after a client disconnected.
+/// `…_FREE` means idle.
 ///
-/// - **Linux**: run `nvidia-smi` and parse. Missing/erroring `nvidia-smi` ⇒
-///   `false` (never fail the endpoint).
-/// - **Other OSes**: `false` for now.
-// TODO: non-NVIDIA / other-GPU stream detection (AMD/Intel encode sessions, or a
-// Sunshine-side signal) is a later refinement; today only the NVENC path is wired.
+/// This deliberately replaces the earlier NVENC encode-session probe, which only
+/// saw an *actively encoding* stream and reported `false` for a resumable session
+/// the user can still reconnect to — the mismatch the session indicator showed
+/// ("No session" while the laptop's Moonlight still listed BPM as resumable). It
+/// is also GPU-agnostic (no `nvidia-smi`), so it works on AMD/Intel hosts.
+///
+/// Best-effort: a minimal sync HTTP GET to Sunshine's HTTP port (default 47989,
+/// override via `GAME_SHELL_SUNSHINE_PORT`) on loopback — the *unpaired*
+/// `serverinfo` returns basic state (incl. `<state>`) with no client cert.
+/// Sunshine down / unreachable / any error ⇒ `false` (never fail the endpoint).
 pub fn streaming() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        match std::process::Command::new("nvidia-smi")
-            .args([
-                "--query-gpu=encoder.stats.sessionCount",
-                "--format=csv,noheader,nounits",
-            ])
-            .output()
-        {
-            Ok(out) if out.status.success() => {
-                let text = String::from_utf8_lossy(&out.stdout);
-                encoder_sessions_from_nvidia_smi(&text) > 0
-            }
-            // nvidia-smi present but failed, or any other case: not streaming.
-            Ok(_) => false,
-            // nvidia-smi missing (non-NVIDIA host) or spawn error: not streaming.
-            Err(_) => false,
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        // TODO: non-Linux stream detection not wired yet.
-        false
-    }
+    sunshine_server_busy()
 }
 
-/// Parse the active NVENC encoder-session count from `nvidia-smi`'s
-/// `encoder.stats.sessionCount` CSV output. Pure function (unit-tested).
-///
-/// `nvidia-smi --query-gpu=… --format=csv,noheader,nounits` prints one value per
-/// GPU, one per line, e.g. `"1"` or `"0"`; a multi-GPU host prints multiple lines.
-/// We take the **first** parseable integer (the host streams off a single GPU).
-/// Anything unparseable (blank, `[N/A]`, garbage) yields `0`.
-#[cfg(any(target_os = "linux", test))]
-fn encoder_sessions_from_nvidia_smi(out: &str) -> u32 {
-    out.lines()
-        // A single CSV line may itself be comma-separated on some queries; take
-        // the first field of the first line that parses.
-        .flat_map(|line| line.split(','))
-        .find_map(|field| field.trim().parse::<u32>().ok())
-        .unwrap_or(0)
+/// Sunshine GameStream HTTP port. Default 47989 (Sunshine's GameStream base);
+/// override with `GAME_SHELL_SUNSHINE_PORT` for a non-default install.
+fn sunshine_http_port() -> u16 {
+    std::env::var("GAME_SHELL_SUNSHINE_PORT")
+        .ok()
+        .and_then(|p| p.trim().parse::<u16>().ok())
+        .unwrap_or(47989)
+}
+
+/// Query Sunshine's unpaired `serverinfo` on loopback and report whether a
+/// session is live (active or resumable). Dependency-free sync HTTP/1.0 GET (this
+/// runs inside `spawn_blocking`), so the host crate stays HTTP-client-free.
+/// Any connect/read failure ⇒ `false`.
+fn sunshine_server_busy() -> bool {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let addr = format!("127.0.0.1:{}", sunshine_http_port());
+    let Ok(mut stream) = TcpStream::connect(&addr) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+
+    // HTTP/1.0 + `Connection: close` so the server closes after the response and
+    // `read_to_string` returns on EOF. The `uniqueid` is required by the
+    // GameStream contract but any value works for the unpaired basic info.
+    let req = "GET /serverinfo?uniqueid=0123456789ABCDEF HTTP/1.0\r\n\
+               Host: localhost\r\nConnection: close\r\n\r\n";
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    // Ignore a read error: a partial body that already carries `<state>` is still
+    // conclusive, and a timeout leaves whatever arrived in `body`.
+    let mut body = String::new();
+    let _ = stream.read_to_string(&mut body);
+    serverinfo_is_busy(&body)
+}
+
+/// True when a Sunshine `serverinfo` response reports a live (active or
+/// resumable) session: `<state>SUNSHINE_SERVER_BUSY</state>`. Idle is
+/// `…_SERVER_FREE`. Pure function (unit-tested).
+fn serverinfo_is_busy(body: &str) -> bool {
+    body.contains("SUNSHINE_SERVER_BUSY")
 }
 
 /// Is this entry Steam runtime tooling (Proton, Linux Runtime, redistributables)
@@ -587,28 +601,20 @@ mod tests {
     }
 
     #[test]
-    fn encoder_sessions_parses_single_value() {
-        assert_eq!(encoder_sessions_from_nvidia_smi("1"), 1);
-        assert_eq!(encoder_sessions_from_nvidia_smi("0"), 0);
-        assert_eq!(encoder_sessions_from_nvidia_smi("3\n"), 3);
+    fn serverinfo_busy_detected() {
+        // A live (active or resumable) session: state BUSY.
+        let busy = "<root><state>SUNSHINE_SERVER_BUSY</state><currentgame>1093255277</currentgame></root>";
+        assert!(serverinfo_is_busy(busy));
     }
 
     #[test]
-    fn encoder_sessions_takes_first_value_multiline() {
-        // Multi-GPU / multi-line output: take the first parseable value.
-        assert_eq!(encoder_sessions_from_nvidia_smi("1\n0\n"), 1);
-        assert_eq!(encoder_sessions_from_nvidia_smi("0\n2\n"), 0);
-        // Comma-separated first line: take the first field.
-        assert_eq!(encoder_sessions_from_nvidia_smi("1, 0"), 1);
-    }
-
-    #[test]
-    fn encoder_sessions_garbage_is_zero() {
-        assert_eq!(encoder_sessions_from_nvidia_smi(""), 0);
-        assert_eq!(encoder_sessions_from_nvidia_smi("[N/A]"), 0);
-        assert_eq!(encoder_sessions_from_nvidia_smi("not a number"), 0);
-        // Leading non-numeric line, then a valid one: skip junk, take the int.
-        assert_eq!(encoder_sessions_from_nvidia_smi("[N/A]\n2\n"), 2);
+    fn serverinfo_free_is_not_busy() {
+        // Idle: state FREE, no current game.
+        let free = "<root><state>SUNSHINE_SERVER_FREE</state><currentgame>0</currentgame></root>";
+        assert!(!serverinfo_is_busy(free));
+        // Empty / failed fetch ⇒ not busy.
+        assert!(!serverinfo_is_busy(""));
+        assert!(!serverinfo_is_busy("HTTP/1.0 404 Not Found"));
     }
 
     #[test]
