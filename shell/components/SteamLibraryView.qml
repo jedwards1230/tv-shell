@@ -90,32 +90,26 @@ ColumnLayout {
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
-    // Data-driven visibility, robust against QML's short-circuit dependency
-    // tracking. `_showable` is a BLOCK binding that reads all three inputs
-    // unconditionally (not a `||` chain) so every dependency is registered; and
-    // `visible` reads both inputs in a block too. The earlier `viewActive && (…)`
-    // form went STALE: `&&` short-circuited so the data deps were never
-    // registered, and the row failed to re-show when the library loaded. ANDed
-    // with `viewActive` (parent decides WHICH view renders) — never set `visible`
-    // from the parent, which would clobber this binding. Stay visible whenever
-    // there's something to show or say:
+    // Whether there's something to show or say — the data half of visibility,
+    // exposed as its OWN property so the parent (MoonlightWidget) can gate the
+    // whole widget on it WITHOUT reading this view's `visible`. Reading a Layout
+    // child's `visible` from a sibling binding clobbered that child's `visible`
+    // binding (it evaluated once at init and never tracked data changes — the
+    // "widget vanishes" bug); routing the parent through this data property
+    // instead leaves `visible` as a clean binding only the Layout reads, exactly
+    // like PlexWidget's inner rows. True when:
     //   • last-good items loaded (persisted across a transient poll failure — a
     //     stream close churns a non-ok `steam-library` poll, which must NOT make
     //     the games row vanish); OR
     //   • degraded (`unreachable`/`error`) so the ServiceStatusNotice can render.
-    // Hide only when truly unconfigured (`disabled`) with no data, or after a
+    // False only when truly unconfigured (`disabled`) with no data, or after a
     // successful poll returned an empty library.
-    readonly property bool _showable: {
-        let r = root._hasRecent;
-        let a = root._hasAll;
-        let deg = steamMon.degraded;
-        return r || a || deg;
-    }
-    visible: {
-        let active = root.viewActive;
-        let show = root._showable;
-        return active && show;
-    }
+    readonly property bool hasContent: root._hasRecent || root._hasAll || steamMon.degraded
+
+    // ANDed with `viewActive` (the parent decides WHICH view renders). Nothing
+    // outside this view reads `visible` — only the parent Layout — so the binding
+    // tracks `hasContent` cleanly.
+    visible: root.viewActive && root.hasContent
 
     // === Home-tile focus contract ===
     readonly property var firstRow: segmentChips
@@ -202,7 +196,6 @@ ColumnLayout {
                 root._segment = "all";
             else if (root._segment === "all" && !root._hasAll && root._hasRecent)
                 root._segment = "recent";
-            console.log("STEAMDBG status=" + (d && d.status) + " all=" + root.allItems.length + " recent=" + root.recentItems.length + " running=" + root.runningAppid + " streaming=" + root.streaming + " visible=" + root.visible);
         }
     }
 

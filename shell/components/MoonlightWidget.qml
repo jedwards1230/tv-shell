@@ -62,8 +62,12 @@ ColumnLayout {
 
     readonly property bool _hasTargets: root.targets.length > 0
     // Server view needs a target; library view stands on its own (steam-library
-    // health), so it can show even with no Moonlight target configured.
-    visible: root.widgetEnabled && (_serverView ? _hasTargets : steamView.visible)
+    // health), so it can show even with no Moonlight target configured. Gate the
+    // library branch on `steamView.hasContent` (a DATA property), NOT
+    // `steamView.visible`: reading a Layout child's `visible` from this sibling
+    // binding clobbered that child's `visible` binding (the "widget vanishes"
+    // bug). `hasContent` carries the same condition without the read hazard.
+    visible: root.widgetEnabled && (_serverView ? _hasTargets : steamView.hasContent)
 
     // === Server-view sizing ===
     readonly property int _cardW: Theme.cardWidth
