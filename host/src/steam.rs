@@ -128,7 +128,7 @@ pub fn enumerate() -> Vec<LibraryEntry> {
 
     // Stable order: name (case-insensitive) so the daemon's name-sorted rail is
     // deterministic even before it re-sorts.
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by_key(|e| e.name.to_lowercase());
     entries.dedup_by_key(|e| e.appid);
     entries
 }
