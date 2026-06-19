@@ -37,8 +37,13 @@ use axum::{
 use base64::Engine as _;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo},
+    model::{
+        AnnotateAble, CallToolResult, Content, ErrorData as McpError, Implementation,
+        ListResourcesResult, PaginatedRequestParams, RawResource, ReadResourceRequestParams,
+        ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
+    },
     schemars::{self, JsonSchema},
+    service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router, Json, ServerHandler,
 };
 use serde::Deserialize;
@@ -48,6 +53,34 @@ use tokio_util::sync::CancellationToken;
 use crate::bridge_core;
 use crate::protocol::Event;
 use crate::state::Control;
+
+// ─── Resources ───────────────────────────────────────────────────────────────
+
+/// URI of the screenshot resource. Reading it captures a fresh frame of the live
+/// display.
+///
+/// Exposed **additively** alongside the `take_screenshot` tool, not as a
+/// replacement: the tool is the model-driven primitive that powers the autonomous
+/// observe→act→verify loop, while this resource is the host/user-driven path for
+/// attaching the current screen as context from an MCP client's resource picker.
+/// Per the MCP spec, `resources/read` MUST be side-effect-free, so a read NEVER
+/// triggers the screen flash (only the tool's `flash` arg does). Nothing is
+/// captured until a client actually reads.
+const SCREENSHOT_RESOURCE_URI: &str = "screenshot://current";
+
+/// Build the `screenshot://current` descriptor returned by `resources/list`.
+/// Factored out so a unit test can assert its shape without constructing a
+/// `RequestContext`.
+fn screenshot_resource_descriptor() -> RawResource {
+    RawResource::new(SCREENSHOT_RESOURCE_URI, "Current screen")
+        .with_title("Current screen")
+        .with_description(
+            "Live game-shell display, captured as a PNG on read (no flash). \
+             Host/user-driven context — for the autonomous observe→verify loop, \
+             use the take_screenshot tool instead.",
+        )
+        .with_mime_type("image/png")
+}
 
 // ─── Parameter types ─────────────────────────────────────────────────────────
 
@@ -253,13 +286,18 @@ impl GameShellMcp {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for GameShellMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "game-shell-mcp",
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(
-                "Controls the game-shell Quickshell UI on the game client.\n\
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::new(
+            "game-shell-mcp",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(
+            "Controls the game-shell Quickshell UI on the game client.\n\
                  \n\
                  Observe → Act → Verify loop:\n\
                  1. take_screenshot or get_ui_state to observe current state.\n\
@@ -277,8 +315,59 @@ impl ServerHandler for GameShellMcp {
                  and confirm/cancel (select/back). Use after observing what is focused.\n\
                  - list_apps: discover installed apps (name, wm_class, comment).\n\
                  - get_status: daemon-level health snapshot (not the UI's on-screen state).\n\
-                 - get_logs / restart_shell: diagnostics and recovery.",
-            )
+                 - get_logs / restart_shell: diagnostics and recovery.\n\
+                 \n\
+                 Resource:\n\
+                 - screenshot://current — the live display as a PNG, exposed as an \
+                 MCP resource for host/user-driven context attachment. Reading it \
+                 captures a fresh frame WITHOUT the flash effect. For the autonomous \
+                 observe→act→verify loop above, prefer the take_screenshot tool.",
+        )
+    }
+
+    // ── Resources ─────────────────────────────────────────────────────────────
+    // The single `screenshot://current` resource is additive: it lets a human in
+    // an MCP client attach the live screen as context. The take_screenshot tool
+    // remains the primitive the autonomous agent loop uses.
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult::with_all_items(vec![
+            screenshot_resource_descriptor().no_annotation(),
+        ]))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        let uri = request.uri;
+        if uri != SCREENSHOT_RESOURCE_URI {
+            return Err(McpError::resource_not_found(
+                format!("unknown resource '{uri}'"),
+                Some(serde_json::json!({ "uri": uri })),
+            ));
+        }
+        // `resources/read` MUST be side-effect-free, so flash is hard-wired off
+        // here — only the take_screenshot tool flashes the TV. Capture is lazy:
+        // nothing runs until a client actually reads this URI.
+        let png = bridge_core::capture_screenshot(&self.handles.events_tx, false)
+            .await
+            .map_err(|msg| McpError::internal_error(msg, None))?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        // Same provenance the take_screenshot tool returns, as a second content
+        // block — read live (a dev_deploy can move HEAD under the daemon).
+        let meta = bridge_core::capture_meta().await;
+        let meta_json = serde_json::to_string(&meta).unwrap_or_else(|_| "{}".to_owned());
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::blob(b64, SCREENSHOT_RESOURCE_URI).with_mime_type("image/png"),
+            ResourceContents::text(meta_json, SCREENSHOT_RESOURCE_URI)
+                .with_mime_type("application/json"),
+        ]))
     }
 }
 
@@ -833,6 +922,28 @@ mod tests {
     #[test]
     fn tool_router_builds_without_panic() {
         let _ = GameShellMcp::tool_router();
+    }
+
+    // ── screenshot resource descriptor ────────────────────────────────────────
+
+    #[test]
+    fn screenshot_resource_descriptor_shape() {
+        let r = screenshot_resource_descriptor();
+        assert_eq!(r.uri, SCREENSHOT_RESOURCE_URI);
+        assert_eq!(r.uri, "screenshot://current");
+        assert_eq!(r.mime_type.as_deref(), Some("image/png"));
+        assert!(!r.name.is_empty(), "resource needs a name");
+        assert!(r.description.is_some(), "resource needs a description");
+    }
+
+    #[test]
+    fn screenshot_resource_serialises_as_blob_uri() {
+        // The descriptor must round-trip through the rmcp Resource wrapper with
+        // the custom URI scheme intact (resources/list payload shape).
+        let resource = screenshot_resource_descriptor().no_annotation();
+        let json = serde_json::to_string(&resource).expect("resource serialises");
+        assert!(json.contains("screenshot://current"), "uri missing: {json}");
+        assert!(json.contains("image/png"), "mimeType missing: {json}");
     }
 
     // ── NavKey enum serialisation ─────────────────────────────────────────────

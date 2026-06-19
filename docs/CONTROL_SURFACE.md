@@ -82,6 +82,17 @@ conditionally, `mcp.rs:413`).
 
 🔒 = requires `GAME_SHELL_MCP_DEV`.
 
+**MCP resource — `screenshot://current`:** the live display as a PNG, exposed via
+`resources/list` + `resources/read` (capabilities advertise `resources`). It is
+**additive, not a replacement** for the `take_screenshot` tool: the tool is the
+model-driven primitive the autonomous observe→act→verify loop calls; the resource
+is the host/user-driven path for attaching the current screen as context from an
+MCP client's resource picker. A `resources/read` is side-effect-free (flash is
+hard-wired off — only the tool flashes) and lazy (nothing is captured until a
+client reads). It returns two content blocks: the PNG `blob` (`image/png`) and the
+same `{captured_at,sha,branch,version}` provenance as a JSON text block. Unknown
+URIs return a JSON-RPC `resource_not_found` (-32002).
+
 **Tool design:**
 - `shell_action` accepts only bare verbs from the closed vocabulary (`home`,
   `home-tap`, `home-hold`, `menu`, `settings`, `power`). Deep-links are rejected
