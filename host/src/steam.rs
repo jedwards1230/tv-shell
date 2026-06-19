@@ -353,6 +353,62 @@ pub fn parse_running_appid(text: &str) -> Option<u32> {
     raw.trim().parse::<u32>().ok().filter(|&id| id != 0)
 }
 
+/// Whether a Moonlight/Sunshine stream is currently active on this host.
+///
+/// The verified signal is an **active NVENC encode session**: while streaming,
+/// `nvidia-smi --query-gpu=encoder.stats.sessionCount` reports a count ≥ 1; idle
+/// reports 0. We shell out to `nvidia-smi`, parse the first integer, and report
+/// `count > 0`.
+///
+/// - **Linux**: run `nvidia-smi` and parse. Missing/erroring `nvidia-smi` ⇒
+///   `false` (never fail the endpoint).
+/// - **Other OSes**: `false` for now.
+// TODO: non-NVIDIA / other-GPU stream detection (AMD/Intel encode sessions, or a
+// Sunshine-side signal) is a later refinement; today only the NVENC path is wired.
+pub fn streaming() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        match std::process::Command::new("nvidia-smi")
+            .args([
+                "--query-gpu=encoder.stats.sessionCount",
+                "--format=csv,noheader,nounits",
+            ])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                encoder_sessions_from_nvidia_smi(&text) > 0
+            }
+            // nvidia-smi present but failed, or any other case: not streaming.
+            Ok(_) => false,
+            // nvidia-smi missing (non-NVIDIA host) or spawn error: not streaming.
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // TODO: non-Linux stream detection not wired yet.
+        false
+    }
+}
+
+/// Parse the active NVENC encoder-session count from `nvidia-smi`'s
+/// `encoder.stats.sessionCount` CSV output. Pure function (unit-tested).
+///
+/// `nvidia-smi --query-gpu=… --format=csv,noheader,nounits` prints one value per
+/// GPU, one per line, e.g. `"1"` or `"0"`; a multi-GPU host prints multiple lines.
+/// We take the **first** parseable integer (the host streams off a single GPU).
+/// Anything unparseable (blank, `[N/A]`, garbage) yields `0`.
+#[cfg(any(target_os = "linux", test))]
+fn encoder_sessions_from_nvidia_smi(out: &str) -> u32 {
+    out.lines()
+        // A single CSV line may itself be comma-separated on some queries; take
+        // the first field of the first line that parses.
+        .flat_map(|line| line.split(','))
+        .find_map(|field| field.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
 /// Is this entry Steam runtime tooling (Proton, Linux Runtime, redistributables)
 /// rather than a real game? Matches known appids and lower-cased name prefixes.
 fn is_runtime(entry: &LibraryEntry) -> bool {
@@ -528,6 +584,31 @@ mod tests {
         // SteamLaunch present, AppId= present but non-numeric.
         let argv = ["reaper", "SteamLaunch", "AppId=notanumber", "--"];
         assert_eq!(steam_appid_from_argv(&argv), None);
+    }
+
+    #[test]
+    fn encoder_sessions_parses_single_value() {
+        assert_eq!(encoder_sessions_from_nvidia_smi("1"), 1);
+        assert_eq!(encoder_sessions_from_nvidia_smi("0"), 0);
+        assert_eq!(encoder_sessions_from_nvidia_smi("3\n"), 3);
+    }
+
+    #[test]
+    fn encoder_sessions_takes_first_value_multiline() {
+        // Multi-GPU / multi-line output: take the first parseable value.
+        assert_eq!(encoder_sessions_from_nvidia_smi("1\n0\n"), 1);
+        assert_eq!(encoder_sessions_from_nvidia_smi("0\n2\n"), 0);
+        // Comma-separated first line: take the first field.
+        assert_eq!(encoder_sessions_from_nvidia_smi("1, 0"), 1);
+    }
+
+    #[test]
+    fn encoder_sessions_garbage_is_zero() {
+        assert_eq!(encoder_sessions_from_nvidia_smi(""), 0);
+        assert_eq!(encoder_sessions_from_nvidia_smi("[N/A]"), 0);
+        assert_eq!(encoder_sessions_from_nvidia_smi("not a number"), 0);
+        // Leading non-numeric line, then a valid one: skip junk, take the int.
+        assert_eq!(encoder_sessions_from_nvidia_smi("[N/A]\n2\n"), 2);
     }
 
     #[test]

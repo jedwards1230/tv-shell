@@ -5,8 +5,9 @@
 //!
 //! Endpoints (all require `Authorization: Bearer <token>`):
 //!   GET  /library  → { games: [LibraryEntry, ...] }   (VDF/ACF enumeration)
-//!   POST /launch   { appid }  → { ok: true }           (steam://rungameid)
-//!   GET  /status   → { version, running_appid }
+//!   POST /launch   { appid }  → { ok: true }  (navigates Big Picture to the
+//!                                              game's page; the user presses Play)
+//!   GET  /status   → { version, running_appid, streaming }
 //!
 //! Config (env):
 //!   GAME_SHELL_HOST_TOKEN — bearer token. If unset, a random one is generated
@@ -142,7 +143,9 @@ async fn library(
     Ok(Json(LibraryResponse { games }))
 }
 
-/// `POST /launch` — start a Steam game by appid.
+/// `POST /launch` — navigate Big Picture to a Steam game's page by appid. This no
+/// longer auto-starts the game (it fires `steam://nav/games/details/<appid>`); the
+/// user presses Play. On Linux it waits for Big Picture to be up first.
 async fn launch_game(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -158,23 +161,31 @@ async fn launch_game(
     }
 }
 
-/// `GET /status` — version + the currently-running Steam appid (or null). The
-/// running id is detected per-OS (Linux: scanning `/proc` for Steam's `reaper`
-/// `SteamLaunch AppId=<n>` launcher; Windows: `registry.vdf`'s `RunningAppID`),
-/// so it reflects the running game regardless of how it was started. `null` ⇒
-/// nothing running (or detection found no match).
+/// `GET /status` — version + the currently-running Steam appid (or null) +
+/// whether a Moonlight/Sunshine stream is active. The running id is detected
+/// per-OS (Linux: scanning `/proc` for Steam's `reaper` `SteamLaunch AppId=<n>`
+/// launcher; Windows: `registry.vdf`'s `RunningAppID`), so it reflects the running
+/// game regardless of how it was started. `running_appid: null` ⇒ nothing running
+/// (or detection found no match). `streaming` is true when an active NVENC encode
+/// session is detected (Linux/NVIDIA; false elsewhere or when `nvidia-smi` is
+/// absent).
 async fn status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     authorize(&state, &headers)?;
-    // The VDF read touches the filesystem; keep it off the async reactor.
+    // Both probes touch the OS off-band (a `/proc`/VDF read and an `nvidia-smi`
+    // shell-out); keep them off the async reactor.
     let running = tokio::task::spawn_blocking(steam::running_appid)
         .await
         .unwrap_or(None);
+    let streaming = tokio::task::spawn_blocking(steam::streaming)
+        .await
+        .unwrap_or(false);
     Ok(Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "running_appid": running,
+        "streaming": streaming,
     })))
 }
 
