@@ -43,8 +43,15 @@ ColumnLayout {
     // PopoverMenu and reads currentTarget / currentCard / currentHasSession.
     signal contextRequested
     // Emitted when a Steam poster is activated (medium/large view); HomeScreen
-    // launches the appid then starts the single-target stream.
+    // launches (navigates) the appid then starts the single-target stream IFF
+    // none is already live (see HomeScreen.launchSteamGame — one session, ever).
     signal gameSelected(int appid)
+
+    // Whether a Moonlight stream is currently live on the host, mirrored from the
+    // `steam-library` reply's `streaming` field (library view only — false in the
+    // server view, which has no steam-library poll). HomeScreen reads this to
+    // enforce "one session": it only starts a stream on game-select when false.
+    readonly property bool streaming: root._libraryView && steamView.streaming
 
     spacing: Units.spacingMD
 
@@ -52,10 +59,6 @@ ColumnLayout {
     readonly property bool _serverView: root.size === "small"
     readonly property bool _libraryView: !_serverView
     readonly property real _posterScale: root.size === "large" ? 0.82 : 0.62
-
-    // The single configured Moonlight target — the library view streams into it,
-    // and the session indicator probes it. The home is one gaming PC.
-    readonly property var _primaryTarget: root.targets.length > 0 ? root.targets[0] : null
 
     readonly property bool _hasTargets: root.targets.length > 0
     // Server view needs a target; library view stands on its own (steam-library
@@ -135,9 +138,12 @@ ColumnLayout {
     // === medium / large: Steam library posters ===
     SteamLibraryView {
         id: steamView
-        visible: root._libraryView
+        // The parent decides WHICH view is active (medium/large) via `viewActive`;
+        // the child owns its own data-driven `visible`. We must NOT bind
+        // `visible:` here — doing so clobbers the persist-last-good binding and
+        // renders an empty zero-height column when the library data is good.
+        viewActive: root._libraryView
         Layout.fillWidth: true
-        target: root._primaryTarget
         posterScale: root._posterScale
         previousRow: root.previousRow
         nextRow: root.nextRow
