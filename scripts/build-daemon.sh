@@ -25,6 +25,11 @@ set -euo pipefail
 ROOT="${GAME_SHELL_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 FEATURES="${GAME_SHELL_FEATURES:-cec,mcp}"
 
-cd "$ROOT/daemon"
-echo "build-daemon: cargo build --release --features ${FEATURES} (in ${ROOT}/daemon)"
-exec cargo build --release --features "${FEATURES}"
+# The repo is a Cargo workspace (daemon/ + host/ + protocol/). Build the daemon
+# package explicitly (`-p game-shell-input`) from the workspace root so the
+# host's pure-Rust crate is never dragged into the daemon's Linux/cec build, and
+# so the output lands at the workspace-root `target/release/` (one shared target
+# dir). `--features` only applies to the daemon's own cec/mcp gates.
+cd "$ROOT"
+echo "build-daemon: cargo build --release -p game-shell-input --features ${FEATURES} (in ${ROOT})"
+exec cargo build --release -p game-shell-input --features "${FEATURES}"
