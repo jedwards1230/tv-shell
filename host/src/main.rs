@@ -117,9 +117,10 @@ fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.trim())
         .unwrap_or("");
-    // ConstantTimeEq over bytes; length mismatch is handled by ct_eq returning 0.
+    // ConstantTimeEq over bytes; exact match only — the stored token is trimmed
+    // at resolution, so do NOT trim the presented token (a whitespace-padded copy
+    // must fail). Length mismatch is handled by ct_eq returning 0.
     let ok: bool = presented.as_bytes().ct_eq(state.token.as_bytes()).into();
     if ok {
         Ok(())
@@ -197,6 +198,16 @@ mod tests {
     fn authorize_rejects_wrong_token() {
         assert_eq!(
             authorize(&state("sekret"), &bearer("nope")),
+            Err(StatusCode::UNAUTHORIZED)
+        );
+    }
+
+    #[test]
+    fn authorize_rejects_token_with_trailing_spaces() {
+        // The presented token must match exactly; a whitespace-padded copy of the
+        // correct token must NOT be accepted (no trim on the presented side).
+        assert_eq!(
+            authorize(&state("sekret"), &bearer("sekret   ")),
             Err(StatusCode::UNAUTHORIZED)
         );
     }
