@@ -14,6 +14,15 @@ game-client (TV)                          gaming PC (Steam host)
 
 It never touches Sunshine config, so other Moonlight clients are unaffected.
 
+> ⚠️ **Security — trusted LANs only.** The daemon talks to the host over
+> **unencrypted HTTP** with a **static bearer token**. That's safe only on an
+> isolated, trusted LAN where you control every host — a passive observer (ARP
+> spoof, rogue DHCP, WiFi sniffer) on the same segment can capture the token.
+> Do not expose the host to guest WiFi, untrusted networks, or the Internet
+> without putting it behind TLS or a VPN (e.g. Tailscale). The token is a shared
+> secret stored in plaintext on both machines and is not rotated automatically —
+> rotate it by hand if it leaks or when moving to a different network.
+
 ## Endpoints
 
 | Method | Path          | Auth        | Purpose |
@@ -98,6 +107,11 @@ firewall to port 47995. See the role for the full variable list.
    firewall-cmd --reload
    ```
 
+   The `/24` source opens the port to the whole subnet — fine if every host on it
+   is trusted. To tighten it, scope the rule to the TV client's IP only (e.g.
+   `source address="192.168.8.50/32"`) so a guest or compromised device on the LAN
+   can't reach the control surface.
+
 ---
 
 ## Pair the daemon (the TV box)
@@ -113,6 +127,11 @@ GAME_SHELL_STEAM_TOKEN=<same token as GAME_SHELL_HOST_TOKEN>
 Restart the daemon to pick it up. In the homelab this is wired by the
 `game_client_common` role (`game_shell_steam_url` / `game_shell_steam_token` in
 `host_vars/game-client-1.yaml`).
+
+Keep the token private: it's the same secret on both machines in plaintext, so
+store `daemon.env` (and the host env file) `chmod 0600`, keep it out of shell
+history, and vault it in any config repo. It isn't rotated by default — rotate it
+on both ends together if it leaks.
 
 ## Verify
 
