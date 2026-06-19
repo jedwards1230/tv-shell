@@ -191,6 +191,9 @@ pub async fn handle_steam_launch(appid: u32) -> String {
 enum FetchError {
     Http(reqwest::Error),
     Json(serde_json::Error),
+    /// Response body advertised more bytes than the sanity cap — refused before
+    /// reading it into memory (DoS guard against a rogue/compromised host).
+    TooLarge(u64),
 }
 
 impl std::fmt::Display for FetchError {
@@ -198,6 +201,7 @@ impl std::fmt::Display for FetchError {
         match self {
             FetchError::Http(e) => write!(f, "http: {e}"),
             FetchError::Json(e) => write!(f, "json: {e}"),
+            FetchError::TooLarge(n) => write!(f, "response body too large: {n} bytes"),
         }
     }
 }
@@ -208,7 +212,7 @@ impl std::fmt::Display for FetchError {
 async fn fetch_library(base: &str, token: &str) -> Result<Value, FetchError> {
     let url = format!("{base}/library");
     let client = crate::service_health::build_client().map_err(FetchError::Http)?;
-    let body = client
+    let resp = client
         .get(&url)
         .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/json")
@@ -216,10 +220,18 @@ async fn fetch_library(base: &str, token: &str) -> Result<Value, FetchError> {
         .await
         .map_err(FetchError::Http)?
         .error_for_status()
-        .map_err(FetchError::Http)?
-        .text()
-        .await
         .map_err(FetchError::Http)?;
+    // Bound the body before reading it, like `fetch_status` does for /status —
+    // /library is legitimately larger (one entry per game), so use a higher cap:
+    // 10 MiB covers ~1000 games. Refuses a rogue/compromised host streaming an
+    // unbounded body into memory (the 6s timeout alone doesn't cap size).
+    const MAX_LIBRARY_BODY: u64 = 10 * 1024 * 1024;
+    if let Some(len) = resp.content_length() {
+        if len > MAX_LIBRARY_BODY {
+            return Err(FetchError::TooLarge(len));
+        }
+    }
+    let body = resp.text().await.map_err(FetchError::Http)?;
     serde_json::from_str(&body).map_err(FetchError::Json)
 }
 
