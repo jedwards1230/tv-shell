@@ -398,22 +398,44 @@ fn sunshine_server_busy() -> bool {
     let Ok(mut stream) = TcpStream::connect(&addr) else {
         return false;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
 
-    // HTTP/1.0 + `Connection: close` so the server closes after the response and
-    // `read_to_string` returns on EOF. The `uniqueid` is required by the
-    // GameStream contract but any value works for the unpaired basic info.
+    // The `uniqueid` is required by the GameStream contract but any value works
+    // for the unpaired basic info.
     let req = "GET /serverinfo?uniqueid=0123456789ABCDEF HTTP/1.0\r\n\
                Host: localhost\r\nConnection: close\r\n\r\n";
     if stream.write_all(req.as_bytes()).is_err() {
         return false;
     }
-    // Ignore a read error: a partial body that already carries `<state>` is still
-    // conclusive, and a timeout leaves whatever arrived in `body`.
-    let mut body = String::new();
-    let _ = stream.read_to_string(&mut body);
-    serverinfo_is_busy(&body)
+
+    // Read incrementally rather than `read_to_string`: Sunshine may keep the
+    // connection alive (ignoring `Connection: close`), in which case a blocking
+    // read-to-EOF would just hit the timeout and yield nothing. Instead accumulate
+    // chunks and stop as soon as the answer is decidable — the `BUSY` token
+    // appears, or the closing `</root>` shows the full body arrived — so neither a
+    // busy nor an idle response waits for the timeout. On EOF/timeout we evaluate
+    // whatever arrived.
+    let mut buf = Vec::with_capacity(2048);
+    let mut chunk = [0u8; 2048];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break, // EOF — server closed
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                let seen = String::from_utf8_lossy(&buf);
+                if seen.contains("SUNSHINE_SERVER_BUSY") {
+                    return true;
+                }
+                // Full body in hand (idle case) — no need to wait for the timeout.
+                if seen.contains("</root>") || buf.len() > 64 * 1024 {
+                    break;
+                }
+            }
+            Err(_) => break, // timeout or error — evaluate what we have
+        }
+    }
+    serverinfo_is_busy(&String::from_utf8_lossy(&buf))
 }
 
 /// True when a Sunshine `serverinfo` response reports a live (active or
@@ -603,7 +625,8 @@ mod tests {
     #[test]
     fn serverinfo_busy_detected() {
         // A live (active or resumable) session: state BUSY.
-        let busy = "<root><state>SUNSHINE_SERVER_BUSY</state><currentgame>1093255277</currentgame></root>";
+        let busy =
+            "<root><state>SUNSHINE_SERVER_BUSY</state><currentgame>1093255277</currentgame></root>";
         assert!(serverinfo_is_busy(busy));
     }
 
