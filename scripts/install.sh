@@ -33,7 +33,7 @@ set -euo pipefail
 PREFIX="/opt/game-shell"
 SESSION_DIR="/usr/share/wayland-sessions"
 SESSION_EXEC=""
-TARGET_USER="${SUDO_USER:-$(id -un)}"
+TARGET_USER="${SUDO_USER:-}"
 DO_BUILD=1
 FEATURES="cec,mcp"
 
@@ -58,6 +58,16 @@ done
 # Default the session Exec to the repo launcher under the resolved prefix.
 SESSION_EXEC="${SESSION_EXEC:-$PREFIX/scripts/game-shell-session.sh}"
 
+# Resolve the target user: --user wins, else $SUDO_USER, else the invoking user.
+# Guard the footgun where someone runs as plain root (e.g. `sudo -i`) with no
+# --user — that would install everything root-owned and break the shell for
+# normal users. We check the *resolved* user (not $SUDO_USER directly) so an
+# explicit --user still works under `become`/sudo that doesn't export SUDO_USER.
+TARGET_USER="${TARGET_USER:-$(id -un)}"
+if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" = "root" ]; then
+    die "running as root with no target user — pass --user NAME (or run via sudo) so the install isn't root-owned"
+fi
+
 # Resolve the target user's home (works whether or not we're under sudo).
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 [ -n "$TARGET_HOME" ] || die "could not resolve home for user '$TARGET_USER' (does the user exist?)"
@@ -71,9 +81,12 @@ fi
 
 log "prefix=$PREFIX user=$TARGET_USER home=$TARGET_HOME features=$FEATURES"
 
-# Validate the prefix is creatable up front — don't fail with a cryptic error
-# only after a multi-minute daemon build (read-only FS, missing parent, etc.).
+# Validate the prefix is creatable AND writable up front — don't fail with a
+# cryptic error only after a multi-minute daemon build (read-only FS, missing
+# parent, no space, etc.).
 mkdir -p "$PREFIX" || die "cannot create prefix directory: $PREFIX (check permissions / parent path)"
+( touch "$PREFIX/.install-write-check" && rm -f "$PREFIX/.install-write-check" ) \
+    || die "cannot write to $PREFIX (read-only mount, permissions, or no space?)"
 
 # 1. Build the daemon (canonical script owns the feature flags / profile). The
 #    workspace builds to the repo-root target/ (see scripts/build-daemon.sh).
@@ -91,8 +104,8 @@ install -d -m755 "$PREFIX/bin"
 if [ "$REPO_ROOT" != "$PREFIX" ]; then
     log "copying install tree to $PREFIX ..."
     for d in shell config scripts; do
-        install -d -m755 "$PREFIX/$d"
-        cp -a "$REPO_ROOT/$d/." "$PREFIX/$d/"
+        install -d -m755 "$PREFIX/$d" || die "cannot create $PREFIX/$d"
+        cp -a "$REPO_ROOT/$d/." "$PREFIX/$d/" || die "failed to copy $d/ to $PREFIX/$d (permissions or space?)"
     done
 else
     log "repo is the prefix — installing in place, no copy"
@@ -124,7 +137,8 @@ EOF
 # 4. Per-user setup: Quickshell config symlink + config dir seeded from examples.
 log "linking Quickshell config -> $PREFIX/shell"
 install -d -m755 "$(dirname "$QS_LINK")"
-ln -sfn "$PREFIX/shell" "$QS_LINK"
+ln -sfn "$PREFIX/shell" "$QS_LINK" || die "failed to create symlink $QS_LINK"
+[ -d "$QS_LINK" ] || die "symlink $QS_LINK is broken — target $PREFIX/shell does not exist"
 
 install -d -m755 "$CONFIG_DIR"
 # Seed real config from *.example without ever clobbering a user's edits.
@@ -136,13 +150,19 @@ seed() { # seed <example-name> <dest-name>
 }
 seed daemon.env.example   daemon.env
 seed targets.json.example targets.json
-chmod 600 "$CONFIG_DIR/daemon.env" 2>/dev/null || true
+# daemon.env can hold a bearer token — its 0600 must stick, so a chmod failure
+# is fatal rather than silently leaving it readable.
+if [ -f "$CONFIG_DIR/daemon.env" ]; then
+    chmod 600 "$CONFIG_DIR/daemon.env" || die "failed to chmod 600 $CONFIG_DIR/daemon.env (it may hold a token)"
+fi
 
 # 5. Hand the prefix + per-user files back to the target user. Failure here is
 #    fatal — silently leaving the tree root-owned would block the user (and the
 #    dev bridge) from editing or rebuilding later.
-chown -R "$TARGET_USER" "$PREFIX" || die "failed to chown $PREFIX to $TARGET_USER"
-chown -R "$TARGET_USER" "$CONFIG_DIR" "$(dirname "$QS_LINK")" || die "failed to chown config dirs to $TARGET_USER"
+chown -R "$TARGET_USER" "$PREFIX" \
+    || die "failed to chown $PREFIX to $TARGET_USER (check permissions / filesystem type)"
+chown -R "$TARGET_USER" "$CONFIG_DIR" "$(dirname "$QS_LINK")" \
+    || die "failed to chown config dirs to $TARGET_USER (does $TARGET_USER own ~/.config?)"
 
 log "done. Select 'Game Shell (Wayland)' in your display manager, then log in."
 log "Edit $CONFIG_DIR/daemon.env and targets.json to taste (see docs/INSTALL.md)."
