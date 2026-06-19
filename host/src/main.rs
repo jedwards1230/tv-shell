@@ -3,11 +3,19 @@
 //! this one." Moonlight remains the stream engine; this service never touches
 //! Sunshine config, so other Moonlight clients are unaffected.
 //!
-//! Endpoints (`/library`, `/launch`, `/status` require `Authorization: Bearer
-//! <token>`; `/art/{appid}` is intentionally PUBLIC — see below):
+//! Endpoints (`/library`, `/launch`, `/open-bpm`, `/quit`, `/status` require
+//! `Authorization: Bearer <token>`; `/art/{appid}` is intentionally PUBLIC — see
+//! below):
 //!   GET  /library      → { games: [LibraryEntry, ...] }   (VDF/ACF enumeration)
 //!   POST /launch       { appid }  → { ok: true }  (navigates Big Picture to the
 //!                                                  game's page; user presses Play)
+//!   POST /open-bpm     (no body)  → { ok: true }  (opens Big Picture's HOME
+//!                                                  screen — no game selected)
+//!   POST /quit         { appid }  → { ok: true }  (gracefully terminates the
+//!                                                  running game — SIGTERM to its
+//!                                                  process group, like Steam's
+//!                                                  Stop; { ok: false } if not
+//!                                                  running)
 //!   GET  /status       → { version, running_appid, streaming }
 //!   GET  /art/{appid}  → image/jpeg of the local Steam library art for `appid`,
 //!                        or 404. PUBLIC (no bearer): cover art isn't sensitive
@@ -65,6 +73,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/library", get(library))
         .route("/launch", post(launch_game))
+        .route("/open-bpm", post(open_bpm))
+        .route("/quit", post(quit_game))
         .route("/status", get(status))
         // PUBLIC — no bearer (cover art isn't sensitive; QML's Image.source can't
         // send an Authorization header). `appid` is typed `u32` so a non-numeric
@@ -167,6 +177,53 @@ async fn launch_game(
         Ok(()) => Ok(Json(json!({ "ok": true, "appid": req.appid }))),
         Err(e) => {
             tracing::warn!("launch {} failed: {e}", req.appid);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// `POST /open-bpm` — open Steam Big Picture's HOME screen (no game selected) by
+/// firing `steam://open/bigpicture`. The companion to `/launch` (which navigates
+/// BPM to a specific game's page): this just resets Steam to the Big Picture home.
+/// No body. Requires the same bearer auth as `/launch`/`/library`/`/status`.
+async fn open_bpm(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    authorize(&state, &headers)?;
+    match launch::open_bigpicture() {
+        Ok(()) => Ok(Json(json!({ "ok": true }))),
+        Err(e) => {
+            tracing::warn!("open-bpm failed: {e}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// `POST /quit` — gracefully terminate the running Steam game for `appid` (the
+/// equivalent of Steam's Stop button). Finds the game's `reaper` launcher process
+/// and sends SIGTERM to its process group so the whole game tree shuts down
+/// cleanly (graceful only — never SIGKILL). Returns `{ ok: true, appid }` when a
+/// matching process was signalled, `{ ok: false, appid, reason: "not running" }`
+/// when no such game is running (or the OS is unsupported). The `/proc` scan +
+/// signal run off the async reactor via `spawn_blocking`, matching `status()`.
+async fn quit_game(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<LaunchRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    authorize(&state, &headers)?;
+    let appid = req.appid;
+    let result = tokio::task::spawn_blocking(move || steam::quit(appid))
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!("quit task panicked: {e}")));
+    match result {
+        Ok(true) => Ok(Json(json!({ "ok": true, "appid": appid }))),
+        Ok(false) => Ok(Json(
+            json!({ "ok": false, "appid": appid, "reason": "not running" }),
+        )),
+        Err(e) => {
+            tracing::warn!("quit {appid} failed: {e}");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

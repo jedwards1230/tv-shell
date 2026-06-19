@@ -32,6 +32,10 @@ pub mod steam;
 pub mod service_health;
 pub mod state;
 pub mod system;
+// Wake-on-LAN magic-packet sender for the home-screen "Wake host" card.
+// Cross-platform: pure packet/parse helpers + a blocking UDP broadcast and
+// `ip neigh` shell-out, like `steam`/`plex`.
+pub mod wol;
 
 // Session-environment self-discovery and daemon.env loading (#165).
 // Cross-platform: no Linux-only imports.

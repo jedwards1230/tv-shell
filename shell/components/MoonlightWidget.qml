@@ -46,6 +46,13 @@ ColumnLayout {
     // launches (navigates) the appid then starts the single-target stream IFF
     // none is already live (see HomeScreen.launchSteamGame — one session, ever).
     signal gameSelected(int appid)
+    // Emitted on the X face over the RUNNING Steam game's poster (library view);
+    // HomeScreen opens a Resume/Quit popover for `appid`. Mirrors gameSelected.
+    signal gameContextRequested(int appid)
+    // Emitted when the Steam view's "Open Steam" action chip fires (medium/large
+    // view); HomeScreen resets the host to Big Picture HOME then starts the
+    // single-target stream IFF none is already live (HomeScreen.launchSteamBigPicture).
+    signal openBigPictureRequested
 
     // Whether a Moonlight stream is currently live on the host, mirrored from the
     // `steam-library` reply's `streaming` field (library view only — false in the
@@ -61,6 +68,10 @@ ColumnLayout {
     readonly property real _posterScale: root.size === "large" ? 0.82 : 0.62
 
     readonly property bool _hasTargets: root.targets.length > 0
+    // The host the Steam-library view can wake when it's unavailable. Taken from
+    // the first configured target (the single-session streaming host). Never
+    // hardcoded — it comes entirely from targets.json via `targets`.
+    readonly property string _steamHost: _hasTargets ? (root.targets[0].host || "") : ""
     // Server view needs a target; library view stands on its own (steam-library
     // health), so it can show even with no Moonlight target configured. Gate the
     // library branch on `steamView.hasContent` (a DATA property), NOT
@@ -81,6 +92,9 @@ ColumnLayout {
     // Context-menu passthrough for HomeScreen (server view only).
     readonly property var currentTarget: (_serverView && serverRow.currentIndex >= 0 && serverRow.currentIndex < root.targets.length) ? root.targets[serverRow.currentIndex] : null
     readonly property Item currentCard: _serverView ? serverRow.currentItem : null
+    // The running Steam game's poster card (library view only) — the anchor for
+    // HomeScreen's Resume/Quit popover. Null in the server view / when none runs.
+    readonly property Item runningCard: _libraryView ? steamView.runningCard : null
     readonly property bool currentHasSession: (_serverView && serverRow.currentItem) ? serverRow.currentItem.hasActiveSession === true : false
     // Host reachable (ping). Used to gate the Resume/Quit stream controls: a
     // stream left running suspends in the background, and the Sunshine session
@@ -149,10 +163,13 @@ ColumnLayout {
         viewActive: root._libraryView
         Layout.fillWidth: true
         posterScale: root._posterScale
+        host: root._steamHost
         previousRow: root.previousRow
         nextRow: root.nextRow
         onEscaped: root.escaped()
         onGameSelected: appid => root.gameSelected(appid)
+        onGameContextRequested: appid => root.gameContextRequested(appid)
+        onOpenBigPictureRequested: root.openBigPictureRequested()
         onEnsureVisibleRequested: item => root.ensureVisibleRequested(item)
     }
 }

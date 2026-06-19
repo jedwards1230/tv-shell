@@ -151,11 +151,15 @@ FocusScope {
             Theme.exitMouseMode();
             root.escaped();
         }
-        Keys.onTabPressed: event => {
-            Theme.exitMouseMode();
-            if (listView.currentItem) {
-                root.contextRequested();
-                event.accepted = true;
+        // Context popover trigger = the X face (daemon altAction → KEY_X), not the
+        // Y face (altSelect → KEY_TAB). Standardized to X across every widget.
+        Keys.onPressed: event => {
+            if (event.key === Qt.Key_X) {
+                Theme.exitMouseMode();
+                if (listView.currentItem) {
+                    root.contextRequested();
+                    event.accepted = true;
+                }
             }
         }
         Keys.onUpPressed: {

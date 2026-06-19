@@ -37,12 +37,29 @@ fn steam_url(appid: u32) -> String {
 /// ready so the nav lands on a live BPM window; on other OSes we skip the wait and
 /// fire immediately.
 pub fn launch(appid: u32) -> anyhow::Result<()> {
-    let url = steam_url(appid);
+    fire_steam_url(&steam_url(appid))
+}
 
+/// Open Steam Big Picture's HOME screen (no game pre-selected) by firing
+/// `steam://open/bigpicture`. Unlike [`launch`] this does NOT navigate to a game's
+/// page — it just resets Steam to the Big Picture home. Same BPM-up wait + fire-and-
+/// detach choreography as [`launch`].
+pub fn open_bigpicture() -> anyhow::Result<()> {
+    fire_steam_url(BIGPICTURE_URL)
+}
+
+/// `steam://open/bigpicture` — open Big Picture's home screen (no game selected).
+const BIGPICTURE_URL: &str = "steam://open/bigpicture";
+
+/// Wait for Big Picture mode to be up (Linux), then fire a `steam://` URL at the
+/// local Steam client and detach. Shared by [`launch`] (game nav) and
+/// [`open_bigpicture`] (BPM home). Returns `Ok(())` once the launcher is spawned;
+/// the URL handler returns immediately and Steam keeps running independently.
+fn fire_steam_url(url: &str) -> anyhow::Result<()> {
     wait_for_bigpicture();
 
-    tracing::info!("nav: {url}");
-    let mut cmd = launch_command(&url);
+    tracing::info!("steam url: {url}");
+    let mut cmd = launch_command(url);
     let status = cmd
         .spawn()
         .map_err(|e| anyhow::anyhow!("failed to spawn launcher for {url}: {e}"))?;

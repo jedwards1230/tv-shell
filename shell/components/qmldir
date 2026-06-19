@@ -30,6 +30,7 @@ NavigableRow 1.0 NavigableRow.qml
 PlexCard 1.0 PlexCard.qml
 PlexWidget 1.0 PlexWidget.qml
 SteamCard 1.0 SteamCard.qml
+WakeCard 1.0 WakeCard.qml
 SteamLibraryView 1.0 SteamLibraryView.qml
 SessionIndicator 1.0 SessionIndicator.qml
 NowPlayingStrip 1.0 NowPlayingStrip.qml
