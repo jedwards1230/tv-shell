@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Layouts
 
 // Portrait poster card for the Steam widget (Recently Played / Library). Renders
@@ -103,11 +104,29 @@ Item {
             Layout.preferredHeight: root.posterHeight
             Layout.alignment: Qt.AlignHCenter
 
-            Rectangle {
+            // Poster surface, corner-rounded via a MultiEffect mask. A Rectangle's
+            // `clip` only clips the bounding BOX (its `radius` never reached the
+            // child Image), so the art kept square corners that poked past the
+            // rounded scrim as bright pixels. Masking the whole surface to a rounded
+            // rect rounds the art, the letter fallback, AND the scrim together —
+            // clean rounded corners, no bright-corner gap.
+            Item {
+                id: posterSurface
                 anchors.fill: parent
-                radius: Units.radiusMD
-                color: Theme.surface
-                clip: true
+                layer.enabled: true
+                layer.smooth: true
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: posterMask
+                    // Soft mask edge so the rounded corners stay anti-aliased.
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: Theme.surface
+                }
 
                 Image {
                     id: poster
@@ -143,9 +162,22 @@ Item {
                 // opacity instead would let the light theme bg show as washed white.
                 Rectangle {
                     anchors.fill: parent
-                    radius: Units.radiusMD
                     visible: root.locked
                     color: Qt.rgba(0, 0, 0, 0.66)
+                }
+            }
+
+            // Rounded-rect alpha mask for `posterSurface` (rendered to a layer, not
+            // drawn directly); its rounded corners become the poster's corners.
+            Item {
+                id: posterMask
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Units.radiusMD
                 }
             }
         }
