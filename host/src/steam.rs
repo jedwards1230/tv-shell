@@ -221,6 +221,71 @@ pub fn parse_appmanifest(text: &str) -> Option<LibraryEntry> {
     })
 }
 
+/// The currently-running Steam appid, or `None` when nothing is running.
+///
+/// Steam tracks the foreground game in `registry.vdf` under
+/// `Registry > HKCU > Software > Valve > Steam > RunningAppID` (a decimal u32; it
+/// is `0` when no game is running). We read it rather than tracking process state
+/// so the "Playing" badge reflects Steam's own truth regardless of how the game
+/// was started (the TV client, the desktop, or a phone).
+///
+/// Returns `None` when the file is missing, unparseable, `RunningAppID` is absent,
+/// or it is `0` (nothing running) — all collapse to "no game playing".
+pub fn running_appid() -> Option<u32> {
+    let path = registry_vdf_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    parse_running_appid(&text)
+}
+
+/// Resolve the path to Steam's `registry.vdf` per-OS.
+///
+/// - Linux: `~/.steam/registry.vdf` (the well-known stable location; the
+///   `~/.steam/steam` library root is a symlink, but `registry.vdf` lives one
+///   level up at `~/.steam/registry.vdf`).
+///
+// TODO(windows): On Windows the running-app id is NOT in a registry.vdf — it
+// lives in the actual Windows registry at
+// `HKCU\Software\Valve\Steam\RunningAppID` (a DWORD). Reading it needs the
+// `winreg` crate (or a `reg query` shell-out); cross-platform running-game
+// detection is a later phase. On macOS Steam also keeps a `registry.vdf`
+// (under `~/Library/Application Support/Steam/registry.vdf`); not wired yet.
+fn registry_vdf_path() -> Option<PathBuf> {
+    // Test/override hook: any OS can point at a fixture.
+    if let Ok(p) = std::env::var("GAME_SHELL_STEAM_REGISTRY") {
+        return Some(PathBuf::from(p));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return home_dir().map(|h| h.join(".steam/registry.vdf"));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // No native path wired yet on non-Linux (see TODO(windows) above). The
+        // override env var is the only way to exercise this off-Linux.
+        None
+    }
+}
+
+/// Parse the `RunningAppID` out of a `registry.vdf` body. Pure function
+/// (unit-tested). The file is Valve KeyValues:
+/// `"Registry" { "HKCU" { "Software" { "Valve" { "Steam" { "RunningAppID" "<n>" … } } } } }`.
+/// Returns `None` for a missing key or a `0`/non-numeric value.
+pub fn parse_running_appid(text: &str) -> Option<u32> {
+    let vdf = keyvalues_parser::parse(text).map(Vdf::from).ok()?;
+    // Walk the fixed nesting Registry > HKCU > Software > Valve > Steam.
+    let mut obj = vdf.value.get_obj()?;
+    for key in ["HKCU", "Software", "Valve", "Steam"] {
+        obj = obj.get(key).and_then(|vs| vs.first())?.get_obj()?;
+    }
+    let raw = obj
+        .get("RunningAppID")
+        .and_then(|vs| vs.first())
+        .and_then(|v| v.get_str())?;
+    raw.trim().parse::<u32>().ok().filter(|&id| id != 0)
+}
+
 /// Is this entry Steam runtime tooling (Proton, Linux Runtime, redistributables)
 /// rather than a real game? Matches known appids and lower-cased name prefixes.
 fn is_runtime(entry: &LibraryEntry) -> bool {
@@ -237,6 +302,9 @@ mod tests {
 
     // A trimmed but realistic appmanifest_*.acf (Valve KeyValues).
     const FIXTURE_ACF: &str = include_str!("../tests/fixtures/appmanifest_730.acf");
+
+    // A realistic registry.vdf with RunningAppID set (Valve KeyValues).
+    const FIXTURE_REGISTRY: &str = include_str!("../tests/fixtures/registry.vdf");
 
     #[test]
     fn parses_fixture_manifest() {
@@ -305,6 +373,59 @@ mod tests {
                 "/mnt/games/SteamLibrary".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn parses_running_appid_from_fixture() {
+        // The fixture has RunningAppID 730 nested under Registry/HKCU/Software/Valve/Steam.
+        assert_eq!(parse_running_appid(FIXTURE_REGISTRY), Some(730));
+    }
+
+    #[test]
+    fn running_appid_zero_is_none() {
+        let vdf = r#""Registry"
+{
+    "HKCU"
+    {
+        "Software"
+        {
+            "Valve"
+            {
+                "Steam"
+                {
+                    "RunningAppID"  "0"
+                }
+            }
+        }
+    }
+}"#;
+        assert_eq!(parse_running_appid(vdf), None);
+    }
+
+    #[test]
+    fn running_appid_missing_key_is_none() {
+        let vdf = r#""Registry"
+{
+    "HKCU"
+    {
+        "Software"
+        {
+            "Valve"
+            {
+                "Steam"
+                {
+                    "SomethingElse"  "1"
+                }
+            }
+        }
+    }
+}"#;
+        assert_eq!(parse_running_appid(vdf), None);
+    }
+
+    #[test]
+    fn running_appid_unparseable_is_none() {
+        assert_eq!(parse_running_appid("not vdf at all {{{"), None);
     }
 
     #[test]

@@ -60,39 +60,81 @@ pub async fn handle_steam_library() -> String {
             "status": ServiceStatus::Disabled.as_str(),
             "recentlyPlayed": [],
             "allGames": [],
+            "runningAppid": Value::Null,
         })
         .to_string();
     };
 
-    // Reachability gate — `/status` is small and authenticated, so its HTTP
-    // status classifies cleanly (401 → Error/bad token, 5xx → Unreachable).
-    let status_url = format!("{base}/status");
-    let probe = crate::service_health::probe_get(
-        &status_url,
-        &[("Authorization", &format!("Bearer {token}"))],
-    )
-    .await;
+    // Reachability gate — `GET /status` is small and authenticated, so its HTTP
+    // status classifies cleanly (401 → Error/bad token, 5xx → Unreachable). We
+    // also read its body to capture `running_appid` (the foreground game on the
+    // host) so the widget can badge the "Playing" card without a second request.
+    let (probe, running_appid) = fetch_status(&base, &token).await;
     if probe != ServiceStatus::Ok {
         return json!({
             "status": probe.as_str(),
             "recentlyPlayed": [],
             "allGames": [],
+            "runningAppid": Value::Null,
         })
         .to_string();
     }
 
     match fetch_library(&base, &token).await {
-        Ok(games) => normalize_library(&games),
+        Ok(games) => normalize_library(&games, running_appid),
         Err(e) => {
             tracing::debug!("steam-library fetch failed: {e}");
             json!({
                 "status": ServiceStatus::Unreachable.as_str(),
                 "recentlyPlayed": [],
                 "allGames": [],
+                "runningAppid": Value::Null,
             })
             .to_string()
         }
     }
+}
+
+/// GET `{base}/status` and return both the reachability classification and the
+/// host's `running_appid` (the foreground Steam game, or `None`). The body is
+/// only parsed on a 2xx/3xx; any error degrades to `(status, None)` so the
+/// caller still gets a clean status to surface. The poster widget uses the
+/// running id to badge the "Playing" card — source of truth is the host, not
+/// which card the user tapped.
+async fn fetch_status(
+    base: &str,
+    token: &str,
+) -> (crate::service_health::ServiceStatus, Option<u64>) {
+    use crate::service_health::{classify_code, ServiceStatus};
+
+    let url = format!("{base}/status");
+    let client = match crate::service_health::build_client() {
+        Ok(c) => c,
+        Err(_) => return (ServiceStatus::Error, None),
+    };
+    let resp = match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return (ServiceStatus::Unreachable, None),
+    };
+    let status = classify_code(resp.status().as_u16());
+    if status != ServiceStatus::Ok {
+        return (status, None);
+    }
+    // Parse the body best-effort; a missing/non-numeric/zero running_appid is None.
+    let running = match resp.text().await {
+        Ok(body) => serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|v| v.get("running_appid").and_then(|r| r.as_u64()))
+            .filter(|&id| id != 0),
+        Err(_) => None,
+    };
+    (status, running)
 }
 
 /// IPC entry point for `steam-launch <appid>`. POSTs `{appid}` to the host's
@@ -167,11 +209,15 @@ async fn post_launch(base: &str, token: &str, appid: u32) -> Result<(), reqwest:
 
 /// Normalize a `LibraryResponse` (`{games:[…]}`) into the widget's two rails:
 /// `recentlyPlayed` (sorted by `last_played` desc, top [`RECENT_LIMIT`]) and
-/// `allGames` (sorted by name). Pure function — no I/O — so it unit-tests
-/// anywhere. A body with no `games` array yields empty rails (but `status:ok`,
-/// matching an installed-but-empty library).
-pub fn normalize_library(root: &Value) -> String {
+/// `allGames` (sorted by name). `running_appid` (the host's foreground game, or
+/// `None`) is passed through to the reply's `runningAppid` so the widget can
+/// badge the "Playing" card. Pure function — no I/O — so it unit-tests anywhere.
+/// A body with no `games` array yields empty rails (but `status:ok`, matching an
+/// installed-but-empty library).
+pub fn normalize_library(root: &Value, running_appid: Option<u64>) -> String {
     use crate::service_health::ServiceStatus;
+
+    let running = running_appid.map(Value::from).unwrap_or(Value::Null);
 
     let games = root.get("games").and_then(|g| g.as_array());
     let Some(games) = games else {
@@ -179,6 +225,7 @@ pub fn normalize_library(root: &Value) -> String {
             "status": ServiceStatus::Ok.as_str(),
             "recentlyPlayed": [],
             "allGames": [],
+            "runningAppid": running,
         })
         .to_string();
     };
@@ -215,6 +262,7 @@ pub fn normalize_library(root: &Value) -> String {
         "status": ServiceStatus::Ok.as_str(),
         "recentlyPlayed": recent,
         "allGames": all_games,
+        "runningAppid": running,
     })
     .to_string()
 }
@@ -262,25 +310,43 @@ mod tests {
 
     #[test]
     fn empty_library_is_ok_empty() {
-        let out = parse(&normalize_library(&lib(json!([]))));
+        let out = parse(&normalize_library(&lib(json!([])), None));
         assert_eq!(out["status"], "ok");
         assert_eq!(out["recentlyPlayed"].as_array().unwrap().len(), 0);
         assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
+        assert!(out["runningAppid"].is_null());
     }
 
     #[test]
     fn missing_games_array_is_ok_empty() {
-        let out = parse(&normalize_library(&json!({})));
+        let out = parse(&normalize_library(&json!({}), None));
         assert_eq!(out["status"], "ok");
         assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
     }
 
     #[test]
+    fn running_appid_passed_through() {
+        let out = parse(&normalize_library(
+            &lib(json!([
+                { "appid": 730, "name": "CS2", "last_played": 0, "installed": true },
+            ])),
+            Some(730),
+        ));
+        assert_eq!(out["runningAppid"], 730);
+        // And passes through on the empty-games path too.
+        let empty = parse(&normalize_library(&json!({}), Some(440)));
+        assert_eq!(empty["runningAppid"], 440);
+    }
+
+    #[test]
     fn all_games_sorted_by_name_and_art_built() {
-        let out = parse(&normalize_library(&lib(json!([
-            { "appid": 620, "name": "Portal 2", "last_played": 0, "installed": true },
-            { "appid": 400, "name": "Portal", "last_played": 0, "installed": true },
-        ]))));
+        let out = parse(&normalize_library(
+            &lib(json!([
+                { "appid": 620, "name": "Portal 2", "last_played": 0, "installed": true },
+                { "appid": 400, "name": "Portal", "last_played": 0, "installed": true },
+            ])),
+            None,
+        ));
         let all = out["allGames"].as_array().unwrap();
         assert_eq!(all.len(), 2);
         // Sorted: "Portal" before "Portal 2".
@@ -299,12 +365,15 @@ mod tests {
 
     #[test]
     fn recently_played_sorted_desc_and_filtered() {
-        let out = parse(&normalize_library(&lib(json!([
-            { "appid": 1, "name": "Old", "last_played": 100, "installed": true },
-            { "appid": 2, "name": "Newest", "last_played": 300, "installed": true },
-            { "appid": 3, "name": "Never", "last_played": 0, "installed": true },
-            { "appid": 4, "name": "Mid", "last_played": 200, "installed": true },
-        ]))));
+        let out = parse(&normalize_library(
+            &lib(json!([
+                { "appid": 1, "name": "Old", "last_played": 100, "installed": true },
+                { "appid": 2, "name": "Newest", "last_played": 300, "installed": true },
+                { "appid": 3, "name": "Never", "last_played": 0, "installed": true },
+                { "appid": 4, "name": "Mid", "last_played": 200, "installed": true },
+            ])),
+            None,
+        ));
         let recent = out["recentlyPlayed"].as_array().unwrap();
         // Never-played dropped; rest by last_played desc.
         assert_eq!(recent.len(), 3);
@@ -315,10 +384,13 @@ mod tests {
 
     #[test]
     fn uninstalled_games_excluded() {
-        let out = parse(&normalize_library(&lib(json!([
-            { "appid": 1, "name": "Installed", "last_played": 0, "installed": true },
-            { "appid": 2, "name": "Downloading", "last_played": 0, "installed": false },
-        ]))));
+        let out = parse(&normalize_library(
+            &lib(json!([
+                { "appid": 1, "name": "Installed", "last_played": 0, "installed": true },
+                { "appid": 2, "name": "Downloading", "last_played": 0, "installed": false },
+            ])),
+            None,
+        ));
         let all = out["allGames"].as_array().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0]["name"], "Installed");
@@ -329,7 +401,7 @@ mod tests {
         let many: Vec<Value> = (0..30)
             .map(|i| json!({ "appid": i, "name": format!("G{i}"), "last_played": 1000 + i, "installed": true }))
             .collect();
-        let out = parse(&normalize_library(&lib(json!(many))));
+        let out = parse(&normalize_library(&lib(json!(many)), None));
         assert_eq!(
             out["recentlyPlayed"].as_array().unwrap().len(),
             RECENT_LIMIT

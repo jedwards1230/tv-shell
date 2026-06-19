@@ -158,17 +158,22 @@ async fn launch_game(
     }
 }
 
-/// `GET /status` — version + (best-effort) currently-running appid. We don't
-/// track a running game yet, so `running_appid` is always null for now; the
-/// field is present so the daemon/QML contract is stable.
+/// `GET /status` — version + the currently-running Steam appid (or null). The
+/// running id is read from Steam's `registry.vdf` (`RunningAppID`), so it
+/// reflects Steam's own truth regardless of how the game was started. `null` ⇒
+/// nothing running (or the registry is absent/unreadable).
 async fn status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     authorize(&state, &headers)?;
+    // The VDF read touches the filesystem; keep it off the async reactor.
+    let running = tokio::task::spawn_blocking(steam::running_appid)
+        .await
+        .unwrap_or(None);
     Ok(Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "running_appid": serde_json::Value::Null,
+        "running_appid": running,
     })))
 }
 
