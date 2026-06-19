@@ -1,0 +1,79 @@
+# Cross-platform CI for the game-shell host sidecar (host/) + the shared
+# protocol crate (protocol/).
+#
+# `game-shell-host` enumerates and launches Steam games on the gaming PC; it must
+# build for ANY cloner's machine (Linux/Windows/macOS), so this matrix exercises
+# all three on the MSRV toolchain (1.75). Everything is `-p`-scoped to the
+# cross-platform crates so the daemon's Linux-only evdev/cec graph is never
+# pulled in — a bare `cargo build` on Windows would try the daemon and fail. The
+# daemon has its own Linux-only CI in rust.yml.
+
+name: Host
+
+run-name: "Host CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}"
+
+on:
+  push:
+    branches: [main]
+    paths: ['host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
+  pull_request:
+    paths: ['host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pin the MSRV (1.75) + the components we lint with, so a newer default
+      # toolchain on the runner can't mask an MSRV regression.
+      - name: Install Rust 1.75 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.75"
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: host-${{ matrix.os }}
+
+      - name: Format check
+        id: fmt
+        run: cargo fmt --check -p game-shell-host -p game-shell-protocol
+
+      - name: Clippy
+        id: clippy
+        run: cargo clippy -p game-shell-host -p game-shell-protocol --all-targets -- -D warnings
+
+      - name: Build
+        id: build
+        run: cargo build -p game-shell-host -p game-shell-protocol
+
+      - name: Test
+        id: test
+        run: cargo test -p game-shell-host -p game-shell-protocol
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Host CI — \`host/\` + \`protocol/\` (${{ matrix.os }})"
+            echo ""
+            echo "| Step | Result |"
+            echo "|------|--------|"
+            echo "| Format | ${{ steps.fmt.outcome }} |"
+            echo "| Clippy | ${{ steps.clippy.outcome }} |"
+            echo "| Build | ${{ steps.build.outcome }} |"
+            echo "| Test | ${{ steps.test.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
