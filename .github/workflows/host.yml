@@ -3,10 +3,12 @@
 #
 # `game-shell-host` enumerates and launches Steam games on the gaming PC; it must
 # build for ANY cloner's machine (Linux/Windows/macOS), so this matrix exercises
-# all three on the MSRV toolchain (1.75). Everything is `-p`-scoped to the
-# cross-platform crates so the daemon's Linux-only evdev/cec graph is never
-# pulled in — a bare `cargo build` on Windows would try the daemon and fail. The
-# daemon has its own Linux-only CI in rust.yml.
+# all three on the stable toolchain. The host is a distributed prebuilt binary
+# built from CI (not constrained to the daemon's declared 1.75 MSRV — its modern
+# dep closure pulls edition2024 crates that need Cargo >=1.85). Everything is
+# `-p`-scoped to the cross-platform crates so the daemon's Linux-only evdev/cec
+# graph is never pulled in — a bare `cargo build` on Windows would try the daemon
+# and fail. The daemon has its own Linux-only CI in rust.yml.
 
 name: Host
 
@@ -33,12 +35,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Pin the MSRV (1.75) + the components we lint with, so a newer default
-      # toolchain on the runner can't mask an MSRV regression.
-      - name: Install Rust 1.75 (MSRV)
+      # Build on stable (the host ships as a prebuilt binary from CI; its dep
+      # closure requires Cargo >=1.85, so it is not bound to the daemon's 1.75).
+      - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.75"
           components: rustfmt, clippy
 
       - name: Cache cargo
