@@ -31,6 +31,13 @@ Item {
     // user sees what's live regardless of which client started it.
     property bool playing: false
 
+    // Running-game lockdown: true when a game is running on the host AND this card
+    // is NOT that game. A locked card is dimmed and fully non-interactive (no
+    // hover/click, no A/Return activation, not an activatable Accessibility
+    // target) so the user can only act on the running card. False (the default,
+    // and always when nothing runs) renders exactly as before.
+    property bool locked: false
+
     // Poster geometry (set by the host row so all cards match).
     property int posterWidth: Math.round(Theme.cardWidth * 0.62)
     property int posterHeight: Math.round(posterWidth * 1.5)
@@ -54,11 +61,17 @@ Item {
     width: posterWidth
     height: posterHeight + (root.showCaption ? captionCol.implicitHeight + Units.spacingSM : 0)
 
-    Accessible.role: Accessible.Button
+    // Dim a locked card so the running game reads as the only live target.
+    opacity: root.locked ? 0.35 : 1.0
+
+    // A locked card is not a pressable button — expose it as a static image so
+    // accessibility tooling doesn't advertise an activation that's disabled.
+    Accessible.role: root.locked ? Accessible.Graphic : Accessible.Button
     Accessible.name: root.title
     Accessible.description: root.playing ? "Running" : ""
-    Accessible.focusable: true
-    Accessible.onPressAction: root.activated()
+    Accessible.focusable: !root.locked
+    Accessible.onPressAction: if (!root.locked)
+        root.activated()
 
     // Mirror BaseCard: when leaving mouse-mode with the pointer still over this
     // card, claim controller focus so the crimson ring lands where the cursor was.
@@ -169,7 +182,9 @@ Item {
     MouseArea {
         id: mouseArea
         anchors.fill: parent
-        hoverEnabled: true
+        // Locked cards take no hover or click — only the running card is live.
+        enabled: !root.locked
+        hoverEnabled: !root.locked
         cursorShape: Qt.PointingHandCursor
         onPositionChanged: mouse => {
             let p = mapToItem(null, mouse.x, mouse.y);
@@ -182,6 +197,10 @@ Item {
         }
     }
 
-    Keys.onReturnPressed: root.activated()
-    Keys.onEnterPressed: root.activated()
+    // A/Return activation is suppressed while locked (belt-and-braces — a locked
+    // card also can't hold focus, since the host row skips it).
+    Keys.onReturnPressed: if (!root.locked)
+        root.activated()
+    Keys.onEnterPressed: if (!root.locked)
+        root.activated()
 }

@@ -264,8 +264,26 @@ ColumnLayout {
         previousRow: segmentChips
         nextRow: root.nextRow
         model: root._activeItems
-        onActiveFocusChanged: if (activeFocus)
-            Qt.callLater(() => root.ensureVisibleRequested(posterRow))
+
+        // Running-game lockdown: while a game is actively running on the host
+        // (`runningAppid > 0`), only the matching card is focusable/clickable —
+        // every other card is skipped in left/right scroll/focus (and dimmed +
+        // disabled in SteamCard). With nothing running (`runningAppid <= 0`) the
+        // predicate is null, so navigation is byte-for-byte the unlocked default.
+        focusableIndex: root.runningAppid <= 0 ? null : (function (i) {
+                return root._activeItems[i] && root._activeItems[i].appid === root.runningAppid;
+            })
+        onActiveFocusChanged: if (activeFocus) {
+            // When locked, snap the highlight onto the running card if it landed
+            // on a now-disabled one (e.g. entered via the up/down chain, which
+            // forceActiveFocus()es without resetting currentIndex).
+            if (root.runningAppid > 0 && !posterRow._indexFocusable(posterRow.currentIndex)) {
+                var first = posterRow._firstFocusableIndex();
+                if (first >= 0)
+                    posterRow.currentIndex = first;
+            }
+            Qt.callLater(() => root.ensureVisibleRequested(posterRow));
+        }
         onActivated: {
             let it = root._activeItems[posterRow.currentIndex];
             if (it)
@@ -284,6 +302,10 @@ ColumnLayout {
             localArt: modelData.localArt || ""
             headerArt: modelData.headerArt || ""
             playing: root.runningAppid > 0 && modelData.appid === root.runningAppid
+            // Locked = a lockdown is active (a game runs) and this is NOT it:
+            // dimmed + non-interactive so focus/click can only land on the
+            // running card.
+            locked: root.runningAppid > 0 && modelData.appid !== root.runningAppid
             focus: index === posterRow.currentIndex
             onActivated: root.gameSelected(modelData.appid)
         }
