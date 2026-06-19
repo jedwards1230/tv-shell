@@ -201,26 +201,33 @@ FocusScope {
         console.log("HomeScreen: no Plex app found to launch");
     }
 
-    // === Steam launch choreography (one session, ever) ===
+    // === Steam launch choreography ===
     // Select a Steam card →
     //   1. `steam-launch <appid>` → the host NAVIGATES Big Picture to that game's
     //      page (it no longer launches the game directly — just moves BPM).
-    //   2. If NO Moonlight stream is already live (`moonlightWidget.streaming` is
-    //      false) → start exactly ONE stream to the primary target (targets[0]).
-    //      If a stream IS already live → do NOT start a second one — BPM is up and
-    //      the nav already moved it. This enforces the single-session rule and
-    //      fixes the duplicate-stream bug.
-    // Never trigger a `rungameid`-style direct launch; never open a 2nd stream.
+    //   2. If THIS client is NOT already viewing a stream (`shellState !==
+    //      "streaming"`) → start one stream to the primary target (targets[0]).
+    //      Moonlight RESUMES a host that already has a session, so this both opens
+    //      a fresh stream and reconnects to a resumable one — selecting a game must
+    //      ALWAYS get you onto the screen.
+    //   3. If this client IS already streaming → the nav alone moved the live BPM;
+    //      don't launch a 2nd local Moonlight process.
+    // The gate is THIS client's own `shellState`, NOT the host's session flag
+    // (`moonlightWidget.streaming`, which is true whenever *any* client — e.g. the
+    // laptop — holds a resumable session). Gating on the host flag wrongly blocked
+    // launching/resuming whenever a session existed elsewhere; that flag drives the
+    // session INDICATOR only. Never trigger a `rungameid`-style direct launch.
     function launchSteamGame(appid) {
         root.userActivity();
         // Fire the host-side navigate (fire-and-forget; the reply is just ok/error).
         steamLaunchReq.request("steam-launch", appid);
-        if (moonlightWidget.streaming) {
-            // A session is already up — the nav moved the live BPM. Don't stream again.
+        if (root.shellState === "streaming") {
+            // This client is already in the stream — the nav moved the live BPM.
+            // Don't start a 2nd local Moonlight process.
             return;
         }
-        // No session yet → start exactly one stream to the primary target. With no
-        // target configured there's nothing to stream into; the nav still fired.
+        // Not viewing a stream here → start/resume one to the primary target. With
+        // no target configured there's nothing to stream into; the nav still fired.
         let ts = root.targets || [];
         if (ts.length > 0)
             root.streamRequested(ts[0]);

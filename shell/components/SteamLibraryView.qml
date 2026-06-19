@@ -145,7 +145,11 @@ ColumnLayout {
         id: steamMon
         healthKey: "steam"
         dataCommand: "steam-library"
-        dataIntervalMs: 30000  // matches daemon service_health POLL_INTERVAL
+        // 10s so the session indicator + running badge track the host reasonably
+        // promptly (closing a stream reflects within ~10s, not ~30s). The poll is
+        // cheap: host /status (a loopback serverinfo) + /library (a few appmanifest
+        // reads). Independent of the daemon's 30s service_health broadcast.
+        dataIntervalMs: 10000
         // ALWAYS poll — the library is available independent of any Moonlight
         // stream/session (the daemon serves `steam-library` whether or not a
         // stream is live). Nothing gates this on shellState/streaming, so a
