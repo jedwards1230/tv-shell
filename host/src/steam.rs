@@ -223,55 +223,122 @@ pub fn parse_appmanifest(text: &str) -> Option<LibraryEntry> {
 
 /// The currently-running Steam appid, or `None` when nothing is running.
 ///
-/// Steam tracks the foreground game in `registry.vdf` under
-/// `Registry > HKCU > Software > Valve > Steam > RunningAppID` (a decimal u32; it
-/// is `0` when no game is running). We read it rather than tracking process state
-/// so the "Playing" badge reflects Steam's own truth regardless of how the game
-/// was started (the TV client, the desktop, or a phone).
+/// The detection source is OS-specific because Steam exposes the running game
+/// differently per platform:
 ///
-/// Returns `None` when the file is missing, unparseable, `RunningAppID` is absent,
-/// or it is `0` (nothing running) — all collapse to "no game playing".
+/// - **Linux**: scan `/proc/*/cmdline` for Steam's `reaper` launcher process,
+///   whose argv is `reaper SteamLaunch AppId=<appid> -- <proton/...> <game.exe>`.
+///   Linux Steam does NOT write `RunningAppID` to `registry.vdf` (that's a
+///   Windows-only field), so the process scan is the only reliable signal.
+/// - **Windows**: read `RunningAppID` from `registry.vdf` (where it IS correct).
+/// - **macOS**: not wired yet — returns `None` (out of scope).
+///
+/// Returns `None` whenever nothing matches — the "Playing" badge then shows no
+/// running game.
 pub fn running_appid() -> Option<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        running_appid_linux()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        running_appid_registry()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        // macOS (and any other OS): no running-game detection wired yet. Steam
+        // on mac keeps a `registry.vdf`, but without a Linux-style `reaper`
+        // process or a Windows registry key it's out of scope for now.
+        None
+    }
+}
+
+/// Linux running-game detector: scan `/proc/*/cmdline` for Steam's `reaper`
+/// launcher and return its `AppId=<digits>`. `/proc` is read with pure std (no
+/// new crates); each `cmdline` is NUL-separated argv. Unreadable entries
+/// (permissions, races where the pid exits mid-scan) are skipped.
+#[cfg(target_os = "linux")]
+fn running_appid_linux() -> Option<u32> {
+    let proc = std::fs::read_dir("/proc").ok()?;
+    for dirent in proc.flatten() {
+        // Only numeric (pid) directories carry a cmdline worth reading.
+        let name = dirent.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read(dirent.path().join("cmdline")) else {
+            continue;
+        };
+        // cmdline is NUL-separated; split, drop the trailing empty field, and
+        // keep only valid UTF-8 args (Steam's launcher args are plain ASCII).
+        let args: Vec<&str> = raw
+            .split(|&b| b == 0)
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| std::str::from_utf8(s).ok())
+            .collect();
+        if let Some(appid) = steam_appid_from_argv(&args) {
+            return Some(appid);
+        }
+    }
+    None
+}
+
+/// Pure argv → appid extractor for the Linux `reaper` launcher. A running Steam
+/// game has a process whose args contain the token `SteamLaunch` followed by an
+/// `AppId=<digits>` arg, e.g.
+/// `reaper SteamLaunch AppId=2215200 -- <proton/...> <game.exe>`.
+/// Returns the parsed appid, or `None` when the marker/appid is absent or
+/// unparseable. Unit-tested without touching `/proc`.
+#[cfg(any(target_os = "linux", test))]
+fn steam_appid_from_argv(args: &[&str]) -> Option<u32> {
+    if !args.contains(&"SteamLaunch") {
+        return None;
+    }
+    args.iter()
+        .find_map(|a| a.strip_prefix("AppId="))
+        .and_then(|id| id.parse::<u32>().ok())
+}
+
+/// Windows running-game detector: read `RunningAppID` from `registry.vdf`.
+///
+/// On Linux this field is never written, so this path is Windows-only (and the
+/// `GAME_SHELL_STEAM_REGISTRY` override, used by tests). The registry-DWORD case
+/// (`HKCU\Software\Valve\Steam\RunningAppID`) is left as a later refinement.
+// TODO(windows): the authoritative source is the actual Windows registry DWORD
+// `HKCU\Software\Valve\Steam\RunningAppID`; reading it needs the `winreg` crate
+// (or a `reg query` shell-out). For now we parse the on-disk `registry.vdf`,
+// which Steam also maintains. (The pure parser `parse_running_appid` is exercised
+// by tests on every OS; this Windows-only wiring is not.)
+#[cfg(target_os = "windows")]
+fn running_appid_registry() -> Option<u32> {
     let path = registry_vdf_path()?;
     let text = std::fs::read_to_string(&path).ok()?;
     parse_running_appid(&text)
 }
 
-/// Resolve the path to Steam's `registry.vdf` per-OS.
-///
-/// - Linux: `~/.steam/registry.vdf` (the well-known stable location; the
-///   `~/.steam/steam` library root is a symlink, but `registry.vdf` lives one
-///   level up at `~/.steam/registry.vdf`).
-///
-// TODO(windows): On Windows the running-app id is NOT in a registry.vdf — it
-// lives in the actual Windows registry at
-// `HKCU\Software\Valve\Steam\RunningAppID` (a DWORD). Reading it needs the
-// `winreg` crate (or a `reg query` shell-out); cross-platform running-game
-// detection is a later phase. On macOS Steam also keeps a `registry.vdf`
-// (under `~/Library/Application Support/Steam/registry.vdf`); not wired yet.
+/// Resolve the path to Steam's `registry.vdf` (Windows running-game path only).
+#[cfg(target_os = "windows")]
 fn registry_vdf_path() -> Option<PathBuf> {
-    // Test/override hook: any OS can point at a fixture.
+    // Test/override hook: point at a fixture.
     if let Ok(p) = std::env::var("GAME_SHELL_STEAM_REGISTRY") {
         return Some(PathBuf::from(p));
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        home_dir().map(|h| h.join(".steam/registry.vdf"))
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        // No native path wired yet on non-Linux (see TODO(windows) above). The
-        // override env var is the only way to exercise this off-Linux.
-        None
-    }
+    // Default install; a STEAM_PATH override refines this. registry.vdf sits at
+    // the Steam root.
+    let root = std::env::var("STEAM_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(r"C:\Program Files (x86)\Steam"));
+    Some(root.join("registry.vdf"))
 }
 
-/// Parse the `RunningAppID` out of a `registry.vdf` body. Pure function
-/// (unit-tested). The file is Valve KeyValues:
+/// Parse the `RunningAppID` out of a `registry.vdf` body (Windows source only).
+/// Pure function (unit-tested). The file is Valve KeyValues:
 /// `"Registry" { "HKCU" { "Software" { "Valve" { "Steam" { "RunningAppID" "<n>" … } } } } }`.
 /// Returns `None` for a missing key or a `0`/non-numeric value.
+#[cfg(any(target_os = "windows", test))]
 pub fn parse_running_appid(text: &str) -> Option<u32> {
     let vdf = keyvalues_parser::parse(text).map(Vdf::from).ok()?;
     // Walk the fixed nesting Registry > HKCU > Software > Valve > Steam.
@@ -426,6 +493,41 @@ mod tests {
     #[test]
     fn running_appid_unparseable_is_none() {
         assert_eq!(parse_running_appid("not vdf at all {{{"), None);
+    }
+
+    #[test]
+    fn steam_appid_from_reaper_argv() {
+        // The canonical Linux launcher process for a running game.
+        let argv = [
+            "reaper",
+            "SteamLaunch",
+            "AppId=2215200",
+            "--",
+            "/home/user/.steam/steam/steamapps/common/Proton/proton",
+            "waitforexitandrun",
+            "/path/to/game.exe",
+        ];
+        assert_eq!(steam_appid_from_argv(&argv), Some(2215200));
+    }
+
+    #[test]
+    fn steam_appid_from_unrelated_argv_is_none() {
+        let argv = ["/usr/bin/firefox", "--new-window", "https://example.com"];
+        assert_eq!(steam_appid_from_argv(&argv), None);
+    }
+
+    #[test]
+    fn steam_appid_missing_appid_is_none() {
+        // SteamLaunch present but no AppId= arg.
+        let argv = ["reaper", "SteamLaunch", "--", "/some/proton"];
+        assert_eq!(steam_appid_from_argv(&argv), None);
+    }
+
+    #[test]
+    fn steam_appid_garbled_appid_is_none() {
+        // SteamLaunch present, AppId= present but non-numeric.
+        let argv = ["reaper", "SteamLaunch", "AppId=notanumber", "--"];
+        assert_eq!(steam_appid_from_argv(&argv), None);
     }
 
     #[test]

@@ -159,9 +159,10 @@ async fn launch_game(
 }
 
 /// `GET /status` — version + the currently-running Steam appid (or null). The
-/// running id is read from Steam's `registry.vdf` (`RunningAppID`), so it
-/// reflects Steam's own truth regardless of how the game was started. `null` ⇒
-/// nothing running (or the registry is absent/unreadable).
+/// running id is detected per-OS (Linux: scanning `/proc` for Steam's `reaper`
+/// `SteamLaunch AppId=<n>` launcher; Windows: `registry.vdf`'s `RunningAppID`),
+/// so it reflects the running game regardless of how it was started. `null` ⇒
+/// nothing running (or detection found no match).
 async fn status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
