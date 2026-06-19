@@ -11,9 +11,14 @@ Item {
     id: root
 
     property string title: ""
-    // Portrait library poster URL (built daemon-side off the appid).
+    // Portrait library poster URL on Steam's CDN (built daemon-side off the appid).
     property string art: ""
-    // 16:9 header fallback URL — used when the portrait poster fails to load.
+    // Host-served local Steam library art (`{host}/art/{appid}`) — the daemon's
+    // fallback for newer titles whose CDN art 404s (the CDN simply lacks
+    // `library_600x900`/`header` for some unreleased/just-released games, but the
+    // gaming PC has the portrait capsule cached locally).
+    property string localArt: ""
+    // 16:9 header.jpg on the CDN — last image fallback before the letter initial.
     property string headerArt: ""
 
     // Poster-only mode (small size): hide the title caption band so the card
@@ -32,11 +37,17 @@ Item {
 
     readonly property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
 
-    // Art source with header.jpg fallback: start on the portrait poster; on a
-    // load error swap to the header image; if that also fails, the letter-initial
-    // placeholder shows through.
-    property string _artSource: root.art
-    onArtChanged: root._artSource = root.art
+    // Art fallback chain: CDN portrait → host-local capsule → CDN header → letter
+    // initial. `_artCandidates` is the ordered, non-empty URL list; on each load
+    // error we advance `_artIdx` to the next, and when the last also fails the
+    // Image isn't Ready so the letter placeholder shows through. Resets to the top
+    // whenever any source URL changes.
+    readonly property var _artCandidates: [root.art, root.localArt, root.headerArt].filter(u => u !== "")
+    property int _artIdx: 0
+    readonly property string _artSource: root._artIdx < root._artCandidates.length ? root._artCandidates[root._artIdx] : ""
+    onArtChanged: root._artIdx = 0
+    onLocalArtChanged: root._artIdx = 0
+    onHeaderArtChanged: root._artIdx = 0
 
     signal activated
 
@@ -91,12 +102,12 @@ Item {
                     asynchronous: true
                     cache: true
                     visible: status === Image.Ready
-                    // Fallback to the header image once, then give up to the
-                    // letter placeholder. Guard against a loop by only swapping
-                    // when we're still on the portrait art.
+                    // On a load error advance to the next candidate (portrait →
+                    // local → header); stop at the last so the letter placeholder
+                    // shows through. No loop: index only moves forward.
                     onStatusChanged: {
-                        if (status === Image.Error && root._artSource === root.art && root.headerArt !== "")
-                            root._artSource = root.headerArt;
+                        if (status === Image.Error && root._artIdx < root._artCandidates.length - 1)
+                            root._artIdx += 1;
                     }
                 }
 

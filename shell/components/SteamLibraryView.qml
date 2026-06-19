@@ -281,6 +281,7 @@ ColumnLayout {
             showCaption: true
             title: modelData.name || ""
             art: modelData.art || ""
+            localArt: modelData.localArt || ""
             headerArt: modelData.headerArt || ""
             playing: root.runningAppid > 0 && modelData.appid === root.runningAppid
             focus: index === posterRow.currentIndex
