@@ -232,3 +232,9 @@ external screenshot/deploy automation — no host-management tooling required.
 ## CI
 
 - **QML formatting**: `qmlformat` (Qt 6.8) enforced via GitHub Actions. On PRs, unformatted files are auto-fixed and pushed. On main, unformatted files fail the check.
+- **Rust CI**: `rust.yml` builds/lints/tests the daemon (`game-shell-input`) on Linux — a default leg plus a `--features cec` leg (static-libcec, on `rust:1-trixie`). `host.yml` builds/lints/tests the cross-platform host + protocol crates on Linux/macOS/Windows. Both are path-filtered and `-p`-scoped so a QML-only PR triggers neither and the daemon's Linux-only graph never leaks into the host's cross-platform build.
+- **Releases — per-binary tags**: artifacts are released by pushing a per-binary tag, not on merge-to-main:
+  - `host-v<semver>` → `release-host.yml` builds `game-shell-host` for linux-musl / macOS (arm64+x86_64) / windows and publishes one Release with all binaries + `checksums.txt`. Consumed by the homelab `desktop-common` Ansible role (`install_method: fetch`).
+  - `input-v<semver>` → `release-input.yml` builds `game-shell-input` (`--features cec,mcp`, linux-gnu) and publishes its binary + `checksums.txt`.
+
+  This is a deliberate deviation from the org's PR-label-driven `ai-release.yml` convention: the two binaries are versioned independently within one monorepo, so the tag prefix (not a merged-PR `semver:*` label) selects what to build. Release notes come from `generate_release_notes`.
