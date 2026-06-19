@@ -1709,8 +1709,8 @@ mod tests {
     #[test]
     fn parses_moonlight_forget_body() {
         assert_eq!(
-            Command::parse("moonlight-forget 192.168.8.10"),
-            Command::MoonlightForget("192.168.8.10".into())
+            Command::parse("moonlight-forget 192.0.2.1"),
+            Command::MoonlightForget("192.0.2.1".into())
         );
         // Surrounding whitespace is trimmed.
         assert_eq!(

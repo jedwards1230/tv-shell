@@ -25,7 +25,7 @@ import "lib"
 // Health-aware: a `ServiceMonitor` keyed on "steam" collapses the view when
 // unconfigured/empty and shows a graceful `ServiceStatusNotice` when the host is
 // down. The reply's `runningAppid` badges the card whose appid matches as
-// "Playing" — source of truth is desktop-1, not which card was tapped.
+// "Playing" — source of truth is the gaming host, not which card was tapped.
 //
 // Focus contract (host uses these): `firstRow`/`lastRow` resolve to the first/
 // last *visible* internal region (segment chips, poster row). The session

@@ -4,7 +4,7 @@ A Rust backend daemon replacing `input/gamepad-input.py` and the QML shell's
 inline `python3`/shell-out parsers. Same Unix socket + newline-delimited wire
 protocol (`docs/IPC_PROTOCOL.md`). Phases 1–4 of
 [#28](https://github.com/jedwards1230/game-shell/issues/28) (HDMI-CEC deployed
-and verified on game-client-1 via `cec.rs`/cec-rs with static-linked libcec).
+and verified on gaming-client via `cec.rs`/cec-rs with static-linked libcec).
 
 The QML shell depends on this daemon for the Settings / app-discovery / system
 pages as well as input; it is the sole backend (the Python
@@ -151,7 +151,7 @@ macOS build and verifiable only on-device. `health.rs` runs everywhere, but its
 live fetch needs a reachable Sunshine host.
 
 **HDMI-CEC lives in the daemon** (`cec.rs`, cec-rs/libcec, #94) — deployed and
-verified on game-client-1 with static-linked libcec (no system libcec dependency).
+verified on gaming-client with static-linked libcec (no system libcec dependency).
 `AVController.qml` and `AVControlSettings.qml` use the daemon's `cec-*` IPC over
 `SocketClient` (the `living-room-cec` shell-out chain is gone).
 
@@ -259,4 +259,4 @@ Phase 3 (zbus/Bluetooth/Wi-Fi-read/power) and Phase 4 (Hyprland + Sunshine
 `health`) **require on-device verification** — the Linux-only modules (D-Bus,
 `hyprland`) don't compile or run on macOS/CI, and `health`'s live fetch needs a
 reachable Sunshine host. **HDMI-CEC** (`cec.rs`, #94) is deployed and verified on
-game-client-1 (static-linked libcec, no CEC hardware on CI).
+gaming-client (static-linked libcec, no CEC hardware on CI).

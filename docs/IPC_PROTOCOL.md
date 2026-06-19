@@ -1015,7 +1015,7 @@ and cross-platform (`reqwest`), served like `sunshine-status`.
 
 Config comes from the **daemon environment** (typically `daemon.env`):
 
-- `GAME_SHELL_PLEX_URL` — server base, e.g. `https://plex.lilbro.cloud`
+- `GAME_SHELL_PLEX_URL` — server base, e.g. `https://plex.example.com`
 - `GAME_SHELL_PLEX_TOKEN` — an `X-Plex-Token`
 
 The token never leaves the daemon: the reply embeds ready-to-load, tokenized
@@ -1047,7 +1047,7 @@ After forgetting, the host's status flips to "not paired" and the **Pair** actio
 returns; re-pairing re-establishes it.
 
 `<host>` is the single host token — the IP/hostname string the shell uses, e.g.
-`192.168.8.10`. The daemon reads Moonlight's config
+`192.0.2.1`. The daemon reads Moonlight's config
 (`${XDG_CONFIG_HOME:-$HOME/.config}/Moonlight Game Streaming Project/Moonlight.conf`,
 a QSettings INI) and, within its `[hosts]` array, finds the index whose
 `hostname` / `localaddress` / `manualaddress` / `remoteaddress` equals `<host>`,

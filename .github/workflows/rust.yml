@@ -40,7 +40,7 @@ jobs:
 
       # bluer (BlueZ binding) pulls in libdbus-sys, which needs the system
       # libdbus headers + pkg-config at build time. zbus is pure-Rust and needs
-      # nothing. game-client-1 has libdbus at runtime (dbus is core on Arch).
+      # nothing. the gaming client has libdbus at runtime (dbus is core on Arch).
       - name: Install D-Bus build deps
         run: apt-get update && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
 
@@ -93,7 +93,7 @@ jobs:
   # Runs on Debian Trixie (glibc 2.41), NOT bookworm (glibc 2.36): the prebuilt
   # static libcec.a references the glibc ≥2.38 C23 symbols `__isoc23_sscanf` /
   # `__isoc23_strtoul`, so linking it on bookworm fails with "undefined symbol".
-  # The deploy host (game-client-1 / CachyOS) has glibc 2.43, so Trixie matches
+  # The deploy host (gaming-client / CachyOS) has glibc 2.43, so Trixie matches
   # the runtime target. The default `build` job stays on bookworm (it never links
   # libcec).
   cec:

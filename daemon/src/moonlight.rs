@@ -215,21 +215,21 @@ mod tests {
     use super::*;
 
     // A realistic two-host Moonlight.conf with other sections and srvcert blobs.
-    // Host 1 = desktop-1, host 2 = laptop. Note the spaces-in-dir is irrelevant
+    // Host 1 = gaming-host, host 2 = laptop. Note the spaces-in-dir is irrelevant
     // here (we parse text, not the path). The srvcert ByteArray is shortened but
     // shaped like the real `@ByteArray(...)` value, which must survive verbatim.
     const TWO_HOSTS: &str = "[General]\n\
 theme=dark\n\
 \n\
 [hosts]\n\
-1\\hostname=desktop-1\n\
-1\\localaddress=192.168.8.10\n\
+1\\hostname=gaming-host\n\
+1\\localaddress=192.0.2.1\n\
 1\\manualaddress=\n\
 1\\remoteaddress=\n\
 1\\uuid=uuid-one\n\
 1\\srvcert=@ByteArray(-----BEGIN CERT one-----)\n\
 2\\hostname=laptop\n\
-2\\localaddress=192.168.8.20\n\
+2\\localaddress=192.0.2.2\n\
 2\\manualaddress=\n\
 2\\remoteaddress=\n\
 2\\uuid=uuid-two\n\
@@ -240,21 +240,21 @@ size=2\n\
 0030000058420000=mapping-blob\n";
 
     const ONE_HOST: &str = "[hosts]\n\
-1\\hostname=desktop-1\n\
-1\\localaddress=192.168.8.10\n\
+1\\hostname=gaming-host\n\
+1\\localaddress=192.0.2.1\n\
 1\\uuid=uuid-one\n\
 1\\srvcert=@ByteArray(blob)\n\
 size=1\n";
 
     #[test]
     fn forget_first_of_two_renumbers_second_to_first() {
-        let out = forget_host(TWO_HOSTS, "desktop-1");
-        // desktop-1's lines are gone.
-        assert!(!out.contains("desktop-1"));
+        let out = forget_host(TWO_HOSTS, "gaming-host");
+        // gaming-host's lines are gone.
+        assert!(!out.contains("gaming-host"));
         assert!(!out.contains("CERT one"));
         // laptop survives and is renumbered 2 -> 1.
         assert!(out.contains("1\\hostname=laptop"));
-        assert!(out.contains("1\\localaddress=192.168.8.20"));
+        assert!(out.contains("1\\localaddress=192.0.2.2"));
         assert!(out.contains("1\\uuid=uuid-two"));
         // laptop's srvcert ByteArray is preserved verbatim under the new index.
         assert!(out.contains("1\\srvcert=@ByteArray(-----BEGIN CERT two-----)"));
@@ -272,8 +272,8 @@ size=1\n";
     #[test]
     fn forget_match_by_localaddress() {
         // Match by an address field, not just hostname.
-        let out = forget_host(TWO_HOSTS, "192.168.8.10");
-        assert!(!out.contains("desktop-1"));
+        let out = forget_host(TWO_HOSTS, "192.0.2.1");
+        assert!(!out.contains("gaming-host"));
         assert!(out.contains("1\\hostname=laptop"));
         assert!(out.contains("size=1"));
     }
@@ -284,8 +284,8 @@ size=1\n";
         // laptop gone.
         assert!(!out.contains("laptop"));
         assert!(!out.contains("CERT two"));
-        // desktop-1 stays at index 1, unchanged.
-        assert!(out.contains("1\\hostname=desktop-1"));
+        // gaming-host stays at index 1, unchanged.
+        assert!(out.contains("1\\hostname=gaming-host"));
         assert!(out.contains("1\\srvcert=@ByteArray(-----BEGIN CERT one-----)"));
         assert!(!out.contains("2\\hostname"));
         assert!(out.contains("size=1"));
@@ -299,11 +299,11 @@ size=1\n";
 
     #[test]
     fn forget_only_host_leaves_empty_array() {
-        let out = forget_host(ONE_HOST, "desktop-1");
+        let out = forget_host(ONE_HOST, "gaming-host");
         // [hosts] section remains, but with no N\ lines and size=0.
         assert!(out.contains("[hosts]"));
         assert!(out.contains("size=0"));
-        assert!(!out.contains("desktop-1"));
+        assert!(!out.contains("gaming-host"));
         assert!(!out.contains("1\\hostname"));
         assert!(!out.contains("@ByteArray"));
     }
@@ -311,7 +311,7 @@ size=1\n";
     #[test]
     fn no_hosts_section_is_unchanged() {
         let conf = "[General]\ntheme=dark\n";
-        assert_eq!(forget_host(conf, "desktop-1"), conf);
+        assert_eq!(forget_host(conf, "gaming-host"), conf);
     }
 
     #[test]

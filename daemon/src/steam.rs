@@ -12,7 +12,7 @@
 //! that host's `GET /library` / `POST /launch` over HTTP with a bearer token.
 //!
 //! **Config via env** (set in `~/.config/game-shell/daemon.env`):
-//! - `GAME_SHELL_STEAM_URL`   — game-shell-host base, e.g. `http://192.168.8.10:47995`
+//! - `GAME_SHELL_STEAM_URL`   — game-shell-host base, e.g. `http://192.0.2.1:47995`
 //! - `GAME_SHELL_STEAM_TOKEN` — the host's bearer token (`GAME_SHELL_HOST_TOKEN`)
 //!
 //! The reply carries a `status` field from the shared [`crate::service_health`]

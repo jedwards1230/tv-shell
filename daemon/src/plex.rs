@@ -7,7 +7,7 @@
 //! Added".
 //!
 //! **Config via env** (set in `~/.config/game-shell/daemon.env`):
-//! - `GAME_SHELL_PLEX_URL`   — server base, e.g. `https://plex.lilbro.cloud`
+//! - `GAME_SHELL_PLEX_URL`   — server base, e.g. `https://plex.example.com`
 //! - `GAME_SHELL_PLEX_TOKEN` — an `X-Plex-Token`
 //!
 //! The reply carries a `status` field from the shared [`crate::service_health`]

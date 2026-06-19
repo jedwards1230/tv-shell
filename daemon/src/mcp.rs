@@ -774,7 +774,7 @@ pub async fn serve(
         let mut hosts: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "::1".into()];
         if !bind_is_wildcard {
             // Include the concrete bind address so LAN clients connecting to
-            // game-client-1's real IP get through.
+            // the gaming client's real IP get through.
             hosts.push(addr.ip().to_string());
             hosts.push(addr.to_string()); // also include host:port form
         }
