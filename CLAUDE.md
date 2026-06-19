@@ -67,13 +67,17 @@ config/
   hyprland.conf               # Generic monitor default + `source` hook for a per-machine override
   hyprland.conf.example       # Machine-specific display example (LG C2/Denon HDR) → ~/.config/game-shell/hyprland-local.conf
   palette.md                  # Color palette documentation
-  game-shell.desktop          # SDDM session file
-  targets.yaml.example        # Example streaming targets (docs only)
+  game-shell.desktop          # Wayland session file (install.sh rewrites Exec to the prefix)
+  targets.json.example        # Copy-runnable streaming targets → ~/.config/game-shell/targets.json
+  targets.yaml.example        # Annotated streaming-target field reference (docs only)
+  daemon.env.example          # Per-machine daemon options → ~/.config/game-shell/daemon.env
 daemon/                      # Rust backend daemon (game-shell-input) — sole backend
   src/                       # input/uinput, ipc, config, apps, bluetooth, network, power, hyprland, health
   README.md                  # daemon architecture + phase notes
 packaging/                   # PKGBUILD / install layout (see #147)
 scripts/
+  install.sh                  # Standalone install: build daemon + lay tree + register session (see docs/INSTALL.md)
+  install-deps.sh             # Distro-aware system dependency installer
   game-shell-session.sh       # Session wrapper launched by SDDM
   super-intent.sh             # Hyprland Super binds -> intents (Super=menu/drawer, +Escape=home, +Backspace=reset, +Right=overlay:session)
 ```

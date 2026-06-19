@@ -4,6 +4,16 @@ Quickshell + Hyprland couch gaming shell for Moonlight streaming.
 
 A minimal 10-foot UI for a dedicated streaming box — controller-navigable home screen, exclusive gamepad input, auto-reconnect, and AV control.
 
+## Install
+
+```bash
+sudo ./scripts/install-deps.sh   # Hyprland, Quickshell, Rust, build libs
+sudo ./scripts/install.sh        # build the daemon + lay down the install tree
+```
+
+Then pick **Game Shell (Wayland)** in your display manager. Full walkthrough,
+config, and prefix options in [docs/INSTALL.md](docs/INSTALL.md).
+
 ## Architecture
 
 ```
@@ -35,19 +45,27 @@ shell/                   # QML shell — Quickshell config root (-c game-shell)
 daemon/                  # Rust backend daemon (game-shell-input) — sole backend
   src/                   # input/uinput, IPC, config, apps, bluetooth, network, power, hyprland, health
 config/
-  hyprland.conf          # Kiosk compositor config
-  game-shell.desktop     # SDDM wayland session entry
-  targets.yaml.example   # Example streaming targets
+  hyprland.conf          # Kiosk compositor config (sources hyprland-local.conf)
+  game-shell.desktop     # Wayland session entry (installer rewrites Exec to prefix)
+  targets.json.example   # Copy-runnable streaming targets (single-line JSON)
+  targets.yaml.example   # Annotated streaming-target field reference (docs only)
+  daemon.env.example     # Per-machine daemon options (HTTP/MCP, CEC, Plex, Steam)
+  hyprland.conf.example  # Per-machine display/HDR override example
 packaging/               # PKGBUILD / install layout (see #147)
 scripts/
+  install.sh             # Build daemon + install tree + register session
+  install-deps.sh        # Install system dependencies (distro-aware)
   game-shell-session.sh  # Session wrapper (starts input daemon + Hyprland)
 ```
 
 ## Configuration
 
-Streaming targets are stored in `~/.config/game-shell/targets.json` as single-line
-JSON — managed in-UI via MoonlightSettings. `config/targets.yaml.example` is
-illustrative only (the runtime format is JSON, not YAML).
+Per-machine config lives under `~/.config/game-shell/` and is seeded from the
+`config/*.example` files on install — see [docs/INSTALL.md](docs/INSTALL.md#3-configure).
+Streaming targets are stored in `targets.json` as single-line JSON (managed in-UI
+via MoonlightSettings; `config/targets.yaml.example` documents the fields). Daemon
+options (LAN bridge, CEC, Plex/Steam widgets) go in the optional `daemon.env`
+(`config/daemon.env.example`).
 
 ## Controls
 
