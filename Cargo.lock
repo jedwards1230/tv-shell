@@ -941,6 +941,7 @@ dependencies = [
  "axum",
  "game-shell-protocol",
  "keyvalues-parser",
+ "libc",
  "serde",
  "serde_json",
  "subtle",

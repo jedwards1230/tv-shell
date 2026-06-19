@@ -90,10 +90,10 @@ FocusScope {
 
     onRunningWindowsChanged: Qt.callLater(root._reanchorFocusIfNeeded)
 
-    // Pre-discover Moonlight apps so the home Y-menu profile picker is populated
+    // Pre-discover Moonlight apps so the home X-menu profile picker is populated
     // on the first press (the provider runs `moonlight list` per host). Re-run
     // ONLY when the host SET changes — not when a target's `app` (default profile)
-    // changes via the Y-menu "set default". discoverApps() clears hostApps while
+    // changes via the X-menu "set default". discoverApps() clears hostApps while
     // it re-queries, so re-running it on our own setHostApp write would blank the
     // picker mid-rebuild and collapse it to the empty-state fallback.
     property string _discoveredHosts: ""
@@ -245,6 +245,83 @@ FocusScope {
                 console.log("HomeScreen: steam-launch reply: " + line);
         }
         onRequestFailed: console.log("HomeScreen: steam-launch request failed (daemon down?)")
+    }
+
+    // === Open Steam Big Picture (home) choreography ===
+    // The "Open Steam" action chip in the library view →
+    //   1. `steam-bigpicture` (no appid) → the host RESETS Big Picture to its HOME
+    //      screen (fires `steam://open/bigpicture`; no game pre-selected).
+    //   2. If THIS client is NOT already viewing a stream (`shellState !==
+    //      "streaming"`) → start/resume one stream to the primary target
+    //      (targets[0]) — Moonlight resumes a resumable host, so this both opens a
+    //      fresh stream and reconnects to one already live elsewhere.
+    //   3. If this client IS already streaming → the host-side BPM-home reset alone
+    //      moved the live session; don't start a 2nd local Moonlight process.
+    // Mirrors launchSteamGame() exactly (same one-session guard / stream path) but
+    // sends the bare `steam-bigpicture` instead of `steam-launch <appid>`. The gate
+    // is THIS client's own shellState, NOT the host's session flag.
+    function launchSteamBigPicture() {
+        root.userActivity();
+        // Fire the host-side BPM-home reset (fire-and-forget; reply is just ok/error).
+        steamBigPictureReq.request("steam-bigpicture");
+        if (root.shellState === "streaming") {
+            // This client is already in the stream — the reset moved the live BPM.
+            // Don't start a 2nd local Moonlight process.
+            return;
+        }
+        // Not viewing a stream here → start/resume one to the primary target. With
+        // no target configured there's nothing to stream into; the reset still fired.
+        let ts = root.targets || [];
+        if (ts.length > 0)
+            root.streamRequested(ts[0]);
+        else
+            console.log("HomeScreen: steam-bigpicture sent, but no stream target configured");
+    }
+
+    // One-shot socket client for `steam-bigpicture`. The reply (a status JSON) is
+    // logged on failure; the stream start above doesn't gate on it (the reset and
+    // the stream race, exactly like launchSteamGame).
+    SocketClient {
+        id: steamBigPictureReq
+        onResponseReceived: line => {
+            if (line.indexOf("\"status\":\"ok\"") === -1)
+                console.log("HomeScreen: steam-bigpicture reply: " + line);
+        }
+        onRequestFailed: console.log("HomeScreen: steam-bigpicture request failed (daemon down?)")
+    }
+
+    // === Quit running Steam game choreography ===
+    // The active-game popover's "Quit" action →
+    //   1. `steam-quit <appid>` → the host gracefully terminates the running game
+    //      (SIGTERM to its process group — like Steam's Stop button). Fire-and-
+    //      forget; the reply is a status JSON (logged only on non-ok).
+    //   2. Close THIS client's Moonlight stream via the existing
+    //      streamQuitRequested(targets[0]) path (same teardown the Moonlight
+    //      "Quit Stream" action uses).
+    // The two race exactly like launchSteamGame's navigate+stream — the host kill
+    // and the local stream-close are independent.
+    function quitSteamGame(appid) {
+        root.userActivity();
+        // Fire the host-side graceful kill (fire-and-forget; reply is a status JSON).
+        steamQuitReq.request("steam-quit", appid);
+        // Close the local Moonlight stream to the primary target, if one is configured.
+        let ts = root.targets || [];
+        if (ts.length > 0)
+            root.streamQuitRequested(ts[0]);
+        else
+            console.log("HomeScreen: steam-quit " + appid + " sent, but no stream target configured");
+    }
+
+    // One-shot socket client for `steam-quit <appid>`. The reply (a status JSON) is
+    // logged on a non-ok status; the stream close above doesn't gate on it (the
+    // host kill and the local stream-close race, like launchSteamGame).
+    SocketClient {
+        id: steamQuitReq
+        onResponseReceived: line => {
+            if (line.indexOf("\"status\":\"ok\"") === -1)
+                console.log("HomeScreen: steam-quit reply: " + line);
+        }
+        onRequestFailed: console.log("HomeScreen: steam-quit request failed (daemon down?)")
     }
 
     function _focusFirstVisibleRow() {
@@ -583,6 +660,8 @@ FocusScope {
                 onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
                 onContextRequested: root._moonlightContext()
                 onGameSelected: appid => root.launchSteamGame(appid)
+                onGameContextRequested: appid => root._steamGameContext(appid)
+                onOpenBigPictureRequested: root.launchSteamBigPicture()
             }
 
             // === Now Playing — small (strip) renderer ===
@@ -795,7 +874,7 @@ FocusScope {
                         let idx = recentRow.currentIndex;
                         let model = root._recentModel;
                         let running = (idx >= 0 && idx < model.length && model[idx].running === true);
-                        return (running ? "A: Resume" : "A: Launch") + "  |  Y: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
+                        return (running ? "A: Resume" : "A: Launch") + "  |  X: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                     }
                     if (allAppsEntry.activeFocus)
                         return "A: Browse all  |  B: Home  |  ↑↓: Switch Row";
@@ -885,6 +964,43 @@ FocusScope {
             StreamProviders.active.discoverApps();
         }
         popoverMenu.actions = actions;
+        popoverMenu.opened = true;
+        popoverMenu.forceActiveFocus();
+    }
+
+    // Active-game context menu (Resume / Quit) for the RUNNING Steam game's poster
+    // card. Opened by the X face over that card (only the running card emits — see
+    // SteamCard's guard), positioned over it. Mirrors _moonlightContext's
+    // mapToItem positioning, anchored on moonlightWidget.runningCard.
+    function _steamGameContext(appid) {
+        let card = moonlightWidget.runningCard;
+        if (!card)
+            return;
+        let pos = card.mapToItem(root, card.width / 2, 0);
+        popoverMenu.targetX = pos.x;
+        popoverMenu.targetY = pos.y;
+        popoverMenu.actions = [
+            {
+                label: "Resume",
+                hint: "A: Resume",
+                // Reconnect/stream the running session. Reuses the Big-Picture
+                // stream path (navigate BPM to this game, then stream targets[0])
+                // and respects the one-session guard: if THIS client is already
+                // streaming, launchSteamGame just moves the live BPM (no 2nd stream).
+                action: function () {
+                    root.launchSteamGame(appid);
+                }
+            },
+            {
+                label: "Quit",
+                hint: "A: Quit",
+                // Gracefully kill the running game on the host (`steam-quit`), then
+                // close THIS client's Moonlight stream (streamQuitRequested).
+                action: function () {
+                    root.quitSteamGame(appid);
+                }
+            }
+        ];
         popoverMenu.opened = true;
         popoverMenu.forceActiveFocus();
     }

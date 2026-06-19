@@ -173,6 +173,20 @@ pub enum Command {
     /// `sunshine-status` with a missing/incomplete `<host> <port>` body.
     SunshineStatusUsage,
 
+    /// `wol <host>` -> send a Wake-on-LAN magic packet to `<host>`. The body is
+    /// a single token (the IP/hostname the shell uses; QML passes the configured
+    /// streaming-target host). The host→MAC mapping is resolved from the kernel
+    /// neighbor table (`ip neigh`) and a persisted MAC cache, so wake works even
+    /// when the host is already asleep (its ARP entry is STALE/absent). Replies a
+    /// compact-JSON object `{"status":"ok","mac":"…"}` on success or
+    /// `{"status":"error","reason":"…"}` when the MAC can't be resolved. Stateless
+    /// + cross-platform (UDP broadcast), served like `sunshine-status`.
+    Wol {
+        host: String,
+    },
+    /// `wol` with a missing/empty `<host>` body.
+    WolUsage,
+
     /// `plex-hubs` -> compact JSON `{enabled,onDeck:[…],recentlyAdded:[…]}` for
     /// the home-screen Plex widget. Bare command (no body); the server URL +
     /// token come from the daemon environment (`GAME_SHELL_PLEX_URL` /
@@ -195,6 +209,22 @@ pub enum Command {
     SteamLaunch(u32),
     /// `steam-launch` with a missing/non-numeric `<appid>` body.
     SteamLaunchUsage,
+
+    /// `steam-bigpicture` -> open Steam Big Picture's HOME screen on the host
+    /// (proxies `POST /open-bpm` to game-shell-host — no body). Bare command (no
+    /// args), mirroring `steam-launch` but landing on the BPM home instead of a
+    /// game's page. Replies a compact-JSON status object (`{"status":"ok"}` /
+    /// `{"status":"error",…}`). Stateless + cross-platform.
+    SteamBigPicture,
+
+    /// `steam-quit <appid>` -> gracefully terminate a running Steam game on the
+    /// host (proxies `POST /quit` to game-shell-host with `{appid}`). The body is a
+    /// single numeric appid token, mirroring `steam-launch`. Replies a compact-JSON
+    /// status object (`{"status":"ok"}` / `{"status":"error",…}`). Stateless +
+    /// cross-platform.
+    SteamQuit(u32),
+    /// `steam-quit` with a missing/non-numeric `<appid>` body.
+    SteamQuitUsage,
 
     // --- Moonlight local-config "forget" (creds-free unpair) ---
     /// `moonlight-forget <host>` -> remove a host from Moonlight's local config
@@ -412,6 +442,7 @@ impl Command {
             "power-battery" => Command::PowerBattery,
             "plex-hubs" => Command::PlexHubs,
             "steam-library" => Command::SteamLibrary,
+            "steam-bigpicture" => Command::SteamBigPicture,
             // Phase 4 bare commands (no body).
             "hypr-active" => Command::HyprActive,
             "hypr-clients" => Command::HyprClients,
@@ -535,6 +566,18 @@ impl Command {
                         _ => Command::SunshineStatusUsage,
                     };
                 }
+                // `wol <host>`: a single host token (the IP/hostname the shell
+                // uses). A missing body is a usage error. `command_body` enforces
+                // the word boundary so e.g. `wolX` is not mistaken for `wol`.
+                if let Some(body) = command_body(cmd, "wol") {
+                    return if body.is_empty() {
+                        Command::WolUsage
+                    } else {
+                        Command::Wol {
+                            host: body.to_string(),
+                        }
+                    };
+                }
                 // `steam-launch <appid>`: the body is a single numeric appid
                 // token. A missing/non-numeric body is a usage error.
                 // `command_body` enforces the word boundary so e.g.
@@ -547,6 +590,20 @@ impl Command {
                     {
                         Some(appid) => Command::SteamLaunch(appid),
                         None => Command::SteamLaunchUsage,
+                    };
+                }
+                // `steam-quit <appid>`: same shape as `steam-launch` — a single
+                // numeric appid token. Missing/non-numeric ⇒ usage error.
+                // `command_body` enforces the word boundary so e.g. `steam-quitX`
+                // is not mistaken for the command.
+                if let Some(body) = command_body(cmd, "steam-quit") {
+                    return match body
+                        .split_whitespace()
+                        .next()
+                        .and_then(|t| t.parse::<u32>().ok())
+                    {
+                        Some(appid) => Command::SteamQuit(appid),
+                        None => Command::SteamQuitUsage,
                     };
                 }
                 // `moonlight-forget <host>`: a single host token (the IP/hostname
@@ -1007,9 +1064,19 @@ pub fn resp_sunshine_status_usage() -> String {
     "error:usage: sunshine-status <host> <port>".to_string()
 }
 
+/// Usage line for `wol` issued without a `<host>` body.
+pub fn resp_wol_usage() -> String {
+    "error:usage: wol <host>".to_string()
+}
+
 /// Usage line for `steam-launch` issued without a numeric `<appid>` body.
 pub fn resp_steam_launch_usage() -> String {
     "error:usage: steam-launch <appid>".to_string()
+}
+
+/// Usage line for `steam-quit` issued without a numeric `<appid>` body.
+pub fn resp_steam_quit_usage() -> String {
+    "error:usage: steam-quit <appid>".to_string()
 }
 
 /// Usage line for `moonlight-forget` issued without a `<host>` body.
@@ -1669,6 +1736,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_wol_body() {
+        assert_eq!(
+            Command::parse("wol 192.0.2.1"),
+            Command::Wol {
+                host: "192.0.2.1".into()
+            }
+        );
+        // Surrounding/internal whitespace is trimmed.
+        assert_eq!(
+            Command::parse("  wol   host-1  "),
+            Command::Wol {
+                host: "host-1".into()
+            }
+        );
+        // Missing host -> usage; bare command -> usage.
+        assert_eq!(Command::parse("wol"), Command::WolUsage);
+        assert_eq!(Command::parse("wol   "), Command::WolUsage);
+        // Word boundary: `wolX` is NOT wol.
+        assert_eq!(Command::parse("wolX"), Command::Unknown);
+    }
+
+    #[test]
+    fn wol_usage_string() {
+        assert_eq!(resp_wol_usage(), "error:usage: wol <host>");
+    }
+
+    #[test]
     fn parses_steam_library_bare() {
         assert_eq!(Command::parse("steam-library"), Command::SteamLibrary);
         assert_eq!(Command::parse("  steam-library  "), Command::SteamLibrary);
@@ -1704,6 +1798,38 @@ mod tests {
             resp_steam_launch_usage(),
             "error:usage: steam-launch <appid>"
         );
+    }
+
+    #[test]
+    fn parses_steam_bigpicture_bare() {
+        assert_eq!(Command::parse("steam-bigpicture"), Command::SteamBigPicture);
+        assert_eq!(
+            Command::parse("  steam-bigpicture  "),
+            Command::SteamBigPicture
+        );
+        // Word boundary: `steam-bigpictureX` is NOT steam-bigpicture.
+        assert_eq!(Command::parse("steam-bigpictureX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_steam_quit_body() {
+        assert_eq!(Command::parse("steam-quit 730"), Command::SteamQuit(730));
+        // Surrounding whitespace is trimmed.
+        assert_eq!(
+            Command::parse("  steam-quit   220  "),
+            Command::SteamQuit(220)
+        );
+        // Missing appid -> usage.
+        assert_eq!(Command::parse("steam-quit"), Command::SteamQuitUsage);
+        // Non-numeric appid -> usage.
+        assert_eq!(Command::parse("steam-quit abc"), Command::SteamQuitUsage);
+        // Word boundary: `steam-quitX` is NOT steam-quit.
+        assert_eq!(Command::parse("steam-quitX"), Command::Unknown);
+    }
+
+    #[test]
+    fn steam_quit_usage_string() {
+        assert_eq!(resp_steam_quit_usage(), "error:usage: steam-quit <appid>");
     }
 
     #[test]

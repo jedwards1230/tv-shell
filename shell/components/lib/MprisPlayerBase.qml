@@ -31,7 +31,7 @@ FocusScope {
     property Item contentCard: null
 
     signal escaped
-    // Context action (gamepad X / Tab) — the host opens a quit popover.
+    // Context action (gamepad X face → KEY_X) — the host opens a quit popover.
     signal contextRequested
     // Open the player's desktop app full-screen. The host resolves the
     // identifiers to a launchable app and routes through the normal launch/
@@ -187,8 +187,9 @@ FocusScope {
             root._activate();
             event.accepted = true;
             break;
-        case Qt.Key_Tab:
-            // Context action (gamepad X): ask the host to open the quit popover.
+        case Qt.Key_X:
+            // Context action (gamepad X face → daemon altAction → KEY_X): ask the
+            // host to open the quit popover.
             Theme.exitMouseMode();
             if (root.hasPlayer)
                 root.contextRequested();

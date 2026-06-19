@@ -58,6 +58,11 @@ Item {
     onHeaderArtChanged: root._artIdx = 0
 
     signal activated
+    // Context popover trigger — emitted on the X face (daemon altAction → KEY_X)
+    // ONLY for the running game's card (`playing`). Locked cards (a different game
+    // is live) stay fully non-interactive and never emit this; non-running cards
+    // with nothing running also don't (there's no active session to act on).
+    signal contextRequested
 
     width: posterWidth
     height: posterHeight + (root.showCaption ? captionCol.implicitHeight + Units.spacingSM : 0)
@@ -250,4 +255,14 @@ Item {
         root.activated()
     Keys.onEnterPressed: if (!root.locked)
         root.activated()
+
+    // X face → context popover (Resume / Quit) — ONLY on the running game's card.
+    // A locked card (a different game running) is non-interactive; a card with
+    // nothing running has no live session to act on, so neither emits.
+    Keys.onPressed: event => {
+        if (event.key === Qt.Key_X && root.playing && !root.locked) {
+            root.contextRequested();
+            event.accepted = true;
+        }
+    }
 }

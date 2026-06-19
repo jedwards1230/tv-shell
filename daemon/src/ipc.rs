@@ -9,7 +9,7 @@
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
 use crate::{
-    apps, config, controllerdb, health, moonlight, notifications, plex, recents, steam, system,
+    apps, config, controllerdb, health, moonlight, notifications, plex, recents, steam, system, wol,
 };
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
@@ -306,6 +306,12 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             Some(health::handle_sunshine_status(host, port).await)
         }
         Command::SunshineStatusUsage => Some(protocol::resp_sunshine_status_usage()),
+        // Wake-on-LAN: send a magic packet to a streaming host whose Steam row is
+        // showing the "Wake host" card. Stateless + cross-platform (UDP
+        // broadcast). Missing host routes to `WolUsage`; an unresolvable MAC
+        // degrades to `{"status":"error","reason":"no-mac"}`.
+        Command::Wol { host } => Some(wol::handle_wol(host).await),
+        Command::WolUsage => Some(protocol::resp_wol_usage()),
         // Plex hubs (On Deck + Recently Added) for the home-screen widget.
         // Stateless + cross-platform like `sunshine-status`; the server URL and
         // token come from the daemon env. Unconfigured/unreachable degrades to
@@ -317,6 +323,15 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         Command::SteamLibrary => Some(steam::handle_steam_library().await),
         Command::SteamLaunch(appid) => Some(steam::handle_steam_launch(*appid).await),
         Command::SteamLaunchUsage => Some(protocol::resp_steam_launch_usage()),
+        // Steam Big Picture HOME — reset the host's BPM to its home screen (no
+        // game). Bare command; same stateless/cross-platform category as
+        // steam-launch. Unconfigured/unreachable degrades to a JSON error status.
+        Command::SteamBigPicture => Some(steam::handle_steam_bigpicture().await),
+        // Steam graceful quit — terminate the running game on the host (SIGTERM to
+        // its process group). Same stateless/cross-platform category as
+        // steam-launch. Unconfigured/unreachable degrades to a JSON error status.
+        Command::SteamQuit(appid) => Some(steam::handle_steam_quit(*appid).await),
+        Command::SteamQuitUsage => Some(protocol::resp_steam_quit_usage()),
         // Moonlight local-config "forget" — creds-free client-side unpair.
         // Stateless and cross-platform (just edits Moonlight.conf). Missing host
         // routes to `MoonlightForgetUsage`. Runs the blocking file edit off the
@@ -516,12 +531,18 @@ async fn dispatch(
         // Phase 4 Sunshine is stateless (consumed by `dispatch_stateless`).
         | Command::SunshineStatus { .. }
         | Command::SunshineStatusUsage
+        // Wake-on-LAN is stateless (consumed by `dispatch_stateless`).
+        | Command::Wol { .. }
+        | Command::WolUsage
         // Plex hubs is stateless (consumed by `dispatch_stateless`).
         | Command::PlexHubs
         // Steam library/launch are stateless (consumed by `dispatch_stateless`).
         | Command::SteamLibrary
         | Command::SteamLaunch(_)
         | Command::SteamLaunchUsage
+        | Command::SteamBigPicture
+        | Command::SteamQuit(_)
+        | Command::SteamQuitUsage
         // Moonlight forget is stateless (consumed by `dispatch_stateless`).
         | Command::MoonlightForget(_)
         | Command::MoonlightForgetUsage

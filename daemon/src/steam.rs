@@ -9,7 +9,8 @@
 //!
 //! The actual enumeration + launch live in `game-shell-host` (a thin
 //! cross-platform sidecar on the gaming PC). This daemon module just proxies to
-//! that host's `GET /library` / `POST /launch` over HTTP with a bearer token.
+//! that host's `GET /library` / `POST /launch` / `POST /open-bpm` / `POST /quit`
+//! over HTTP with a bearer token.
 //!
 //! **Config via env** (set in `~/.config/game-shell/daemon.env`):
 //! - `GAME_SHELL_STEAM_URL`   — game-shell-host base, e.g. `http://192.0.2.1:47995`
@@ -183,6 +184,94 @@ pub async fn handle_steam_launch(appid: u32) -> String {
             crate::protocol::resp_error(&format!("steam-launch failed: {e}"))
         }
     }
+}
+
+/// IPC entry point for `steam-bigpicture`. POSTs to the host's `/open-bpm` (no
+/// body) to reset Steam to the Big Picture HOME screen, and returns a compact-JSON
+/// status object (`{"status":"ok"}` / `{"status":"error","reason":…}`). Mirrors
+/// [`handle_steam_launch`] but lands on the BPM home rather than a game's page;
+/// the Moonlight stream start stays in QML. Degrades gracefully when the host is
+/// unconfigured (`disabled`) or unreachable (`error`), exactly like steam-launch.
+pub async fn handle_steam_bigpicture() -> String {
+    use crate::service_health::ServiceStatus;
+
+    let Some((base, token)) = config() else {
+        return json!({
+            "status": ServiceStatus::Disabled.as_str(),
+            "reason": "steam not configured",
+        })
+        .to_string();
+    };
+    match post_open_bpm(&base, &token).await {
+        Ok(()) => json!({ "status": ServiceStatus::Ok.as_str() }).to_string(),
+        Err(e) => {
+            tracing::debug!("steam-bigpicture failed: {e}");
+            json!({
+                "status": ServiceStatus::Error.as_str(),
+                "reason": format!("steam-bigpicture failed: {e}"),
+            })
+            .to_string()
+        }
+    }
+}
+
+/// POST `{base}/open-bpm` with the bearer token and no body. Any non-2xx is an
+/// error. Companion to [`post_launch`] — opens Big Picture's home screen.
+async fn post_open_bpm(base: &str, token: &str) -> Result<(), reqwest::Error> {
+    let url = format!("{base}/open-bpm");
+    let client = crate::service_health::build_client()?;
+    client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+/// IPC entry point for `steam-quit <appid>`. POSTs `{appid}` to the host's `/quit`
+/// to gracefully terminate the running game (SIGTERM to its process group — like
+/// Steam's Stop button), and returns a compact-JSON status object
+/// (`{"status":"ok"}` / `{"status":"error","reason":…}`). Mirrors
+/// [`handle_steam_bigpicture`]; the Moonlight stream close stays in QML. Degrades
+/// gracefully when the host is unconfigured (`disabled`) or unreachable (`error`).
+pub async fn handle_steam_quit(appid: u32) -> String {
+    use crate::service_health::ServiceStatus;
+
+    let Some((base, token)) = config() else {
+        return json!({
+            "status": ServiceStatus::Disabled.as_str(),
+            "reason": "steam not configured",
+        })
+        .to_string();
+    };
+    match post_quit(&base, &token, appid).await {
+        Ok(()) => json!({ "status": ServiceStatus::Ok.as_str() }).to_string(),
+        Err(e) => {
+            tracing::debug!("steam-quit {appid} failed: {e}");
+            json!({
+                "status": ServiceStatus::Error.as_str(),
+                "reason": format!("steam-quit failed: {e}"),
+            })
+            .to_string()
+        }
+    }
+}
+
+/// POST `{base}/quit` with `{appid}` and the bearer token. Any non-2xx is an
+/// error. Companion to [`post_launch`] — gracefully terminates the running game.
+async fn post_quit(base: &str, token: &str, appid: u32) -> Result<(), reqwest::Error> {
+    let url = format!("{base}/quit");
+    let client = crate::service_health::build_client()?;
+    client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(json!({ "appid": appid }).to_string())
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
 }
 
 /// Error type for a host fetch: a transport failure (`reqwest`) or a body that

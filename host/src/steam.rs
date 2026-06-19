@@ -311,6 +311,99 @@ fn steam_appid_from_argv(args: &[&str]) -> Option<u32> {
         .and_then(|id| id.parse::<u32>().ok())
 }
 
+/// Pure predicate: is this the `reaper` launcher argv for the given `appid`? Reuses
+/// [`steam_appid_from_argv`] (so the `SteamLaunch` marker + `AppId=` extraction
+/// stay one source of truth) and compares the parsed id. Unit-tested without
+/// touching `/proc`.
+#[cfg(any(target_os = "linux", test))]
+fn argv_matches_appid(args: &[&str], appid: u32) -> bool {
+    steam_appid_from_argv(args) == Some(appid)
+}
+
+/// Gracefully terminate the running Steam game for `appid` — the host side of
+/// `steam-quit`, the equivalent of pressing Steam's Stop button.
+///
+/// - **Linux**: find the `reaper` launcher pid whose argv matches `SteamLaunch
+///   AppId=<appid>` (same `/proc` scan as [`running_appid_linux`]) and send
+///   **SIGTERM to its process group** (`kill(-pid, SIGTERM)`) so the whole game
+///   process tree shuts down cleanly. Graceful only — never SIGKILL. Returns
+///   `Ok(true)` if a matching process was signalled, `Ok(false)` if no such game
+///   is running (nothing to do).
+/// - **Other OSes**: not wired yet — returns `Ok(false)` (unsupported), mirroring
+///   how [`running_appid`] degrades on non-Linux.
+pub fn quit(appid: u32) -> anyhow::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        quit_linux(appid)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // No running-game termination wired off Linux (no `reaper` process to find
+        // / signal). Report "nothing signalled" so the caller surfaces a clean
+        // not-running/unsupported reply rather than an error.
+        let _ = appid;
+        Ok(false)
+    }
+}
+
+/// Linux graceful-quit: locate the `reaper` pid for `appid`, then SIGTERM its
+/// process group. Returns `Ok(false)` when no matching game is running.
+#[cfg(target_os = "linux")]
+fn quit_linux(appid: u32) -> anyhow::Result<bool> {
+    let Some(pid) = reaper_pid_for_appid_linux(appid) else {
+        return Ok(false);
+    };
+    // SIGTERM the whole process GROUP (`-pid`) so the game's child tree (Proton,
+    // the game exe, helper processes) all receive it and shut down cleanly — this
+    // is what Steam's Stop does. Graceful only: SIGTERM, never SIGKILL.
+    //
+    // Safety: `kill(2)` is an FFI call with no memory effects; we pass a negative
+    // pid (the group) and the standard SIGTERM signal number.
+    let rc = unsafe { libc::kill(-pid, libc::SIGTERM) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(anyhow::anyhow!(
+            "kill(-{pid}, SIGTERM) for appid {appid} failed: {err}"
+        ));
+    }
+    tracing::info!("steam-quit: sent SIGTERM to process group {pid} for appid {appid}");
+    Ok(true)
+}
+
+/// Linux reaper-pid finder: scan `/proc/*/cmdline` for Steam's `reaper` launcher
+/// whose argv matches `SteamLaunch AppId=<appid>`, returning that pid (the head of
+/// the game's process group). Same `/proc` scan as [`running_appid_linux`], but
+/// keyed to a specific appid and returning the pid rather than the appid.
+/// Unreadable entries (permissions, pid-exit races) are skipped.
+#[cfg(target_os = "linux")]
+fn reaper_pid_for_appid_linux(appid: u32) -> Option<libc::pid_t> {
+    let proc = std::fs::read_dir("/proc").ok()?;
+    for dirent in proc.flatten() {
+        // Only numeric (pid) directories carry a cmdline worth reading.
+        let name = dirent.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(pid) = name.parse::<libc::pid_t>() else {
+            continue;
+        };
+        let Ok(raw) = std::fs::read(dirent.path().join("cmdline")) else {
+            continue;
+        };
+        let args: Vec<&str> = raw
+            .split(|&b| b == 0)
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| std::str::from_utf8(s).ok())
+            .collect();
+        if argv_matches_appid(&args, appid) {
+            return Some(pid);
+        }
+    }
+    None
+}
+
 /// Windows running-game detector: read `RunningAppID` from `registry.vdf`.
 ///
 /// On Linux this field is never written, so this path is Windows-only (and the
@@ -686,6 +779,26 @@ mod tests {
         // SteamLaunch present, AppId= present but non-numeric.
         let argv = ["reaper", "SteamLaunch", "AppId=notanumber", "--"];
         assert_eq!(steam_appid_from_argv(&argv), None);
+    }
+
+    #[test]
+    fn argv_matches_appid_only_for_that_game() {
+        let argv = [
+            "reaper",
+            "SteamLaunch",
+            "AppId=2215200",
+            "--",
+            "/path/to/game.exe",
+        ];
+        // Matches its own appid, nothing else.
+        assert!(argv_matches_appid(&argv, 2215200));
+        assert!(!argv_matches_appid(&argv, 730));
+        // A non-launcher argv never matches any appid.
+        let unrelated = ["/usr/bin/firefox", "--new-window"];
+        assert!(!argv_matches_appid(&unrelated, 2215200));
+        // SteamLaunch with no AppId= matches nothing.
+        let no_id = ["reaper", "SteamLaunch", "--", "/some/proton"];
+        assert!(!argv_matches_appid(&no_id, 2215200));
     }
 
     #[test]

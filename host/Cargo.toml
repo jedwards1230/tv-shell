@@ -28,3 +28,9 @@ subtle = { workspace = true }
 # appmanifest_*.acf.
 keyvalues-parser = { workspace = true }
 game-shell-protocol = { workspace = true }
+
+# POSIX kill(2) for the graceful-quit path (SIGTERM to the running game's process
+# group). Only needed on Linux; gating it here keeps the macOS/Windows graph
+# unchanged. (libc itself compiles cross-platform, but it's unused off Linux.)
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

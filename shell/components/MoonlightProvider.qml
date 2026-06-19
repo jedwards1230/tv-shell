@@ -19,7 +19,7 @@ TargetProvider {
         loadProc.running = true;
     }
 
-    // Persist a new default `app` for the target matching `host` (the home Y-menu
+    // Persist a new default `app` for the target matching `host` (the home X-menu
     // "set default" / X action). Writes targets.json via tee + stdin so the value
     // can never break out into a shell command (mirrors MoonlightSettings' write),
     // then reloads so the home widget reflects the change. Local `targets` is
