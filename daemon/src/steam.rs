@@ -140,7 +140,10 @@ async fn fetch_status(
     // could otherwise stream a huge body into memory (the 6s timeout alone
     // doesn't cap size). Guards the common Content-Length-bearing case.
     const MAX_STATUS_BODY: u64 = 64 * 1024;
-    if resp.content_length().is_some_and(|len| len > MAX_STATUS_BODY) {
+    if resp
+        .content_length()
+        .is_some_and(|len| len > MAX_STATUS_BODY)
+    {
         tracing::warn!("steam /status body too large (> {MAX_STATUS_BODY} bytes); ignoring");
         return (status, None, false);
     }
@@ -275,7 +278,11 @@ pub fn normalize_library(
         // Default a missing `installed` to FALSE (exclude) — safer than letting a
         // possibly-uninstalled, unlaunchable game through. The host always sends
         // the field, so this default only ever guards malformed input.
-        .filter(|g| g.get("installed").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter(|g| {
+            g.get("installed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
         // filter_map: `card` returns None for a missing/zero appid (an unaddressable
         // entry) so it's skipped rather than emitted as a broken card.
         .filter_map(|g| card(g, base))
