@@ -61,6 +61,7 @@ pub async fn handle_steam_library() -> String {
             "recentlyPlayed": [],
             "allGames": [],
             "runningAppid": Value::Null,
+            "streaming": false,
         })
         .to_string();
     };
@@ -68,20 +69,23 @@ pub async fn handle_steam_library() -> String {
     // Reachability gate — `GET /status` is small and authenticated, so its HTTP
     // status classifies cleanly (401 → Error/bad token, 5xx → Unreachable). We
     // also read its body to capture `running_appid` (the foreground game on the
-    // host) so the widget can badge the "Playing" card without a second request.
-    let (probe, running_appid) = fetch_status(&base, &token).await;
+    // host) and `streaming` (an active Moonlight/Sunshine stream) so the widget
+    // can badge the "Playing" card and reflect stream state without a second
+    // request.
+    let (probe, running_appid, streaming) = fetch_status(&base, &token).await;
     if probe != ServiceStatus::Ok {
         return json!({
             "status": probe.as_str(),
             "recentlyPlayed": [],
             "allGames": [],
             "runningAppid": Value::Null,
+            "streaming": false,
         })
         .to_string();
     }
 
     match fetch_library(&base, &token).await {
-        Ok(games) => normalize_library(&games, running_appid),
+        Ok(games) => normalize_library(&games, running_appid, streaming),
         Err(e) => {
             tracing::debug!("steam-library fetch failed: {e}");
             json!({
@@ -89,28 +93,30 @@ pub async fn handle_steam_library() -> String {
                 "recentlyPlayed": [],
                 "allGames": [],
                 "runningAppid": Value::Null,
+                "streaming": false,
             })
             .to_string()
         }
     }
 }
 
-/// GET `{base}/status` and return both the reachability classification and the
-/// host's `running_appid` (the foreground Steam game, or `None`). The body is
-/// only parsed on a 2xx/3xx; any error degrades to `(status, None)` so the
-/// caller still gets a clean status to surface. The poster widget uses the
-/// running id to badge the "Playing" card — source of truth is the host, not
-/// which card the user tapped.
+/// GET `{base}/status` and return the reachability classification, the host's
+/// `running_appid` (the foreground Steam game, or `None`), and `streaming` (true
+/// when a Moonlight/Sunshine stream is active on the host). The body is only
+/// parsed on a 2xx/3xx; any error degrades to `(status, None, false)` so the
+/// caller still gets a clean status to surface. The poster widget uses the running
+/// id to badge the "Playing" card and `streaming` to reflect stream state — source
+/// of truth is the host, not which card the user tapped.
 async fn fetch_status(
     base: &str,
     token: &str,
-) -> (crate::service_health::ServiceStatus, Option<u64>) {
+) -> (crate::service_health::ServiceStatus, Option<u64>, bool) {
     use crate::service_health::{classify_code, ServiceStatus};
 
     let url = format!("{base}/status");
     let client = match crate::service_health::build_client() {
         Ok(c) => c,
-        Err(_) => return (ServiceStatus::Error, None),
+        Err(_) => return (ServiceStatus::Error, None, false),
     };
     let resp = match client
         .get(&url)
@@ -120,21 +126,32 @@ async fn fetch_status(
         .await
     {
         Ok(r) => r,
-        Err(_) => return (ServiceStatus::Unreachable, None),
+        Err(_) => return (ServiceStatus::Unreachable, None, false),
     };
     let status = classify_code(resp.status().as_u16());
     if status != ServiceStatus::Ok {
-        return (status, None);
+        return (status, None, false);
     }
-    // Parse the body best-effort; a missing/non-numeric/zero running_appid is None.
-    let running = match resp.text().await {
-        Ok(body) => serde_json::from_str::<Value>(&body)
-            .ok()
-            .and_then(|v| v.get("running_appid").and_then(|r| r.as_u64()))
-            .filter(|&id| id != 0),
-        Err(_) => None,
+    // Parse the body best-effort; a missing/non-numeric/zero running_appid is
+    // None, and a missing/non-bool streaming defaults to false.
+    let (running, streaming) = match resp.text().await {
+        Ok(body) => match serde_json::from_str::<Value>(&body).ok() {
+            Some(v) => {
+                let running = v
+                    .get("running_appid")
+                    .and_then(|r| r.as_u64())
+                    .filter(|&id| id != 0);
+                let streaming = v
+                    .get("streaming")
+                    .and_then(|s| s.as_bool())
+                    .unwrap_or(false);
+                (running, streaming)
+            }
+            None => (None, false),
+        },
+        Err(_) => (None, false),
     };
-    (status, running)
+    (status, running, streaming)
 }
 
 /// IPC entry point for `steam-launch <appid>`. POSTs `{appid}` to the host's
@@ -211,10 +228,11 @@ async fn post_launch(base: &str, token: &str, appid: u32) -> Result<(), reqwest:
 /// `recentlyPlayed` (sorted by `last_played` desc, top [`RECENT_LIMIT`]) and
 /// `allGames` (sorted by name). `running_appid` (the host's foreground game, or
 /// `None`) is passed through to the reply's `runningAppid` so the widget can
-/// badge the "Playing" card. Pure function — no I/O — so it unit-tests anywhere.
-/// A body with no `games` array yields empty rails (but `status:ok`, matching an
-/// installed-but-empty library).
-pub fn normalize_library(root: &Value, running_appid: Option<u64>) -> String {
+/// badge the "Playing" card; `streaming` (whether a stream is active on the host)
+/// is passed through to `streaming`. Pure function — no I/O — so it unit-tests
+/// anywhere. A body with no `games` array yields empty rails (but `status:ok`,
+/// matching an installed-but-empty library).
+pub fn normalize_library(root: &Value, running_appid: Option<u64>, streaming: bool) -> String {
     use crate::service_health::ServiceStatus;
 
     let running = running_appid.map(Value::from).unwrap_or(Value::Null);
@@ -226,6 +244,7 @@ pub fn normalize_library(root: &Value, running_appid: Option<u64>) -> String {
             "recentlyPlayed": [],
             "allGames": [],
             "runningAppid": running,
+            "streaming": streaming,
         })
         .to_string();
     };
@@ -263,6 +282,7 @@ pub fn normalize_library(root: &Value, running_appid: Option<u64>) -> String {
         "recentlyPlayed": recent,
         "allGames": all_games,
         "runningAppid": running,
+        "streaming": streaming,
     })
     .to_string()
 }
@@ -310,16 +330,17 @@ mod tests {
 
     #[test]
     fn empty_library_is_ok_empty() {
-        let out = parse(&normalize_library(&lib(json!([])), None));
+        let out = parse(&normalize_library(&lib(json!([])), None, false));
         assert_eq!(out["status"], "ok");
         assert_eq!(out["recentlyPlayed"].as_array().unwrap().len(), 0);
         assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
         assert!(out["runningAppid"].is_null());
+        assert_eq!(out["streaming"], false);
     }
 
     #[test]
     fn missing_games_array_is_ok_empty() {
-        let out = parse(&normalize_library(&json!({}), None));
+        let out = parse(&normalize_library(&json!({}), None, false));
         assert_eq!(out["status"], "ok");
         assert_eq!(out["allGames"].as_array().unwrap().len(), 0);
     }
@@ -331,11 +352,27 @@ mod tests {
                 { "appid": 730, "name": "CS2", "last_played": 0, "installed": true },
             ])),
             Some(730),
+            false,
         ));
         assert_eq!(out["runningAppid"], 730);
         // And passes through on the empty-games path too.
-        let empty = parse(&normalize_library(&json!({}), Some(440)));
+        let empty = parse(&normalize_library(&json!({}), Some(440), false));
         assert_eq!(empty["runningAppid"], 440);
+    }
+
+    #[test]
+    fn streaming_passed_through() {
+        // streaming flows through on both the populated and empty-games paths.
+        let out = parse(&normalize_library(
+            &lib(json!([
+                { "appid": 730, "name": "CS2", "last_played": 0, "installed": true },
+            ])),
+            None,
+            true,
+        ));
+        assert_eq!(out["streaming"], true);
+        let empty = parse(&normalize_library(&json!({}), None, true));
+        assert_eq!(empty["streaming"], true);
     }
 
     #[test]
@@ -346,6 +383,7 @@ mod tests {
                 { "appid": 400, "name": "Portal", "last_played": 0, "installed": true },
             ])),
             None,
+            false,
         ));
         let all = out["allGames"].as_array().unwrap();
         assert_eq!(all.len(), 2);
@@ -373,6 +411,7 @@ mod tests {
                 { "appid": 4, "name": "Mid", "last_played": 200, "installed": true },
             ])),
             None,
+            false,
         ));
         let recent = out["recentlyPlayed"].as_array().unwrap();
         // Never-played dropped; rest by last_played desc.
@@ -390,6 +429,7 @@ mod tests {
                 { "appid": 2, "name": "Downloading", "last_played": 0, "installed": false },
             ])),
             None,
+            false,
         ));
         let all = out["allGames"].as_array().unwrap();
         assert_eq!(all.len(), 1);
@@ -401,7 +441,7 @@ mod tests {
         let many: Vec<Value> = (0..30)
             .map(|i| json!({ "appid": i, "name": format!("G{i}"), "last_played": 1000 + i, "installed": true }))
             .collect();
-        let out = parse(&normalize_library(&lib(json!(many)), None));
+        let out = parse(&normalize_library(&lib(json!(many)), None, false));
         assert_eq!(
             out["recentlyPlayed"].as_array().unwrap().len(),
             RECENT_LIMIT
