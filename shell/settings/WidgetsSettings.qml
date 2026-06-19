@@ -33,6 +33,23 @@ FocusScope {
         }
     ]
 
+    // Moonlight has a third size: small = server cards, medium/large = Steam
+    // library posters at two scales (two views of the one widget).
+    readonly property var _moonlightSizeOptions: [
+        {
+            "label": "Small",
+            "value": "small"
+        },
+        {
+            "label": "Medium",
+            "value": "medium"
+        },
+        {
+            "label": "Large",
+            "value": "large"
+        }
+    ]
+
     // SettingsApp calls this on section entry (Right from sidebar). Always
     // reset to the list level so re-entry is predictable.
     function focusFirst() {
@@ -344,7 +361,7 @@ FocusScope {
         ConfigPage {
             id: mc
             title: "Moonlight"
-            blurb: "Your game-streaming servers. Small = an icon-only online rail; Medium = cards with the server name."
+            blurb: "Jump into game streaming. Small = your streaming-server cards; Medium and Large = your Steam library as posters (smaller / full size)."
             function focusFirst() {
                 mEnabled.forceActiveFocus();
             }
@@ -373,7 +390,7 @@ FocusScope {
                 SettingsButtonGroup {
                     id: mSize
                     Layout.alignment: Qt.AlignVCenter
-                    options: root._sizeOptions
+                    options: root._moonlightSizeOptions
                     isCurrentOption: opt => opt.value === Theme.widgetMoonlightSize
                     onValueSelected: opt => SettingsStore.setWidgetMoonlightSize(opt.value)
                     KeyNavigation.up: mEnabled

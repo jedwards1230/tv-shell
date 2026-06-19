@@ -2,35 +2,42 @@ import QtQuick
 import QtQuick.Layouts
 import "lib"
 
-// Home-screen Steam widget — ONE poster row with a segmented header that flips
-// between "Recently Played" (recently-played rail) and "Library" (all installed
-// games), fed by the daemon's `steam-library` IPC. Mirrors `PlexWidget`: a
-// single prominent row of poster cards, not two stacked rows. The segment
-// control appears only when BOTH segments have content (otherwise the lone
-// segment's name is just a header). `size` reformats the row (not a scale):
-//   small  = poster-only rail (caption band removed) — glanceable
-//   medium = posters + title captions (default)
+// Steam-library poster view — the medium/large rendering of the unified Moonlight
+// home widget (MoonlightWidget hosts this; it is NOT an independently-enableable
+// widget anymore). ONE poster row with a segmented header that flips between
+// "Recently Played" and "Library", fed by the daemon's `steam-library` IPC, plus
+// a right-justified, status-only session indicator opposite the tabs.
 //
 // Selecting a card launches that Steam game on the host (`steam-launch <appid>`)
-// and then starts the existing Moonlight stream — the old GameStream "pick a
-// game, it streams" flow, rebuilt on Sunshine. The stream START stays in QML
-// (HomeScreen owns the existing Moonlight path); this widget only emits
+// and then starts the existing single-target Moonlight stream — there is exactly
+// one session; cards do not own a stream. The stream START stays in QML
+// (HomeScreen owns the existing Moonlight path); this view only emits
 // `gameSelected(appid)`.
 //
-// Health-aware: a `ServiceMonitor` keyed on "steam" collapses the widget when
+// `posterScale` is set by the host so the same view renders at two sizes:
+//   medium = 0.62 (smaller posters)
+//   large  = 0.82 (full posters)
+//
+// Health-aware: a `ServiceMonitor` keyed on "steam" collapses the view when
 // unconfigured/empty and shows a graceful `ServiceStatusNotice` when the host is
-// down.
+// down. The reply's `runningAppid` badges the card whose appid matches as
+// "Playing" — source of truth is desktop-1, not which card was tapped.
 //
 // Focus contract (host uses these): `firstRow`/`lastRow` resolve to the first/
-// last *visible* internal region (segment chips, poster row).
+// last *visible* internal region (segment chips, poster row). The session
+// indicator is non-focusable (status only).
 ColumnLayout {
     id: root
 
     property Item previousRow: null
     property Item nextRow: null
-    property bool widgetEnabled: true
-    // "small" | "medium".
-    property string size: "medium"
+
+    // The single configured Moonlight target (used only for the session
+    // indicator's `sunshine-status` probe). Null ⇒ no indicator.
+    property var target: null
+
+    // Poster scale set by the host (medium vs large). A reflow, not a crop.
+    property real posterScale: 0.62
 
     signal escaped
     // Emitted when a card is activated; HomeScreen launches + streams the appid.
@@ -42,6 +49,9 @@ ColumnLayout {
     // === Data (populated from `steam-library`) ===
     property var recentItems: []
     property var allItems: []
+    // The host's currently-running Steam appid (or -1 when nothing is running).
+    // Drives the per-card "Playing" badge.
+    property int runningAppid: -1
 
     readonly property bool _hasRecent: recentItems.length > 0
     readonly property bool _hasAll: allItems.length > 0
@@ -66,7 +76,7 @@ ColumnLayout {
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
-    visible: root.widgetEnabled && (steamMon.degraded || (steamMon.ok && (root._hasRecent || root._hasAll)))
+    visible: steamMon.degraded || (steamMon.ok && (root._hasRecent || root._hasAll))
 
     // === Home-tile focus contract ===
     readonly property var firstRow: segmentChips
@@ -88,13 +98,11 @@ ColumnLayout {
         return false;
     }
 
-    // === Poster geometry (reflow by size) ===
-    readonly property real _posterScale: root.size === "small" ? 0.50 : 0.62
-    readonly property bool _showCaption: root.size !== "small"
-    readonly property int posterW: Math.round(Theme.cardWidth * _posterScale)
+    // === Poster geometry (reflow by posterScale) ===
+    readonly property int posterW: Math.round(Theme.cardWidth * posterScale)
     readonly property int posterH: Math.round(posterW * 1.5)
     readonly property int _captionBand: Math.round(Theme.fontSmall * 1.4 + Units.spacingSM * 2)
-    readonly property int steamRowHeight: posterH + (_showCaption ? _captionBand : 0)
+    readonly property int steamRowHeight: posterH + _captionBand
 
     function refresh() {
         steamMon.refresh();
@@ -109,9 +117,12 @@ ColumnLayout {
             if (steamMon.ok && steamMon.data) {
                 root.recentItems = steamMon.data.recentlyPlayed || [];
                 root.allItems = steamMon.data.allGames || [];
+                let ra = steamMon.data.runningAppid;
+                root.runningAppid = (typeof ra === "number" && ra > 0) ? ra : -1;
             } else {
                 root.recentItems = [];
                 root.allItems = [];
+                root.runningAppid = -1;
             }
             // Keep the active segment on something that has content.
             if (root._segment === "recent" && !root._hasRecent && root._hasAll)
@@ -127,7 +138,7 @@ ColumnLayout {
         status: steamMon.status
     }
 
-    // === Header: segment chips ===
+    // === Header: segment chips + right-justified session indicator ===
     RowLayout {
         Layout.fillWidth: true
         visible: root._hasRecent || root._hasAll
@@ -148,7 +159,7 @@ ColumnLayout {
             nextRow: posterRow
             onFilterChanged: value => root._segment = value
             onEscaped: root.escaped()
-            // Defer so the Flickable geometry is settled (the widget may have been
+            // Defer so the Flickable geometry is settled (the view may have been
             // hidden — Steam down — and just re-revealed) before we scroll to it.
             onActiveFocusChanged: if (activeFocus)
                 Qt.callLater(() => root.ensureVisibleRequested(segmentChips))
@@ -156,6 +167,15 @@ ColumnLayout {
 
         Item {
             Layout.fillWidth: true
+        }
+
+        // Session indicator — status only (NOT focusable, NOT a pill, NOT
+        // actionable). Tells the user at a glance whether there's a Moonlight
+        // session to resume on the configured target, driven by the same
+        // `sunshine-status` probe the server cards use.
+        SessionIndicator {
+            Layout.alignment: Qt.AlignVCenter
+            target: root.target
         }
     }
 
@@ -186,10 +206,11 @@ ColumnLayout {
             required property var modelData
             posterWidth: root.posterW
             posterHeight: root.posterH
-            showCaption: root._showCaption
+            showCaption: true
             title: modelData.name || ""
             art: modelData.art || ""
             headerArt: modelData.headerArt || ""
+            playing: root.runningAppid > 0 && modelData.appid === root.runningAppid
             focus: index === posterRow.currentIndex
             onActivated: root.gameSelected(modelData.appid)
         }

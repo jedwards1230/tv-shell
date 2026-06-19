@@ -60,7 +60,7 @@ FocusScope {
     // Ordered focusable regions, top→bottom. Both Now-Playing renderers are
     // listed; the hidden one reports focusFirstChild()===false and is skipped.
     function _contentRegions() {
-        return [moonlightWidget, nowPlayingStrip, nowPlayingCard, steamWidget, plexWidget, recentRow, allAppsEntry];
+        return [moonlightWidget, nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry];
     }
 
     function _reanchorFocusIfNeeded() {
@@ -290,15 +290,6 @@ FocusScope {
                     return np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "") && root._entryIsActivePlayer(e, np.playerDesktopEntry, np.playerIdentity);
                 }
             },
-            "configSurface": null
-        },
-        {
-            "id": "steam",
-            "name": "Steam",
-            "region": steamWidget,
-            "enabled": Theme.widgetSteamEnabled,
-            "size": Theme.widgetSteamSize,
-            "hideFromRecent": null,
             "configSurface": null
         },
         {
@@ -577,6 +568,7 @@ FocusScope {
                 onStreamQuitRequested: target => root.streamQuitRequested(target)
                 onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
                 onContextRequested: root._moonlightContext()
+                onGameSelected: appid => root.launchSteamGame(appid)
             }
 
             // === Now Playing — small (strip) renderer ===
@@ -585,7 +577,7 @@ FocusScope {
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "small"
                 previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
-                nextRow: steamWidget.canFocus ? steamWidget.firstRow : (plexWidget.canFocus ? plexWidget.firstRow : recentRow)
+                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
@@ -602,7 +594,7 @@ FocusScope {
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "medium"
                 previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
-                nextRow: steamWidget.canFocus ? steamWidget.firstRow : (plexWidget.canFocus ? plexWidget.firstRow : recentRow)
+                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
                 onEscaped: {
                     root.userActivity();
                     root.focusDefaultPosition();
@@ -613,29 +605,13 @@ FocusScope {
                     scrollView.ensureVisible(this)
             }
 
-            // === Steam widget (Recently Played + Library posters) ===
-            SteamWidget {
-                id: steamWidget
-                Layout.fillWidth: true
-                widgetEnabled: Theme.widgetSteamEnabled
-                size: Theme.widgetSteamSize
-                previousRow: root._npActive
-                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-                onGameSelected: appid => root.launchSteamGame(appid)
-                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
-            }
-
             // === Plex widget (On Deck + Recently Added + dynamic chips) ===
             PlexWidget {
                 id: plexWidget
                 Layout.fillWidth: true
                 widgetEnabled: Theme.widgetPlexEnabled
                 size: Theme.widgetPlexSize
-                previousRow: steamWidget.canFocus ? steamWidget.lastRow : root._npActive
+                previousRow: root._npActive
                 nextRow: recentRow
                 onEscaped: {
                     root.userActivity();
@@ -660,7 +636,7 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
-                previousRow: plexWidget.canFocus ? plexWidget.lastRow : (steamWidget.canFocus ? steamWidget.lastRow : root._npActive)
+                previousRow: plexWidget.canFocus ? plexWidget.lastRow : root._npActive
                 nextRow: allAppsEntry
                 model: root._recentModel
                 onActiveFocusChanged: if (activeFocus)

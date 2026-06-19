@@ -49,10 +49,9 @@ Item {
     property bool widgetPlexHideFromRecent: true  // hide the Plex app from the Recent row
     property bool widgetRecentEnabled: true       // Recent (running + recents app cards) widget
     property string widgetRecentSize: "medium"    // "small" (compact) | "medium" (full app cards)
-    property bool widgetMoonlightEnabled: true    // Moonlight (servers rail → quick stream) widget
-    property string widgetMoonlightSize: "medium" // "small" (icon-only rail) | "medium" (named cards)
-    property bool widgetSteamEnabled: true        // Steam (Recently Played / Library) widget
-    property string widgetSteamSize: "medium"     // "small" (compact posters) | "medium"
+    property bool widgetMoonlightEnabled: true    // Moonlight (unified stream + Steam-library) widget
+    // "small" (server cards) | "medium" (smaller Steam posters) | "large" (full Steam posters)
+    property string widgetMoonlightSize: "medium"
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
     property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
     property bool nightLightEnabled: false       // drives hyprsunset
@@ -123,10 +122,6 @@ Item {
                     store.widgetMoonlightEnabled = obj.widgetMoonlightEnabled;
                 if (typeof obj.widgetMoonlightSize === "string")
                     store.widgetMoonlightSize = obj.widgetMoonlightSize;
-                if (typeof obj.widgetSteamEnabled === "boolean")
-                    store.widgetSteamEnabled = obj.widgetSteamEnabled;
-                if (typeof obj.widgetSteamSize === "string")
-                    store.widgetSteamSize = obj.widgetSteamSize;
                 if (typeof obj.textScale === "number")
                     store.textScale = obj.textScale;
                 if (typeof obj.hdrEnabled === "boolean")
@@ -198,8 +193,6 @@ Item {
             "widgetRecentSize": store.widgetRecentSize,
             "widgetMoonlightEnabled": store.widgetMoonlightEnabled,
             "widgetMoonlightSize": store.widgetMoonlightSize,
-            "widgetSteamEnabled": store.widgetSteamEnabled,
-            "widgetSteamSize": store.widgetSteamSize,
             "textScale": store.textScale,
             "hdrEnabled": store.hdrEnabled,
             "nightLightEnabled": store.nightLightEnabled,
@@ -303,16 +296,6 @@ Item {
 
     function setWidgetMoonlightSize(size) {
         widgetMoonlightSize = size;
-        save();
-    }
-
-    function setWidgetSteamEnabled(enabled) {
-        widgetSteamEnabled = enabled;
-        save();
-    }
-
-    function setWidgetSteamSize(size) {
-        widgetSteamSize = size;
         save();
     }
 

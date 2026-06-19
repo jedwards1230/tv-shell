@@ -20,6 +20,11 @@ Item {
     // collapses to just the poster. The host row sizes itself to match.
     property bool showCaption: true
 
+    // True when this game is the one currently running on the host (from the
+    // daemon's `runningAppid`, NOT a locally-tracked tap). Shows a "Playing"
+    // badge so the user sees what's live regardless of which client started it.
+    property bool playing: false
+
     // Poster geometry (set by the host row so all cards match).
     property int posterWidth: Math.round(Theme.cardWidth * 0.62)
     property int posterHeight: Math.round(posterWidth * 1.5)
@@ -102,6 +107,41 @@ Item {
                     font.pixelSize: Units.iconSizeLG
                     font.bold: true
                     color: Theme.textMuted
+                }
+
+                // "Playing" badge — this game is the one live on the host. Dual
+                // cue (● glyph + label), colourblind-safe like StreamCard's LIVE.
+                Rectangle {
+                    id: playingBadge
+                    visible: root.playing
+                    height: Math.round(Theme.fontSmall * 1.8)
+                    radius: height / 2
+                    color: Theme.online
+                    width: playingRow.implicitWidth + Units.spacingMD * 2
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.topMargin: Units.spacingSM
+                    anchors.leftMargin: Units.spacingSM
+
+                    Row {
+                        id: playingRow
+                        anchors.centerIn: parent
+                        spacing: Units.spacingSM
+
+                        Text {
+                            text: "●"
+                            font.pixelSize: Math.round(Theme.fontSmall * 0.7)
+                            color: Theme.textOnDark
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            text: "Playing"
+                            font.pixelSize: Theme.fontSmall
+                            font.bold: true
+                            color: Theme.textOnDark
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
                 }
             }
         }
