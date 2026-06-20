@@ -65,6 +65,23 @@
 #token = "must-match-host-token"
 #token_file = "~/.config/game-shell/steam-token"
 
+# --- Observability: logs + metrics (optional) --------------------------------
+# See docs/OBSERVABILITY.md for the full emit contract (metric catalogue, etc.).
+[observability]
+# Logging backend. Omit/unset = auto (journald when launched under systemd, i.e.
+# JOURNAL_STREAM is set; stdout otherwise). true = force the systemd journal
+# (tracing-journald: structured fields + syslog priority); false = force stdout.
+#log_journal = true
+# Standard tracing log level/targets stay an ENV var (RUST_LOG), not a config key
+# — e.g. `RUST_LOG=debug game-shell-input`. Default: info.
+#
+# Metrics PRIMARY path: node_exporter textfile collector. Absolute path to the
+# .prom file to write. Omit/unset = textfile writer disabled (the /metrics HTTP
+# route on the bridge, when [http].bind is set, is unaffected).
+#metrics_textfile = "/var/lib/node_exporter/textfile/game-shell.prom"
+# Textfile render/write interval in seconds. Default 15; 0 falls back to 15.
+#metrics_interval = 15
+
 # --- Operator escape hatch ---------------------------------------------------
 [dev]
 # Explicitly permit the otherwise-refused combination of a non-loopback bind +

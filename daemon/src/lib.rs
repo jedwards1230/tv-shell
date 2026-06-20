@@ -40,6 +40,10 @@ pub mod steam;
 pub mod service_health;
 pub mod state;
 pub mod system;
+// Observability metrics: app-specific counters + Prometheus/OpenMetrics text
+// renderer shared by the `/metrics` HTTP route and the textfile writer.
+// Cross-platform: no Linux-only imports (sys gauges degrade to zero on non-Linux).
+pub mod metrics;
 // Wake-on-LAN magic-packet sender for the home-screen "Wake host" card.
 // Cross-platform: pure packet/parse helpers + a blocking UDP broadcast and
 // `ip neigh` shell-out, like `steam`/`plex`.

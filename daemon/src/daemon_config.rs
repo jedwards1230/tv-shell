@@ -84,6 +84,7 @@ pub struct DaemonConfig {
     pub cec: CecConfig,
     pub plex: PlexConfig,
     pub steam: SteamConfig,
+    pub observability: ObservabilityConfig,
     pub dev: DevConfig,
 }
 
@@ -148,6 +149,40 @@ pub struct SteamConfig {
     pub url: Option<String>,
     pub token: Option<String>,
     pub token_file: Option<String>,
+}
+
+/// `[observability]` — logs + metrics emission (#268).
+///
+/// `RUST_LOG` is deliberately NOT modelled here: it's the standard
+/// `tracing-subscriber` EnvFilter variable, read directly at logging init, and
+/// kept as an env var so the usual `RUST_LOG=debug game-shell-input` workflow
+/// still works. Everything else that used to be a `GAME_SHELL_*` env var is
+/// typed config now.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ObservabilityConfig {
+    /// Logging backend: `Some(true)` forces the systemd journal
+    /// (tracing-journald), `Some(false)` forces plain stdout, `None` = auto
+    /// (journald when `JOURNAL_STREAM` indicates a systemd-spawned service).
+    /// Was `GAME_SHELL_LOG_JOURNAL`.
+    pub log_journal: Option<bool>,
+    /// node_exporter textfile-collector output path (the PRIMARY metrics path).
+    /// `None` ⇒ the textfile writer is disabled (the `/metrics` HTTP route, when
+    /// the bridge is bound, is unaffected). Was `GAME_SHELL_METRICS_TEXTFILE`.
+    pub metrics_textfile: Option<String>,
+    /// Textfile render/write interval in seconds. Was `GAME_SHELL_METRICS_INTERVAL`.
+    pub metrics_interval: u64,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            log_journal: None,
+            metrics_textfile: None,
+            // Mirrors metrics.rs DEFAULT_INTERVAL_SECS (15).
+            metrics_interval: 15,
+        }
+    }
 }
 
 /// `[dev]` — operator escape hatches.
@@ -256,6 +291,18 @@ impl DaemonConfig {
             self.steam.token_file.as_deref(),
             "steam.token_file",
         )
+    }
+
+    /// Metrics textfile write interval in seconds, clamped to ≥1 so a `0` (which
+    /// would busy-loop the writer) falls back to the 15s default — mirroring the
+    /// old `interval_secs()` env parser's `filter(|&n| n > 0)`.
+    pub fn metrics_interval_secs(&self) -> u64 {
+        let n = self.observability.metrics_interval;
+        if n == 0 {
+            15
+        } else {
+            n
+        }
     }
 
     /// Validate cross-field invariants, refusing to run in a configuration that
@@ -411,7 +458,38 @@ mod tests {
         assert!(!c.mcp.dev);
         assert!(!c.cec.lifecycle);
         assert!(!c.dev.allow_insecure_lan);
+        // Observability defaults: auto log backend, no textfile, 15s interval.
+        assert_eq!(c.observability.log_journal, None);
+        assert!(c.observability.metrics_textfile.is_none());
+        assert_eq!(c.metrics_interval_secs(), 15);
         c.validate().unwrap(); // nothing bound ⇒ trivially valid
+    }
+
+    #[test]
+    fn observability_section_parses_and_interval_clamps() {
+        let c = DaemonConfig::parse(
+            r#"
+            [observability]
+            log_journal = true
+            metrics_textfile = "/var/lib/node_exporter/textfile/game-shell.prom"
+            metrics_interval = 30
+        "#,
+        )
+        .unwrap();
+        assert_eq!(c.observability.log_journal, Some(true));
+        assert_eq!(
+            c.observability.metrics_textfile.as_deref(),
+            Some("/var/lib/node_exporter/textfile/game-shell.prom")
+        );
+        assert_eq!(c.metrics_interval_secs(), 30);
+
+        // A zero interval (busy-loop) clamps back to the 15s default.
+        let z = DaemonConfig::parse("[observability]\nmetrics_interval = 0\n").unwrap();
+        assert_eq!(z.metrics_interval_secs(), 15);
+
+        // log_journal = false forces stdout.
+        let f = DaemonConfig::parse("[observability]\nlog_journal = false\n").unwrap();
+        assert_eq!(f.observability.log_journal, Some(false));
     }
 
     #[test]

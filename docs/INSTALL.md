@@ -82,7 +82,12 @@ will now hit the startup-refusal above. On such a box the deploy is no longer ju
 1. Run the installer/migration so the new tree + `config.toml.example` are in place.
 2. **Write `~/.config/game-shell/config.toml`** translating the box's old
    `daemon.env` (and, if it ran LAN + dev + no-auth, include `[dev]
-   allow_insecure_lan = true` — without it the daemon refuses to start).
+   allow_insecure_lan = true` — without it the daemon refuses to start). The old
+   `GAME_SHELL_*` env vars map to typed keys: HTTP/MCP → `[http]`/`[mcp]`, CEC →
+   `[cec].lifecycle`, Plex/Steam → `[plex]`/`[steam]`, and observability
+   (`GAME_SHELL_LOG_JOURNAL` / `GAME_SHELL_METRICS_TEXTFILE` /
+   `GAME_SHELL_METRICS_INTERVAL`) → `[observability]`. Only `RUST_LOG` stays an
+   env var.
 3. **Then** restart the daemon/shell.
 
 For the canonical agent-native dev box (LAN bind + dev tools + auth off on a

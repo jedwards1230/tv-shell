@@ -32,15 +32,18 @@ fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
     use tokio::sync::{broadcast, mpsc, Notify};
 
-    init_tracing();
-
-    // Load the typed config (~/.config/game-shell/config.toml). A missing file
-    // is fine (all-default ⇒ no control surface); a malformed file or an unsafe
-    // combination (LAN bind + dev tools + no auth, without [dev].allow_insecure_lan)
-    // is a hard startup failure. Validate BEFORE installing the global / opening
-    // any socket.
+    // Load the typed config (~/.config/game-shell/config.toml) FIRST — before
+    // tracing init, so the logging backend can be driven by
+    // [observability].log_journal. A missing file is fine (all-default ⇒ no
+    // control surface); a malformed file or an unsafe combination (LAN bind +
+    // dev tools + no auth, without [dev].allow_insecure_lan) is a hard startup
+    // failure (the `?` surfaces it to stderr even before tracing is up). Validate
+    // BEFORE installing the global / opening any socket.
     let daemon_cfg = game_shell_input::daemon_config::DaemonConfig::load()?;
     daemon_cfg.validate()?;
+
+    init_tracing(daemon_cfg.observability.log_journal);
+
     game_shell_input::daemon_config::init_global(daemon_cfg.clone());
 
     let uid = unsafe { libc::getuid() };
@@ -49,6 +52,14 @@ fn main() -> anyhow::Result<()> {
 
     let (events_tx, _events_rx) = broadcast::channel::<protocol::Event>(256);
     let (control_tx, control_rx) = mpsc::channel::<state::Control>(64);
+
+    // Observability counters, shared between the input runtime (which records
+    // intents/transitions/pad-join-leave/input-events) and the metrics exporter
+    // (textfile writer + `/metrics` HTTP route). Count this start as a restart:
+    // the daemon re-execs on /dev/restart-daemon and is otherwise supervised, so
+    // the running total is the shell-input restart count for this boot session.
+    let metrics = game_shell_input::metrics::Metrics::new();
+    metrics.inc_shell_restarts();
 
     // Dedicated channel for the file-watch actor to signal the input runtime
     // of external settings.json changes. A separate Notify (rather than a
@@ -60,6 +71,7 @@ fn main() -> anyhow::Result<()> {
     // runtime (isolated timing).
     let input_events = events_tx.clone();
     let input_config_changed = Arc::clone(&config_changed);
+    let input_metrics = Arc::clone(&metrics);
     let input_thread = std::thread::Builder::new()
         .name("input".into())
         .spawn(move || {
@@ -67,7 +79,12 @@ fn main() -> anyhow::Result<()> {
                 .enable_all()
                 .build()
                 .expect("build input runtime");
-            rt.block_on(input::run(control_rx, input_events, input_config_changed));
+            rt.block_on(input::run(
+                control_rx,
+                input_events,
+                input_config_changed,
+                input_metrics,
+            ));
         })?;
 
     // Unified shutdown signal: a single CancellationToken that is cancelled
@@ -105,6 +122,21 @@ fn main() -> anyhow::Result<()> {
             let watch_config_changed = Arc::clone(&config_changed);
             tokio::spawn(async move {
                 watch::run(watch_config_changed).await;
+            });
+        }
+
+        // Metrics textfile-collector writer (observability): periodically renders
+        // the Prometheus/OpenMetrics exposition and writes it atomically to
+        // [observability].metrics_textfile. Disabled (no file) when that key is
+        // unset. Fire-and-forget like the actors above — logs and degrades
+        // gracefully, never panics. The `/metrics` HTTP route is unaffected.
+        {
+            let writer_metrics = Arc::clone(&metrics);
+            let textfile = daemon_cfg.observability.metrics_textfile.clone();
+            let interval = daemon_cfg.metrics_interval_secs();
+            tokio::spawn(async move {
+                game_shell_input::metrics::run_textfile_writer(writer_metrics, textfile, interval)
+                    .await;
             });
         }
 
@@ -150,7 +182,8 @@ fn main() -> anyhow::Result<()> {
         // Absent ⇒ no socket is opened and no control surface is exposed. The
         // address + the dangerous-combo refusal were already parsed/validated
         // above (DaemonConfig::validate), so http_bind() here is infallible-by-
-        // construction; we still match defensively.
+        // construction; we still match defensively. The metrics handle backs the
+        // bridge's auth-exempt GET /metrics route (#268).
         match daemon_cfg.http_bind() {
             Ok(Some(addr)) => {
                 let token = daemon_cfg.http_token();
@@ -163,6 +196,7 @@ fn main() -> anyhow::Result<()> {
                     events_tx.clone(),
                     shutdown.clone(),
                     reexec_flag.clone(),
+                    Arc::clone(&metrics),
                 ));
             }
             Ok(None) => {}
@@ -333,12 +367,63 @@ fn spawn_dbus_actors(
     }
 }
 
+/// Decide whether to log to the systemd journal.
+///
+/// `[observability].log_journal` is the escape hatch: `Some(true)` forces
+/// journald on, `Some(false)` forces it off (stdout). When `None` (the default),
+/// auto-detect: a systemd-spawned service has `JOURNAL_STREAM` set, which means
+/// our stdout is already wired to the journal — but the `tracing-journald` layer
+/// adds structured fields + syslog priority mapping that plain stdout loses, so
+/// we prefer it when the journal socket is reachable.
 #[cfg(target_os = "linux")]
-fn init_tracing() {
+fn want_journal(log_journal: Option<bool>) -> bool {
+    match log_journal {
+        Some(v) => v,
+        // None → auto: the presence of JOURNAL_STREAM means we were launched
+        // under journald's control (systemd unit / `systemd-run`).
+        None => std::env::var_os("JOURNAL_STREAM").is_some(),
+    }
+}
+
+/// Initialise tracing.
+///
+/// **Linux**: log to the systemd journal via `tracing-journald` when a journal
+/// is available (structured fields + syslog priority mapping), otherwise fall
+/// back to the plain stdout `fmt` layer. `[observability].log_journal` forces
+/// the choice. The `RUST_LOG`/`EnvFilter` behaviour (default `info`) is
+/// identical on both paths.
+#[cfg(target_os = "linux")]
+fn init_tracing(log_journal: Option<bool>) {
+    use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // The EnvFilter is constructed per branch (it isn't `Clone`) so both paths
+    // honour RUST_LOG identically with a default of `info`.
+    let new_filter =
+        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // Try journald when requested/auto-detected; fall back to stdout on any
+    // failure (no journal socket) so the daemon is never left without logging.
+    if want_journal(log_journal) {
+        match tracing_journald::layer() {
+            Ok(journald) => {
+                tracing_subscriber::registry()
+                    .with(new_filter())
+                    .with(journald)
+                    .init();
+                return;
+            }
+            Err(e) => {
+                eprintln!("game-shell-input: journald unavailable ({e}), logging to stdout");
+            }
+        }
+    }
+
+    // Stdout layer (journal disabled, unavailable, or forced off). journald adds
+    // its own timestamps + priority, so the stdout path keeps the original
+    // compact format (no target, no time — the journal/console adds those).
     fmt()
-        .with_env_filter(filter)
+        .with_env_filter(new_filter())
         .with_target(false)
         .without_time()
         .init();
