@@ -6,15 +6,23 @@ import Qt5Compat.GraphicalEffects
 import "../components"
 import "../components/lib"
 
-Rectangle {
+FocusScope {
     id: root
-    color: Theme.background
     visible: false
 
     signal closed
 
     property int currentSection: 0
     property int _pendingSection: 0
+
+    // Opaque panel background. Lives as a child Rectangle now that the root is a
+    // FocusScope (C4) rather than a Rectangle — the FocusScope properly delegates
+    // focus into the sidebar/page, so the old "root is a plain Rectangle so
+    // forceActiveFocus() won't steal focus" workarounds are gone.
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.background
+    }
 
     // ── Public API ──────────────────────────────────────────────────────────
     // The only surface shell.qml / ShellLayout should call. The internals
@@ -25,8 +33,8 @@ Rectangle {
 
     // open() — show the panel on its first section, mirroring the fresh-open path
     // in openSection() (visible=true then forceActiveFocus; onVisibleChanged drives
-    // the focusTimer that lands focus on the sidebar — the root is a plain
-    // Rectangle, so this does not steal focus back).
+    // the focusTimer that lands focus on the sidebar). The FocusScope root forwards
+    // focus to its focused child, so the sidebar ends up focused either way.
     function open() {
         if (visible) {
             forceActiveFocus();
@@ -578,9 +586,7 @@ Rectangle {
             sidebarList.currentIndex = idx;
             contentFlick.contentY = 0;
             // With a deep target pending, let the page load then apply it (which
-            // pulls focus into the page); otherwise focus the sidebar. The root is
-            // a plain Rectangle (not a FocusScope), so a trailing
-            // root.forceActiveFocus() would steal focus back in the visible case.
+            // pulls focus into the page); otherwise focus the sidebar directly.
             if (root._pendingDeep !== "")
                 focusTimer.restart();
             else
