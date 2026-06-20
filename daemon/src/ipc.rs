@@ -9,7 +9,8 @@
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
 use crate::{
-    apps, config, controllerdb, health, moonlight, notifications, plex, recents, steam, system, wol,
+    apps, config, controllerdb, health, moonlight, netinfo, notifications, plex, recents, steam,
+    system, wol,
 };
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
@@ -323,6 +324,17 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         // degrades to `{"status":"error","reason":"no-mac"}`.
         Command::Wol { host } => Some(wol::handle_wol(host).await),
         Command::WolUsage => Some(protocol::resp_wol_usage()),
+        // Network reads for the QML shell (#M3): per-interface throughput
+        // counters (sysfs) and a bounded reachability/latency ping. Stateless +
+        // fail-soft like sunshine-status/wol — not routed through the NM actor.
+        Command::NetThroughput { iface } => {
+            Some(netinfo::handle_net_throughput(iface.clone()).await)
+        }
+        Command::NetThroughputUsage => Some(protocol::resp_net_throughput_usage()),
+        Command::NetPing { host, count } => {
+            Some(netinfo::handle_net_ping(host.clone(), *count).await)
+        }
+        Command::NetPingUsage => Some(protocol::resp_net_ping_usage()),
         // Plex hubs (On Deck + Recently Added) for the home-screen widget.
         // Stateless + cross-platform like `sunshine-status`; the server URL and
         // token come from the daemon env. Unconfigured/unreachable degrades to
@@ -545,6 +557,11 @@ async fn dispatch(
         // Wake-on-LAN is stateless (consumed by `dispatch_stateless`).
         | Command::Wol { .. }
         | Command::WolUsage
+        // Network reads (throughput/ping) are stateless (consumed by `dispatch_stateless`).
+        | Command::NetThroughput { .. }
+        | Command::NetThroughputUsage
+        | Command::NetPing { .. }
+        | Command::NetPingUsage
         // Plex hubs is stateless (consumed by `dispatch_stateless`).
         | Command::PlexHubs
         // Steam library/launch are stateless (consumed by `dispatch_stateless`).

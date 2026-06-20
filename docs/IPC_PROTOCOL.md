@@ -14,7 +14,7 @@ The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communic
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, `get-notifications`, `record-notification`, `set-notifications`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query reply `cec-scan`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, `get-notifications`, `record-notification`, `set-notifications`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, `net-throughput`, `net-ping`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query reply `cec-scan`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -662,6 +662,73 @@ Trigger a Wi-Fi rescan (NetworkManager `RequestScan`). Fresh results show up via
 
 **Response:** `ok\n` on success, `error:<detail>\n` on failure. Non-Linux:
 `error:unsupported on this platform\n`.
+
+### Network reads (stateless: sysfs + `ping`)
+
+These two reads do **not** go through the NetworkManager D-Bus actor — they are
+stateless and served directly from the dispatcher (like `sunshine-status` /
+`wol`). They exist so the QML shell stops shelling out for per-interface
+throughput and connectivity checks.
+
+#### `net-throughput <iface>`
+
+Read an interface's **cumulative** rx/tx byte counters from
+`/sys/class/net/<iface>/statistics/{rx,tx}_bytes`. These are raw counters, **not
+a rate** — the caller samples on an interval and computes the delta itself.
+
+The `<iface>` is the single token after the command word (the device name the
+caller gets from `net-status`'s primary connection). It is validated (no path
+separators / `..`) before it touches the sysfs path.
+
+**Response:** A compact single-line JSON **object**:
+
+```json
+{"iface":"eth0","rxBytes":12345678,"txBytes":2345678}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `iface` | string | Echo of the requested interface |
+| `rxBytes` | number | Cumulative received bytes since boot |
+| `txBytes` | number | Cumulative transmitted bytes since boot |
+
+**Fail-soft:** an unknown/unreadable interface, an invalid name, or a non-Linux
+build returns the same shape with zeroed counters and an `error` field rather
+than a protocol error, so the UI can render a dash without special-casing:
+
+```json
+{"iface":"eth0","rxBytes":0,"txBytes":0,"error":"interface not found"}
+```
+
+A missing `<iface>` body is `error:usage: net-throughput <iface>\n`.
+
+#### `net-ping <host> [count]`
+
+Run a bounded `ping` and report reachability + average RTT. `count` defaults to
+`1` and is clamped to `1..=10`; each packet uses a 2 s timeout. `<host>` is
+passed as a single argv (no shell), so it cannot inject.
+
+**Response:** A compact single-line JSON **object**:
+
+```json
+{"host":"1.1.1.1","reachable":true,"rttMs":14.5}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `host` | string | Echo of the requested host |
+| `reachable` | bool | True when `ping` exited 0 (at least one reply) |
+| `rttMs` | number \| null | Average round-trip ms when reachable; `null` otherwise |
+
+**Fail-soft:** an unreachable host, 100% packet loss, an unknown host, or a
+missing `ping` binary all return `reachable:false` with `rttMs:null` — never a
+protocol error:
+
+```json
+{"host":"1.1.1.1","reachable":false,"rttMs":null}
+```
+
+A missing `<host>` body is `error:usage: net-ping <host> [count]\n`.
 
 ### Power / idle (`zbus` / logind + UPower)
 
