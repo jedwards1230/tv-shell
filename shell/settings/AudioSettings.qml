@@ -397,8 +397,8 @@ FocusScope {
             tonePlayer.running = false;
         else if (tonePlayer.running)
             tonePlayer.running = false;
-            // onExited restarts with the new mask
         else
+            // onExited restarts with the new mask
             tonePlayer.running = true;       // start fresh
     }
 
