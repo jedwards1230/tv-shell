@@ -8,9 +8,9 @@ import "../components/lib"
 //                get-config, set-config (rumbleEnabled via SettingsStore)
 // Events consumed (subscribe): pad:connected / pad:disconnected / pad:index /
 //                pad:battery — folded into the live `pads` fleet model.
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: ctrlMainCol.implicitHeight + 2 * Theme.padding
+    hintText: "A: Select  |  Auto-refreshes every 10s"
 
     // Diagnostic enumeration of EVERY controller-like input device the system
     // sees (incl. ungrabbed/virtual), from the daemon `list-input-devices` IPC.
@@ -312,10 +312,11 @@ FocusScope {
 
     // --- Layout ---
 
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: ctrlMainCol
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         // === Connected Controllers (fleet — player slot + battery) ===
@@ -842,14 +843,6 @@ FocusScope {
                     }
                 }
             }
-        }
-
-        Item {
-            Layout.fillHeight: true
-        }
-
-        HintBar {
-            text: "A: Select  |  Auto-refreshes every 10s"
         }
     }
 }
