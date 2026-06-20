@@ -72,6 +72,169 @@ Item {
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
 
+    // === Settings schema (drives parse / serialize / setters, #8 M6) ===
+    // One row per persisted key replaces the parse / serialize / setter
+    // triplication. Fields:
+    //   key       — property name on `store` (also the JSON key)
+    //   t         — JSON typeof guard: "string" | "number" | "boolean" | "object"
+    //   validate  — optional extra predicate (v) => bool, applied on BOTH parse and
+    //               setter (enum / range checks); a failing value is rejected.
+    //   noSave    — true for keys this store reads but does NOT write back
+    //               (daemon-owned: keyBindings). Parsed in, excluded from save().
+    // Keep the per-key validators identical to the old inline guards so behavior
+    // is unchanged.
+    readonly property var _schema: [
+        {
+            key: "themeMode",
+            t: "string",
+            validate: v => v === "auto" || v === "light" || v === "dark"
+        },
+        {
+            key: "autoThemeDarkStart",
+            t: "number",
+            validate: v => v >= 0 && v <= 23
+        },
+        {
+            key: "autoThemeLightStart",
+            t: "number",
+            validate: v => v >= 0 && v <= 23
+        },
+        {
+            key: "controllerDebug",
+            t: "boolean"
+        },
+        {
+            key: "rumbleEnabled",
+            t: "boolean"
+        },
+        {
+            key: "reduceMotion",
+            t: "boolean"
+        },
+        {
+            key: "widgetSpotifyEnabled",
+            t: "boolean"
+        },
+        {
+            key: "widgetSpotifySize",
+            t: "string"
+        },
+        {
+            key: "widgetSpotifyHideFromRecent",
+            t: "boolean"
+        },
+        {
+            key: "widgetPlexEnabled",
+            t: "boolean"
+        },
+        {
+            key: "widgetPlexSize",
+            t: "string"
+        },
+        {
+            key: "widgetPlexHideFromRecent",
+            t: "boolean"
+        },
+        {
+            key: "widgetRecentEnabled",
+            t: "boolean"
+        },
+        {
+            key: "widgetRecentSize",
+            t: "string"
+        },
+        {
+            key: "widgetMoonlightEnabled",
+            t: "boolean"
+        },
+        {
+            key: "widgetMoonlightSize",
+            t: "string"
+        },
+        {
+            key: "textScale",
+            t: "number"
+        },
+        {
+            key: "hdrEnabled",
+            t: "boolean"
+        },
+        {
+            key: "nightLightEnabled",
+            t: "boolean"
+        },
+        {
+            key: "nightLightTemp",
+            t: "number"
+        },
+        {
+            key: "overscan",
+            t: "number"
+        },
+        {
+            key: "sleepTimerMinutes",
+            t: "number"
+        },
+        {
+            key: "wakeOnController",
+            t: "boolean"
+        },
+        {
+            key: "autoDimEnabled",
+            t: "boolean"
+        },
+        {
+            key: "autoDimDelayMinutes",
+            t: "number"
+        },
+        {
+            key: "defaultSink",
+            t: "string"
+        },
+        {
+            key: "audioCardProfile",
+            t: "string"
+        },
+        {
+            key: "cecFocusOnStartup",
+            t: "boolean"
+        },
+        {
+            key: "cecFocusOnWake",
+            t: "boolean"
+        },
+        {
+            key: "cecAutoSwitchOnPowerOn",
+            t: "boolean"
+        },
+        {
+            key: "cecDefaultInput",
+            t: "number"
+        },
+        {
+            key: "cecDeviceNames",
+            t: "object"
+        },
+        {
+            key: "keyBindings",
+            t: "object",
+            noSave: true
+        }
+    ]
+
+    // Does a parsed JSON value satisfy a schema row's type + validator? The
+    // "object" type also rejects null (typeof null === "object"), matching the
+    // old `obj.x && typeof obj.x === "object"` guards.
+    function _valueOk(row, v) {
+        if (row.t === "object") {
+            if (!v || typeof v !== "object")
+                return false;
+        } else if (typeof v !== row.t) {
+            return false;
+        }
+        return row.validate ? row.validate(v) : true;
+    }
+
     // Emitted once each time a get-config response has been parsed, so root-level
     // consumers can (re)apply system state that the daemon doesn't itself restore
     // on boot — e.g. the audio surround card profile (#234).
@@ -90,72 +253,14 @@ Item {
         onResponseReceived: line => {
             try {
                 var obj = JSON.parse(line);
-                if (obj.themeMode === "auto" || obj.themeMode === "light" || obj.themeMode === "dark")
-                    store.themeMode = obj.themeMode;
-                if (typeof obj.autoThemeDarkStart === "number" && obj.autoThemeDarkStart >= 0 && obj.autoThemeDarkStart <= 23)
-                    store.autoThemeDarkStart = obj.autoThemeDarkStart;
-                if (typeof obj.autoThemeLightStart === "number" && obj.autoThemeLightStart >= 0 && obj.autoThemeLightStart <= 23)
-                    store.autoThemeLightStart = obj.autoThemeLightStart;
-                if (typeof obj.controllerDebug === "boolean")
-                    store.controllerDebug = obj.controllerDebug;
-                if (typeof obj.rumbleEnabled === "boolean")
-                    store.rumbleEnabled = obj.rumbleEnabled;
-                if (typeof obj.reduceMotion === "boolean")
-                    store.reduceMotion = obj.reduceMotion;
-                if (typeof obj.widgetSpotifyEnabled === "boolean")
-                    store.widgetSpotifyEnabled = obj.widgetSpotifyEnabled;
-                if (typeof obj.widgetSpotifySize === "string")
-                    store.widgetSpotifySize = obj.widgetSpotifySize;
-                if (typeof obj.widgetSpotifyHideFromRecent === "boolean")
-                    store.widgetSpotifyHideFromRecent = obj.widgetSpotifyHideFromRecent;
-                if (typeof obj.widgetPlexEnabled === "boolean")
-                    store.widgetPlexEnabled = obj.widgetPlexEnabled;
-                if (typeof obj.widgetPlexSize === "string")
-                    store.widgetPlexSize = obj.widgetPlexSize;
-                if (typeof obj.widgetPlexHideFromRecent === "boolean")
-                    store.widgetPlexHideFromRecent = obj.widgetPlexHideFromRecent;
-                if (typeof obj.widgetRecentEnabled === "boolean")
-                    store.widgetRecentEnabled = obj.widgetRecentEnabled;
-                if (typeof obj.widgetRecentSize === "string")
-                    store.widgetRecentSize = obj.widgetRecentSize;
-                if (typeof obj.widgetMoonlightEnabled === "boolean")
-                    store.widgetMoonlightEnabled = obj.widgetMoonlightEnabled;
-                if (typeof obj.widgetMoonlightSize === "string")
-                    store.widgetMoonlightSize = obj.widgetMoonlightSize;
-                if (typeof obj.textScale === "number")
-                    store.textScale = obj.textScale;
-                if (typeof obj.hdrEnabled === "boolean")
-                    store.hdrEnabled = obj.hdrEnabled;
-                if (typeof obj.nightLightEnabled === "boolean")
-                    store.nightLightEnabled = obj.nightLightEnabled;
-                if (typeof obj.nightLightTemp === "number")
-                    store.nightLightTemp = obj.nightLightTemp;
-                if (typeof obj.overscan === "number")
-                    store.overscan = obj.overscan;
-                if (typeof obj.sleepTimerMinutes === "number")
-                    store.sleepTimerMinutes = obj.sleepTimerMinutes;
-                if (typeof obj.wakeOnController === "boolean")
-                    store.wakeOnController = obj.wakeOnController;
-                if (typeof obj.autoDimEnabled === "boolean")
-                    store.autoDimEnabled = obj.autoDimEnabled;
-                if (typeof obj.autoDimDelayMinutes === "number")
-                    store.autoDimDelayMinutes = obj.autoDimDelayMinutes;
-                if (typeof obj.defaultSink === "string")
-                    store.defaultSink = obj.defaultSink;
-                if (typeof obj.audioCardProfile === "string")
-                    store.audioCardProfile = obj.audioCardProfile;
-                if (typeof obj.cecFocusOnStartup === "boolean")
-                    store.cecFocusOnStartup = obj.cecFocusOnStartup;
-                if (typeof obj.cecFocusOnWake === "boolean")
-                    store.cecFocusOnWake = obj.cecFocusOnWake;
-                if (typeof obj.cecAutoSwitchOnPowerOn === "boolean")
-                    store.cecAutoSwitchOnPowerOn = obj.cecAutoSwitchOnPowerOn;
-                if (typeof obj.cecDefaultInput === "number")
-                    store.cecDefaultInput = obj.cecDefaultInput;
-                if (obj.cecDeviceNames && typeof obj.cecDeviceNames === "object")
-                    store.cecDeviceNames = obj.cecDeviceNames;
-                if (obj.keyBindings && typeof obj.keyBindings === "object")
-                    store.keyBindings = obj.keyBindings;
+                // Schema-driven parse: apply each known key whose value passes its
+                // type + validator guard. Unknown / malformed keys are left at the
+                // current value (same as the old per-key `if` guards).
+                for (var i = 0; i < store._schema.length; i++) {
+                    var row = store._schema[i];
+                    if (row.key in obj && store._valueOk(row, obj[row.key]))
+                        store[row.key] = obj[row.key];
+                }
                 store.configLoaded();
             } catch (e) {
                 console.log("SettingsStore: failed to parse settings:", e);
@@ -176,204 +281,160 @@ Item {
         loadProc.request("get-config");
     }
     function save() {
-        var body = JSON.stringify({
-            "themeMode": store.themeMode,
-            "autoThemeDarkStart": store.autoThemeDarkStart,
-            "autoThemeLightStart": store.autoThemeLightStart,
-            "controllerDebug": store.controllerDebug,
-            "rumbleEnabled": store.rumbleEnabled,
-            "reduceMotion": store.reduceMotion,
-            "widgetSpotifyEnabled": store.widgetSpotifyEnabled,
-            "widgetSpotifySize": store.widgetSpotifySize,
-            "widgetSpotifyHideFromRecent": store.widgetSpotifyHideFromRecent,
-            "widgetPlexEnabled": store.widgetPlexEnabled,
-            "widgetPlexSize": store.widgetPlexSize,
-            "widgetPlexHideFromRecent": store.widgetPlexHideFromRecent,
-            "widgetRecentEnabled": store.widgetRecentEnabled,
-            "widgetRecentSize": store.widgetRecentSize,
-            "widgetMoonlightEnabled": store.widgetMoonlightEnabled,
-            "widgetMoonlightSize": store.widgetMoonlightSize,
-            "textScale": store.textScale,
-            "hdrEnabled": store.hdrEnabled,
-            "nightLightEnabled": store.nightLightEnabled,
-            "nightLightTemp": store.nightLightTemp,
-            "overscan": store.overscan,
-            "sleepTimerMinutes": store.sleepTimerMinutes,
-            "wakeOnController": store.wakeOnController,
-            "autoDimEnabled": store.autoDimEnabled,
-            "autoDimDelayMinutes": store.autoDimDelayMinutes,
-            "defaultSink": store.defaultSink,
-            "audioCardProfile": store.audioCardProfile,
-            "cecFocusOnStartup": store.cecFocusOnStartup,
-            "cecFocusOnWake": store.cecFocusOnWake,
-            "cecAutoSwitchOnPowerOn": store.cecAutoSwitchOnPowerOn,
-            "cecDefaultInput": store.cecDefaultInput,
-            "cecDeviceNames": store.cecDeviceNames
-        });
-        saveProc.request("set-config", body);
+        // Schema-driven serialize: every QML-owned key except the daemon-owned
+        // ones (noSave, e.g. keyBindings). The daemon does the read-modify-write,
+        // preserving foreign keys it owns.
+        var out = {};
+        for (var i = 0; i < store._schema.length; i++) {
+            var row = store._schema[i];
+            if (!row.noSave)
+                out[row.key] = store[row.key];
+        }
+        saveProc.request("set-config", JSON.stringify(out));
+    }
+
+    // Generic setter backing the trivial set+save setters. Looks up the key's
+    // schema row and applies its validator (if any) as a gate, so a validated key
+    // (themeMode enum, autoTheme*Start range) rejects a bad value exactly as the
+    // old hand-written guards did. Returns true if the value was accepted.
+    function _setKey(key, value) {
+        for (var i = 0; i < store._schema.length; i++) {
+            var row = store._schema[i];
+            if (row.key === key) {
+                if (row.validate && !row.validate(value))
+                    return false;
+                store[key] = value;
+                store.save();
+                return true;
+            }
+        }
+        return false;
     }
 
     function setThemeMode(mode) {
-        if (mode === "auto" || mode === "light" || mode === "dark") {
-            themeMode = mode;
-            save();
-        }
+        store._setKey("themeMode", mode);
     }
 
     function setAutoThemeDarkStart(hour) {
-        if (hour >= 0 && hour <= 23) {
-            autoThemeDarkStart = hour;
-            save();
-        }
+        store._setKey("autoThemeDarkStart", hour);
     }
 
     function setAutoThemeLightStart(hour) {
-        if (hour >= 0 && hour <= 23) {
-            autoThemeLightStart = hour;
-            save();
-        }
+        store._setKey("autoThemeLightStart", hour);
     }
 
     function setControllerDebug(enabled) {
-        controllerDebug = enabled;
-        save();
+        store._setKey("controllerDebug", enabled);
     }
 
     function setRumbleEnabled(enabled) {
-        rumbleEnabled = enabled;
-        save();
+        store._setKey("rumbleEnabled", enabled);
     }
 
     function setReduceMotion(enabled) {
-        reduceMotion = enabled;
-        save();
+        store._setKey("reduceMotion", enabled);
     }
 
     function setWidgetSpotifyEnabled(enabled) {
-        widgetSpotifyEnabled = enabled;
-        save();
+        store._setKey("widgetSpotifyEnabled", enabled);
     }
 
     function setWidgetSpotifySize(size) {
-        widgetSpotifySize = size;
-        save();
+        store._setKey("widgetSpotifySize", size);
     }
 
     function setWidgetSpotifyHideFromRecent(enabled) {
-        widgetSpotifyHideFromRecent = enabled;
-        save();
+        store._setKey("widgetSpotifyHideFromRecent", enabled);
     }
 
     function setWidgetPlexEnabled(enabled) {
-        widgetPlexEnabled = enabled;
-        save();
+        store._setKey("widgetPlexEnabled", enabled);
     }
 
     function setWidgetPlexSize(size) {
-        widgetPlexSize = size;
-        save();
+        store._setKey("widgetPlexSize", size);
     }
 
     function setWidgetPlexHideFromRecent(enabled) {
-        widgetPlexHideFromRecent = enabled;
-        save();
+        store._setKey("widgetPlexHideFromRecent", enabled);
     }
 
     function setWidgetRecentEnabled(enabled) {
-        widgetRecentEnabled = enabled;
-        save();
+        store._setKey("widgetRecentEnabled", enabled);
     }
 
     function setWidgetRecentSize(size) {
-        widgetRecentSize = size;
-        save();
+        store._setKey("widgetRecentSize", size);
     }
 
     function setWidgetMoonlightEnabled(enabled) {
-        widgetMoonlightEnabled = enabled;
-        save();
+        store._setKey("widgetMoonlightEnabled", enabled);
     }
 
     function setWidgetMoonlightSize(size) {
-        widgetMoonlightSize = size;
-        save();
+        store._setKey("widgetMoonlightSize", size);
     }
 
     function setTextScale(scale) {
-        textScale = scale;
-        save();
+        store._setKey("textScale", scale);
     }
 
     function setHdrEnabled(enabled) {
-        hdrEnabled = enabled;
-        save();
+        store._setKey("hdrEnabled", enabled);
     }
 
     function setNightLightEnabled(enabled) {
-        nightLightEnabled = enabled;
-        save();
+        store._setKey("nightLightEnabled", enabled);
     }
 
     function setNightLightTemp(temp) {
-        nightLightTemp = temp;
-        save();
+        store._setKey("nightLightTemp", temp);
     }
 
     function setOverscan(pct) {
-        overscan = pct;
-        save();
+        store._setKey("overscan", pct);
     }
 
     function setSleepTimerMinutes(m) {
-        sleepTimerMinutes = m;
-        save();
+        store._setKey("sleepTimerMinutes", m);
     }
 
     function setWakeOnController(enabled) {
-        wakeOnController = enabled;
-        save();
+        store._setKey("wakeOnController", enabled);
     }
 
     function setAutoDimEnabled(enabled) {
-        autoDimEnabled = enabled;
-        save();
+        store._setKey("autoDimEnabled", enabled);
     }
 
     function setAutoDimDelayMinutes(minutes) {
-        autoDimDelayMinutes = minutes;
-        save();
+        store._setKey("autoDimDelayMinutes", minutes);
     }
 
     function setDefaultSink(name) {
-        defaultSink = name;
-        save();
+        store._setKey("defaultSink", name);
     }
 
     // Persist the chosen surround card profile as "card|profile" so it can be
     // re-applied on boot (PipeWire otherwise reverts to the stereo default).
     function setAudioCardProfile(value) {
-        audioCardProfile = value;
-        save();
+        store._setKey("audioCardProfile", value);
     }
 
     function setCecFocusOnStartup(enabled) {
-        cecFocusOnStartup = enabled;
-        save();
+        store._setKey("cecFocusOnStartup", enabled);
     }
 
     function setCecFocusOnWake(enabled) {
-        cecFocusOnWake = enabled;
-        save();
+        store._setKey("cecFocusOnWake", enabled);
     }
 
     function setCecAutoSwitchOnPowerOn(enabled) {
-        cecAutoSwitchOnPowerOn = enabled;
-        save();
+        store._setKey("cecAutoSwitchOnPowerOn", enabled);
     }
 
     function setCecDefaultInput(addr) {
-        cecDefaultInput = addr;
-        save();
+        store._setKey("cecDefaultInput", addr);
     }
 
     // Set or clear a local name override for a CEC logical address. An empty/blank
