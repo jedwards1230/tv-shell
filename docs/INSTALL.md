@@ -70,6 +70,42 @@ untouched and the shell still boots fully.
 > (an unauthenticated RCE surface). Set `[dev] allow_insecure_lan = true` to
 > override that on a box that genuinely wants the unauthenticated LAN dev loop.
 
+#### Migrating an existing deploy (daemon.env → config.toml)
+
+This release replaced the old `daemon.env` env file with `config.toml`. The
+session script no longer sources `daemon.env`, so a box that relied on it for the
+LAN bridge / MCP server **will silently lose those settings** (the surface just
+won't come up) — and a box that ran a non-loopback bind with dev tools + no auth
+will now hit the startup-refusal above. On such a box the deploy is no longer just
+"restart the shell"; do it in this order so the daemon doesn't refuse to start:
+
+1. Run the installer/migration so the new tree + `config.toml.example` are in place.
+2. **Write `~/.config/game-shell/config.toml`** translating the box's old
+   `daemon.env` (and, if it ran LAN + dev + no-auth, include `[dev]
+   allow_insecure_lan = true` — without it the daemon refuses to start).
+3. **Then** restart the daemon/shell.
+
+For the canonical agent-native dev box (LAN bind + dev tools + auth off on a
+trusted, firewalled single-user LAN), the equivalent `config.toml` is:
+
+```toml
+[http]
+bind = "0.0.0.0:8089"
+auth_enabled = false
+
+[mcp]
+bind = "0.0.0.0:8090"
+dev = true
+
+[dev]
+# Required: without this the daemon refuses to start (LAN bind + dev + no auth).
+allow_insecure_lan = true
+```
+
+To **lock such a box down** instead of preserving the insecure loop, drop the
+`[dev]` block, set `[http] auth_enabled = true`, and point `[http] token_file` at
+a `0600` token file (`openssl rand -hex 32 > ~/.config/game-shell/http-token`).
+
 ### Display tuning — `hyprland-local.conf` (optional)
 
 `config/hyprland.conf` sources `~/.config/game-shell/hyprland-local.conf` if
