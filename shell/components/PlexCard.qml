@@ -26,7 +26,7 @@ Item {
     property int posterWidth: Math.round(Theme.cardWidth * 0.62)
     property int posterHeight: Math.round(posterWidth * 1.5)
 
-    readonly property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
+    readonly property bool isFocused: (activeFocus && !InputMode.mouseMode) || (mouseArea.containsMouse && InputMode.mouseMode)
 
     signal activated
 
@@ -43,7 +43,7 @@ Item {
     Connections {
         target: Theme
         function onMouseModeChanged() {
-            if (!Theme.mouseMode && mouseArea.containsMouse) {
+            if (!InputMode.mouseMode && mouseArea.containsMouse) {
                 if (root.ListView.view)
                     root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y);
                 root.forceActiveFocus();
@@ -183,10 +183,10 @@ Item {
         cursorShape: Qt.PointingHandCursor
         onPositionChanged: mouse => {
             let p = mapToItem(null, mouse.x, mouse.y);
-            Theme.pointerMoved(p.x, p.y);
+            InputMode.pointerMoved(p.x, p.y);
         }
         onClicked: {
-            Theme.enterMouseMode();
+            InputMode.enterMouseMode();
             root.forceActiveFocus();
             root.activated();
         }

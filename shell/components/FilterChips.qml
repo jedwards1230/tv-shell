@@ -44,7 +44,7 @@ FocusScope {
     // True while the D-pad cursor sits on an ACTION chip. Suppresses the
     // selected-segment crimson fill so a focused action chip and the active
     // segment are never both filled at once — only one chip fills at a time.
-    readonly property bool _actionFocused: activeFocus && !Theme.mouseMode && _isAction(_focusIndex)
+    readonly property bool _actionFocused: activeFocus && !InputMode.mouseMode && _isAction(_focusIndex)
 
     // === Home-tile focus contract ===
     readonly property bool regionFocused: activeFocus
@@ -88,25 +88,25 @@ FocusScope {
     Keys.onPressed: event => {
         switch (event.key) {
         case Qt.Key_Left:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root._focusIndex > 0)
                 root._moveTo(root._focusIndex - 1);
             event.accepted = true;
             break;
         case Qt.Key_Right:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root._focusIndex < root.options.length - 1)
                 root._moveTo(root._focusIndex + 1);
             event.accepted = true;
             break;
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             root._activate();
             event.accepted = true;
             break;
         case Qt.Key_Up:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             {
                 var up = root.previousRow;
                 while (up) {
@@ -120,7 +120,7 @@ FocusScope {
             }
             break;
         case Qt.Key_Down:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             {
                 var dn = root.nextRow;
                 while (dn) {
@@ -157,7 +157,7 @@ FocusScope {
                 readonly property bool isAction: modelData.action === true
                 // Only filter chips can be the "selected" segment.
                 readonly property bool isCurrent: !isAction && index === root.currentIndex
-                readonly property bool isFocused: root.activeFocus && !Theme.mouseMode && index === root._focusIndex
+                readonly property bool isFocused: root.activeFocus && !InputMode.mouseMode && index === root._focusIndex
                 // Crimson selected fill — hidden while the cursor is on an action
                 // chip so it and the focused action chip are never both filled.
                 readonly property bool showSelectedFill: isCurrent && !root._actionFocused
@@ -192,10 +192,10 @@ FocusScope {
                     cursorShape: Qt.PointingHandCursor
                     onPositionChanged: mouse => {
                         let p = mapToItem(null, mouse.x, mouse.y);
-                        Theme.pointerMoved(p.x, p.y);
+                        InputMode.pointerMoved(p.x, p.y);
                     }
                     onClicked: {
-                        Theme.enterMouseMode();
+                        InputMode.enterMouseMode();
                         root.forceActiveFocus();
                         root._focusIndex = chip.index;
                         // Click commits (mouse users expect select-on-click) —

@@ -36,7 +36,7 @@ FocusScope {
 
     activeFocusOnTab: true
 
-    readonly property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
+    readonly property bool isFocused: (activeFocus && !InputMode.mouseMode) || (mouseArea.containsMouse && InputMode.mouseMode)
 
     Accessible.role: Accessible.Button
     Accessible.name: root.waking ? "Waking " + root.host : "Wake " + root.host
@@ -49,7 +49,7 @@ FocusScope {
     Connections {
         target: Theme
         function onMouseModeChanged() {
-            if (!Theme.mouseMode && mouseArea.containsMouse)
+            if (!InputMode.mouseMode && mouseArea.containsMouse)
                 root.forceActiveFocus();
         }
     }
@@ -110,10 +110,10 @@ FocusScope {
         cursorShape: Qt.PointingHandCursor
         onPositionChanged: mouse => {
             let p = mapToItem(null, mouse.x, mouse.y);
-            Theme.pointerMoved(p.x, p.y);
+            InputMode.pointerMoved(p.x, p.y);
         }
         onClicked: {
-            Theme.enterMouseMode();
+            InputMode.enterMouseMode();
             root.forceActiveFocus();
             root.activated();
         }
@@ -126,7 +126,7 @@ FocusScope {
     // like FilterChips, so vertical navigation works while the wake card stands in
     // for the poster row. B/Escape bubbles up as `escaped`.
     Keys.onUpPressed: event => {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         var up = root.previousRow;
         while (up) {
             if (up.visible) {
@@ -138,7 +138,7 @@ FocusScope {
         }
     }
     Keys.onDownPressed: event => {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         var dn = root.nextRow;
         while (dn) {
             if (dn.visible) {

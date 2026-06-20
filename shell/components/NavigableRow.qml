@@ -116,7 +116,7 @@ FocusScope {
         // (the always-wrapping ListView increment/decrement methods would break
         // the default no-wrap behavior).
         Keys.onLeftPressed: {
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             // Default (no predicate): the exact original index move. Predicate set:
             // skip non-focusable indices via _stepFocusable.
             if (root.focusableIndex !== null) {
@@ -128,7 +128,7 @@ FocusScope {
             }
         }
         Keys.onRightPressed: {
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root.focusableIndex !== null) {
                 root._stepFocusable(1);
             } else if (listView.currentIndex < listView.count - 1) {
@@ -138,24 +138,24 @@ FocusScope {
             }
         }
         Keys.onReturnPressed: {
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (listView.currentItem)
                 root.activated();
         }
         Keys.onEnterPressed: {
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (listView.currentItem)
                 root.activated();
         }
         Keys.onEscapePressed: {
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             root.escaped();
         }
         // Context popover trigger = the X face (daemon altAction → KEY_X), not the
         // Y face (altSelect → KEY_TAB). Standardized to X across every widget.
         Keys.onPressed: event => {
             if (event.key === Qt.Key_X) {
-                Theme.exitMouseMode();
+                InputMode.exitMouseMode();
                 if (listView.currentItem) {
                     root.contextRequested();
                     event.accepted = true;
@@ -163,11 +163,11 @@ FocusScope {
             }
         }
         Keys.onUpPressed: {
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             root._navigateUp();
         }
         Keys.onDownPressed: {
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             root._navigateDown();
         }
     }

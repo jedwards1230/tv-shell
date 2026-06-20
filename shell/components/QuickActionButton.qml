@@ -43,8 +43,8 @@ Rectangle {
     width: iconSize
     height: iconSize
     radius: iconSize / 2
-    color: mouseArea.containsMouse && Theme.mouseMode ? Theme.surfaceHover : "transparent"
-    border.width: glyph.rowActiveFocus && !Theme.mouseMode && glyph.currentIndex === glyph.index ? 3 : 0
+    color: mouseArea.containsMouse && InputMode.mouseMode ? Theme.surfaceHover : "transparent"
+    border.width: glyph.rowActiveFocus && !InputMode.mouseMode && glyph.currentIndex === glyph.index ? 3 : 0
     border.color: Theme.focusBorder
 
     Accessible.role: Accessible.Button
@@ -91,11 +91,11 @@ Rectangle {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         // Genuine-move-only mouse-mode flip (#45): scene-root coords delta
-        // filtered by Theme.pointerMoved. No onEntered (content-scroll false
+        // filtered by InputMode.pointerMoved. No onEntered (content-scroll false
         // trigger). mapToItem(null,...) maps to scene root.
         onPositionChanged: mouse => {
             let p = mapToItem(null, mouse.x, mouse.y);
-            Theme.pointerMoved(p.x, p.y);
+            InputMode.pointerMoved(p.x, p.y);
         }
         onClicked: glyph.activated()
     }

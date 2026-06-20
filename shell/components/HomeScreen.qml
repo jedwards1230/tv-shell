@@ -792,7 +792,7 @@ FocusScope {
                     required property int index
                     width: Math.round(Theme.cardWidth * 1.8)
                     height: Theme.cardHeight
-                    readonly property bool isFocused: (index === allAppsEntry.currentIndex && allAppsEntry.activeFocus && !Theme.mouseMode) || (allAppsMouse.containsMouse && Theme.mouseMode)
+                    readonly property bool isFocused: (index === allAppsEntry.currentIndex && allAppsEntry.activeFocus && !InputMode.mouseMode) || (allAppsMouse.containsMouse && InputMode.mouseMode)
                     z: isFocused ? 10 : 0
 
                     FocusFrame {
@@ -831,10 +831,10 @@ FocusScope {
                             cursorShape: Qt.PointingHandCursor
                             onPositionChanged: mouse => {
                                 let p = mapToItem(null, mouse.x, mouse.y);
-                                Theme.pointerMoved(p.x, p.y);
+                                InputMode.pointerMoved(p.x, p.y);
                             }
                             onClicked: {
-                                Theme.enterMouseMode();
+                                InputMode.enterMouseMode();
                                 allAppsEntry.currentIndex = 0;
                                 allAppsEntry.forceActiveFocus();
                                 root.libraryRequested();

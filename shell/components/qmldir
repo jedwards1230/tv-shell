@@ -8,6 +8,7 @@ TargetProvider 1.0 TargetProvider.qml
 MoonlightProvider 1.0 MoonlightProvider.qml
 MoonlightConf 1.0 MoonlightConf.qml
 singleton Theme 1.0 Theme.qml
+singleton InputMode 1.0 InputMode.qml
 singleton Units 1.0 Units.qml
 singleton WindowMatcher 1.0 WindowMatcher.qml
 StreamCard 1.0 StreamCard.qml

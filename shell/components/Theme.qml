@@ -6,50 +6,23 @@ Item {
     // "auto" (time-based), "light", "dark"
     readonly property string themeMode: SettingsStore.themeMode
 
-    // === Input Mode ===
-    // true when mouse/right-stick is driving focus, false for controller/D-pad.
-    //
-    // Multi-source (#45): this UI flag is owned by QML, which observes its own
-    // Wayland pointer and key/gamepad-nav events directly — a physical K400
-    // mouse never reaches the daemon, so hover/move must flip mouse-mode WITHOUT
-    // any daemon round-trip. The daemon's `input-mode:*` event (InputManager)
-    // is now just ONE more source, covering only its right-stick->cursor case.
-    // Funnel writes through enterMouseMode()/exitMouseMode() so redundant sets
-    // don't emit spurious mouseModeChanged() (every consumer re-syncs focus on
-    // that signal).
-    property bool mouseMode: false
+    // === Input Mode (extracted to the InputMode singleton, #45 follow-up) ===
+    // These are thin pass-throughs so call sites not yet migrated to InputMode
+    // keep working. `mouseMode` re-exports the flag (readonly — write via
+    // InputMode.enter/exitMouseMode); the helpers forward to InputMode. New code
+    // should call InputMode.* directly. See InputMode.qml for the rationale.
+    readonly property bool mouseMode: InputMode.mouseMode
 
-    // A real Wayland pointer event (hover/move/click) — switch to mouse mode.
     function enterMouseMode() {
-        if (!mouseMode)
-            mouseMode = true;
+        InputMode.enterMouseMode();
     }
 
-    // A key or gamepad-nav event — switch back to controller mode.
     function exitMouseMode() {
-        if (mouseMode)
-            mouseMode = false;
+        InputMode.exitMouseMode();
     }
 
-    // Last sampled GLOBAL pointer position (-1 = no sample yet). Tracked here so
-    // every hover handler shares one delta filter instead of each MouseArea
-    // guessing whether the pointer actually moved.
-    property real _lastPointerX: -1
-    property real _lastPointerY: -1
-
-    // Called from MouseArea.onPositionChanged with the GLOBAL pointer coords.
-    // Only flips to mouse mode on a *genuine* pointer move. Why global coords:
-    // when content scrolls under a still cursor, onPositionChanged fires because
-    // the item moved under the pointer — but the pointer's GLOBAL position is
-    // UNCHANGED (the local coords shift by exactly the same delta the item moved,
-    // so mapToGlobal cancels it out). A real mouse move changes the global
-    // position. The first sample only records a baseline (never flips), so the
-    // initial hover that lands when a row scrolls into place can't trip it.
     function pointerMoved(gx, gy) {
-        if (_lastPointerX >= 0 && (Math.abs(gx - _lastPointerX) + Math.abs(gy - _lastPointerY) > 1.0))
-            enterMouseMode();
-        _lastPointerX = gx;
-        _lastPointerY = gy;
+        InputMode.pointerMoved(gx, gy);
     }
 
     // === Controller Debug Overlay (persisted via SettingsStore) ===

@@ -7,9 +7,9 @@ Rectangle {
     width: implicitWidth
     height: implicitHeight
     radius: Units.radiusMD
-    color: ((root.activeFocus || root.highlighted) && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode) ? Theme.surfaceHover : Theme.surface
-    border.width: (root.activeFocus || root.highlighted) && !Theme.mouseMode ? 3 : 2
-    border.color: (root.activeFocus || root.highlighted) && !Theme.mouseMode ? Theme.focusBorder : Theme.surfaceBorder
+    color: ((root.activeFocus || root.highlighted) && !InputMode.mouseMode) || (mouseArea.containsMouse && InputMode.mouseMode) ? Theme.surfaceHover : Theme.surface
+    border.width: (root.activeFocus || root.highlighted) && !InputMode.mouseMode ? 3 : 2
+    border.color: (root.activeFocus || root.highlighted) && !InputMode.mouseMode ? Theme.focusBorder : Theme.surfaceBorder
 
     property alias text: label.text
     // Externally-driven focus styling for call sites that manage selection via a
@@ -30,7 +30,7 @@ Rectangle {
     Connections {
         target: Theme
         function onMouseModeChanged() {
-            if (!Theme.mouseMode && mouseArea.containsMouse)
+            if (!InputMode.mouseMode && mouseArea.containsMouse)
                 root.forceActiveFocus();
         }
     }
@@ -52,16 +52,16 @@ Rectangle {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         // Hover flips to mouse-mode only on a GENUINE pointer move, filtered by
-        // Theme.pointerMoved (global-coords delta). No onEntered: containsMouse
+        // InputMode.pointerMoved (global-coords delta). No onEntered: containsMouse
         // flips when content scrolls under a stationary cursor and would hijack
         // controller-nav focus (#45). Coords mapped to scene root (null) —
         // mapToItem (used elsewhere here) over mapToGlobal (used nowhere).
         onPositionChanged: mouse => {
             let p = mapToItem(null, mouse.x, mouse.y);
-            Theme.pointerMoved(p.x, p.y);
+            InputMode.pointerMoved(p.x, p.y);
         }
         onClicked: {
-            Theme.enterMouseMode();
+            InputMode.enterMouseMode();
             root.forceActiveFocus();
             root.activated();
         }

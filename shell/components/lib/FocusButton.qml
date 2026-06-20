@@ -52,7 +52,7 @@ FocusScope {
         cursorShape: Qt.PointingHandCursor
         onPositionChanged: mouse => {
             let p = mapToItem(null, mouse.x, mouse.y);
-            Theme.pointerMoved(p.x, p.y);
+            InputMode.pointerMoved(p.x, p.y);
         }
         onClicked: {
             scope.forceActiveFocus();

@@ -279,9 +279,9 @@ Rectangle {
                         color: {
                             if (root.currentSection === index)
                                 return Theme.sidebarActive;
-                            if (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode)
+                            if (sidebarList.currentIndex === index && sidebarList.activeFocus && !InputMode.mouseMode)
                                 return Theme.surfaceHover;
-                            if (sidebarMA.containsMouse && Theme.mouseMode)
+                            if (sidebarMA.containsMouse && InputMode.mouseMode)
                                 return Theme.surfaceHover;
                             return "transparent";
                         }
@@ -294,7 +294,7 @@ Rectangle {
 
                         // Left accent bar on focused item
                         FocusAccentBar {
-                            active: (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode) || (sidebarMA.containsMouse && Theme.mouseMode)
+                            active: (sidebarList.currentIndex === index && sidebarList.activeFocus && !InputMode.mouseMode) || (sidebarMA.containsMouse && InputMode.mouseMode)
                         }
 
                         RowLayout {
@@ -360,7 +360,7 @@ Rectangle {
                         Connections {
                             target: Theme
                             function onMouseModeChanged() {
-                                if (!Theme.mouseMode && sidebarMA.containsMouse) {
+                                if (!InputMode.mouseMode && sidebarMA.containsMouse) {
                                     sidebarList.currentIndex = index;
                                     sidebarList.forceActiveFocus();
                                 }
