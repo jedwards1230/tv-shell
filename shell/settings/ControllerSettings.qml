@@ -486,21 +486,12 @@ FocusScope {
             KeyNavigation.up: refreshScope
             KeyNavigation.down: grabScope
 
-            delegate: Rectangle {
+            delegate: SettingsListRow {
                 required property int index
                 required property var modelData
                 width: controllerList.width
-                height: 180
-                radius: Units.radiusMD
-                color: controllerList.currentIndex === index && controllerList.activeFocus ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
+                itemHeight: 180
+                selected: controllerList.currentIndex === index && controllerList.activeFocus
 
                 ColumnLayout {
                     anchors.fill: parent
