@@ -2,30 +2,25 @@ import QtQuick
 import QtQuick.Layouts
 import "lib"
 
-FocusScope {
+ModalOverlay {
     id: root
 
     property string runningApp: ""
     property string hostName: ""
-    property bool opened: false
 
     signal resumeRequested
     signal quitRequested
     signal cancelled
 
-    anchors.fill: parent
-    visible: opened
-    focus: opened
     z: 55
+
+    // The base's scrim-click + B/Escape emit closed(); for this dialog that's a
+    // cancel.
+    onClosed: root.cancelled()
 
     onOpenedChanged: {
         if (opened)
             resumeBtn.forceActiveFocus();
-    }
-
-    DimmedBackdrop {
-        // dimLevel defaults to Theme.scrimOpacity (canonical modal scrim).
-        onClicked: root.cancelled()
     }
 
     Rectangle {
@@ -83,6 +78,4 @@ FocusScope {
             }
         }
     }
-
-    Keys.onEscapePressed: root.cancelled()
 }

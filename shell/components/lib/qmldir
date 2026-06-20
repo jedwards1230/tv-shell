@@ -10,6 +10,7 @@ FocusButton 1.0 FocusButton.qml
 FocusRegion 1.0 FocusRegion.qml
 HintBar 1.0 HintBar.qml
 LabeledTextInput 1.0 LabeledTextInput.qml
+ModalOverlay 1.0 ModalOverlay.qml
 MprisPlayerBase 1.0 MprisPlayerBase.qml
 PointerTrackingArea 1.0 PointerTrackingArea.qml
 PreferenceRow 1.0 PreferenceRow.qml
