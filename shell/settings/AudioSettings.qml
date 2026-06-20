@@ -567,43 +567,25 @@ FocusScope {
         }
 
         // ---------------------------------------------------------------
-        // Format / sample-rate card (read-only — not in focus chain).
-        // Placed ABOVE the speaker test so it's reachable: scroll-follow only
-        // tracks focusable controls, and nothing below the last test button can
-        // be scrolled into view otherwise (the "can't reach Format" bug).
-        // ---------------------------------------------------------------
-        SectionHeader {
-            text: "Format"
-        }
-
-        ReadonlyInfoCard {
-            Text {
-                id: formatLabel
-                width: parent.width
-                text: root.formatInfo
-                font.pixelSize: Theme.fontSmall
-                font.family: "monospace"
-                color: Theme.textPrimary
-                wrapMode: Text.Wrap
-            }
-        }
-
-        // ---------------------------------------------------------------
         // Speaker Test — short, soft 480 Hz tones via pw-play (#234). The
         // buttons are conditional on the active output profile's channel count
-        // (see channelLayouts above): stereo → Left/Right, 5.1 → six, 7.1 →
-        // eight. Each is its own FocusScope (FocusButton) so SettingsApp's
-        // scroll-follow keeps the focused control visible.
+        // (see channelLayouts above): stereo → L/R, 5.1 → six, 7.1 → eight. Each
+        // is its own FocusScope (FocusButton) so SettingsApp's scroll-follow
+        // keeps the focused control visible.
         // ---------------------------------------------------------------
         SectionHeader {
             text: "Speaker Test"
         }
 
+        // Lightweight status line (no card/pill): the negotiated sample-rate /
+        // format / channel count of the current output. The channel layout is
+        // already inferred from the profile, so a separate Format box would be
+        // redundant — this just surfaces the live format as a muted caption.
         Text {
             Layout.fillWidth: true
-            text: "Output: " + sinkDropdownScope.displayText + "  ·  " + root.channelCount + " channels"
+            text: root.formatInfo === "Unavailable" ? (root.channelCount + " channels") : root.formatInfo
             font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
+            color: Theme.textMuted
             wrapMode: Text.Wrap
         }
 
