@@ -298,6 +298,10 @@ Item {
         onClientsReceived: clients => {
             let apps = (root.applications || []);
             let windows = [];
+            // Set of window classes currently present — used by the
+            // launched-app fast-path below to detect a still-running tracked app
+            // without re-running the full WindowMatcher scan.
+            let seenClasses = {};
             // One entry PER WINDOW (no class dedup) so the home row can show a
             // card per running window and focus/close each one individually.
             for (let i = 0; i < clients.length; i++) {
@@ -305,6 +309,8 @@ Item {
                 let cls = c["class"] || "";
                 if (cls === "" || cls.indexOf("quickshell") >= 0)
                     continue;
+
+                seenClasses[cls] = true;
 
                 let iconName = (c["initialClass"] || cls).toLowerCase();
                 let appIcon = iconName;
