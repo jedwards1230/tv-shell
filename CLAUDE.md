@@ -17,7 +17,7 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 ```
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
-- **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots, and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset), **`Super+Right` → `intent overlay:session`** (open Session QAM). Build with `scripts/build-daemon.sh` (canonical; uses `--features cec,mcp`) or `cargo build --release --features cec,mcp` and install to `$GAME_SHELL_DIR/bin/game-shell-input`; the session script spawns it directly
+- **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots, and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset), **`Super+Right` → `intent overlay:session`** (open Session QAM). Build with `scripts/build-daemon.sh` (canonical; uses `--features cec,mcp`) or `cargo build --release --features cec,mcp` and install to `$GAME_SHELL_DIR/bin/game-shell-input`; the session script starts it as the `game-shell-input.service` `systemd --user` unit (bare-process fallback when no user manager / under a `GAME_SHELL_INPUT_BIN` dev override) — see [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md)
 - **ShellLayout.qml** — hosts every top-level surface (Home, Library, Settings, overlays, drawers) and owns the **ScreenManager** router. shell.qml reaches the shell only through `ShellLayout`'s API (`openSettings`/`closeSettings`, `toggleMenu`, `focusHome`, …), never into a surface's internals.
 - **ScreenManager.qml** — minimal navigation model for the secondary-screen layer (Home is the base; Library/Settings open over it). `push("settings", {page})` / `push("library")` / `popToHome()` centralize the imperative show/hide + focus handoff. It does NOT own modal/overlay back-handling or the Settings-internal B-stack — it reacts to each surface's `closed` signal and never intercepts Escape. Visibility/focus **bindings** stay declarative on the surfaces.
 - **settings/SettingsApp.qml** — the Settings "app": its own `shell.settings` module (the 11 pages + sidebar). Public API `open()` / `openPage(id)` / `close()` + `closed` signal; deep-link slugs and the moonlight/streaming reroute live in `openSectionById` behind `openPage`.
@@ -68,6 +68,7 @@ config/
   hyprland.conf.example       # Machine-specific display example (LG C2/Denon HDR) → ~/.config/game-shell/hyprland-local.conf
   palette.md                  # Color palette documentation
   game-shell.desktop          # Wayland session file (install.sh rewrites Exec to the prefix)
+  game-shell-input.service    # systemd --user unit for the daemon (install.sh rewrites ExecStart to the prefix; see docs/SYSTEMD_SETUP.md)
   targets.json.example        # Copy-runnable streaming targets → ~/.config/game-shell/targets.json
   targets.yaml.example        # Annotated streaming-target field reference (docs only)
   daemon.env.example          # Per-machine daemon options → ~/.config/game-shell/daemon.env
@@ -138,7 +139,12 @@ Besides the owner-only Unix-socket IPC, the daemon can expose a **network-facing
 control surface** — an HTTP bridge and an MCP server, both opt-in via env, sharing
 one bearer token, both thin adapters over `daemon/src/bridge_core.rs`. See
 [`docs/CONTROL_SURFACE.md`](docs/CONTROL_SURFACE.md) (and the Agent-Native Dev Loop
-under Development).
+under Development). The daemon also emits **observability** signals — structured
+journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM` /
+`GAME_SHELL_LOG_JOURNAL`) and Prometheus metrics via an auth-exempt `GET /metrics`
+route plus an optional node_exporter textfile writer
+(`GAME_SHELL_METRICS_TEXTFILE`); full catalogue in
+[`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
 
 The table above reflects the deliberate split: the daemon owns all *reads* of
 system state (D-Bus, Hyprland IPC, Sunshine), while shell-outs remain only for
