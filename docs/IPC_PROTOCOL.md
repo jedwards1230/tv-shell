@@ -961,7 +961,7 @@ or `{}` when no window is focused (or on any IPC failure, e.g. the Hyprland
 socket is absent):
 
 ```json
-{"class":"firefox","title":"Mozilla Firefox","address":"0x55a1b2c3d4e5"}
+{"class":"firefox","title":"Mozilla Firefox","address":"0x55a1b2c3d4e5","fullscreen":false}
 ```
 
 | Field | Type | Notes |
@@ -969,6 +969,7 @@ socket is absent):
 | `class` | string | Active window's class (empty string allowed) |
 | `title` | string | Active window's title |
 | `address` | string | Hyprland window address (e.g. `0x…`) |
+| `fullscreen` | bool | Whether the active window is fullscreen. Lets QML read the state on the initial query, before any live `hypr:fullscreen:<0\|1>` event arrives. Derived from Hyprland's `fullscreen` field (a bool or an integer fullscreen-mode); `true` for a bool `true` or any nonzero mode, `false` for `false`/`0`/absent. |
 
 On a non-Linux build: `error:unsupported on this platform\n`.
 
