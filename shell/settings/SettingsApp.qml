@@ -407,12 +407,8 @@ FocusScope {
                             currentIndex++;
                     }
 
-                    Keys.onPressed: event => {
-                        if (event.key === Qt.Key_B && !event.modifiers) {
-                            root.closed();
-                            event.accepted = true;
-                        }
-                    }
+                    // B/Escape on the sidebar bubbles up to the root's unified
+                    // _back() handler (#5 C5) — no sidebar-local Key_B handler.
                 }
 
                 // Back hint
@@ -568,17 +564,24 @@ FocusScope {
         }
     }
 
-    // Global key handling — B / Escape is hierarchical. The controller B button
-    // arrives as Escape, so this is the handler the pad actually hits (the
-    // Key_B handlers cover a literal keyboard 'B'). From inside a settings page
-    // it backs focus out to the sidebar; from the sidebar it closes the panel
-    // and returns Home. So: page -> B -> sidebar -> B -> Home.
-    Keys.onEscapePressed: {
+    // Global back handling — B / Escape is hierarchical and UNIFIED (#5 C5).
+    // The controller B button arrives as Escape; a literal keyboard 'B' is the
+    // other source. Both now route through one _back(): from inside a settings
+    // page it backs focus out to the sidebar; from the sidebar it closes the
+    // panel and returns Home. So: page -> B -> sidebar -> B -> Home, identically
+    // for Escape and keyboard-B.
+    //
+    // Behavior change: keyboard-B on the sidebar now CLOSES the panel (via this
+    // unified path). Previously the sidebar's own Key_B handler closed it while
+    // the root Key_B handler was a no-op on the sidebar — the two are now one.
+    function _back() {
         if (!sidebarList.activeFocus)
             returnToSidebar();
         else
             root.closed();
     }
+
+    Keys.onEscapePressed: root._back()
 
     function openSection(idx) {
         if (visible) {
@@ -627,10 +630,8 @@ FocusScope {
 
     Keys.onPressed: event => {
         if (event.key === Qt.Key_B && !event.modifiers) {
-            if (!sidebarList.activeFocus) {
-                returnToSidebar();
-                event.accepted = true;
-            }
+            root._back();
+            event.accepted = true;
         }
     }
 }
