@@ -35,4 +35,18 @@ Item {
             return override;
         return gameShellConfigDir + "/targets.json";
     }
+
+    // "End game session" command, run on the daemon's `combo:end-session` (the
+    // controller end-session combo). The script is supplied by the deployment
+    // environment, not the prefix-agnostic shell tree, so its location varies.
+    // Resolution order:
+    //   1. $GAME_SHELL_END_SESSION (deployment override)
+    //   2. /usr/local/bin/end-game-session (documented last-ditch fallback,
+    //      matching the GAME_SHELL_DIR fallback idiom in game-shell-session.sh)
+    readonly property string endSessionCmd: {
+        let override = Quickshell.env("GAME_SHELL_END_SESSION");
+        if (override && override !== "")
+            return override;
+        return "/usr/local/bin/end-game-session";
+    }
 }

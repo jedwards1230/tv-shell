@@ -248,7 +248,7 @@ Item {
 
     Process {
         id: endSessionProc
-        command: ["/usr/local/bin/end-game-session"]
+        command: [Paths.endSessionCmd]
     }
 
     SocketClient {
