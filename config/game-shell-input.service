@@ -1,0 +1,35 @@
+[Unit]
+# systemd --user unit for the game-shell input/backend daemon (game-shell-input).
+#
+# The session wrapper (scripts/game-shell-session.sh) starts this explicitly with
+# `systemctl --user start game-shell-input.service` before launching Hyprland, so
+# there is no [Install] WantedBy= here — it is NOT enabled into a user target and
+# is not auto-started on login by systemd. The session script is the single owner
+# of the daemon lifecycle; running it as a unit just buys journald capture,
+# cgroup accounting, and single-instance + restart semantics for free.
+#
+# scripts/install.sh installs a copy to ~/.config/systemd/user/ with the ExecStart
+# path rewritten to the resolved --prefix (mirroring how it rewrites the session
+# .desktop Exec=). This committed copy uses the installer's default prefix
+# (/opt/game-shell); edit ExecStart to match if you wire the unit up by hand.
+Description=game-shell input/backend daemon
+
+[Service]
+Type=simple
+# Rewritten by scripts/install.sh to <prefix>/bin/game-shell-input. The daemon
+# self-discovers its install root from this binary path (current_exe), its socket
+# (/run/user/%U/game-shell-input.sock by default), and reads daemon.env itself —
+# so no extra Environment= wiring is required here.
+ExecStart=/opt/game-shell/bin/game-shell-input
+# Per-machine daemon options (HTTP bridge / MCP binds + token, CEC lifecycle,
+# Plex/Steam widgets). Optional `-`: a missing file is not an error. The daemon
+# also reads this file directly, so this is belt-and-suspenders for unit-level
+# visibility (systemctl show-environment / journald).
+EnvironmentFile=-%h/.config/game-shell/daemon.env
+Restart=on-failure
+RestartSec=2
+
+# No [Install] section by design: the session script `systemctl --user start`s
+# this unit on every session, so it must NOT also be enabled into default.target
+# (that would start a second, env-less copy at user-manager boot before Hyprland
+# exists, racing the session-owned one). Single owner = the session script.

@@ -10,6 +10,7 @@ section in [CLAUDE.md](../CLAUDE.md).
 - The Rust input daemon (`game-shell-input`) → `<prefix>/bin/`
 - The QML shell + Hyprland config + scripts → `<prefix>/` (default prefix `/opt/game-shell`)
 - A Wayland session entry → `/usr/share/wayland-sessions/game-shell-wayland.desktop`
+- A `systemd --user` unit for the daemon → `~/.config/systemd/user/game-shell-input.service` (see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md))
 - A Quickshell config symlink → `~/.config/quickshell/game-shell`
 - A per-user config dir seeded from examples → `~/.config/game-shell/`
 

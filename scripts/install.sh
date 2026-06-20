@@ -134,6 +134,43 @@ Exec=$SESSION_EXEC
 DesktopNames=Hyprland
 EOF
 
+# 3b. Install the systemd --user unit for the daemon, rewriting ExecStart to the
+#     resolved prefix (mirrors the session .desktop Exec rewrite above). The
+#     session script `systemctl --user start`s this unit; the unit is NOT enabled
+#     (no [Install]), so installing it is just file placement + a daemon-reload.
+UNIT_SRC="$REPO_ROOT/config/game-shell-input.service"
+if [ -f "$UNIT_SRC" ]; then
+    UNIT_DIR="$TARGET_HOME/.config/systemd/user"
+    UNIT_FILE="$UNIT_DIR/game-shell-input.service"
+    log "installing systemd --user unit -> $UNIT_FILE"
+    install -d -m755 "$UNIT_DIR"
+    # Rewrite the committed default ExecStart (/opt/game-shell/...) to the
+    # resolved prefix's binary. Keep the rest of the unit verbatim.
+    sed "s#^ExecStart=.*#ExecStart=$PREFIX/bin/game-shell-input#" "$UNIT_SRC" > "$UNIT_FILE" \
+        || die "failed to write $UNIT_FILE"
+    chown -R "$TARGET_USER" "$TARGET_HOME/.config/systemd" \
+        || die "failed to chown $TARGET_HOME/.config/systemd to $TARGET_USER"
+    # daemon-reload so a re-run picks up unit edits. Best-effort: the target
+    # user's systemd manager / bus may not be reachable from this (root) install
+    # context — a fresh box, a container, or an install before first login. The
+    # session script reloads-by-starting anyway, so never hard-fail here.
+    if command -v systemctl >/dev/null 2>&1; then
+        TARGET_UID="$(id -u "$TARGET_USER" 2>/dev/null || true)"
+        if [ -n "$TARGET_UID" ] && [ -S "/run/user/$TARGET_UID/bus" ]; then
+            sudo -u "$TARGET_USER" \
+                XDG_RUNTIME_DIR="/run/user/$TARGET_UID" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$TARGET_UID/bus" \
+                systemctl --user daemon-reload >/dev/null 2>&1 \
+                && log "ran systemctl --user daemon-reload for $TARGET_USER" \
+                || log "note: systemctl --user daemon-reload skipped (user manager not reachable now — picked up on next login/start)"
+        else
+            log "note: no user bus for $TARGET_USER yet — systemd will load the unit on next login"
+        fi
+    fi
+else
+    log "WARNING: $UNIT_SRC missing — daemon will run via the session script fallback (bare process)"
+fi
+
 # 4. Per-user setup: Quickshell config symlink + config dir seeded from examples.
 log "linking Quickshell config -> $PREFIX/shell"
 install -d -m755 "$(dirname "$QS_LINK")"
