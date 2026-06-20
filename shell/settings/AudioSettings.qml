@@ -219,11 +219,11 @@ FocusScope {
     readonly property var channelLayouts: ({
             "2": [
                 {
-                    "label": "Left",
+                    "label": "L",
                     "idx": 0
                 },
                 {
-                    "label": "Right",
+                    "label": "R",
                     "idx": 1
                 }
             ],
@@ -557,7 +557,7 @@ FocusScope {
             }
 
             KeyNavigation.up: sinkDropdownScope
-            KeyNavigation.down: speakerRep.count > 0 ? speakerRep.itemAt(0) : allChannelsBtn
+            KeyNavigation.down: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4FL : (root.channelCount === 8 ? btn8FL : btn6FL))
         }
 
         Text {
@@ -607,36 +607,315 @@ FocusScope {
             wrapMode: Text.Wrap
         }
 
+        // Spatial speaker grid — laid out to mirror the physical speaker
+        // positions, reshaped per channel count (the charm from #234). Each cell
+        // is its own FocusButton (FocusScope) so SettingsApp's scroll-follow
+        // tracks it; the wide "All Channels" tile sits below every layout. Only
+        // the block matching the active channel count is visible — the rest
+        // collapse. The boundary chains (profile dropdown ↓, All ↑) select the
+        // visible block via channelCount. PipeWire index map: FL=0, FR=1, FC=2,
+        // LFE=3, RL=4, RR=5, SL=6, SR=7.
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 12
 
-            Repeater {
-                id: speakerRep
-                model: root.channels
+            // ── Stereo (2.0):  L   R ──
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 16
+                visible: root.channelCount === 2
 
                 FocusButton {
-                    required property int index
-                    required property var modelData
+                    id: btn2L
                     Layout.fillWidth: true
-                    text: modelData.label
-                    fillActive: root.channelActive[index] === true
+                    text: "L"
+                    fillActive: root.channelActive[0] === true
                     fillColor: Theme.sidebarActive
-                    onActivated: root.toggleChannel(index)
-                    KeyNavigation.up: index > 0 ? speakerRep.itemAt(index - 1) : profileDropdownScope
-                    KeyNavigation.down: index < speakerRep.count - 1 ? speakerRep.itemAt(index + 1) : allChannelsBtn
+                    onActivated: root.toggleChannel(0)
+                    KeyNavigation.up: profileDropdownScope
+                    KeyNavigation.right: btn2R
+                    KeyNavigation.down: allChannelsBtn
+                }
+                FocusButton {
+                    id: btn2R
+                    Layout.fillWidth: true
+                    text: "R"
+                    fillActive: root.channelActive[1] === true
+                    fillColor: Theme.sidebarActive
+                    onActivated: root.toggleChannel(1)
+                    KeyNavigation.up: profileDropdownScope
+                    KeyNavigation.left: btn2L
+                    KeyNavigation.down: allChannelsBtn
                 }
             }
 
+            // ── Quad (4.0):  FL FR / RL RR ──
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                visible: root.channelCount === 4
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn4FL
+                        Layout.fillWidth: true
+                        text: "Front L"
+                        fillActive: root.channelActive[0] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(0)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.right: btn4FR
+                        KeyNavigation.down: btn4RL
+                    }
+                    FocusButton {
+                        id: btn4FR
+                        Layout.fillWidth: true
+                        text: "Front R"
+                        fillActive: root.channelActive[1] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(1)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn4FL
+                        KeyNavigation.down: btn4RR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn4RL
+                        Layout.fillWidth: true
+                        text: "Rear L"
+                        fillActive: root.channelActive[2] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(2)
+                        KeyNavigation.up: btn4FL
+                        KeyNavigation.right: btn4RR
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn4RR
+                        Layout.fillWidth: true
+                        text: "Rear R"
+                        fillActive: root.channelActive[3] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(3)
+                        KeyNavigation.up: btn4FR
+                        KeyNavigation.left: btn4RL
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                }
+            }
+
+            // ── 5.1:  FL  C  FR  /  RL  LFE  RR ──
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                visible: root.channelCount === 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn6FL
+                        Layout.fillWidth: true
+                        text: "Front L"
+                        fillActive: root.channelActive[0] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(0)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.right: btn6C
+                        KeyNavigation.down: btn6RL
+                    }
+                    FocusButton {
+                        id: btn6C
+                        Layout.fillWidth: true
+                        text: "Center"
+                        fillActive: root.channelActive[2] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(2)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn6FL
+                        KeyNavigation.right: btn6FR
+                        KeyNavigation.down: btn6LFE
+                    }
+                    FocusButton {
+                        id: btn6FR
+                        Layout.fillWidth: true
+                        text: "Front R"
+                        fillActive: root.channelActive[1] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(1)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn6C
+                        KeyNavigation.down: btn6RR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn6RL
+                        Layout.fillWidth: true
+                        text: "Rear L"
+                        fillActive: root.channelActive[4] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(4)
+                        KeyNavigation.up: btn6FL
+                        KeyNavigation.right: btn6LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn6LFE
+                        Layout.fillWidth: true
+                        text: "LFE/Sub"
+                        fillActive: root.channelActive[3] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(3)
+                        KeyNavigation.up: btn6C
+                        KeyNavigation.left: btn6RL
+                        KeyNavigation.right: btn6RR
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn6RR
+                        Layout.fillWidth: true
+                        text: "Rear R"
+                        fillActive: root.channelActive[5] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(5)
+                        KeyNavigation.up: btn6FR
+                        KeyNavigation.left: btn6LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                }
+            }
+
+            // ── 7.1:  FL C FR / SL ▢ SR / RL LFE RR  (center of mid row blank) ──
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                visible: root.channelCount === 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn8FL
+                        Layout.fillWidth: true
+                        text: "Front L"
+                        fillActive: root.channelActive[0] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(0)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.right: btn8C
+                        KeyNavigation.down: btn8SL
+                    }
+                    FocusButton {
+                        id: btn8C
+                        Layout.fillWidth: true
+                        text: "Center"
+                        fillActive: root.channelActive[2] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(2)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn8FL
+                        KeyNavigation.right: btn8FR
+                        KeyNavigation.down: btn8LFE
+                    }
+                    FocusButton {
+                        id: btn8FR
+                        Layout.fillWidth: true
+                        text: "Front R"
+                        fillActive: root.channelActive[1] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(1)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn8C
+                        KeyNavigation.down: btn8SR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn8SL
+                        Layout.fillWidth: true
+                        text: "Side L"
+                        fillActive: root.channelActive[6] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(6)
+                        KeyNavigation.up: btn8FL
+                        KeyNavigation.right: btn8SR
+                        KeyNavigation.down: btn8RL
+                    }
+                    // Center of the middle row is intentionally blank (no speaker).
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FocusButton {
+                        id: btn8SR
+                        Layout.fillWidth: true
+                        text: "Side R"
+                        fillActive: root.channelActive[7] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(7)
+                        KeyNavigation.up: btn8FR
+                        KeyNavigation.left: btn8SL
+                        KeyNavigation.down: btn8RR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn8RL
+                        Layout.fillWidth: true
+                        text: "Rear L"
+                        fillActive: root.channelActive[4] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(4)
+                        KeyNavigation.up: btn8SL
+                        KeyNavigation.right: btn8LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn8LFE
+                        Layout.fillWidth: true
+                        text: "LFE/Sub"
+                        fillActive: root.channelActive[3] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(3)
+                        KeyNavigation.up: btn8C
+                        KeyNavigation.left: btn8RL
+                        KeyNavigation.right: btn8RR
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn8RR
+                        Layout.fillWidth: true
+                        text: "Rear R"
+                        fillActive: root.channelActive[5] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(5)
+                        KeyNavigation.up: btn8SR
+                        KeyNavigation.left: btn8LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                }
+            }
+
+            // ── Wide "All Channels" tile, shared below every layout ──
             FocusButton {
                 id: allChannelsBtn
-                visible: root.channels.length > 1
                 Layout.fillWidth: true
                 text: "All Channels"
                 fillActive: root.allChannelsActive
                 fillColor: Theme.sidebarActive
                 onActivated: root.setAllChannels(!root.allChannelsActive)
-                KeyNavigation.up: speakerRep.count > 0 ? speakerRep.itemAt(speakerRep.count - 1) : profileDropdownScope
+                KeyNavigation.up: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4RL : (root.channelCount === 8 ? btn8RL : btn6RL))
             }
         }
 
