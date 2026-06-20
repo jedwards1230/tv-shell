@@ -24,15 +24,14 @@ StartLimitBurst=3
 [Service]
 Type=simple
 # Rewritten by scripts/install.sh to <prefix>/bin/game-shell-input. The daemon
-# self-discovers its install root from this binary path (current_exe), its socket
-# (/run/user/%U/game-shell-input.sock by default), and reads daemon.env itself —
-# so no extra Environment= wiring is required here.
+# self-discovers its install root from this binary path (current_exe) and its
+# socket (/run/user/%U/game-shell-input.sock by default), and reads its typed
+# per-machine config from ~/.config/game-shell/config.toml itself — so no extra
+# Environment=/EnvironmentFile= wiring is required here. (Per-machine daemon
+# options — HTTP/MCP binds + token_file, CEC lifecycle, Plex/Steam, observability
+# — all live in config.toml, NOT the environment, which is exactly why this unit
+# needs no EnvironmentFile and why config works under the env-less unit.)
 ExecStart=/opt/game-shell/bin/game-shell-input
-# Per-machine daemon options (HTTP bridge / MCP binds + token, CEC lifecycle,
-# Plex/Steam widgets). Optional `-`: a missing file is not an error. The daemon
-# also reads this file directly, so this is belt-and-suspenders for unit-level
-# visibility (systemctl show-environment / journald).
-EnvironmentFile=-%h/.config/game-shell/daemon.env
 Restart=on-failure
 RestartSec=2
 

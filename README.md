@@ -74,7 +74,8 @@ The daemon logs to the **systemd journal** when run as a `systemd --user` unit
 (`journalctl --user -u game-shell-input`; quickshell output under `-t
 game-shell-quickshell`), falling back to stderr otherwise. It also exports
 **Prometheus metrics** — an auth-exempt `GET /metrics` on the optional LAN bridge
-and/or a node_exporter textfile (`GAME_SHELL_METRICS_TEXTFILE`). See
+and/or a node_exporter textfile (`[observability].metrics_textfile` in
+`config.toml`). See
 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) and
 [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md).
 

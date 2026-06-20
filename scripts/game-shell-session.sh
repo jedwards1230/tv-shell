@@ -29,8 +29,9 @@ export PATH="$SHELL_DIR/scripts:$PATH"
 # (node_exporter's systemd collector sees per-unit usage with zero app code), and
 # single-instance + restart semantics (which also kills the recurring "duplicate
 # quickshell instance"-style stacking from a re-launched session). The daemon
-# self-discovers everything it needs (install root from its own path, socket,
-# daemon.env), so the unit needs no env wiring from here.
+# self-discovers everything it needs (install root from its own path, socket) and
+# reads its typed config from ~/.config/game-shell/config.toml directly, so the
+# unit needs no env wiring from here.
 #
 # Fallback: if `systemctl --user` is unavailable (no user systemd manager, no
 # user bus) OR a dev override `GAME_SHELL_INPUT_BIN` is set (the unit's ExecStart

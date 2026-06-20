@@ -41,10 +41,12 @@ so they also land in the journal under a tag.
   defaults `ExecStart` to `/opt/game-shell/bin/game-shell-input`; `install.sh`
   rewrites it to the resolved `--prefix` (the same way it rewrites the session
   `.desktop` `Exec=`).
-- `EnvironmentFile=-%h/.config/game-shell/daemon.env` — the leading `-` makes a
-  missing file a non-error. (The daemon *also* reads this file itself via
-  `session_env::load_daemon_env`, so this is belt-and-suspenders for unit-level
-  visibility, e.g. `systemctl --user show-environment`.)
+- **No `EnvironmentFile=`** — per-machine daemon options (HTTP/MCP binds +
+  `token_file`, CEC lifecycle, Plex/Steam, observability) live in the typed
+  `~/.config/game-shell/config.toml`, which the daemon reads directly at startup.
+  They are deliberately **not** environment variables, which is precisely what
+  lets the daemon be configured correctly under this env-less unit (the unit
+  inherits none of the session script's environment).
 - `Restart=on-failure`, `RestartSec=2`.
 - **No `[Install]` section** — deliberate. The session script starts the unit on
   every session, so it must not *also* be enabled into `default.target`; that
@@ -63,7 +65,9 @@ wiring.
 
 `scripts/game-shell-session.sh` (launched by the display manager):
 
-1. Exports `GAME_SHELL_*` session vars and sources `daemon.env`.
+1. Exports `GAME_SHELL_*` session vars (install root, socket, targets path). It no
+   longer sources a `daemon.env` — per-machine daemon options are in `config.toml`,
+   read by the daemon itself.
 2. Starts the daemon:
    - **Preferred:** `systemctl --user start game-shell-input.service` (after a
      `reset-failed` to clear any stale state).

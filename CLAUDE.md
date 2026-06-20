@@ -136,14 +136,15 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 | `moonlight` | Game streaming client (`stream`, `list`, `pair`) |
 
 Besides the owner-only Unix-socket IPC, the daemon can expose a **network-facing
-control surface** — an HTTP bridge and an MCP server, both opt-in via env, sharing
-one bearer token, both thin adapters over `daemon/src/bridge_core.rs`. See
+control surface** — an HTTP bridge and an MCP server, both opt-in via
+`config.toml` (`[http]`/`[mcp]`), sharing one bearer token (`[http].token_file`),
+both thin adapters over `daemon/src/bridge_core.rs`. See
 [`docs/CONTROL_SURFACE.md`](docs/CONTROL_SURFACE.md) (and the Agent-Native Dev Loop
 under Development). The daemon also emits **observability** signals — structured
-journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM` /
-`GAME_SHELL_LOG_JOURNAL`) and Prometheus metrics via an auth-exempt `GET /metrics`
-route plus an optional node_exporter textfile writer
-(`GAME_SHELL_METRICS_TEXTFILE`); full catalogue in
+journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM`, overridable by
+`[observability].log_journal`) and Prometheus metrics via an auth-exempt
+`GET /metrics` route plus an optional node_exporter textfile writer
+(`[observability].metrics_textfile`); full catalogue in
 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
 
 The table above reflects the deliberate split: the daemon owns all *reads* of

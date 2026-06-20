@@ -200,4 +200,4 @@ chown -R "$TARGET_USER" "$CONFIG_DIR" "$(dirname "$QS_LINK")" \
     || die "failed to chown config dirs to $TARGET_USER (does $TARGET_USER own ~/.config?)"
 
 log "done. Select 'Game Shell (Wayland)' in your display manager, then log in."
-log "Edit $CONFIG_DIR/daemon.env and targets.json to taste (see docs/INSTALL.md)."
+log "Edit $CONFIG_DIR/config.toml and targets.json to taste (see docs/INSTALL.md)."
