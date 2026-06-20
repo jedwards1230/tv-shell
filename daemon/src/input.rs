@@ -186,6 +186,10 @@ struct Shared {
     /// The currently active game id for per-game binding lookup (#104).
     /// Set via `set-active-game <id>` IPC; in-memory only (not persisted).
     active_game: Option<String>,
+
+    /// Shared observability counters. Incremented on the relevant events
+    /// (intents, transitions, pad join/leave) and read by the metrics exporter.
+    metrics: std::sync::Arc<crate::metrics::Metrics>,
 }
 
 impl Shared {
@@ -194,6 +198,15 @@ impl Shared {
         // turns this into a full event tracer (intents, combos, pad:*,
         // input-mode, controller-wake, status pushes).
         debug!(event = %ev, "publish");
+        // Observability: this is also the single chokepoint for the
+        // intent/pad-join/pad-leave counters — every intent (IPC, HTTP, MCP,
+        // gamepad Home-tap/hold) and every pad connect/disconnect funnels here.
+        match &ev {
+            Event::Intent(_) => self.metrics.inc_intents(),
+            Event::PadConnected(_) => self.metrics.inc_pad_joins(),
+            Event::PadDisconnected(_) => self.metrics.inc_pad_leaves(),
+            _ => {}
+        }
         let _ = self.events.send(ev);
     }
 
@@ -1877,6 +1890,7 @@ pub async fn run(
     mut control_rx: mpsc::Receiver<Control>,
     events: broadcast::Sender<Event>,
     config_changed: std::sync::Arc<tokio::sync::Notify>,
+    metrics: std::sync::Arc<crate::metrics::Metrics>,
 ) {
     let (internal_tx, mut internal_rx) = mpsc::channel::<Internal>(256);
 
@@ -1940,6 +1954,7 @@ pub async fn run(
         presenter: Presenter::Shell,
         session_active: true,
         rumble_enabled: config::rumble_enabled(&config::settings_path()),
+        metrics,
     };
     let mut fleet = Fleet::new();
 
@@ -1960,6 +1975,9 @@ pub async fn run(
             Some((fd, res)) = next_fleet_event(&mut fleet), if !fleet.pads.is_empty() => {
                 match res {
                     Ok(ev) => {
+                        // Observability: count every raw evdev event we read from
+                        // the fleet (the hot path), whether or not it is acted on.
+                        sh.metrics.inc_input_events();
                         // While our session is backgrounded the pad is ungrabbed
                         // and the foreground compositor also receives this event;
                         // read-and-drop so nothing is injected via uinput.
@@ -2292,6 +2310,7 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
 /// virtual keyboard/mouse.
 fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Shell (grab)");
+    sh.metrics.inc_transitions();
     sh.presenter = Presenter::Shell;
     for pad in fleet.pads.values_mut() {
         pad.grab(sh); // no-op if already grabbed; re-grabs if somehow released
@@ -2305,6 +2324,7 @@ fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
 /// game reads the virtual pads; Home is intercepted into `intent:home-*`.
 fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Game (release)");
+    sh.metrics.inc_transitions();
     sh.presenter = Presenter::Game;
     for pad in fleet.pads.values_mut() {
         // Keep the physical grab; only ensure it's grabbed (it is, post-join).
@@ -2321,6 +2341,7 @@ fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
 /// (drop vpad) and `ungrab` are idempotent.
 fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Handoff (handoff)");
+    sh.metrics.inc_transitions();
     sh.presenter = Presenter::Handoff;
     for pad in fleet.pads.values_mut() {
         pad.enter_shell(sh); // drop any virtual pad

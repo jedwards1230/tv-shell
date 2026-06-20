@@ -89,6 +89,10 @@ pub enum HttpAction {
     },
     /// `GET /dev/status` — JSON status blob.
     DevStatus,
+    /// `GET /metrics` — Prometheus/OpenMetrics exposition text. BYPASSES bearer
+    /// auth (scrapers don't send tokens) and is always available when the bridge
+    /// is bound.
+    Metrics,
 }
 
 // ─── Pure parser (unit-testable on any host) ────────────────────────────────
@@ -182,6 +186,16 @@ pub fn parse_request_line(method: &str, path: &str) -> Result<HttpAction, HttpEr
         Some(i) => (&path[..i], &path[i + 1..]),
         None => (path, ""),
     };
+
+    // Metrics route: GET only. Prometheus/OpenMetrics exposition text. Auth is
+    // bypassed for this route in handle_connection (scrapers don't send tokens).
+    if bare_path == "/metrics" {
+        if method == "GET" {
+            return Ok(HttpAction::Metrics);
+        } else {
+            return Err(HttpError::MethodNotAllowed);
+        }
+    }
 
     // Screenshot routes: GET only.
     // Optional ?flash=1 causes a post-capture flash event on the IPC event bus.
@@ -375,6 +389,7 @@ fn ct_eq_str(a: &str, b: &str) -> bool {
 
 /// Handle a single TCP connection: parse the HTTP/1.1 request, check auth,
 /// dispatch to the control channel or screenshotter, and write a response.
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     token: Option<&str>,
@@ -383,6 +398,7 @@ async fn handle_connection(
     events_tx: &broadcast::Sender<Event>,
     shutdown: &tokio_util::sync::CancellationToken,
     reexec_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    metrics: &std::sync::Arc<crate::metrics::Metrics>,
 ) {
     // Bound the header read with a short timeout (anti-slowloris); the longer
     // outer DEV_TIMEOUT_SECS budget covers dev-op subprocess execution only.
@@ -423,10 +439,32 @@ async fn handle_connection(
     let method = parts[0];
     let path = parts[1];
 
+    // Route first so we can exempt the unauthenticated `/metrics` scrape from
+    // the bearer-auth check below. Routing is a pure string parse with no side
+    // effects, so doing it before auth leaks nothing.
+    let action = match parse_request_line(method, path) {
+        Ok(a) => a,
+        Err(HttpError::NotFound) => {
+            let resp = http_response(404, "not found");
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return;
+        }
+        Err(HttpError::MethodNotAllowed) => {
+            let resp = http_response(405, "method not allowed");
+            let _ = stream.write_all(resp.as_bytes()).await;
+            return;
+        }
+    };
+
     // Auth check — constant-time comparison to prevent timing oracles (#151).
     // When auth is enabled but no token is configured, reject all requests
     // (secure by default — you cannot authenticate without a token).
-    if auth_enabled {
+    //
+    // `/metrics` is EXEMPT: Prometheus/node_exporter scrapers don't send a
+    // bearer token, and the endpoint exposes only aggregate counters + resource
+    // gauges (no screen content, no control). It is always available.
+    let auth_exempt = matches!(action, HttpAction::Metrics);
+    if auth_enabled && !auth_exempt {
         match token {
             None => {
                 // Auth enabled but no token set — reject all requests.
@@ -446,21 +484,6 @@ async fn handle_connection(
             }
         }
     }
-
-    // Route.
-    let action = match parse_request_line(method, path) {
-        Ok(a) => a,
-        Err(HttpError::NotFound) => {
-            let resp = http_response(404, "not found");
-            let _ = stream.write_all(resp.as_bytes()).await;
-            return;
-        }
-        Err(HttpError::MethodNotAllowed) => {
-            let resp = http_response(405, "method not allowed");
-            let _ = stream.write_all(resp.as_bytes()).await;
-            return;
-        }
-    };
 
     // Dispatch to the daemon control channel or screenshotter.
     match action {
@@ -535,7 +558,28 @@ async fn handle_connection(
             let resp = handle_dev_status().await;
             let _ = stream.write_all(resp.as_bytes()).await;
         }
+        HttpAction::Metrics => {
+            let resp = handle_metrics(metrics).await;
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
     }
+}
+
+/// `GET /metrics` — render the Prometheus/OpenMetrics exposition text.
+///
+/// `sys_metrics()` samples CPU over a ~200ms window, so the render runs on the
+/// blocking pool. The same renderer feeds the textfile writer, so the two never
+/// drift. Content-Type is the Prometheus text exposition media type.
+async fn handle_metrics(metrics: &std::sync::Arc<crate::metrics::Metrics>) -> String {
+    let counters = std::sync::Arc::clone(metrics);
+    let body = tokio::task::spawn_blocking(move || crate::metrics::render_blocking(&counters))
+        .await
+        .unwrap_or_else(|e| format!("# render task failed: {e}\n"));
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    )
 }
 
 // ─── Dev-control handlers (#167) ────────────────────────────────────────────
@@ -624,6 +668,7 @@ pub fn read_auth_enabled() -> bool {
 /// logged. When auth is disabled, a warning is logged and auth is skipped
 /// entirely (for local-only dev). A warning is also emitted when binding to an
 /// unspecified address (0.0.0.0 or ::) without a token.
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     addr: std::net::SocketAddr,
     token: Option<String>,
@@ -632,6 +677,7 @@ pub async fn serve(
     events_tx: broadcast::Sender<Event>,
     shutdown: tokio_util::sync::CancellationToken,
     reexec_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    metrics: std::sync::Arc<crate::metrics::Metrics>,
 ) {
     // Treat an empty token as no token at all, so GAME_SHELL_HTTP_TOKEN="" fails
     // closed (rejects all) rather than accepting an empty `Bearer ` credential.
@@ -695,6 +741,7 @@ pub async fn serve(
                 let conns = active_conns.clone();
                 let shutdown = shutdown.clone();
                 let reexec_flag = reexec_flag.clone();
+                let metrics = metrics.clone();
                 tokio::spawn(async move {
                     // Use DEV_TIMEOUT_SECS (180 s) for all connections.
                     // /dev/build and /dev/deploy need up to ~15 s and ~30 s
@@ -712,6 +759,7 @@ pub async fn serve(
                             &events_tx,
                             &shutdown,
                             &reexec_flag,
+                            &metrics,
                         ),
                     )
                     .await;
@@ -1212,6 +1260,33 @@ mod tests {
         assert_eq!(
             parse_request_line("POST", "/dev/nonexistent"),
             Err(HttpError::NotFound)
+        );
+    }
+
+    // ── /metrics ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn metrics_get() {
+        assert_eq!(
+            parse_request_line("GET", "/metrics"),
+            Ok(HttpAction::Metrics)
+        );
+    }
+
+    #[test]
+    fn metrics_with_query_stripped() {
+        // Query strings are stripped before the path match.
+        assert_eq!(
+            parse_request_line("GET", "/metrics?foo=bar"),
+            Ok(HttpAction::Metrics)
+        );
+    }
+
+    #[test]
+    fn metrics_post_method_not_allowed() {
+        assert_eq!(
+            parse_request_line("POST", "/metrics"),
+            Err(HttpError::MethodNotAllowed)
         );
     }
 }

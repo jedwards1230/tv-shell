@@ -121,6 +121,13 @@ schemars = { version = "1", optional = true }
 # (protocol parsing/Display, response builders) stay testable on macOS; the
 # bluetooth/network/power modules are `#[cfg(target_os = "linux")]`.
 [target.'cfg(target_os = "linux")'.dependencies]
+# Native systemd-journal logging layer for tracing (observability). Pure-Rust
+# (no system C dep): it speaks the journal's native socket protocol directly, so
+# it preserves the C-free default-build invariant shared by evdev/zbus/bluer.
+# Linux-only — the journal is a systemd interface; init_tracing() falls back to
+# the stdout `fmt` layer when the journal is unavailable (and always on non-Linux,
+# where main is cfg-excluded anyway).
+tracing-journald = "0.3"
 evdev = { version = "0.13", features = ["tokio"] }
 # zbus 5.x is the current line (5.16). The `tokio` feature matches the daemon
 # runtime and avoids pulling in async-io. default-features = false drops the
