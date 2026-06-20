@@ -492,7 +492,10 @@ Rectangle {
                     id: contentFlick
                     anchors.fill: parent
                     clip: true
-                    interactive: false
+                    // Interactive so wheel/drag (mouse mode) can scroll the pane —
+                    // and so the visible scrollbar is actually draggable. Controller
+                    // nav still drives it via focus-follow (ensureVisible below).
+                    interactive: true
                     contentWidth: width
                     contentHeight: contentLoader.height
                     boundsBehavior: Flickable.StopAtBounds
@@ -512,10 +515,21 @@ Rectangle {
                         if (!it)
                             return;
                         var p = it.mapToItem(contentFlick.contentItem, 0, 0);
-                        if (p.y < contentFlick.contentY)
+                        var maxY = Math.max(0, contentFlick.contentHeight - contentFlick.height);
+                        if (p.y < contentFlick.contentY) {
+                            // Scrolling up: reveal the item (with a small top margin).
                             contentFlick.contentY = Math.max(0, p.y - 24);
-                        else if (p.y + it.height > contentFlick.contentY + contentFlick.height)
-                            contentFlick.contentY = Math.min(p.y + it.height - contentFlick.height + 24, Math.max(0, contentFlick.contentHeight - contentFlick.height));
+                        } else if (p.y + it.height > contentFlick.contentY + contentFlick.height) {
+                            // Scrolling down: normally reveal the item with a small
+                            // bottom margin — but if it sits within the FINAL
+                            // screenful of content, jump to the very bottom so any
+                            // trailing non-focusable content below the last control
+                            // (hint bar, status/format text) comes into view too,
+                            // instead of being stranded just under the fold. This
+                            // makes the whole page reachable on every settings page
+                            // without per-page layout workarounds.
+                            contentFlick.contentY = (p.y >= maxY) ? maxY : Math.min(p.y + it.height - contentFlick.height + 24, maxY);
+                        }
                     }
 
                     Loader {
