@@ -8,8 +8,8 @@ import "lib"
 // anchored-popover pattern: FocusScope + visible:opened + light scrim +
 // onOpenedChanged forces focus; the panel positions itself relative to
 // anchorRect (scene-root coords) and clamps fully on-screen.
-// Stats sourced from the daemon's net-status IPC (read-only); surfaces the
-// IPv4 address, live ↓/↑ speeds (sampled from /sys/class/net statistics), and
+// Stats sourced from the daemon's net-status + net-throughput IPC (read-only);
+// surfaces the IPv4 address, live ↓/↑ speeds (sampled via net-throughput), and
 // a two-step disconnect-with-warning toggle via nmcli so an accidental A on a
 // couch never drops the network (and Moonlight). B/Escape closes.
 FocusScope {
@@ -108,34 +108,30 @@ FocusScope {
         }
     }
 
-    // --- Live speed sampling via /sys/class/net/<device>/statistics ---
-    // Uses a single bash one-liner to read both counters atomically.
-    Process {
+    // --- Live speed sampling via the daemon's net-throughput IPC ---
+    // The daemon reads /sys/class/net/<iface>/statistics/{rx,tx}_bytes and returns
+    // the cumulative counters; we sample on a 1 s timer and compute the delta
+    // ourselves (same model as the old bash one-liner, no shell-out). Fail-soft:
+    // an unknown iface comes back zeroed with an `error` field — we just leave the
+    // speeds dashed rather than special-casing.
+    SocketClient {
         id: readBytes
-        property real rxRead: 0
-        property real txRead: 0
-        // command is set dynamically before each run
-        stdout: SplitParser {
-            onRead: line => {
-                // Format: "rx tx" on one line
-                let parts = line.trim().split(" ");
-                if (parts.length >= 2) {
-                    readBytes.rxRead = parseFloat(parts[0]) || 0;
-                    readBytes.txRead = parseFloat(parts[1]) || 0;
+        onResponseReceived: line => {
+            try {
+                let obj = JSON.parse(line);
+                let rx = obj.rxBytes || 0;
+                let tx = obj.txBytes || 0;
+                if (!obj.error && root._prevRxBytes >= 0) {
+                    let downBps = Math.max(0, rx - root._prevRxBytes);
+                    let upBps = Math.max(0, tx - root._prevTxBytes);
+                    root.downSpeed = _formatSpeed(downBps);
+                    root.upSpeed = _formatSpeed(upBps);
                 }
+                root._prevRxBytes = rx;
+                root._prevTxBytes = tx;
+            } catch (e) {
+                console.log("NetworkOverlay: failed to parse net-throughput:", e);
             }
-        }
-        onExited: {
-            let rx = readBytes.rxRead;
-            let tx = readBytes.txRead;
-            if (root._prevRxBytes >= 0) {
-                let downBps = Math.max(0, rx - root._prevRxBytes);
-                let upBps = Math.max(0, tx - root._prevTxBytes);
-                root.downSpeed = _formatSpeed(downBps);
-                root.upSpeed = _formatSpeed(upBps);
-            }
-            root._prevRxBytes = rx;
-            root._prevTxBytes = tx;
         }
     }
 
@@ -149,8 +145,7 @@ FocusScope {
                 speedTimer.stop();
                 return;
             }
-            readBytes.command = ["bash", "-c", "paste -d' ' /sys/class/net/" + root.device + "/statistics/rx_bytes " + "/sys/class/net/" + root.device + "/statistics/tx_bytes"];
-            readBytes.running = true;
+            readBytes.request("net-throughput", root.device);
         }
     }
 

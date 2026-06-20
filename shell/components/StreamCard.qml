@@ -25,12 +25,18 @@ BaseCard {
     readonly property string _safeActiveAppName: root.activeAppName.replace(/[\x00-\x1f]/g, "").substring(0, 80)
     Accessible.description: (root.isOnline ? "Online" : "Offline") + (root.hasActiveSession ? ", session active: " + root._safeActiveAppName : "")
 
-    Process {
+    // Reachability via the daemon's net-ping IPC (count 1). Fail-soft: an
+    // unreachable host returns reachable:false — the card just shows Offline.
+    SocketClient {
         id: pingCheck
-        command: ["ping", "-c1", "-W1", root.target.host || "127.0.0.1"]
-        onExited: (exitCode, exitStatus) => {
-            root.isOnline = (exitCode === 0);
+        onResponseReceived: line => {
+            try {
+                root.isOnline = JSON.parse(line).reachable === true;
+            } catch (e) {
+                root.isOnline = false;
+            }
         }
+        onRequestFailed: root.isOnline = false
     }
 
     Timer {
@@ -38,10 +44,7 @@ BaseCard {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: {
-            if (!pingCheck.running)
-                pingCheck.running = true;
-        }
+        onTriggered: pingCheck.request("net-ping", root.target.host || "127.0.0.1")
     }
 
     // Resolve the running app name via the daemon's `sunshine-status` IPC command
