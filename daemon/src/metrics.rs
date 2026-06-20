@@ -48,6 +48,22 @@ pub struct Metrics {
     /// on `/dev/restart-daemon` and is otherwise a supervised long-runner, the
     /// running total is the shell-input restart count for this boot session.
     pub shell_restarts: AtomicU64,
+
+    // --- Dev/deployment action counters (HTTP-bridge handlers) ---------------
+    /// `POST /dev/deploy` attempts that succeeded (git fetch+checkout+reset OK).
+    pub deploy_ok: AtomicU64,
+    /// `POST /dev/deploy` attempts that failed (git error). Together with
+    /// `deploy_ok` these render as `game_shell_deploy_total{outcome="ok|error"}`.
+    pub deploy_err: AtomicU64,
+    /// `POST /dev/build` attempts (build via scripts/build-daemon.sh + install).
+    pub build_actions: AtomicU64,
+    /// `POST /dev/restart-shell` attempts (kill + relaunch quickshell).
+    pub restart_shell_actions: AtomicU64,
+    /// `POST /dev/restart-daemon` attempts (re-exec the daemon). Counted when the
+    /// re-exec is requested — the response is written before the process image is
+    /// replaced, so the increment is durable in this process's metrics until the
+    /// re-exec lands (the new process starts its own counters at zero).
+    pub restart_daemon_actions: AtomicU64,
 }
 
 impl Metrics {
@@ -85,6 +101,42 @@ impl Metrics {
     pub fn inc_shell_restarts(&self) {
         self.shell_restarts.fetch_add(1, Ordering::Relaxed);
     }
+
+    /// Record a `/dev/deploy` outcome (`true` = success, `false` = failure).
+    #[inline]
+    pub fn inc_deploy(&self, ok: bool) {
+        if ok {
+            self.deploy_ok.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.deploy_err.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    pub fn inc_build(&self) {
+        self.build_actions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn inc_restart_shell(&self) {
+        self.restart_shell_actions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn inc_restart_daemon(&self) {
+        self.restart_daemon_actions.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Current-deployment provenance for the `game_shell_build_info` info-metric.
+/// Resolved live (re-read on each render) from the same `capture_meta()` source
+/// that backs the `/screenshot` `X-GameShell-*` headers and `/dev/status`, so a
+/// `/dev/deploy` HEAD swap under the live daemon is reflected next render.
+#[derive(Debug, Clone)]
+pub struct BuildInfo {
+    pub sha: String,
+    pub branch: String,
+    pub version: String,
 }
 
 /// Escape a Prometheus label value per the exposition format: backslash,
@@ -118,15 +170,33 @@ fn fmt_f64(v: f64) -> String {
 /// Render the full OpenMetrics/Prometheus exposition text for the daemon.
 ///
 /// `counters` supplies the app-specific `*_total` values; `sys` (optional)
-/// supplies the convenience resource gauges. When `sys` is `None` the resource
-/// gauges are omitted entirely (e.g. if a reader is disabled) — the counters are
-/// always emitted.
+/// supplies the convenience resource gauges; `build` (optional) supplies the
+/// `game_shell_build_info` deployment identity. When an optional is `None` that
+/// section is omitted — the counters are always emitted.
 ///
 /// Every metric carries `# HELP` and `# TYPE` lines. All metrics are namespaced
 /// `game_shell_`. The output ends with a trailing newline (required by the
 /// node_exporter textfile collector parser).
-pub fn render(counters: &Metrics, sys: Option<&crate::system::SysMetrics>) -> String {
+pub fn render(
+    counters: &Metrics,
+    sys: Option<&crate::system::SysMetrics>,
+    build: Option<&BuildInfo>,
+) -> String {
     let mut out = String::with_capacity(1024);
+
+    // ── Current-deployment info metric (always value 1; identity in labels) ───
+    if let Some(b) = build {
+        out.push_str(
+            "# HELP game_shell_build_info Currently deployed game-shell revision (value is always 1; identity is in the labels).\n",
+        );
+        out.push_str("# TYPE game_shell_build_info gauge\n");
+        out.push_str(&format!(
+            "game_shell_build_info{{sha=\"{}\",branch=\"{}\",version=\"{}\"}} 1\n",
+            escape_label_value(&b.sha),
+            escape_label_value(&b.branch),
+            escape_label_value(&b.version),
+        ));
+    }
 
     // ── App-specific counters ────────────────────────────────────────────────
     let counter = |out: &mut String, name: &str, help: &str, val: u64| {
@@ -170,6 +240,40 @@ pub fn render(counters: &Metrics, sys: Option<&crate::system::SysMetrics>) -> St
         "game_shell_shell_restarts_total",
         "game-shell-input daemon starts observed this boot session.",
         counters.shell_restarts.load(Ordering::Relaxed),
+    );
+
+    // ── Dev/deployment action counters ───────────────────────────────────────
+    // deploy carries an outcome label so failed deploys are visible; one
+    // HELP/TYPE block, two labelled samples.
+    out.push_str(
+        "# HELP game_shell_deploy_total /dev/deploy attempts via the HTTP bridge, by outcome.\n",
+    );
+    out.push_str("# TYPE game_shell_deploy_total counter\n");
+    out.push_str(&format!(
+        "game_shell_deploy_total{{outcome=\"ok\"}} {}\n",
+        counters.deploy_ok.load(Ordering::Relaxed),
+    ));
+    out.push_str(&format!(
+        "game_shell_deploy_total{{outcome=\"error\"}} {}\n",
+        counters.deploy_err.load(Ordering::Relaxed),
+    ));
+    counter(
+        &mut out,
+        "game_shell_build_total",
+        "/dev/build attempts via the HTTP bridge.",
+        counters.build_actions.load(Ordering::Relaxed),
+    );
+    counter(
+        &mut out,
+        "game_shell_restart_shell_total",
+        "/dev/restart-shell attempts via the HTTP bridge.",
+        counters.restart_shell_actions.load(Ordering::Relaxed),
+    );
+    counter(
+        &mut out,
+        "game_shell_restart_daemon_total",
+        "/dev/restart-daemon (re-exec) requests via the HTTP bridge.",
+        counters.restart_daemon_actions.load(Ordering::Relaxed),
     );
 
     // ── Convenience resource gauges (better sourced from node_exporter) ───────
@@ -225,13 +329,31 @@ pub fn render(counters: &Metrics, sys: Option<&crate::system::SysMetrics>) -> St
     out
 }
 
+/// Resolve the current-deployment [`BuildInfo`] live from the shared
+/// `capture_meta()` provenance resolver (same source as the `/screenshot`
+/// `X-GameShell-*` headers and `/dev/status`). Async because it shells out to
+/// `git`; callers `.await` this BEFORE `render_blocking` and pass the result in,
+/// so a `/dev/deploy` HEAD swap is reflected on the next render (re-read on
+/// render, not cached at startup).
+pub async fn resolve_build_info() -> BuildInfo {
+    let meta = crate::bridge_core::capture_meta().await;
+    BuildInfo {
+        sha: meta.sha,
+        branch: meta.branch,
+        version: meta.version.to_owned(),
+    }
+}
+
 /// Read the live system metrics on a blocking thread and render the full
 /// exposition text. `cpu_percent` sleeps ~200ms internally, so this MUST run on
 /// the blocking pool (the textfile task and the HTTP handler both wrap it in
 /// `spawn_blocking`).
-pub fn render_blocking(counters: &Metrics) -> String {
+///
+/// `build` is resolved by the caller via [`resolve_build_info`] (async git) and
+/// passed in, since this fn runs on the blocking pool and cannot `.await`.
+pub fn render_blocking(counters: &Metrics, build: Option<BuildInfo>) -> String {
     let sys = crate::system::sys_metrics();
-    render(counters, Some(&sys))
+    render(counters, Some(&sys), build.as_ref())
 }
 
 // ─── node_exporter textfile-collector writer ─────────────────────────────────
@@ -317,9 +439,16 @@ pub async fn run_textfile_writer(counters: Arc<Metrics>) {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(secs));
     loop {
         ticker.tick().await;
-        // Render on the blocking pool: sys_metrics() sleeps ~200ms (CPU sample).
+        // Resolve build identity live (async git) so a /dev/deploy HEAD swap is
+        // reflected next render — then render on the blocking pool (sys_metrics()
+        // sleeps ~200ms for the CPU sample).
+        let build = resolve_build_info().await;
         let counters = Arc::clone(&counters);
-        let text = match tokio::task::spawn_blocking(move || render_blocking(&counters)).await {
+        let text = match tokio::task::spawn_blocking(move || {
+            render_blocking(&counters, Some(build))
+        })
+        .await
+        {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!("metrics: render task failed: {e}");
@@ -351,7 +480,7 @@ mod tests {
         m.inc_transitions();
         m.inc_pad_joins();
         m.inc_shell_restarts();
-        let text = render(&m, None);
+        let text = render(&m, None, None);
 
         // Each counter has HELP + TYPE + a sample line.
         assert!(text.contains("# HELP game_shell_input_events_total"));
@@ -364,8 +493,43 @@ mod tests {
         assert!(text.contains("\ngame_shell_shell_restarts_total 1\n"));
         // Trailing newline (textfile collector requirement).
         assert!(text.ends_with('\n'));
-        // No gauges when sys is None.
+        // No gauges when sys is None; no build_info when build is None.
         assert!(!text.contains("game_shell_cpu_percent"));
+        assert!(!text.contains("game_shell_build_info"));
+    }
+
+    #[test]
+    fn dev_action_counters_render() {
+        let m = Metrics::default();
+        m.inc_deploy(true);
+        m.inc_deploy(true);
+        m.inc_deploy(false);
+        m.inc_build();
+        m.inc_restart_shell();
+        m.inc_restart_daemon();
+        let text = render(&m, None, None);
+
+        assert!(text.contains("# TYPE game_shell_deploy_total counter"));
+        assert!(text.contains("game_shell_deploy_total{outcome=\"ok\"} 2\n"));
+        assert!(text.contains("game_shell_deploy_total{outcome=\"error\"} 1\n"));
+        assert!(text.contains("\ngame_shell_build_total 1\n"));
+        assert!(text.contains("\ngame_shell_restart_shell_total 1\n"));
+        assert!(text.contains("\ngame_shell_restart_daemon_total 1\n"));
+    }
+
+    #[test]
+    fn build_info_renders_value_1_with_labels() {
+        let m = Metrics::default();
+        let build = BuildInfo {
+            sha: "a1b2c3d".into(),
+            branch: "feat/daemon-observability".into(),
+            version: "0.1.0".into(),
+        };
+        let text = render(&m, None, Some(&build));
+        assert!(text.contains("# TYPE game_shell_build_info gauge"));
+        assert!(text.contains(
+            "game_shell_build_info{sha=\"a1b2c3d\",branch=\"feat/daemon-observability\",version=\"0.1.0\"} 1\n"
+        ));
     }
 
     #[test]
@@ -388,7 +552,7 @@ mod tests {
                 },
             ],
         };
-        let text = render(&m, Some(&sys));
+        let text = render(&m, Some(&sys), None);
 
         assert!(text.contains("# TYPE game_shell_cpu_percent gauge"));
         assert!(text.contains("\ngame_shell_cpu_percent 12.5\n"));

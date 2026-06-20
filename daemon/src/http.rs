@@ -532,18 +532,24 @@ async fn handle_connection(
 
         // ── Dev-control routes (#167) ────────────────────────────────────────
         HttpAction::DevDeploy { git_ref } => {
-            let resp = handle_dev_deploy(git_ref.as_deref()).await;
+            // Observability: count attempts by outcome (ok|error).
+            let resp = handle_dev_deploy(git_ref.as_deref(), metrics).await;
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::DevBuild => {
+            metrics.inc_build();
             let resp = handle_dev_build().await;
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::DevRestartShell => {
+            metrics.inc_restart_shell();
             let resp = handle_dev_restart_shell().await;
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::DevRestartDaemon => {
+            // Count the re-exec request before replacing the process image (the
+            // new process starts its own counters at zero).
+            metrics.inc_restart_daemon();
             // Write the response FIRST, then signal main to re-exec.
             let resp = http_response(200, "ok, re-execing\n");
             let _ = stream.write_all(resp.as_bytes()).await;
@@ -567,14 +573,19 @@ async fn handle_connection(
 
 /// `GET /metrics` — render the Prometheus/OpenMetrics exposition text.
 ///
-/// `sys_metrics()` samples CPU over a ~200ms window, so the render runs on the
-/// blocking pool. The same renderer feeds the textfile writer, so the two never
-/// drift. Content-Type is the Prometheus text exposition media type.
+/// Build identity is resolved live (async git via `resolve_build_info`) so a
+/// `/dev/deploy` HEAD swap is reflected on the next scrape; `sys_metrics()`
+/// samples CPU over a ~200ms window, so the render itself runs on the blocking
+/// pool. The same renderer feeds the textfile writer, so the two never drift.
+/// Content-Type is the Prometheus text exposition media type.
 async fn handle_metrics(metrics: &std::sync::Arc<crate::metrics::Metrics>) -> String {
     let counters = std::sync::Arc::clone(metrics);
-    let body = tokio::task::spawn_blocking(move || crate::metrics::render_blocking(&counters))
-        .await
-        .unwrap_or_else(|e| format!("# render task failed: {e}\n"));
+    let build = crate::metrics::resolve_build_info().await;
+    let body = tokio::task::spawn_blocking(move || {
+        crate::metrics::render_blocking(&counters, Some(build))
+    })
+    .await
+    .unwrap_or_else(|e| format!("# render task failed: {e}\n"));
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
@@ -586,10 +597,20 @@ async fn handle_metrics(metrics: &std::sync::Arc<crate::metrics::Metrics>) -> St
 // These thin wrappers translate bridge_core Results into HTTP response strings.
 
 /// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset to remote.
-async fn handle_dev_deploy(git_ref: Option<&str>) -> String {
+/// Records the outcome on `game_shell_deploy_total{outcome="ok|error"}`.
+async fn handle_dev_deploy(
+    git_ref: Option<&str>,
+    metrics: &std::sync::Arc<crate::metrics::Metrics>,
+) -> String {
     match bridge_core::dev_deploy(git_ref).await {
-        Ok(body) => http_response(200, &body),
-        Err(msg) => http_response(500, &msg),
+        Ok(body) => {
+            metrics.inc_deploy(true);
+            http_response(200, &body)
+        }
+        Err(msg) => {
+            metrics.inc_deploy(false);
+            http_response(500, &msg)
+        }
     }
 }
 

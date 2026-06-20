@@ -74,12 +74,17 @@ textfile writer and `/metrics`, so the two never drift.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
+| `game_shell_build_info` | gauge | `sha`, `branch`, `version` | Currently deployed revision. Standard info-metric: value is always `1`, identity is in the labels. Resolved **live on each render** from the same provenance as the `/screenshot` `X-GameShell-*` headers and `/dev/status`, so a `/dev/deploy` HEAD swap shows up on the next render. |
 | `game_shell_input_events_total` | counter | — | Raw gamepad evdev events read and processed by the input runtime (hot path). |
 | `game_shell_intents_emitted_total` | counter | — | Shell intents broadcast (`intent:<name>`) — IPC, HTTP `/intent/*`, MCP `send_intent`, and gamepad Home-tap/Home-hold all funnel through one chokepoint. |
 | `game_shell_transitions_total` | counter | — | Shell↔game presenter transitions (`grab`/`release`/`handoff`). |
 | `game_shell_pad_joins_total` | counter | — | Gamepads that joined the fleet (hot-join or initial enumeration). |
 | `game_shell_pad_leaves_total` | counter | — | Gamepads that left the fleet (disconnect). |
 | `game_shell_shell_restarts_total` | counter | — | Daemon starts observed this boot session (the daemon re-execs on `/dev/restart-daemon` and is otherwise supervised, so this is the input-daemon restart count). |
+| `game_shell_deploy_total` | counter | `outcome` (`ok`\|`error`) | `POST /dev/deploy` attempts via the HTTP bridge, split by success/failure. |
+| `game_shell_build_total` | counter | — | `POST /dev/build` attempts via the HTTP bridge. |
+| `game_shell_restart_shell_total` | counter | — | `POST /dev/restart-shell` attempts via the HTTP bridge. |
+| `game_shell_restart_daemon_total` | counter | — | `POST /dev/restart-daemon` (re-exec) requests via the HTTP bridge. Counted before the process image is replaced; the re-exec'd process starts its own counters at zero. |
 | `game_shell_cpu_percent` | gauge | — | Aggregate CPU utilisation 0..=100. _Convenience — prefer node_exporter._ |
 | `game_shell_mem_used_bytes` | gauge | — | Used memory in bytes. _Convenience._ |
 | `game_shell_mem_total_bytes` | gauge | — | Total memory in bytes. _Convenience._ |
