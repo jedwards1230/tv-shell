@@ -556,39 +556,17 @@ FocusScope {
                     spacing: 24
                     Layout.alignment: Qt.AlignVCenter
 
-                    Text {
-                        id: heroClockText
+                    ClockText {
+                        kind: "time"
                         font.pixelSize: Theme.fontHero
                         font.bold: true
                         color: Theme.textPrimary
-
-                        Timer {
-                            interval: 1000
-                            running: true
-                            repeat: true
-                            triggeredOnStart: true
-                            onTriggered: {
-                                let now = new Date();
-                                heroClockText.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP");
-                            }
-                        }
                     }
 
-                    Text {
-                        id: heroDateText
+                    ClockText {
+                        kind: "date"
                         font.pixelSize: Theme.fontTitle
                         color: Theme.textSecondary
-
-                        Timer {
-                            interval: 60000
-                            running: true
-                            repeat: true
-                            triggeredOnStart: true
-                            onTriggered: {
-                                let now = new Date();
-                                heroDateText.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d");
-                            }
-                        }
                     }
                 }
 

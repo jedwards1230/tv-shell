@@ -49,41 +49,21 @@ Drawer {
                 anchors.centerIn: parent
                 spacing: 12
 
-                Text {
-                    id: drawerClock
+                ClockText {
+                    kind: "time"
+                    running: root.opened
                     font.pixelSize: Theme.fontHero * 0.7
                     font.bold: true
                     color: Theme.textPrimary
                     Layout.alignment: Qt.AlignHCenter
-
-                    Timer {
-                        interval: 1000
-                        running: root.opened
-                        repeat: true
-                        triggeredOnStart: true
-                        onTriggered: {
-                            let now = new Date();
-                            drawerClock.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP");
-                        }
-                    }
                 }
 
-                Text {
-                    id: drawerDate
+                ClockText {
+                    kind: "date"
+                    running: root.opened
                     font.pixelSize: Theme.fontBody
                     color: Theme.textSecondary
                     Layout.alignment: Qt.AlignHCenter
-
-                    Timer {
-                        interval: 60000
-                        running: root.opened
-                        repeat: true
-                        triggeredOnStart: true
-                        onTriggered: {
-                            let now = new Date();
-                            drawerDate.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d");
-                        }
-                    }
                 }
             }
         }
