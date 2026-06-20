@@ -54,9 +54,8 @@ FocusScope {
     }
 
     // Backdrop
-    DimmedBackdrop {
-        // dimLevel defaults to Theme.scrimOpacity (canonical modal scrim).
-    }
+    // dimLevel defaults to Theme.scrimOpacity (canonical modal scrim).
+    DimmedBackdrop {}
 
     // Content
     Item {
