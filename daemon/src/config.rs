@@ -39,6 +39,46 @@ pub fn self_write_gen() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// Atomic file write (shared crash-safe write-then-rename helper).
+// ---------------------------------------------------------------------------
+
+/// Atomically write `contents` to `path`: create the parent directory, write a
+/// sibling temp file in the same directory, fsync-free `rename` it over the
+/// target. A crash mid-write can then only leave a stray `*.tmp`, never a torn
+/// or truncated target file (rename is atomic within a filesystem).
+///
+/// The temp file lives beside the target (same directory) so the rename stays on
+/// one filesystem, and its name is salted with the process id so two concurrent
+/// writers to the same path don't clobber each other's temp before renaming.
+///
+/// NOTE: this does NOT bump the self-write generation counter — callers writing
+/// `settings.json` must still call [`note_self_write`] immediately before, so the
+/// file-watch task can suppress the daemon's own writes.
+pub fn atomic_write(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config");
+    let tmp_name = format!(".{file_name}.{}.tmp", std::process::id());
+    let tmp = match path.parent() {
+        Some(parent) => parent.join(tmp_name),
+        None => PathBuf::from(tmp_name),
+    };
+    std::fs::write(&tmp, contents.as_ref())?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Best-effort cleanup so a failed rename doesn't strand the temp file.
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Linux input-event-codes (kernel `input-event-codes.h`). Kept as plain u16 so
 // this module never depends on the (Linux-only) evdev crate.
 // ---------------------------------------------------------------------------
@@ -473,11 +513,8 @@ pub fn build_settings_json(existing: Option<&str>, bindings: &[Binding]) -> Stri
 pub fn save_bindings(path: &Path, bindings: &[Binding]) -> std::io::Result<()> {
     let existing = std::fs::read_to_string(path).ok();
     let json = build_settings_json(existing.as_deref(), bindings);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     note_self_write();
-    std::fs::write(path, json)
+    atomic_write(path, json)
 }
 
 // ---------------------------------------------------------------------------
@@ -828,11 +865,8 @@ pub fn set_config(path: &Path, updates: &serde_json::Value) -> std::io::Result<S
             "set-config body must be a JSON object",
         )
     })?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     note_self_write();
-    std::fs::write(path, &merged)?;
+    atomic_write(path, &merged)?;
     Ok(merged)
 }
 
@@ -986,6 +1020,34 @@ mod tests {
         // Garbage existing is treated as empty.
         let out = merge_config(Some("not json"), &serde_json::json!({"a":1})).unwrap();
         assert_eq!(out, r#"{"a":1}"#);
+    }
+
+    #[test]
+    fn atomic_write_creates_parent_and_replaces_atomically() {
+        // Nested path under a fresh dir: atomic_write must mkdir -p the parent.
+        let dir = std::env::temp_dir().join(format!(
+            "gs-atomic-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("data.json");
+
+        atomic_write(&path, "first").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first");
+
+        // Overwrite leaves the new content and no stray temp files behind.
+        atomic_write(&path, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "stray temp files: {leftovers:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

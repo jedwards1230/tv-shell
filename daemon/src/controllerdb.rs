@@ -88,7 +88,7 @@ pub fn read_last_downloaded() -> u64 {
 /// Write a fresh timestamp to the cache metadata file. Errors are logged and
 /// swallowed — a missing timestamp just means the UI shows "never".
 fn write_last_downloaded(ts: u64) {
-    if let Err(e) = std::fs::write(cache_ts_path(), ts.to_string()) {
+    if let Err(e) = crate::config::atomic_write(&cache_ts_path(), ts.to_string()) {
         tracing::warn!("failed to write controllerdb timestamp: {e}");
     }
 }
@@ -221,14 +221,10 @@ pub async fn fetch_upstream() -> Result<String, String> {
 pub async fn refresh() -> Result<String, String> {
     let text = fetch_upstream().await?;
 
-    // Persist to the cache (create parent directory if needed).
+    // Persist to the cache atomically (create parent directory if needed).
     let cache_path = cache_db_path();
-    if let Some(parent) = cache_path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return Err(format!("failed to create cache dir: {e}"));
-        }
-    }
-    std::fs::write(&cache_path, &text).map_err(|e| format!("failed to write cache file: {e}"))?;
+    crate::config::atomic_write(&cache_path, &text)
+        .map_err(|e| format!("failed to write cache file: {e}"))?;
     write_last_downloaded(now_unix());
 
     Ok(text)
