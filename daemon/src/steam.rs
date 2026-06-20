@@ -30,16 +30,22 @@ use serde_json::{json, Value};
 /// Recently-played rail cap. The rows only show a handful at 4K.
 const RECENT_LIMIT: usize = 12;
 
-/// Resolve `(base_url, token)` from the environment, or `None` when the widget
-/// is unconfigured. Trailing slash on the base is trimmed so URL joins are clean.
+/// Resolve `(base_url, token)` from `[steam]` in `config.toml`, or `None` when
+/// the widget is unconfigured. Trailing slash on the base is trimmed so URL joins
+/// are clean. The token is by inline `token` or `token_file` (see daemon_config).
 ///
 /// `pub(crate)` so [`crate::service_health`] can reuse the same resolution for a
 /// reachability probe — one source of truth for "is Steam configured?".
 pub(crate) fn config() -> Option<(String, String)> {
-    let base = std::env::var("GAME_SHELL_STEAM_URL").ok()?;
-    let token = std::env::var("GAME_SHELL_STEAM_TOKEN").ok()?;
-    let base = base.trim().trim_end_matches('/').to_string();
-    let token = token.trim().to_string();
+    let cfg = crate::daemon_config::global();
+    let base = cfg
+        .steam
+        .url
+        .as_deref()?
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    let token = cfg.steam_token()?;
     if base.is_empty() || token.is_empty() {
         return None;
     }

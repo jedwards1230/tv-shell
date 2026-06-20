@@ -15,10 +15,9 @@ export GAME_SHELL_SOCK="/run/user/$(id -u)/game-shell-input.sock"
 # super-intent.sh (and friends) by name regardless of install prefix.
 export PATH="$SHELL_DIR/scripts:$PATH"
 
-# Optional per-machine daemon overrides (HTTP bridge bind, auth toggle, etc.) —
-# not tracked in the repo so a box can opt into the LAN HTTP bridge locally.
-DAEMON_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/daemon.env"
-if [ -f "$DAEMON_ENV" ]; then set -a; . "$DAEMON_ENV"; set +a; fi
+# Per-machine daemon options (HTTP/MCP/CEC/Plex/Steam) are NOT sourced here
+# anymore — the daemon reads a typed ~/.config/game-shell/config.toml directly,
+# so the bearer token never enters this script's (or any child's) environment.
 
 # Start the Rust input/backend daemon. It is the sole backend: gamepad
 # grab/release, settings I/O, app discovery, Bluetooth/network/power, Hyprland

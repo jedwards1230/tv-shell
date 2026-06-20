@@ -32,12 +32,16 @@ fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
     use tokio::sync::{broadcast, mpsc, Notify};
 
-    // Load daemon.env before anything else so GAME_SHELL_HTTP_BIND and
-    // other vars are available even when the session wrapper didn't source
-    // the file (#165).
-    session_env::load_daemon_env();
-
     init_tracing();
+
+    // Load the typed config (~/.config/game-shell/config.toml). A missing file
+    // is fine (all-default ⇒ no control surface); a malformed file or an unsafe
+    // combination (LAN bind + dev tools + no auth, without [dev].allow_insecure_lan)
+    // is a hard startup failure. Validate BEFORE installing the global / opening
+    // any socket.
+    let daemon_cfg = game_shell_input::daemon_config::DaemonConfig::load()?;
+    daemon_cfg.validate()?;
+    game_shell_input::daemon_config::init_global(daemon_cfg.clone());
 
     let uid = unsafe { libc::getuid() };
     let sock_path = std::env::var("GAME_SHELL_SOCK")
@@ -142,37 +146,32 @@ fn main() -> anyhow::Result<()> {
             db_state,
         ));
 
-        // LAN HTTP control bridge (#151): opt-in via GAME_SHELL_HTTP_BIND.
-        // When the env var is unset (the default), no socket is opened and no
-        // control surface is exposed. When set, it must be a `host:port`
-        // address the operator has bound to a trusted LAN interface.
-        if let Ok(bind_str) = std::env::var("GAME_SHELL_HTTP_BIND") {
-            match bind_str.parse::<std::net::SocketAddr>() {
-                Ok(addr) => {
-                    let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
-                    // Read auth-enabled flag here so it is logged once at startup
-                    // alongside the bind address, before the task is spawned.
-                    let auth_enabled = http::read_auth_enabled();
-                    tokio::spawn(http::serve(
-                        addr,
-                        token,
-                        auth_enabled,
-                        control_tx.clone(),
-                        events_tx.clone(),
-                        shutdown.clone(),
-                        reexec_flag.clone(),
-                    ));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "GAME_SHELL_HTTP_BIND={bind_str:?} is not a valid host:port address: {e}"
-                    );
-                }
+        // LAN HTTP control bridge (#151): opt-in via [http].bind in config.toml.
+        // Absent ⇒ no socket is opened and no control surface is exposed. The
+        // address + the dangerous-combo refusal were already parsed/validated
+        // above (DaemonConfig::validate), so http_bind() here is infallible-by-
+        // construction; we still match defensively.
+        match daemon_cfg.http_bind() {
+            Ok(Some(addr)) => {
+                let token = daemon_cfg.http_token();
+                let auth_enabled = daemon_cfg.http.auth_enabled;
+                tokio::spawn(http::serve(
+                    addr,
+                    token,
+                    auth_enabled,
+                    control_tx.clone(),
+                    events_tx.clone(),
+                    shutdown.clone(),
+                    reexec_flag.clone(),
+                ));
             }
+            Ok(None) => {}
+            Err(e) => tracing::warn!("{e}"),
         }
 
-        // MCP server (#mcp-bridge): opt-in via GAME_SHELL_MCP_BIND.
-        // When the env var is unset (the default), no socket is opened.
+        // MCP server (#mcp-bridge): opt-in via [mcp].bind in config.toml.
+        // Absent ⇒ no socket is opened. The dangerous-combo refusal already ran
+        // in DaemonConfig::validate above.
         // Pass a child token so the MCP server stops cleanly whenever the
         // shared shutdown token is cancelled (signal or re-exec). The single
         // CancellationToken design (Fix 1) eliminates the previous race where
@@ -180,27 +179,24 @@ fn main() -> anyhow::Result<()> {
         // select!, leaving the daemon stuck with no re-exec.
         #[cfg(feature = "mcp")]
         {
-            if let Ok(bind_str) = std::env::var("GAME_SHELL_MCP_BIND") {
-                match bind_str.parse::<std::net::SocketAddr>() {
-                    Ok(addr) => {
-                        let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
-                        let auth_enabled = http::read_auth_enabled();
-                        tokio::spawn(mcp::serve(
-                            addr,
-                            token,
-                            auth_enabled,
-                            control_tx.clone(),
-                            events_tx.clone(),
-                            shutdown.clone(),
-                            reexec_flag.clone(),
-                        ));
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "GAME_SHELL_MCP_BIND={bind_str:?} is not a valid host:port address: {e}"
-                        );
-                    }
+            match daemon_cfg.mcp_bind() {
+                Ok(Some(addr)) => {
+                    let token = daemon_cfg.http_token();
+                    let auth_enabled = daemon_cfg.http.auth_enabled;
+                    tokio::spawn(mcp::serve(
+                        addr,
+                        token,
+                        auth_enabled,
+                        daemon_cfg.mcp.dev,
+                        daemon_cfg.mcp.allowed_hosts.clone(),
+                        control_tx.clone(),
+                        events_tx.clone(),
+                        shutdown.clone(),
+                        reexec_flag.clone(),
+                    ));
                 }
+                Ok(None) => {}
+                Err(e) => tracing::warn!("{e}"),
             }
         }
 

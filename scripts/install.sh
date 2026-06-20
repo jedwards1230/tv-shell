@@ -148,13 +148,11 @@ seed() { # seed <example-name> <dest-name>
         cp "$src" "$dst"; log "seeded $dst (from $1)"
     fi
 }
-seed daemon.env.example   daemon.env
+seed config.toml.example  config.toml
 seed targets.json.example targets.json
-# daemon.env can hold a bearer token — its 0600 must stick, so a chmod failure
-# is fatal rather than silently leaving it readable.
-if [ -f "$CONFIG_DIR/daemon.env" ]; then
-    chmod 600 "$CONFIG_DIR/daemon.env" || die "failed to chmod 600 $CONFIG_DIR/daemon.env (it may hold a token)"
-fi
+# config.toml holds no secret inline (the bearer token lives in a separate 0600
+# file referenced by [http].token_file), so it needs no special mode. If an
+# operator still has a token file beside it, leave their permissions alone.
 
 # 5. Hand the prefix + per-user files back to the target user. Failure here is
 #    fatal — silently leaving the tree root-owned would block the user (and the

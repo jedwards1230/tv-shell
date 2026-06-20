@@ -30,16 +30,22 @@ use std::time::Duration;
 const ON_DECK_LIMIT: usize = 16;
 const RECENT_LIMIT: usize = 24;
 
-/// Resolve `(base_url, token)` from the environment, or `None` when the widget
-/// is unconfigured. Trailing slash on the base is trimmed so URL joins are clean.
+/// Resolve `(base_url, token)` from `[plex]` in `config.toml`, or `None` when the
+/// widget is unconfigured. Trailing slash on the base is trimmed so URL joins are
+/// clean. The token is by inline `token` or `token_file` (see daemon_config).
 ///
 /// `pub(crate)` so [`crate::service_health`] reuses the exact same resolution
 /// for its reachability probe — one source of truth for "is Plex configured?".
 pub(crate) fn config() -> Option<(String, String)> {
-    let base = std::env::var("GAME_SHELL_PLEX_URL").ok()?;
-    let token = std::env::var("GAME_SHELL_PLEX_TOKEN").ok()?;
-    let base = base.trim().trim_end_matches('/').to_string();
-    let token = token.trim().to_string();
+    let cfg = crate::daemon_config::global();
+    let base = cfg
+        .plex
+        .url
+        .as_deref()?
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    let token = cfg.plex_token()?;
     if base.is_empty() || token.is_empty() {
         return None;
     }

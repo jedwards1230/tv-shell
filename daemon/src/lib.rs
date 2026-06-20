@@ -9,7 +9,11 @@
 
 pub mod apps;
 pub mod config;
+// Typed daemon configuration (~/.config/game-shell/config.toml). Cross-platform
+// (toml + serde); replaces the old daemon.env env-var loader. Carries the
+// startup validate() that refuses an unauthenticated LAN control surface.
 pub mod controllerdb;
+pub mod daemon_config;
 pub mod device;
 pub mod health;
 pub mod ipc;

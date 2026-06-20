@@ -1,33 +1,37 @@
 # Network Control Surface (HTTP bridge + MCP server)
 
 The daemon exposes its intent/key/screenshot/dev surface over the network two
-ways. Both are **opt-in** (a single env var each), share **one bearer token**, and
-are thin adapters over the same action logic in `daemon/src/bridge_core.rs`.
+ways. Both are **opt-in** (a single key each in `config.toml`), share **one bearer
+token**, and are thin adapters over the same action logic in
+`daemon/src/bridge_core.rs`.
 
-| Adapter | Module | Opt-in env | Endpoint |
-|---------|--------|------------|----------|
-| HTTP/1.1 bridge | `daemon/src/http.rs` | `GAME_SHELL_HTTP_BIND=host:port` | `http://<bind>/...` |
-| MCP server (rmcp 1.7.0, streamable-HTTP) | `daemon/src/mcp.rs` | `GAME_SHELL_MCP_BIND=host:port` | `http://<bind>/mcp` |
+| Adapter | Module | Opt-in (config.toml) | Endpoint |
+|---------|--------|----------------------|----------|
+| HTTP/1.1 bridge | `daemon/src/http.rs` | `[http] bind = "host:port"` | `http://<bind>/...` |
+| MCP server (rmcp 1.7.0, streamable-HTTP) | `daemon/src/mcp.rs` | `[mcp] bind = "host:port"` | `http://<bind>/mcp` |
 
 Relationship to the Unix-socket IPC ([IPC_PROTOCOL.md](IPC_PROTOCOL.md)): the IPC
 socket (`0o600`, owner-only) is the shell↔daemon contract. This control surface is
 its **network-facing sibling** — same `Control::Intent` / `Control::Key` paths and
 the `grim` screenshotter, reachable by off-box clients (an LLM agent, Home
-Assistant) when explicitly bound. Unset env → no socket opened, zero exposure.
+Assistant) when explicitly bound. No `bind` set → no socket opened, zero exposure.
 
 ## Auth model
 
-Both adapters use the **same** vars (`mcp.rs:6`, `http.rs:9`):
+Both adapters share the **same** `[http]` keys in `config.toml`:
 
-| Var | Default | Effect |
+| Key | Default | Effect |
 |-----|---------|--------|
-| `GAME_SHELL_HTTP_AUTH_ENABLED` | enabled | `0`/`false` disables auth (local-only dev) |
-| `GAME_SHELL_HTTP_TOKEN` | unset | bearer token; every request needs `Authorization: Bearer <token>` |
+| `[http] auth_enabled` | `true` | `false` disables auth (local-only dev) |
+| `[http] token_file` | unset | path to a `0600` file holding the bearer token; every request needs `Authorization: Bearer <token>`. The token is **by reference only**, never inline |
 
 - Constant-time compare (`bridge_core::ct_eq_str`).
-- Auth enabled + no token → **fail closed** (all 401). Empty token is treated as no token.
-- MCP refuses to start on a **non-loopback** bind when dev tools are on AND auth is
-  effectively off — that combo is an unauthenticated RCE surface (`mcp.rs:559`).
+- Auth enabled + no token → **fail closed** (all 401). An empty/missing token file is treated as no token.
+- The daemon **refuses to start** (`DaemonConfig::validate`) on a **non-loopback**
+  bind when dev tools are on AND auth is effectively off — that combo is an
+  unauthenticated RCE surface. Set `[dev] allow_insecure_lan = true` to override
+  the refusal (downgrades it to a loud warning) on a box that genuinely wants the
+  unauthenticated LAN dev loop.
 
 **Posture**: LAN-only, bind to a trusted interface, keep a token set, leave dev
 tools off in production. A wildcard bind (`0.0.0.0`) widens reach — the token is
@@ -59,7 +63,7 @@ subprocesses (auth checked first).
 ## MCP tools (`mcp.rs`)
 
 14 tools over streamable-HTTP at `/mcp`. The 3 dev tools are gated by
-`GAME_SHELL_MCP_DEV` (any non-empty value) — when unset they return a clear error
+`[mcp] dev = true` in `config.toml` — when off they return a clear error
 instead of acting (registered unconditionally; rmcp can't yet register
 conditionally, `mcp.rs:413`).
 
@@ -80,7 +84,7 @@ conditionally, `mcp.rs:413`).
 | `dev_build` 🔒 | — | destructive | build + install binary (~15–60 s) |
 | `dev_restart_daemon` 🔒 | — | destructive | re-exec daemon (connection drops) |
 
-🔒 = requires `GAME_SHELL_MCP_DEV`.
+🔒 = requires `[mcp] dev = true`.
 
 **MCP resource — `screenshot://current`:** the live display as a PNG, exposed via
 `resources/list` + `resources/read` (capabilities advertise `resources`). It is
@@ -108,7 +112,7 @@ URIs return a JSON-RPC `resource_not_found` (-32002).
   `dev_deploy` mutates HEAD under the long-lived daemon without a restart.
 - `list_apps` makes `launch_app` discoverable without guessing `wm_class` values.
 
-`GAME_SHELL_MCP_ALLOWED_HOSTS` (comma-separated `host[:port]`) sets the rmcp Host
+`[mcp] allowed_hosts = ["host[:port]", …]` sets the rmcp Host
 allowlist (loopback always allowed; a concrete bind IP is auto-added; a wildcard
 bind with no override disables Host matching and relies on the token, `mcp.rs:625`).
 

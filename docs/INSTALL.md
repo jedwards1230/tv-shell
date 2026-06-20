@@ -55,13 +55,20 @@ copy-runnable starting point is `config/targets.json.example`. You can also
 manage targets in-UI (Settings ▸ Widgets ▸ Moonlight). **Never pretty-print this
 file** — the shell parses it line-by-line.
 
-### Daemon env — `daemon.env` (optional)
+### Daemon config — `config.toml` (optional)
 
-Per-machine daemon options, sourced by the session wrapper before the daemon
-starts: the LAN HTTP bridge / MCP server binds and token, CEC lifecycle, and the
-optional Plex / Steam home-screen widgets. Every key is documented inline in
-`config/daemon.env.example`. Keep it `chmod 600` (the installer does this) — it
-can hold tokens. Leave it untouched and the shell still boots fully.
+Per-machine daemon options, read directly by the daemon at startup: the LAN HTTP
+bridge / MCP server binds, the auth toggle, CEC lifecycle, and the optional Plex /
+Steam home-screen widgets. Every key is documented inline in
+`config/config.toml.example`. The shared bearer token is **never inline** — it
+lives in a separate `0600` file that `[http] token_file` points at (e.g.
+`openssl rand -hex 32 > ~/.config/game-shell/http-token`). Leave the file
+untouched and the shell still boots fully.
+
+> **Startup safety check:** the daemon **refuses to start** if a control surface
+> is bound to a non-loopback address with dev tools on and auth effectively off
+> (an unauthenticated RCE surface). Set `[dev] allow_insecure_lan = true` to
+> override that on a box that genuinely wants the unauthenticated LAN dev loop.
 
 ### Display tuning — `hyprland-local.conf` (optional)
 
@@ -77,6 +84,6 @@ specific (SDDM `autologin`, plasmalogin, GDM) and intentionally left to you.
 
 ## Optional: LAN control surface
 
-Setting `GAME_SHELL_HTTP_BIND` / `GAME_SHELL_MCP_BIND` in `daemon.env` exposes the
-daemon's control surface (screenshots, intents, MCP tools) over the network. See
+Setting `[http] bind` / `[mcp] bind` in `config.toml` exposes the daemon's control
+surface (screenshots, intents, MCP tools) over the network. See
 [CONTROL_SURFACE.md](CONTROL_SURFACE.md). Firewall those ports yourself.

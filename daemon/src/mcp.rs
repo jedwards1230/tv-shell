@@ -734,13 +734,20 @@ async fn auth_middleware(
 /// the token. The MCP server then shuts down cleanly and the main loop
 /// proceeds to re-exec (if flagged).
 ///
-/// `token` and `auth_enabled` mirror the HTTP bridge's env vars
-/// (`GAME_SHELL_HTTP_TOKEN`, `GAME_SHELL_HTTP_AUTH_ENABLED`) so operators
-/// only need one token for both bridges.
+/// `token` and `auth_enabled` come from `[http]` in config.toml (the shared
+/// bearer token + auth flag), so operators only need one token for both bridges.
+/// `dev` is `[mcp].dev` and `allowed_hosts` is `[mcp].allowed_hosts`.
+///
+/// The dangerous-combo refusal (non-loopback + dev + no-auth) is enforced once,
+/// up front, by `DaemonConfig::validate` (which also honors
+/// `[dev].allow_insecure_lan`); by the time this runs, that gate has passed.
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     addr: std::net::SocketAddr,
     token: Option<String>,
     auth_enabled: bool,
+    dev_enabled: bool,
+    allowed_hosts_cfg: Vec<String>,
     control_tx: mpsc::Sender<Control>,
     events_tx: broadcast::Sender<Event>,
     shutdown: CancellationToken,
@@ -755,31 +762,14 @@ pub async fn serve(
     // it fails closed (rejects all) instead of accepting `Bearer ` (empty).
     let token = token.filter(|t| !t.is_empty());
 
-    let dev_enabled = std::env::var("GAME_SHELL_MCP_DEV")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-
     if dev_enabled {
-        tracing::warn!(
-            "mcp: GAME_SHELL_MCP_DEV is set — dev tools enabled (deploy/build/restart-daemon)"
-        );
+        tracing::warn!("mcp: [mcp].dev is set — dev tools enabled (deploy/build/restart-daemon)");
     }
 
-    // Fix 5: Refuse to start the MCP server when the dangerous combo is present:
-    // non-loopback bind + dev mode + auth effectively disabled (no token / auth off).
-    if dev_enabled && !addr.ip().is_loopback() {
-        let auth_effectively_disabled = !auth_enabled || token.is_none();
-        if auth_effectively_disabled {
-            tracing::error!(
-                "mcp: REFUSING to start MCP server on non-loopback address {addr} \
-                 with GAME_SHELL_MCP_DEV enabled and no authentication. \
-                 This would expose an unauthenticated RCE surface on the LAN. \
-                 Set GAME_SHELL_HTTP_TOKEN + ensure GAME_SHELL_HTTP_AUTH_ENABLED != 0, \
-                 or bind to 127.0.0.1 for local-only dev access."
-            );
-            return;
-        }
-    }
+    // NOTE: the dangerous-combo refusal (non-loopback + dev + no-auth) lives in
+    // DaemonConfig::validate, run at startup before this task is spawned — and it
+    // honors [dev].allow_insecure_lan, which a hard refusal here would override.
+    // So there is intentionally no second refusal in serve.
 
     // Build auth state for the middleware.
     let auth_state = if !auth_enabled {
@@ -841,21 +831,20 @@ pub async fn serve(
     //
     // We build the allowlist from:
     //   1. Always: localhost, 127.0.0.1, ::1 (loopback)
-    //   2. GAME_SHELL_MCP_ALLOWED_HOSTS env var (comma-separated host[:port])
+    //   2. [mcp].allowed_hosts from config.toml (host[:port] entries)
     //   3. If the bind address is a concrete IP (not 0.0.0.0/::), include it.
-    //   4. If the bind is a wildcard AND no env override, clear the list
+    //   4. If the bind is a wildcard AND no config override, clear the list
     //      (allow-all) and warn — acceptable because Fix 2's bearer token is
     //      the real gate.
-    let allowed_hosts_env = std::env::var("GAME_SHELL_MCP_ALLOWED_HOSTS").ok();
     let bind_is_wildcard = addr.ip().is_unspecified();
 
-    if bind_is_wildcard && allowed_hosts_env.is_none() {
+    if bind_is_wildcard && allowed_hosts_cfg.is_empty() {
         // Allow all — host header matching disabled. Token is the gate.
         tracing::warn!(
             "mcp: host allowlisting is DISABLED (bind is wildcard, \
-             GAME_SHELL_MCP_ALLOWED_HOSTS not set). \
+             [mcp].allowed_hosts not set). \
              DNS-rebinding protection relies on the bearer token. \
-             Set GAME_SHELL_MCP_ALLOWED_HOSTS=<host> or bind to a concrete IP \
+             Set [mcp].allowed_hosts = [\"<host>\"] or bind to a concrete IP \
              to restrict by Host header."
         );
         config.allowed_hosts = vec![];
@@ -867,12 +856,10 @@ pub async fn serve(
             hosts.push(addr.ip().to_string());
             hosts.push(addr.to_string()); // also include host:port form
         }
-        if let Some(env_hosts) = &allowed_hosts_env {
-            for h in env_hosts.split(',') {
-                let h = h.trim();
-                if !h.is_empty() {
-                    hosts.push(h.to_owned());
-                }
+        for h in &allowed_hosts_cfg {
+            let h = h.trim();
+            if !h.is_empty() {
+                hosts.push(h.to_owned());
             }
         }
         config.allowed_hosts = hosts;

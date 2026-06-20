@@ -1,0 +1,75 @@
+# Per-machine configuration for the game-shell input daemon.
+#
+# Copy to ~/.config/game-shell/config.toml and edit. The daemon reads this
+# typed TOML file directly at startup (it replaced the old daemon.env env file).
+# Everything here is OPTIONAL — with no config.toml the shell still boots; these
+# sections only turn on the LAN control surface and the optional Plex / Steam
+# home-screen widgets.
+#
+# The shared bearer token is NEVER inline — it lives in a separate 0600 file that
+# [http].token_file points at. Generate one:
+#   install -m600 /dev/null ~/.config/game-shell/http-token
+#   openssl rand -hex 32 > ~/.config/game-shell/http-token
+#
+# The daemon REFUSES to start if a control surface is bound to a non-loopback
+# address with dev tools on and auth effectively off — unless you explicitly set
+# [dev].allow_insecure_lan = true (see the very bottom).
+
+# --- LAN control surface (HTTP bridge) ---------------------------------------
+[http]
+# Bind address for the HTTP/1.1 control bridge (GET /screenshot, POST intents,
+# /dev/* deploy tools). Omit/comment out to leave the bridge off. Use
+# 127.0.0.1:8089 for local-only, or 0.0.0.0:8089 to expose it on the LAN
+# (firewall it yourself, and keep auth on).
+#bind = "127.0.0.1:8089"
+
+# Require a bearer token on the HTTP bridge + MCP server. Default true. Only set
+# false on a trusted, firewalled LAN (and see [dev].allow_insecure_lan).
+#auth_enabled = true
+
+# Path to the 0600 file holding the shared bearer token (HTTP bridge + MCP).
+# Required when auth_enabled = true. ~ is expanded to $HOME.
+#token_file = "~/.config/game-shell/http-token"
+
+# --- MCP server (optional, requires the daemon built with --features mcp) -----
+[mcp]
+# Streamable-HTTP MCP endpoint at /mcp exposing the daemon's control surface as
+# tools. Omit to leave it off. Shares [http].token_file + [http].auth_enabled.
+#bind = "127.0.0.1:8090"
+# Enable the dev tool surface (build/restart/deploy). Leave off in production.
+#dev = false
+# Host header allowlist (DNS-rebinding guard). Empty ⇒ allow-all (token-gated).
+#allowed_hosts = ["localhost", "my-host.local"]
+
+# --- HDMI-CEC lifecycle (optional, requires the daemon built with --features cec)
+[cec]
+# Daemon wakes the AV chain on start/resume and standbys it on suspend.
+#lifecycle = false
+
+# --- Plex home-screen widget (optional) --------------------------------------
+[plex]
+# On Deck / Recently Added hubs on the home screen. BOTH a url and a token are
+# required or the widget collapses even when toggled on in settings.
+#url = "http://plex-host:32400"
+# Either an inline token …
+#token = "your-plex-token"
+# … or a path to a token file (preferred; keep it 0600):
+#token_file = "~/.config/game-shell/plex-token"
+
+# --- Steam library row (optional) --------------------------------------------
+[steam]
+# Points at a game-shell-host sidecar (see docs/HOST_SETUP.md) running on the
+# gaming PC to enumerate and launch installed Steam games. BOTH url and token
+# are required or the Steam row collapses; the token must match the host's token.
+#url = "http://gaming-pc:47995"
+#token = "must-match-host-token"
+#token_file = "~/.config/game-shell/steam-token"
+
+# --- Operator escape hatch ---------------------------------------------------
+[dev]
+# Explicitly permit the otherwise-refused combination of a non-loopback bind +
+# dev tools + auth effectively disabled. This downgrades the hard startup refusal
+# to a loud warning. Only enable on a trusted, firewalled, single-user dev box
+# (e.g. a dedicated gaming client) where you WANT the unauthenticated LAN dev
+# loop. Default false.
+#allow_insecure_lan = false

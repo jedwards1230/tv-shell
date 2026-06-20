@@ -255,8 +255,8 @@ at relevant lifecycle points):
 | `autoDimEnabled` | bool | `false` | No |
 | `autoDimDelayMinutes` | number | `2` | No |
 | `defaultSink` | string | `""` | No |
-| `cecFocusOnStartup` | bool | `false` | At CEC startup (within `GAME_SHELL_CEC_LIFECYCLE`) |
-| `cecFocusOnWake` | bool | `true` | At CEC resume from sleep (within `GAME_SHELL_CEC_LIFECYCLE`) |
+| `cecFocusOnStartup` | bool | `false` | At CEC startup (within `[cec] lifecycle`) |
+| `cecFocusOnWake` | bool | `true` | At CEC resume from sleep (within `[cec] lifecycle`) |
 
 ### `record-launch <json-object>`
 
@@ -1080,10 +1080,10 @@ Fetch the Plex server's **On Deck** (continue-watching / up-next) and **Recently
 Added** hubs for the home-screen Plex widget. Bare command — no body. Stateless
 and cross-platform (`reqwest`), served like `sunshine-status`.
 
-Config comes from the **daemon environment** (typically `daemon.env`):
+Config comes from the **`[plex]` section** of `~/.config/game-shell/config.toml`:
 
-- `GAME_SHELL_PLEX_URL` — server base, e.g. `https://plex.example.com`
-- `GAME_SHELL_PLEX_TOKEN` — an `X-Plex-Token`
+- `url` — server base, e.g. `https://plex.example.com`
+- `token` (inline) or `token_file` (path to a `0600` file) — an `X-Plex-Token`
 
 The token never leaves the daemon: the reply embeds ready-to-load, tokenized
 poster URLs (`/photo/:/transcode?…&X-Plex-Token=…`) so the QML `Image` loads art
@@ -1237,15 +1237,15 @@ input). This **is** the "Switch Input" primitive — there is no separate
 **Response:** `ok\n` on success, `error:<detail>\n` on failure. Feature/platform
 off: `error:unsupported on this platform\n`.
 
-### Session-lifecycle CEC (`GAME_SHELL_CEC_LIFECYCLE`)
+### Session-lifecycle CEC (`[cec] lifecycle`)
 
 Beyond the manual `cec-*` commands above, the daemon can drive the AV on session
 lifecycle transitions. This is **separate** from the manual commands — it is an
-internal behavior with no IPC verb, gated entirely by an environment flag.
+internal behavior with no IPC verb, gated entirely by a config flag.
 
-| Variable | Purpose |
-|----------|---------|
-| `GAME_SHELL_CEC_LIFECYCLE` | Enable daemon-owned CEC lifecycle. Enabled only when set to exactly `1` or `true`. **Unset/any other value → disabled (the default).** Set it in `daemon.env` on the deploy host. |
+| Key | Purpose |
+|-----|---------|
+| `[cec] lifecycle` | Enable daemon-owned CEC lifecycle (a TOML bool, default `false`). **Unset/`false` → disabled (the default).** Set it in `~/.config/game-shell/config.toml` on the deploy host. |
 
 When **enabled** (and the daemon is built `--features cec` on a host with a
 working libcec adapter), the daemon:
@@ -1282,7 +1282,7 @@ working libcec adapter), the daemon:
 
   All other codes (menus, media transport, number/colour keys) are ignored —
   no new nav vocabulary is introduced. Gated by the **same**
-  `GAME_SHELL_CEC_LIFECYCLE` flag as the wake/standby behavior, so a default
+  `[cec] lifecycle` flag as the wake/standby behavior, so a default
   build, a host without the flag, or dev/CI never inject keys.
 
 When **disabled** (the default) the CEC actor still serves the manual `cec-*`
@@ -1302,41 +1302,43 @@ An optional, LAN-bound HTTP/1.1 listener that maps `POST /intent/<target>`,
 broadcast paths and the `grim` screenshotter, so Home Assistant `rest_command` /
 curl / scripts can drive the shell without needing a Unix socket client.
 
-### Opt-in via environment variables
+### Opt-in via `config.toml`
 
-| Variable | Purpose |
-|----------|---------|
-| `GAME_SHELL_HTTP_BIND` | `host:port` address to bind (e.g. `192.168.1.50:8731` or `0.0.0.0:8731`). When **unset** (the default), no TCP socket is opened and no control surface is exposed. |
-| `GAME_SHELL_HTTP_TOKEN` | Bearer token for auth. When auth is enabled (the default), every request must carry `Authorization: Bearer <token>` (constant-time match); requests without a valid token receive 401. |
-| `GAME_SHELL_HTTP_AUTH_ENABLED` | Auth toggle. Default: **enabled** (unset or any value other than `0`/`false`). Set to `0` to skip auth entirely for local-only dev. When auth is enabled but `GAME_SHELL_HTTP_TOKEN` is not set, **all requests are rejected with 401** (secure by default — you cannot authenticate without a token). |
+| Key (`[http]`) | Purpose |
+|----------------|---------|
+| `bind` | `host:port` address to bind (e.g. `192.168.1.50:8731` or `0.0.0.0:8731`). When **omitted** (the default), no TCP socket is opened and no control surface is exposed. |
+| `token_file` | Path to a `0600` file holding the bearer token (the token is **by reference only**, never inline). When auth is enabled (the default), every request must carry `Authorization: Bearer <token>` (constant-time match); requests without a valid token receive 401. |
+| `auth_enabled` | Auth toggle (a TOML bool, default `true`). Set to `false` to skip auth entirely for local-only dev. When auth is enabled but `token_file` resolves no token, **all requests are rejected with 401** (secure by default — you cannot authenticate without a token). |
 
 > **Security note**: bind to a trusted LAN interface (e.g. `192.168.1.x:8731`),
 > not a public one. The bridge is a control surface — a mis-bound listener would
-> expose shell control to the public internet. Pair with `GAME_SHELL_HTTP_TOKEN`
-> for defence-in-depth even on a LAN.
+> expose shell control to the public internet. Pair with `token_file` for
+> defence-in-depth even on a LAN. The daemon **refuses to start** on a non-loopback
+> bind with dev tools on and auth effectively off unless `[dev] allow_insecure_lan
+> = true`.
 
 Default port suggestion: **8731**. The bind address must include the port.
 
-### Per-box opt-in via `daemon.env`
+### Per-box opt-in via `config.toml`
 
-The session script (`scripts/game-shell-session.sh`) sources an optional
-machine-local env file before starting the daemon, so per-box overrides survive
-git deploys without touching tracked files:
+The daemon reads an optional machine-local typed config at startup, so per-box
+overrides survive git deploys without touching tracked files:
 
 ```
-~/.config/game-shell/daemon.env
+~/.config/game-shell/config.toml
 ```
 
-Example file to opt a box into the LAN HTTP bridge:
+Example to opt a box into the LAN HTTP bridge:
 
-```sh
-# ~/.config/game-shell/daemon.env
+```toml
+# ~/.config/game-shell/config.toml
+[http]
 # Bind the HTTP bridge to the LAN interface on this box.
-GAME_SHELL_HTTP_BIND=192.168.1.50:8731
-# Set a bearer token (required when auth is enabled, the default).
-GAME_SHELL_HTTP_TOKEN=mysecret
+bind = "192.168.1.50:8731"
+# A 0600 file holding the bearer token (required when auth is enabled, the default).
+token_file = "~/.config/game-shell/http-token"
 # Uncomment to disable auth entirely for local-only dev:
-# GAME_SHELL_HTTP_AUTH_ENABLED=0
+# auth_enabled = false
 ```
 
 ### Routes
@@ -1418,7 +1420,7 @@ curl -X POST http://192.168.1.50:8731/key/select
 curl -H "Authorization: Bearer mysecret" \
      http://192.168.1.50:8731/screenshot > screenshot.png
 
-# Screenshot without auth (GAME_SHELL_HTTP_AUTH_ENABLED=0)
+# Screenshot without auth ([http] auth_enabled = false)
 curl http://192.168.1.50:8731/screenshot > screenshot.png
 ```
 
@@ -1435,17 +1437,19 @@ An additional set of routes for iterating on the shell from a remote machine —
 a new git ref, build the daemon, restart quickshell, tail logs, and query daemon state,
 all over HTTP. These routes require a freshly-built binary (issues #167 + #165).
 
-All `/dev/*` routes are gated by the same `AUTH_ENABLED` bearer auth as the rest of
-the bridge, and are LAN-only by design. `/dev/deploy` and `/dev/build` execute
-arbitrary code on the host and are **RCE-by-design** — acceptable for a trusted LAN
-box, but never expose the bridge to a public interface.
+All `/dev/*` routes are gated by the same `[http] auth_enabled` bearer auth as the
+rest of the bridge, and are LAN-only by design. `/dev/deploy` and `/dev/build`
+execute arbitrary code on the host and are **RCE-by-design** — acceptable for a
+trusted LAN box, but never expose the bridge to a public interface. (This is
+exactly the combination `DaemonConfig::validate` refuses on a non-loopback bind
+with auth off, absent `[dev] allow_insecure_lan = true`.)
 
-The daemon now self-discovers session env at startup (#165): it loads
-`~/.config/game-shell/daemon.env` into the process environment (variables not already
-set) and resolves `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE` from
-`$XDG_RUNTIME_DIR` when they are not inherited. This means the bridge binds and
-subprocesses (`grim`, `quickshell`) work correctly even when the daemon is launched
-before `exec Hyprland` in the session script.
+The daemon reads its options from a typed `~/.config/game-shell/config.toml` at
+startup, and separately self-discovers session env (#165): it resolves
+`WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE` from `$XDG_RUNTIME_DIR` when
+they are not inherited. This means the bridge binds and subprocesses (`grim`,
+`quickshell`) work correctly even when the daemon is launched before
+`exec Hyprland` in the session script.
 
 #### Route table
 
