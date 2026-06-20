@@ -23,14 +23,9 @@ FocusScope {
             resumeBtn.forceActiveFocus();
     }
 
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.7)
-
-        MouseArea {
-            anchors.fill: parent
-            onClicked: root.cancelled()
-        }
+    DimmedBackdrop {
+        // dimLevel defaults to Theme.scrimOpacity (canonical modal scrim).
+        onClicked: root.cancelled()
     }
 
     Rectangle {

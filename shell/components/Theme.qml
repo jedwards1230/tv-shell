@@ -197,6 +197,14 @@ Item {
     readonly property int rowHeight: Math.round(Units.gridUnit * 10.0)
     readonly property int statusBarHeight: Math.round(Units.gridUnit * 2.22)
 
+    // === Scrim ===
+    // Canonical dim level for a modal overlay's full-screen backdrop. Modal
+    // overlays previously hand-picked 0.7 / 0.85 ad hoc (drift); route them all
+    // through DimmedBackdrop's default (this token) so the dim reads uniform.
+    // Intentionally near-opaque surfaces (e.g. the power menu) set their own
+    // higher dimLevel — this is the baseline, not a hard cap.
+    readonly property real scrimOpacity: 0.85
+
     // === Font sizes — derived from Units.gridUnit (couch-readable, resolution-adaptive) ===
     // fontHero (hero clock) is intentionally unscaled — it owns the layout.
     // All text-content tiers scale by textScale so users can enlarge body text (#110).

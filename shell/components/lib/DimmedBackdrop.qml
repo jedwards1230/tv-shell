@@ -6,7 +6,7 @@ Rectangle {
     anchors.fill: parent
     color: Qt.rgba(0, 0, 0, dimLevel)
 
-    property real dimLevel: 0.7
+    property real dimLevel: Theme.scrimOpacity
     property string message: ""
 
     signal clicked
