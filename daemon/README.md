@@ -225,7 +225,11 @@ override), and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
 
 ## Logging & debugging
 
-Logs go to stderr via `tracing`, filtered by `RUST_LOG` (default `info`). Tiers:
+Logs go to the **systemd journal** when the daemon runs as a `systemd --user`
+unit (or any journal-attached context — auto-detected via `JOURNAL_STREAM`,
+overridable with `GAME_SHELL_LOG_JOURNAL=1`/`0`), else to **stderr**. Either way
+they ride `tracing`, filtered by `RUST_LOG` (default `info`). Read a unit's logs
+with `journalctl --user -u game-shell-input`. Tiers:
 
 | Level | Shows |
 |-------|-------|
@@ -252,6 +256,18 @@ Inject a control-surface intent by hand (e.g. to test the keyboard escape path):
 ```bash
 printf 'intent home\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"   # -> ok
 ```
+
+## Metrics
+
+The daemon exports Prometheus/OpenMetrics two ways: an **auth-exempt `GET /metrics`**
+on the HTTP bridge, and/or an atomically-written **node_exporter textfile** (env
+`GAME_SHELL_METRICS_TEXTFILE`; refresh `GAME_SHELL_METRICS_INTERVAL`, default 15s;
+unset = off). One shared renderer feeds both (`metrics.rs`). Series are all
+`game_shell_*`: `build_info{sha,branch,version}` (current deployment), dev-action
+counters (`deploy_total{outcome}`, `build_total`, `restart_*_total`),
+input/intent/transition/pad counters, and cpu/mem/load/temp gauges (the gauges are
+a convenience — prefer node_exporter for host resources). Full catalogue in
+[`../docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md).
 
 ## Status
 

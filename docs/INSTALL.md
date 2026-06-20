@@ -81,3 +81,18 @@ specific (SDDM `autologin`, plasmalogin, GDM) and intentionally left to you.
 Setting `GAME_SHELL_HTTP_BIND` / `GAME_SHELL_MCP_BIND` in `daemon.env` exposes the
 daemon's control surface (screenshots, intents, MCP tools) over the network. See
 [CONTROL_SURFACE.md](CONTROL_SURFACE.md). Firewall those ports yourself.
+
+## Verify
+
+After logging in, the daemon runs as a `systemd --user` unit — check it and its
+logs:
+
+```bash
+systemctl --user status game-shell-input         # active (running)
+journalctl --user -u game-shell-input -f         # daemon logs
+journalctl --user -t game-shell-quickshell -f    # quickshell output
+```
+
+If the LAN bridge is bound, `curl http://<host>:8089/metrics` returns Prometheus
+metrics — `game_shell_build_info` shows the deployed revision. Details in
+[SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) and [OBSERVABILITY.md](OBSERVABILITY.md).
