@@ -25,6 +25,25 @@ FocusScope {
     // Bottom-of-page hint text. Empty string hides the HintBar.
     property string hintText: ""
 
+    // === Settings-page contract ===
+    // SettingsApp drives every loaded page through these two entry points
+    // (contentLoader.item.focusFirst() on Return-to-enter; applyDeepTarget() when
+    // a deep-link slug is pending). Declaring them on the base means a page that
+    // extends SettingsPageBase always satisfies the contract — a page that forgets
+    // to override focusFirst() inherits a safe no-op instead of SettingsApp's
+    // guarded `&& item.focusFirst` silently skipping focus-entry.
+    //
+    // Override in the page:
+    //   function focusFirst() { firstControl.forceActiveFocus(); }
+    //   function applyDeepTarget(t) { ... }   // only pages with deep-links
+    function focusFirst() {
+    }
+
+    // Apply a pending deep-link target (e.g. "moonlight"). Default no-op — only
+    // pages that host a deep-linkable sub-surface (Widgets ▸ Moonlight) override.
+    function applyDeepTarget(target) {
+    }
+
     // Page content is appended into the content column.
     default property alias content: contentColumn.data
 
