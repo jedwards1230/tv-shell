@@ -217,70 +217,94 @@ FocusScope {
     // PipeWire/WAV channel index order per channel count:
     //   2: FL,FR · 4: FL,FR,RL,RR · 6: FL,FR,FC,LFE,RL,RR · 8: +SL,SR
     readonly property var channelLayouts: ({
-            "2": [{
+            "2": [
+                {
                     "label": "Left",
                     "idx": 0
-                }, {
+                },
+                {
                     "label": "Right",
                     "idx": 1
-                }],
-            "4": [{
+                }
+            ],
+            "4": [
+                {
                     "label": "Front L",
                     "idx": 0
-                }, {
+                },
+                {
                     "label": "Front R",
                     "idx": 1
-                }, {
+                },
+                {
                     "label": "Rear L",
                     "idx": 2
-                }, {
+                },
+                {
                     "label": "Rear R",
                     "idx": 3
-                }],
-            "6": [{
+                }
+            ],
+            "6": [
+                {
                     "label": "Front L",
                     "idx": 0
-                }, {
+                },
+                {
                     "label": "Front R",
                     "idx": 1
-                }, {
+                },
+                {
                     "label": "Center",
                     "idx": 2
-                }, {
+                },
+                {
                     "label": "LFE/Sub",
                     "idx": 3
-                }, {
+                },
+                {
                     "label": "Rear L",
                     "idx": 4
-                }, {
+                },
+                {
                     "label": "Rear R",
                     "idx": 5
-                }],
-            "8": [{
+                }
+            ],
+            "8": [
+                {
                     "label": "Front L",
                     "idx": 0
-                }, {
+                },
+                {
                     "label": "Front R",
                     "idx": 1
-                }, {
+                },
+                {
                     "label": "Center",
                     "idx": 2
-                }, {
+                },
+                {
                     "label": "LFE/Sub",
                     "idx": 3
-                }, {
+                },
+                {
                     "label": "Rear L",
                     "idx": 4
-                }, {
+                },
+                {
                     "label": "Rear R",
                     "idx": 5
-                }, {
+                },
+                {
                     "label": "Side L",
                     "idx": 6
-                }, {
+                },
+                {
                     "label": "Side R",
                     "idx": 7
-                }]
+                }
+            ]
         })
 
     // Negotiated channel count of the current default sink (from getFormat),
@@ -372,7 +396,8 @@ FocusScope {
         if (mask.length === 0)
             tonePlayer.running = false;
         else if (tonePlayer.running)
-            tonePlayer.running = false;      // onExited restarts with the new mask
+            tonePlayer.running = false;
+            // onExited restarts with the new mask
         else
             tonePlayer.running = true;       // start fresh
     }
