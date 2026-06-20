@@ -13,9 +13,9 @@ import "../components/lib"
 //   net-status     -> {connectivity, primaryType, hasWifi, ipv4, gateway, dns, activeConnections:[{name,type,device,speed}]}
 //   net-wifi-list  -> [{ssid, signal, security, inUse}]
 //   net-wifi-rescan -> ok|error (NetworkManager RequestScan)
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: netMainCol.implicitHeight + 2 * Theme.padding
+    hintText: "Network configuration is read-only"
 
     property var activeConnections: []
     property string ipAddress: ""
@@ -132,10 +132,11 @@ FocusScope {
         testButtonScope.forceActiveFocus();
     }
 
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: netMainCol
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         // Connection status
@@ -420,16 +421,6 @@ FocusScope {
             Layout.preferredHeight: Units.gridUnit * 3
             visible: !root.hasWifi || root.wifiNetworks.length === 0
             line: !root.hasWifi ? "No WiFi adapter detected" : "No WiFi networks found"
-        }
-
-        // Absorb remaining vertical space so content top-packs and the hint
-        // pins to the bottom (mirrors ControllerSettings.qml).
-        Item {
-            Layout.fillHeight: true
-        }
-
-        HintBar {
-            text: "Network configuration is read-only"
         }
     }
 }
