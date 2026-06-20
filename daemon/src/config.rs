@@ -14,6 +14,23 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
+// ---------------------------------------------------------------------------
+// settings.json read-modify-write serialization.
+// ---------------------------------------------------------------------------
+
+/// Serializes the read→modify→write of `settings.json`. The file has two
+/// concurrent writers that share no other synchronization: `save_bindings`
+/// (driven from the input thread when a binding is captured, input.rs) and
+/// `set_config` (driven from a `spawn_blocking` IPC handler, ipc.rs). Both
+/// read the existing document, merge their change, and write the whole file
+/// back. Without a shared lock those two RMW cycles can interleave
+/// (read, read, write, write) and silently drop the loser's keys — e.g. a
+/// captured binding clobbered by a concurrent `themeMode` flip. Holding this
+/// lock across the entire read→modify→write makes each cycle atomic with
+/// respect to the other regardless of thread/task scheduling.
+static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Self-write generation guard (used by watch.rs to suppress daemon-own writes).
@@ -509,8 +526,11 @@ pub fn build_settings_json(existing: Option<&str>, bindings: &[Binding]) -> Stri
     serde_json::to_string(&doc).expect("settings serialize")
 }
 
-/// Write bindings to disk (read existing, modify, write single-line).
+/// Write bindings to disk (read existing, modify, write single-line). The
+/// read→modify→write is serialized by [`SETTINGS_LOCK`] against a concurrent
+/// [`set_config`] so neither loses the other's keys.
 pub fn save_bindings(path: &Path, bindings: &[Binding]) -> std::io::Result<()> {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let existing = std::fs::read_to_string(path).ok();
     let json = build_settings_json(existing.as_deref(), bindings);
     note_self_write();
@@ -857,7 +877,10 @@ pub fn rumble_enabled(path: &Path) -> bool {
 
 /// Apply a `set-config` update to disk: read existing, merge, write single-line.
 /// Returns the new document text on success. `updates` must be a JSON object.
+/// The read→modify→write is serialized by [`SETTINGS_LOCK`] against a concurrent
+/// [`save_bindings`] so neither loses the other's keys.
 pub fn set_config(path: &Path, updates: &serde_json::Value) -> std::io::Result<String> {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let existing = std::fs::read_to_string(path).ok();
     let merged = merge_config(existing.as_deref(), updates).ok_or_else(|| {
         std::io::Error::new(
@@ -1087,6 +1110,61 @@ mod tests {
     fn merge_config_rejects_non_object_body() {
         assert!(merge_config(None, &serde_json::json!([1, 2, 3])).is_none());
         assert!(merge_config(None, &serde_json::json!("string")).is_none());
+    }
+
+    #[test]
+    fn concurrent_set_config_and_save_bindings_lose_no_keys() {
+        // M2 regression guard: set_config (IPC handler) and save_bindings (input
+        // thread) both read→modify→write settings.json. Without SETTINGS_LOCK their
+        // RMW cycles interleave and silently drop the loser's keys. Here many
+        // threads each set a *distinct* key while another writes bindings; with the
+        // lock, every key and the keyBindings block must survive.
+        let path = std::env::temp_dir().join(format!(
+            "gs-concurrent-{}-{:?}.json",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, "{}").unwrap();
+
+        const WRITERS: usize = 16;
+        let mut handles = Vec::new();
+        for i in 0..WRITERS {
+            let p = path.clone();
+            handles.push(std::thread::spawn(move || {
+                let key = format!("key{i}");
+                set_config(&p, &serde_json::json!({ key: i })).unwrap();
+            }));
+        }
+        // Interleave a couple of binding writes (the other RMW writer).
+        for _ in 0..2 {
+            let p = path.clone();
+            let bindings = default_bindings();
+            handles.push(std::thread::spawn(move || {
+                save_bindings(&p, &bindings).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        // Every distinct set_config key survived (none clobbered by a racing write).
+        for i in 0..WRITERS {
+            assert_eq!(
+                v.get(format!("key{i}")).and_then(|n| n.as_u64()),
+                Some(i as u64),
+                "key{i} lost or wrong; doc = {text}"
+            );
+        }
+        // The bindings block survived too.
+        assert!(
+            v.get("keyBindings").and_then(|b| b.as_object()).is_some(),
+            "keyBindings lost; doc = {text}"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
