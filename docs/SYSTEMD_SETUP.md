@@ -130,3 +130,10 @@ flow the session script's explicit `start`/`stop` is the intended lifecycle.
 - **Two daemons after a crash?** Shouldn't happen — the session does
   `reset-failed` then `start`, and `stop`s on exit. If you started one by hand,
   `systemctl --user stop game-shell-input` and let the session own it.
+- **Frequent restarts / unit gives up?** `Restart=on-failure` is rate-limited to
+  `StartLimitBurst=3` per `StartLimitIntervalSec=60` — if the daemon hits a
+  persistent error (e.g. evdev/uinput permission denied, socket creation failure)
+  it restarts at most 3×/60s, then systemd stops trying (no 2s thrash loop).
+  Check `journalctl --user -u game-shell-input` for the root cause; after the
+  window elapses, `systemctl --user reset-failed game-shell-input && systemctl
+  --user start game-shell-input` to retry.

@@ -13,6 +13,13 @@
 # .desktop Exec=). This committed copy uses the installer's default prefix
 # (/opt/game-shell); edit ExecStart to match if you wire the unit up by hand.
 Description=game-shell input/backend daemon
+# Rate-limit restarts (these are [Unit]-level directives in modern systemd): at
+# most 3 starts per 60s, after which systemd stops retrying. Without this,
+# Restart=on-failure + RestartSec=2 would restart every 2s indefinitely on a hard
+# failure (e.g. evdev/uinput permission denied). The session script's bare-process
+# fallback still covers a failed start, so the session itself never breaks.
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
