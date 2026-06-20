@@ -13,6 +13,8 @@ FocusScope {
     property var sinks: []
     property int defaultSinkIndex: -1
     property string formatInfo: "Unavailable"
+    // Sample-rate / format only (no channel count — the grid + profile show that).
+    property string formatDetail: ""
 
     // Output card profiles (#234): the available output profiles of every audio
     // card (stereo / surround 5.1 / 7.1 / …). PipeWire auto-selects the highest-
@@ -139,6 +141,13 @@ FocusScope {
             } else {
                 root.formatInfo = "Unavailable";
             }
+            // Rate/format only — channel count is conveyed by the grid + profile.
+            let detail = [];
+            if (r !== "")
+                detail.push(r + " Hz");
+            if (f !== "")
+                detail.push(f);
+            root.formatDetail = detail.join(" · ");
         }
     }
 
@@ -342,14 +351,6 @@ FocusScope {
     property var channelActive: []
     readonly property bool anyChannelActive: channelActive.indexOf(true) >= 0
     readonly property bool allChannelsActive: channelActive.length > 0 && channelActive.indexOf(false) < 0
-    readonly property string activeLabels: {
-        var ch = layoutFor(channelCount);
-        var names = [];
-        for (var i = 0; i < ch.length; i++)
-            if (channelActive[i])
-                names.push(ch[i].label);
-        return names.join(", ");
-    }
 
     // Whenever the visible layout changes (profile switch), clear the active set
     // and stop any tone so we never leave a now-hidden channel "playing".
@@ -577,15 +578,20 @@ FocusScope {
             text: "Speaker Test"
         }
 
-        // Lightweight status line (no card/pill): the negotiated sample-rate /
-        // format / channel count of the current output. The channel layout is
-        // already inferred from the profile, so a separate Format box would be
-        // redundant — this just surfaces the live format as a muted caption.
+        // Status caption directly under the header — the always-on-screen spot
+        // (the focused button is what scrolls into view, and the header sits just
+        // above it). While a tone plays it's the "it's playing" cue + how to stop
+        // (the crimson button fills are the primary feedback); otherwise it shows
+        // the negotiated sample-rate / format when the system reports it. Channel
+        // count is omitted (grid + profile already convey it) and the line
+        // collapses entirely when there's nothing to say.
         Text {
             Layout.fillWidth: true
-            text: root.formatInfo === "Unavailable" ? (root.channelCount + " channels") : root.formatInfo
+            visible: root.anyChannelActive || root.formatDetail !== ""
+            text: root.anyChannelActive ? "● Playing — press a speaker again to stop" : root.formatDetail
             font.pixelSize: Theme.fontHint
-            color: Theme.textMuted
+            font.bold: root.anyChannelActive
+            color: root.anyChannelActive ? Theme.ember : Theme.textMuted
             wrapMode: Text.Wrap
         }
 
@@ -889,39 +895,17 @@ FocusScope {
                 }
             }
 
-            // ── Wide "All Channels" tile, shared below every layout ──
+            // ── Wide "All Channels" tile, shared below every layout. Becomes
+            //    "Stop All" once anything is playing so the label always states
+            //    what pressing it will do. ──
             FocusButton {
                 id: allChannelsBtn
                 Layout.fillWidth: true
-                text: "All Channels"
-                fillActive: root.allChannelsActive
+                text: root.anyChannelActive ? "Stop All" : "All Channels"
+                fillActive: root.anyChannelActive
                 fillColor: Theme.sidebarActive
-                onActivated: root.setAllChannels(!root.allChannelsActive)
+                onActivated: root.setAllChannels(!root.anyChannelActive)
                 KeyNavigation.up: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4RL : (root.channelCount === 8 ? btn8RL : btn6RL))
-            }
-        }
-
-        // Conditional "now playing" popup — appears only while a tone is active,
-        // explaining how to turn it off.
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            radius: Units.radiusMD
-            visible: root.anyChannelActive
-            color: Theme.darkMode ? Qt.rgba(Theme.ember.r, Theme.ember.g, Theme.ember.b, 0.18) : Qt.rgba(Theme.navy.r, Theme.navy.g, Theme.navy.b, 0.12)
-            border.width: 2
-            border.color: Theme.ember
-
-            Text {
-                anchors.fill: parent
-                anchors.leftMargin: 24
-                anchors.rightMargin: 24
-                verticalAlignment: Text.AlignVCenter
-                text: "♪  Playing: " + root.activeLabels + "   —   press a speaker (or All Channels) again to turn it off"
-                font.pixelSize: Theme.fontSmall
-                font.bold: true
-                color: Theme.textPrimary
-                elide: Text.ElideRight
             }
         }
 
@@ -930,7 +914,7 @@ FocusScope {
         }
 
         HintBar {
-            text: "Use A to open the output device dropdown"
+            text: root.anyChannelActive ? "A: stop tone   ·   B: back" : "A: play a test tone on the focused speaker   ·   B: back"
         }
     }
 }
