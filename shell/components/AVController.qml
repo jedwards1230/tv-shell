@@ -25,7 +25,6 @@ Item {
     property bool systemOn: false
     property bool waking: false
     property string shellState: ""
-    property bool _initialized: false
 
     function wake() {
         if (waking || _wakeInFlight || avWakeCooldown.running)
@@ -55,7 +54,6 @@ Item {
             var trimmed = line.trim();
             if (trimmed.length === 0 || trimmed[0] !== "[") {
                 // error:* or unexpected — CEC unavailable; leave systemOn as-is.
-                root._initialized = true;
                 return;
             }
             try {
@@ -69,14 +67,9 @@ Item {
                     }
                 }
                 root.systemOn = avr !== null && avr.powerStatus === "on";
-                root._initialized = true;
             } catch (e) {
                 console.log("AVController: failed to parse cec-scan:", e);
-                root._initialized = true;
             }
-        }
-        onRequestFailed: {
-            root._initialized = true;
         }
     }
 
@@ -148,16 +141,5 @@ Item {
         onTriggered: {
             root.waking = false;
         }
-    }
-
-    onSystemOnChanged: {
-        if (!root._initialized) {
-            root._initialized = true;
-            return;
-        }
-        if (systemOn)
-            NotificationManager.info("av", "AV System On");
-        else
-            NotificationManager.info("av", "AV System Off");
     }
 }
