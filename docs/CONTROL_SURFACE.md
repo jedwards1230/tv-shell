@@ -60,7 +60,7 @@ subprocesses (auth checked first).
 ## Observability (`/metrics`)
 
 `GET /metrics` returns the daemon's Prometheus/OpenMetrics exposition text
-(`Content-Type: text/plain; version=0.0.4`). Unlike every other route it
+(`Content-Type: text/plain; version=0.0.4; charset=utf-8`). Unlike every other route it
 **bypasses the bearer-token auth** — scrapers don't send tokens, and it exposes
 only aggregate counters (`game_shell_*_total`) and convenience resource gauges
 (no screen content, no control). It is always available when the bridge is bound.

@@ -113,7 +113,7 @@ Point node_exporter's textfile collector at the file's **directory** (see
 When the HTTP bridge is bound (`GAME_SHELL_HTTP_BIND`), it serves:
 
 ```
-GET /metrics  →  200, Content-Type: text/plain; version=0.0.4
+GET /metrics  →  200, Content-Type: text/plain; version=0.0.4; charset=utf-8
 ```
 
 This route **bypasses the bearer-token auth** (scrapers don't send tokens) and
