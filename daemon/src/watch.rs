@@ -83,6 +83,11 @@ pub async fn run(config_changed: std::sync::Arc<tokio::sync::Notify>) {
     // Snapshot the self-write generation at task start.
     let mut last_seen_gen = config::self_write_gen();
 
+    // Content-hash of the last settings.json we acted on (or that the daemon
+    // wrote), used as a second-layer guard below. Seeded from the current file
+    // so a no-op inotify event at startup doesn't fire a spurious reload.
+    let mut last_hash: Option<u64> = hash_settings(&settings_path);
+
     // Bridge the blocking std::mpsc receiver to the async runtime:
     // spawn a dedicated OS thread that drains std_rx and forwards batches over
     // a tokio mpsc channel, so the async loop can `await` without blocking the
@@ -128,10 +133,10 @@ pub async fn run(config_changed: std::sync::Arc<tokio::sync::Notify>) {
             continue;
         }
 
-        // Self-write suppression: if the daemon's generation advanced since
-        // we last processed a batch, the write was daemon-originated —
-        // suppress this event but update last_seen so a later external edit
-        // still fires.
+        // First-layer suppression: if the daemon's generation advanced since we
+        // last processed a batch, the write was daemon-originated — suppress this
+        // event but refresh last_seen_gen and last_hash to the daemon-written
+        // content so a later external edit still fires.
         let cur_gen = config::self_write_gen();
         if cur_gen != last_seen_gen {
             tracing::debug!(
@@ -140,8 +145,22 @@ pub async fn run(config_changed: std::sync::Arc<tokio::sync::Notify>) {
                 cur_gen
             );
             last_seen_gen = cur_gen;
+            last_hash = hash_settings(&settings_path);
             continue;
         }
+
+        // Second-layer guard: hash the (post-rename, thanks to atomic_write)
+        // file contents. The self-write generation counter has a known
+        // same-debounce-window race — a daemon write and an external edit can
+        // land in one batch with the counter advancing, masking the external
+        // edit. Comparing actual content closes that gap and also drops spurious
+        // inotify events (touch / identical-byte rewrites) that change nothing.
+        let cur_hash = hash_settings(&settings_path);
+        if cur_hash == last_hash {
+            tracing::debug!("watch: settings.json event with unchanged content, suppressing");
+            continue;
+        }
+        last_hash = cur_hash;
 
         // External edit confirmed — notify the input runtime via the
         // dedicated config-changed channel. Using a separate Notify avoids
@@ -153,4 +172,17 @@ pub async fn run(config_changed: std::sync::Arc<tokio::sync::Notify>) {
     }
 
     tracing::debug!("watch: file-watch loop exited");
+}
+
+/// Hash the bytes of `settings.json` for change detection. Returns `None` when
+/// the file is absent/unreadable (treated as a distinct "no content" state so a
+/// create or delete still registers as a change). Uses the std default hasher —
+/// this only needs to answer "did the content change", not resist collisions; a
+/// missed event degrades to restart-required, the same as the inotify fallback.
+fn hash_settings(path: &std::path::Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Some(hasher.finish())
 }
