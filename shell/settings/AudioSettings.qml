@@ -4,9 +4,9 @@ import Quickshell.Io
 import "../components"
 import "../components/lib"
 
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: audioMainCol.implicitHeight + 2 * Theme.padding
+    hintText: root.anyChannelActive ? "A: stop tone   ·   B: back" : "A: play a test tone on the focused speaker   ·   B: back"
 
     property int volume: 50
     property bool muted: false
@@ -455,10 +455,11 @@ FocusScope {
         volDownScope.forceActiveFocus();
     }
 
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: audioMainCol
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         // Volume control
@@ -907,14 +908,6 @@ FocusScope {
                 onActivated: root.setAllChannels(!root.anyChannelActive)
                 KeyNavigation.up: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4RL : (root.channelCount === 8 ? btn8RL : btn6RL))
             }
-        }
-
-        Item {
-            Layout.fillHeight: true
-        }
-
-        HintBar {
-            text: root.anyChannelActive ? "A: stop tone   ·   B: back" : "A: play a test tone on the focused speaker   ·   B: back"
         }
     }
 }
