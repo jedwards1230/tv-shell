@@ -46,6 +46,7 @@ then the only gate.
 | POST | `/dev/build` | run `scripts/build-daemon.sh` + install binary |
 | POST | `/dev/restart-shell` | kill + relaunch quickshell, return first WARN/ERROR |
 | POST | `/dev/restart-daemon` | re-exec the daemon (picks up a new binary) |
+| GET | `/metrics` | Prometheus/OpenMetrics exposition (**auth-exempt**; see Observability) |
 
 Returns `200 ok`, `400` (`error:` reply), `401`, `404`, `405`, `500` (grim/dev
 failure), `503` (daemon unavailable). Hardening: 4 KiB header cap, 5 s header
@@ -55,6 +56,20 @@ subprocesses (auth checked first).
 > The HTTP `/dev/*` routes are **always registered** when the bridge is bound —
 > they are not behind a separate dev flag (unlike MCP). Gate them by not binding
 > the HTTP bridge in production, or bind it to loopback.
+
+## Observability (`/metrics`)
+
+`GET /metrics` returns the daemon's Prometheus/OpenMetrics exposition text
+(`Content-Type: text/plain; version=0.0.4; charset=utf-8`). Unlike every other route it
+**bypasses the bearer-token auth** — scrapers don't send tokens, and it exposes
+only aggregate counters (`game_shell_*_total`) and convenience resource gauges
+(no screen content, no control). It is always available when the bridge is bound.
+
+This is the *portable* metrics path; the *primary* path is the node_exporter
+textfile collector (`GAME_SHELL_METRICS_TEXTFILE`). Logs go to the systemd
+journal (`journalctl --user -u game-shell-input`). The full emit contract — env
+vars, the complete metric catalogue with types, and both collection options — is
+in [`OBSERVABILITY.md`](OBSERVABILITY.md).
 
 ## MCP tools (`mcp.rs`)
 

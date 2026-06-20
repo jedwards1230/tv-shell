@@ -413,8 +413,13 @@ fn read_temps() -> Vec<TempEntry> {
     out
 }
 
-/// Build the `sys-metrics` JSON response (#235).
-pub fn sys_metrics_json() -> String {
+/// Sample live hardware telemetry into a [`SysMetrics`] struct (#235).
+///
+/// Blocking: `cpu_percent()` sleeps ~200ms to compute a busy delta, so callers
+/// on a tokio runtime must invoke this on the blocking pool. Reused by both the
+/// `sys-metrics` IPC JSON response and the Prometheus metrics renderer
+/// (`metrics::render_blocking`), so the two never drift.
+pub fn sys_metrics() -> SysMetrics {
     let cpu_pct = (cpu_percent() * 10.0).round() / 10.0;
     let (mem_used, mem_total) = mem_info();
     let mem_pct = if mem_total > 0 {
@@ -428,15 +433,19 @@ pub fn sys_metrics_json() -> String {
         .and_then(|v| v.parse::<f64>().ok())
         .map(|f| (f * 100.0).round() / 100.0)
         .unwrap_or(0.0);
-    let metrics = SysMetrics {
+    SysMetrics {
         cpu_pct,
         mem_used,
         mem_total,
         mem_pct,
         load1,
         temps: read_temps(),
-    };
-    serde_json::to_string(&metrics).unwrap_or_else(|_| "{}".into())
+    }
+}
+
+/// Build the `sys-metrics` JSON response (#235).
+pub fn sys_metrics_json() -> String {
+    serde_json::to_string(&sys_metrics()).unwrap_or_else(|_| "{}".into())
 }
 
 // ---------------------------------------------------------------------------
