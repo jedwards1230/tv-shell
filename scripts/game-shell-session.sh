@@ -23,12 +23,48 @@ export PATH="$SHELL_DIR/scripts:$PATH"
 # grab/release, settings I/O, app discovery, Bluetooth/network/power, Hyprland
 # reads, and Sunshine pre-flight all flow through it. Build with
 # `cargo build --release` and install to `$SHELL_DIR/bin/game-shell-input`.
-"${GAME_SHELL_INPUT_BIN:-$SHELL_DIR/bin/game-shell-input}" &
-INPUT_PID=$!
+#
+# Preferred path: run it as a `systemd --user` unit (game-shell-input.service).
+# That gives journald log capture with unit metadata, cgroup CPU/mem accounting
+# (node_exporter's systemd collector sees per-unit usage with zero app code), and
+# single-instance + restart semantics (which also kills the recurring "duplicate
+# quickshell instance"-style stacking from a re-launched session). The daemon
+# self-discovers everything it needs (install root from its own path, socket,
+# daemon.env), so the unit needs no env wiring from here.
+#
+# Fallback: if `systemctl --user` is unavailable (no user systemd manager, no
+# user bus) OR a dev override `GAME_SHELL_INPUT_BIN` is set (the unit's ExecStart
+# is the installed binary and can't honor an arbitrary override), launch the
+# daemon as a bare background process exactly as before. The session must never
+# be bricked by a missing user manager.
+INPUT_PID=""
+INPUT_UNIT=""
+INPUT_BIN="${GAME_SHELL_INPUT_BIN:-$SHELL_DIR/bin/game-shell-input}"
+
+if [ -z "${GAME_SHELL_INPUT_BIN:-}" ] \
+    && command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user show-environment >/dev/null 2>&1; then
+    # Stop any stale instance from a previous (crashed/un-cleaned) session so a
+    # re-launch never stacks two daemons, then start fresh.
+    systemctl --user reset-failed game-shell-input.service >/dev/null 2>&1 || true
+    if systemctl --user start game-shell-input.service; then
+        INPUT_UNIT="game-shell-input.service"
+    fi
+fi
+
+if [ -z "$INPUT_UNIT" ]; then
+    # Fallback: bare background process (legacy path).
+    "$INPUT_BIN" &
+    INPUT_PID=$!
+fi
 
 cleanup() {
-    kill "$INPUT_PID" 2>/dev/null
-    wait "$INPUT_PID" 2>/dev/null
+    if [ -n "$INPUT_UNIT" ]; then
+        systemctl --user stop "$INPUT_UNIT" >/dev/null 2>&1
+    elif [ -n "$INPUT_PID" ]; then
+        kill "$INPUT_PID" 2>/dev/null
+        wait "$INPUT_PID" 2>/dev/null
+    fi
 }
 trap cleanup EXIT
 

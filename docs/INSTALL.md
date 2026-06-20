@@ -10,6 +10,7 @@ section in [CLAUDE.md](../CLAUDE.md).
 - The Rust input daemon (`game-shell-input`) → `<prefix>/bin/`
 - The QML shell + Hyprland config + scripts → `<prefix>/` (default prefix `/opt/game-shell`)
 - A Wayland session entry → `/usr/share/wayland-sessions/game-shell-wayland.desktop`
+- A `systemd --user` unit for the daemon → `~/.config/systemd/user/game-shell-input.service` (see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md))
 - A Quickshell config symlink → `~/.config/quickshell/game-shell`
 - A per-user config dir seeded from examples → `~/.config/game-shell/`
 
@@ -128,3 +129,18 @@ specific (SDDM `autologin`, plasmalogin, GDM) and intentionally left to you.
 Setting `[http] bind` / `[mcp] bind` in `config.toml` exposes the daemon's control
 surface (screenshots, intents, MCP tools) over the network. See
 [CONTROL_SURFACE.md](CONTROL_SURFACE.md). Firewall those ports yourself.
+
+## Verify
+
+After logging in, the daemon runs as a `systemd --user` unit — check it and its
+logs:
+
+```bash
+systemctl --user status game-shell-input         # active (running)
+journalctl --user -u game-shell-input -f         # daemon logs
+journalctl --user -t game-shell-quickshell -f    # quickshell output
+```
+
+If the LAN bridge is bound, `curl http://<host>:8089/metrics` returns Prometheus
+metrics — `game_shell_build_info` shows the deployed revision. Details in
+[SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) and [OBSERVABILITY.md](OBSERVABILITY.md).

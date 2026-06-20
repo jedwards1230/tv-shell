@@ -25,7 +25,7 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 ```
 
 - **Quickshell** renders the UI via QML on Hyprland's Wayland compositor
-- **game-shell-input** (Rust daemon, `daemon/`) grabs the gamepad exclusively, emits keyboard/mouse via uinput, and serves the backend IPC (settings, app discovery, Bluetooth/network/power, Hyprland, Sunshine). It is the sole input/backend daemon
+- **game-shell-input** (Rust daemon, `daemon/`) grabs the gamepad exclusively, emits keyboard/mouse via uinput, and serves the backend IPC (settings, app discovery, Bluetooth/network/power, Hyprland, Sunshine). It is the sole input/backend daemon, supervised as a `systemd --user` unit (journald logging, with a bare-process fallback)
 - **Moonlight** streams games from a Sunshine host
 - **end-game-session** script handles session teardown (deployed separately via Ansible); HDMI-CEC is owned by the daemon's `cec-*` IPC (`--features cec`)
 
@@ -67,6 +67,16 @@ via MoonlightSettings; `config/targets.yaml.example` documents the fields). Daem
 options (LAN bridge, CEC, Plex/Steam widgets) go in the optional typed
 `config.toml` (`config/config.toml.example`); the shared bearer token lives in a
 separate `0600` file referenced by `[http] token_file`.
+
+## Observability
+
+The daemon logs to the **systemd journal** when run as a `systemd --user` unit
+(`journalctl --user -u game-shell-input`; quickshell output under `-t
+game-shell-quickshell`), falling back to stderr otherwise. It also exports
+**Prometheus metrics** — an auth-exempt `GET /metrics` on the optional LAN bridge
+and/or a node_exporter textfile (`GAME_SHELL_METRICS_TEXTFILE`). See
+[docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) and
+[docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md).
 
 ## Controls
 
