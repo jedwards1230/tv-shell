@@ -323,8 +323,10 @@ pub async fn dev_deploy(git_ref: Option<&str>) -> Result<String, String> {
         return Err(format!("git fetch failed: {out}"));
     }
 
-    // Checkout
-    let (ok, out) = git_run(&root, &["-C", root_str, "checkout", "-f", r]).await;
+    // Checkout. The trailing `--` forces git to treat `r` as a revision, never a
+    // pathspec, so a ref that happens to collide with a tracked path name can't be
+    // misinterpreted (validate_git_ref already blocks option-like and exotic refs).
+    let (ok, out) = git_run(&root, &["-C", root_str, "checkout", "-f", r, "--"]).await;
     if !ok {
         return Err(format!("git checkout failed: {out}"));
     }
@@ -428,37 +430,47 @@ pub async fn dev_restart_shell() -> Result<String, String> {
         .output()
         .await;
 
-    let log_file = match std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(QS_LOG_PATH)
-    {
-        Ok(f) => f,
-        Err(e) => return Err(format!("open log failed: {e}")),
-    };
-    let log_stderr = match log_file.try_clone() {
-        Ok(f) => f,
-        Err(e) => return Err(format!("clone log fd failed: {e}")),
-    };
+    // Open the log file and spawn quickshell detached on the blocking pool: the
+    // log open + the `setsid` fork are blocking syscalls, and the detached spawn
+    // must stay on `std::process::Command` (tokio::process would try to reap the
+    // child we deliberately let outlive this handler). Done together so the new
+    // session is created in one off-runtime hop.
+    let env_pairs = crate::session_env::session_env_pairs();
+    let spawned = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(QS_LOG_PATH)
+            .map_err(|e| format!("open log failed: {e}"))?;
+        let log_stderr = log_file
+            .try_clone()
+            .map_err(|e| format!("clone log fd failed: {e}"))?;
 
-    // Spawn quickshell detached (new session so it outlives this handler task).
-    let mut cmd = std::process::Command::new("setsid");
-    cmd.args(["quickshell", "-c", "game-shell"]);
-    cmd.stdout(log_file);
-    cmd.stderr(log_stderr);
-    for (k, v) in crate::session_env::session_env_pairs() {
-        cmd.env(k, v);
-    }
-    match cmd.spawn() {
-        Ok(_) => {}
-        Err(e) => return Err(format!("spawn failed: {e}")),
+        // Spawn quickshell detached (new session so it outlives this handler task).
+        let mut cmd = std::process::Command::new("setsid");
+        cmd.args(["quickshell", "-c", "game-shell"]);
+        cmd.stdout(log_file);
+        cmd.stderr(log_stderr);
+        for (k, v) in env_pairs {
+            cmd.env(k, v);
+        }
+        cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        Ok(())
+    })
+    .await;
+    match spawned {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e),
+        Err(e) => return Err(format!("restart task failed: {e}")),
     }
 
     // Give quickshell a moment to emit initial log lines.
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-    let log_content = std::fs::read_to_string(QS_LOG_PATH).unwrap_or_default();
+    let log_content = tokio::fs::read_to_string(QS_LOG_PATH)
+        .await
+        .unwrap_or_default();
     let filtered: String = log_content
         .lines()
         .filter(|l| {
