@@ -305,17 +305,25 @@ FocusScope {
         return 2;
     }
 
-    readonly property var channels: channelLayouts[String(channelCount)] || channelLayouts["2"]
+    readonly property var channels: layoutFor(channelCount)
+
+    // Always returns a valid layout array — read this from imperative code
+    // instead of the `channels` binding, which can be transiently undefined
+    // when a signal handler (onChannelCountChanged) races its first evaluation.
+    function layoutFor(n) {
+        return channelLayouts[String(n)] || channelLayouts["2"];
+    }
 
     // Parallel bool array, one per visible channel (by position in `channels`).
     property var channelActive: []
     readonly property bool anyChannelActive: channelActive.indexOf(true) >= 0
     readonly property bool allChannelsActive: channelActive.length > 0 && channelActive.indexOf(false) < 0
     readonly property string activeLabels: {
+        var ch = layoutFor(channelCount);
         var names = [];
-        for (var i = 0; i < channels.length; i++)
+        for (var i = 0; i < ch.length; i++)
             if (channelActive[i])
-                names.push(channels[i].label);
+                names.push(ch[i].label);
         return names.join(", ");
     }
 
@@ -324,16 +332,18 @@ FocusScope {
     onChannelCountChanged: resetChannels()
 
     function resetChannels() {
+        var ch = layoutFor(channelCount);
         var a = [];
-        for (var i = 0; i < channels.length; i++)
+        for (var i = 0; i < ch.length; i++)
             a.push(false);
         channelActive = a;
         tonePlayer.running = false;
     }
 
     function toggleChannel(pos) {
+        var ch = layoutFor(channelCount);
         var arr = channelActive.slice();
-        while (arr.length < channels.length)
+        while (arr.length < ch.length)
             arr.push(false);
         arr[pos] = !arr[pos];
         channelActive = arr;
@@ -341,8 +351,9 @@ FocusScope {
     }
 
     function setAllChannels(on) {
+        var ch = layoutFor(channelCount);
         var arr = [];
-        for (var i = 0; i < channels.length; i++)
+        for (var i = 0; i < ch.length; i++)
             arr.push(on);
         channelActive = arr;
         applyTones();
@@ -351,10 +362,11 @@ FocusScope {
     // Push the active set to the tone player. Empty set → stop; otherwise
     // (re)start so the regenerated multi-channel WAV reflects the current set.
     function applyTones() {
+        var ch = layoutFor(channelCount);
         var mask = [];
-        for (var i = 0; i < channels.length; i++)
+        for (var i = 0; i < ch.length; i++)
             if (channelActive[i])
-                mask.push(channels[i].idx);
+                mask.push(ch[i].idx);
         tonePlayer.nch = channelCount;
         tonePlayer.mask = mask.join(",");
         if (mask.length === 0)
