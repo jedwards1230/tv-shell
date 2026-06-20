@@ -13,6 +13,8 @@ FocusScope {
     property var sinks: []
     property int defaultSinkIndex: -1
     property string formatInfo: "Unavailable"
+    // Sample-rate / format only (no channel count — the grid + profile show that).
+    property string formatDetail: ""
 
     // Output card profiles (#234): the available output profiles of every audio
     // card (stereo / surround 5.1 / 7.1 / …). PipeWire auto-selects the highest-
@@ -42,6 +44,8 @@ FocusScope {
             }
             // Refresh format info after sink list updates.
             getFormat.running = true;
+            // Re-scope the profile dropdown to the new default sink's card.
+            listProfiles.running = true;
         }
 
         function onVolumeChanged() {
@@ -123,6 +127,8 @@ FocusScope {
             getFormat.stdout.rate = "";
             getFormat.stdout.fmt = "";
             getFormat.stdout.channels = "";
+            // Negotiated channel count drives the speaker-test layout fallback.
+            root.sinkChannels = (c !== "") ? (parseInt(c) || 2) : 2;
             if (r !== "" || f !== "" || c !== "") {
                 let parts = [];
                 if (r !== "")
@@ -135,20 +141,38 @@ FocusScope {
             } else {
                 root.formatInfo = "Unavailable";
             }
+            // Rate/format only — channel count is conveyed by the grid + profile.
+            let detail = [];
+            if (r !== "")
+                detail.push(r + " Hz");
+            if (f !== "")
+                detail.push(f);
+            root.formatDetail = detail.join(" · ");
         }
     }
 
-    // Enumerate every card's AVAILABLE output profiles (#234). Emits one
-    // tab-separated line per profile: `<cardName>\t<profileName>\t<active>\t<desc>`.
-    // Only output-bearing profiles on connected ports (`available: yes`) are
-    // listed, so the dropdown shows e.g. "Digital Stereo (HDMI 2)" alongside
-    // "Digital Surround 5.1 (HDMI 2)".
+    // Enumerate the AVAILABLE output profiles (#234) of the card that backs the
+    // CURRENT default sink. Emits one tab-separated line per profile:
+    // `<cardName>\t<profileName>\t<active>\t<desc>`. Only output-bearing profiles
+    // on connected ports (`available: yes`) are listed, so the dropdown shows the
+    // real choices for the active output (e.g. "Digital Stereo (HDMI 2)",
+    // "Digital Surround 5.1 (HDMI 2)", "Digital Surround 7.1 (HDMI 2)").
+    //
+    // Scoping to the default sink's card is essential: every output card carries
+    // its OWN active profile, so listing all cards yields multiple `active=1`
+    // rows and the dropdown would track the wrong card (e.g. show analog stereo
+    // while HDMI 5.1 is really playing). `want` is the default sink's card name,
+    // resolved from the sink's `device.name` property (matches the card `Name:`).
     Process {
         id: listProfiles
-        command: ["bash", "-c", "pactl list cards | awk '" + "/^Card #/ { flush(); card=\"\"; ap=\"\"; n=0; inprof=0 } " + "/^[ \\t]*Name:/ { card=$2 } " + "/^[ \\t]*Profiles:/ { inprof=1; next } " + "/^[ \\t]*Active Profile:/ { ap=$3; inprof=0; flush() } " + "inprof && /available: yes/ { line=$0; sub(/^[ \\t]+/,\"\",line); ci=index(line,\": \"); if(ci<1) next; pname=substr(line,1,ci-1); if(pname !~ /^output:/) next; rest=substr(line,ci+2); si=index(rest,\" (sinks:\"); if(si>0) desc=substr(rest,1,si-1); else desc=rest; buf[n]=pname \"|\" desc; n++ } " + "function flush(  i,a){ for(i=0;i<n;i++){ split(buf[i],a,\"|\"); print card \"\\t\" a[1] \"\\t\" ((a[1]==ap)?\"1\":\"0\") \"\\t\" a[2] } n=0 } " + "END { flush() }'"]
+        command: ["bash", "-c", "def=$(pactl get-default-sink 2>/dev/null); " + "want=$(pactl list sinks 2>/dev/null | awk -v d=\"$def\" '/^[ \\t]*Name:/{n=$2} n==d && /device\\.name = /{gsub(/\"/,\"\"); print $3; exit}'); " + "pactl list cards | awk -v want=\"$want\" '" + "/^Card #/ { flush(); card=\"\"; ap=\"\"; n=0; inprof=0 } " + "/^[ \\t]*Name:/ { card=$2 } " + "/^[ \\t]*Profiles:/ { inprof=1; next } " + "/^[ \\t]*Active Profile:/ { ap=$3; inprof=0; flush() } " + "inprof && /available: yes/ { line=$0; sub(/^[ \\t]+/,\"\",line); ci=index(line,\": \"); if(ci<1) next; pname=substr(line,1,ci-1); if(pname !~ /^output:/) next; rest=substr(line,ci+2); si=index(rest,\" (sinks:\"); if(si>0) desc=substr(rest,1,si-1); else desc=rest; buf[n]=pname \"|\" desc; n++ } " + "function flush(  i,a){ if(want!=\"\" && card!=want){ n=0; return } for(i=0;i<n;i++){ split(buf[i],a,\"|\"); print card \"\\t\" a[1] \"\\t\" ((a[1]==ap)?\"1\":\"0\") \"\\t\" a[2] } n=0 } " + "END { flush() }'"]
         stdout: SplitParser {
             property var collected: []
             onRead: line => {
+                // First line of a fresh run (collected was emptied onExited):
+                // clear any stale selection so a re-scope can't keep an old index.
+                if (collected.length === 0)
+                    root.currentProfileIndex = -1;
                 let parts = line.split("\t");
                 if (parts.length < 4)
                     return;
@@ -181,7 +205,7 @@ FocusScope {
                 "GS_CARD": cardName,
                 "GS_PROFILE": profileName
             })
-        command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
+        command: ["bash", "-c", "[ -z \"$GS_CARD\" ] && exit 0; " + "pactl set-card-profile \"$GS_CARD\" \"$GS_PROFILE\" || exit 0; " + "sink=$(pactl list sinks | awk -v c=\"$GS_CARD\" '/^[ \\t]*Name:/{n=$2} /device\\.name = /{ gsub(/\"/,\"\"); if($3==c) print n }' | head -1); " + "[ -n \"$sink\" ] && pactl set-default-sink \"$sink\" || true"]
         onExited: {
             // Refresh everything: new default sink, format, and active profile.
             AudioController.refresh();
@@ -190,54 +214,193 @@ FocusScope {
         }
     }
 
-    // 5.1 channel toggles (#234). Each channel is an independent on/off toggle:
-    // press A to start a sustained tone on that speaker, press again to stop.
-    // Multiple channels can be on at once; "All channels" mirrors the whole set
-    // (and shows active when every channel is on). The active set is rendered as
-    // a 6-channel WAV — a steady 480 Hz tone in each active channel — and looped
-    // via pw-play. PipeWire's 6-channel order is FL,FR,FC,LFE,RL,RR →
-    //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5.
-    property var channelActive: [false, false, false, false, false, false]
-    readonly property var channelLabels: ["Front L", "Front R", "Center", "LFE/Sub", "Rear L", "Rear R"]
-    readonly property bool anyChannelActive: channelActive.indexOf(true) >= 0
-    readonly property bool allChannelsActive: channelActive.indexOf(false) < 0
-    readonly property string activeLabels: {
-        var names = [];
-        for (var i = 0; i < 6; i++)
-            if (channelActive[i])
-                names.push(channelLabels[i]);
-        return names.join(", ");
+    // Speaker test channels (#234) — the visible buttons are CONDITIONAL on the
+    // active output profile: a stereo sink shows Left/Right, 5.1 shows six
+    // channels, 7.1 shows eight. Each channel is an independent on/off toggle:
+    // press A to start a sustained 480 Hz tone on that speaker, press again to
+    // stop. Multiple channels can be on at once; "All Channels" mirrors the whole
+    // set. The active set is rendered as a WAV whose channel count MATCHES the
+    // layout and looped via pw-play, so each button drives its real speaker with
+    // no down/upmix folding (e.g. Center into L/R on a stereo sink).
+    //
+    // PipeWire/WAV channel index order per channel count:
+    //   2: FL,FR · 4: FL,FR,RL,RR · 6: FL,FR,FC,LFE,RL,RR · 8: +SL,SR
+    readonly property var channelLayouts: ({
+            "2": [
+                {
+                    "label": "L",
+                    "idx": 0
+                },
+                {
+                    "label": "R",
+                    "idx": 1
+                }
+            ],
+            "4": [
+                {
+                    "label": "Front L",
+                    "idx": 0
+                },
+                {
+                    "label": "Front R",
+                    "idx": 1
+                },
+                {
+                    "label": "Rear L",
+                    "idx": 2
+                },
+                {
+                    "label": "Rear R",
+                    "idx": 3
+                }
+            ],
+            "6": [
+                {
+                    "label": "Front L",
+                    "idx": 0
+                },
+                {
+                    "label": "Front R",
+                    "idx": 1
+                },
+                {
+                    "label": "Center",
+                    "idx": 2
+                },
+                {
+                    "label": "LFE/Sub",
+                    "idx": 3
+                },
+                {
+                    "label": "Rear L",
+                    "idx": 4
+                },
+                {
+                    "label": "Rear R",
+                    "idx": 5
+                }
+            ],
+            "8": [
+                {
+                    "label": "Front L",
+                    "idx": 0
+                },
+                {
+                    "label": "Front R",
+                    "idx": 1
+                },
+                {
+                    "label": "Center",
+                    "idx": 2
+                },
+                {
+                    "label": "LFE/Sub",
+                    "idx": 3
+                },
+                {
+                    "label": "Rear L",
+                    "idx": 4
+                },
+                {
+                    "label": "Rear R",
+                    "idx": 5
+                },
+                {
+                    "label": "Side L",
+                    "idx": 6
+                },
+                {
+                    "label": "Side R",
+                    "idx": 7
+                }
+            ]
+        })
+
+    // Negotiated channel count of the current default sink (from getFormat),
+    // used as the fallback when no profile description can be parsed.
+    property int sinkChannels: 2
+
+    // How many channels to TEST. Prefer what the active profile advertises (so
+    // the grid updates the instant the user picks a profile, before the sink
+    // re-negotiates), falling back to the sink's negotiated channel count.
+    readonly property int channelCount: {
+        var desc = (root.currentProfileIndex >= 0 && root.currentProfileIndex < root.cardProfiles.length) ? root.cardProfiles[root.currentProfileIndex].desc : "";
+        if (desc.indexOf("7.1") >= 0)
+            return 8;
+        if (desc.indexOf("5.1") >= 0)
+            return 6;
+        if (desc.indexOf("4.0") >= 0 || desc.indexOf("Quad") >= 0)
+            return 4;
+        if (desc.indexOf("Stereo") >= 0 || desc.indexOf("Mono") >= 0)
+            return 2;
+        if (root.sinkChannels === 8 || root.sinkChannels === 6 || root.sinkChannels === 4)
+            return root.sinkChannels;
+        return 2;
     }
 
-    function toggleChannel(c) {
+    readonly property var channels: layoutFor(channelCount)
+
+    // Always returns a valid layout array — read this from imperative code
+    // instead of the `channels` binding, which can be transiently undefined
+    // when a signal handler (onChannelCountChanged) races its first evaluation.
+    function layoutFor(n) {
+        return channelLayouts[String(n)] || channelLayouts["2"];
+    }
+
+    // Parallel bool array, one per visible channel (by position in `channels`).
+    property var channelActive: []
+    readonly property bool anyChannelActive: channelActive.indexOf(true) >= 0
+    readonly property bool allChannelsActive: channelActive.length > 0 && channelActive.indexOf(false) < 0
+
+    // Whenever the visible layout changes (profile switch), clear the active set
+    // and stop any tone so we never leave a now-hidden channel "playing".
+    onChannelCountChanged: resetChannels()
+
+    function resetChannels() {
+        var ch = layoutFor(channelCount);
+        var a = [];
+        for (var i = 0; i < ch.length; i++)
+            a.push(false);
+        channelActive = a;
+        tonePlayer.running = false;
+    }
+
+    function toggleChannel(pos) {
+        var ch = layoutFor(channelCount);
         var arr = channelActive.slice();
-        arr[c] = !arr[c];
+        while (arr.length < ch.length)
+            arr.push(false);
+        arr[pos] = !arr[pos];
         channelActive = arr;
         applyTones();
     }
 
     function setAllChannels(on) {
-        channelActive = [on, on, on, on, on, on];
+        var ch = layoutFor(channelCount);
+        var arr = [];
+        for (var i = 0; i < ch.length; i++)
+            arr.push(on);
+        channelActive = arr;
         applyTones();
     }
 
     // Push the active set to the tone player. Empty set → stop; otherwise
     // (re)start so the regenerated multi-channel WAV reflects the current set.
     function applyTones() {
+        var ch = layoutFor(channelCount);
         var mask = [];
-        for (var i = 0; i < 6; i++)
+        for (var i = 0; i < ch.length; i++)
             if (channelActive[i])
-                mask.push(i);
+                mask.push(ch[i].idx);
+        tonePlayer.nch = channelCount;
         tonePlayer.mask = mask.join(",");
         if (mask.length === 0)
             tonePlayer.running = false;
-        else
-        // onExited won't restart (none active)
-        if (tonePlayer.running)
+        else if (tonePlayer.running)
             tonePlayer.running = false;
         else
             // onExited restarts with the new mask
-            tonePlayer.running = true;      // start fresh
+            tonePlayer.running = true;       // start fresh
     }
 
     // Loops a ~20s steady-tone WAV containing exactly the active channels;
@@ -247,13 +410,17 @@ FocusScope {
     Process {
         id: tonePlayer
         property string mask: "0"
+        property int nch: 2
         environment: ({
-                "GS_MASK": mask
+                "GS_MASK": mask,
+                "GS_NCH": String(nch)
             })
         // python generates the WAV then `exec`s into pw-play (same PID), so when
         // Quickshell kills this Process to change the set, pw-play dies with it —
         // no orphaned child left playing. Fixed temp path → no file accumulation.
-        command: ["python3", "-c", "import wave,struct,math,os\n" + "mask=[int(x) for x in os.environ.get('GS_MASK','0').split(',') if x!='']\n" + "sr=48000;nch=6;freq=480;amp=0.5;blk=24000\n" + "block=bytearray()\n" + "for i in range(blk):\n" + " s=int(amp*32767*math.sin(2*math.pi*freq*i/sr))\n" + " fr=[0]*nch\n" + " for c in mask: fr[c]=s\n" + " block+=struct.pack('<%dh'%nch,*fr)\n" + "data=bytes(block)*40\n" + "fn=os.path.join(os.environ.get('XDG_RUNTIME_DIR','/tmp'),'game-shell-tone.wav')\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "w.writeframes(data);w.close()\n" + "os.execvp('pw-play',['pw-play','--volume','0.85',fn])\n"]
+        // The WAV channel count (GS_NCH) tracks the active layout so each masked
+        // channel index lands on its real speaker.
+        command: ["python3", "-c", "import wave,struct,math,os\n" + "mask=[int(x) for x in os.environ.get('GS_MASK','0').split(',') if x!='']\n" + "nch=int(os.environ.get('GS_NCH','2') or 2)\n" + "if nch<1: nch=1\n" + "sr=48000;freq=480;amp=0.5;blk=24000\n" + "block=bytearray()\n" + "for i in range(blk):\n" + " s=int(amp*32767*math.sin(2*math.pi*freq*i/sr))\n" + " fr=[0]*nch\n" + " for c in mask:\n" + "  if 0<=c<nch: fr[c]=s\n" + " block+=struct.pack('<%dh'%nch,*fr)\n" + "data=bytes(block)*40\n" + "fn=os.path.join(os.environ.get('XDG_RUNTIME_DIR','/tmp'),'game-shell-tone.wav')\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "w.writeframes(data);w.close()\n" + "os.execvp('pw-play',['pw-play','--volume','0.85',fn])\n"]
         onExited: {
             if (root.anyChannelActive)
                 running = true;
@@ -261,6 +428,7 @@ FocusScope {
     }
 
     Component.onCompleted: {
+        resetChannels();
         AudioController.refresh();
         getFormat.running = true;
         listProfiles.running = true;
@@ -390,7 +558,7 @@ FocusScope {
             }
 
             KeyNavigation.up: sinkDropdownScope
-            KeyNavigation.down: testToneFlScope
+            KeyNavigation.down: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4FL : (root.channelCount === 8 ? btn8FL : btn6FL))
         }
 
         Text {
@@ -400,150 +568,344 @@ FocusScope {
         }
 
         // ---------------------------------------------------------------
-        // Speaker Test (5.1) — short, soft tones via pw-play (#234).
-        // PipeWire 6-channel index map (FL,FR,FC,LFE,RL,RR):
-        //   FL=0, FR=1, Center=2, LFE=3, Rear L=4, Rear R=5
+        // Speaker Test — short, soft 480 Hz tones via pw-play (#234). The
+        // buttons are conditional on the active output profile's channel count
+        // (see channelLayouts above): stereo → L/R, 5.1 → six, 7.1 → eight. Each
+        // is its own FocusScope (FocusButton) so SettingsApp's scroll-follow
+        // keeps the focused control visible.
         // ---------------------------------------------------------------
         SectionHeader {
-            text: "Speaker Test (5.1)"
+            text: "Speaker Test"
         }
 
+        // Status caption directly under the header — the always-on-screen spot
+        // (the focused button is what scrolls into view, and the header sits just
+        // above it). While a tone plays it's the "it's playing" cue + how to stop
+        // (the crimson button fills are the primary feedback); otherwise it shows
+        // the negotiated sample-rate / format when the system reports it. Channel
+        // count is omitted (grid + profile already convey it) and the line
+        // collapses entirely when there's nothing to say.
         Text {
-            text: "Sink: " + sinkDropdownScope.displayText
+            Layout.fillWidth: true
+            visible: root.anyChannelActive || root.formatDetail !== ""
+            text: root.anyChannelActive ? "● Playing — press a speaker again to stop" : root.formatDetail
             font.pixelSize: Theme.fontHint
-            color: Theme.textSecondary
+            font.bold: root.anyChannelActive
+            color: root.anyChannelActive ? Theme.ember : Theme.textMuted
+            wrapMode: Text.Wrap
         }
 
-        // Row 1: Front L | Center | Front R (matches the physical speaker layout)
-        RowLayout {
+        // Spatial speaker grid — laid out to mirror the physical speaker
+        // positions, reshaped per channel count (the charm from #234). Each cell
+        // is its own FocusButton (FocusScope) so SettingsApp's scroll-follow
+        // tracks it; the wide "All Channels" tile sits below every layout. Only
+        // the block matching the active channel count is visible — the rest
+        // collapse. The boundary chains (profile dropdown ↓, All ↑) select the
+        // visible block via channelCount. PipeWire index map: FL=0, FR=1, FC=2,
+        // LFE=3, RL=4, RR=5, SL=6, SR=7.
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 16
+            spacing: 12
 
+            // ── Stereo (2.0):  L   R ──
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 16
+                visible: root.channelCount === 2
+
+                FocusButton {
+                    id: btn2L
+                    Layout.fillWidth: true
+                    text: "L"
+                    fillActive: root.channelActive[0] === true
+                    fillColor: Theme.sidebarActive
+                    onActivated: root.toggleChannel(0)
+                    KeyNavigation.up: profileDropdownScope
+                    KeyNavigation.right: btn2R
+                    KeyNavigation.down: allChannelsBtn
+                }
+                FocusButton {
+                    id: btn2R
+                    Layout.fillWidth: true
+                    text: "R"
+                    fillActive: root.channelActive[1] === true
+                    fillColor: Theme.sidebarActive
+                    onActivated: root.toggleChannel(1)
+                    KeyNavigation.up: profileDropdownScope
+                    KeyNavigation.left: btn2L
+                    KeyNavigation.down: allChannelsBtn
+                }
+            }
+
+            // ── Quad (4.0):  FL FR / RL RR ──
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                visible: root.channelCount === 4
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn4FL
+                        Layout.fillWidth: true
+                        text: "Front L"
+                        fillActive: root.channelActive[0] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(0)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.right: btn4FR
+                        KeyNavigation.down: btn4RL
+                    }
+                    FocusButton {
+                        id: btn4FR
+                        Layout.fillWidth: true
+                        text: "Front R"
+                        fillActive: root.channelActive[1] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(1)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn4FL
+                        KeyNavigation.down: btn4RR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn4RL
+                        Layout.fillWidth: true
+                        text: "Rear L"
+                        fillActive: root.channelActive[2] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(2)
+                        KeyNavigation.up: btn4FL
+                        KeyNavigation.right: btn4RR
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn4RR
+                        Layout.fillWidth: true
+                        text: "Rear R"
+                        fillActive: root.channelActive[3] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(3)
+                        KeyNavigation.up: btn4FR
+                        KeyNavigation.left: btn4RL
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                }
+            }
+
+            // ── 5.1:  FL  C  FR  /  RL  LFE  RR ──
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                visible: root.channelCount === 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn6FL
+                        Layout.fillWidth: true
+                        text: "Front L"
+                        fillActive: root.channelActive[0] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(0)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.right: btn6C
+                        KeyNavigation.down: btn6RL
+                    }
+                    FocusButton {
+                        id: btn6C
+                        Layout.fillWidth: true
+                        text: "Center"
+                        fillActive: root.channelActive[2] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(2)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn6FL
+                        KeyNavigation.right: btn6FR
+                        KeyNavigation.down: btn6LFE
+                    }
+                    FocusButton {
+                        id: btn6FR
+                        Layout.fillWidth: true
+                        text: "Front R"
+                        fillActive: root.channelActive[1] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(1)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn6C
+                        KeyNavigation.down: btn6RR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn6RL
+                        Layout.fillWidth: true
+                        text: "Rear L"
+                        fillActive: root.channelActive[4] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(4)
+                        KeyNavigation.up: btn6FL
+                        KeyNavigation.right: btn6LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn6LFE
+                        Layout.fillWidth: true
+                        text: "LFE/Sub"
+                        fillActive: root.channelActive[3] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(3)
+                        KeyNavigation.up: btn6C
+                        KeyNavigation.left: btn6RL
+                        KeyNavigation.right: btn6RR
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn6RR
+                        Layout.fillWidth: true
+                        text: "Rear R"
+                        fillActive: root.channelActive[5] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(5)
+                        KeyNavigation.up: btn6FR
+                        KeyNavigation.left: btn6LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                }
+            }
+
+            // ── 7.1:  FL C FR / SL ▢ SR / RL LFE RR  (center of mid row blank) ──
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                visible: root.channelCount === 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn8FL
+                        Layout.fillWidth: true
+                        text: "Front L"
+                        fillActive: root.channelActive[0] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(0)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.right: btn8C
+                        KeyNavigation.down: btn8SL
+                    }
+                    FocusButton {
+                        id: btn8C
+                        Layout.fillWidth: true
+                        text: "Center"
+                        fillActive: root.channelActive[2] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(2)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn8FL
+                        KeyNavigation.right: btn8FR
+                        KeyNavigation.down: btn8LFE
+                    }
+                    FocusButton {
+                        id: btn8FR
+                        Layout.fillWidth: true
+                        text: "Front R"
+                        fillActive: root.channelActive[1] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(1)
+                        KeyNavigation.up: profileDropdownScope
+                        KeyNavigation.left: btn8C
+                        KeyNavigation.down: btn8SR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn8SL
+                        Layout.fillWidth: true
+                        text: "Side L"
+                        fillActive: root.channelActive[6] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(6)
+                        KeyNavigation.up: btn8FL
+                        KeyNavigation.right: btn8SR
+                        KeyNavigation.down: btn8RL
+                    }
+                    // Center of the middle row is intentionally blank (no speaker).
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                    FocusButton {
+                        id: btn8SR
+                        Layout.fillWidth: true
+                        text: "Side R"
+                        fillActive: root.channelActive[7] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(7)
+                        KeyNavigation.up: btn8FR
+                        KeyNavigation.left: btn8SL
+                        KeyNavigation.down: btn8RR
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+                    FocusButton {
+                        id: btn8RL
+                        Layout.fillWidth: true
+                        text: "Rear L"
+                        fillActive: root.channelActive[4] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(4)
+                        KeyNavigation.up: btn8SL
+                        KeyNavigation.right: btn8LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn8LFE
+                        Layout.fillWidth: true
+                        text: "LFE/Sub"
+                        fillActive: root.channelActive[3] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(3)
+                        KeyNavigation.up: btn8C
+                        KeyNavigation.left: btn8RL
+                        KeyNavigation.right: btn8RR
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                    FocusButton {
+                        id: btn8RR
+                        Layout.fillWidth: true
+                        text: "Rear R"
+                        fillActive: root.channelActive[5] === true
+                        fillColor: Theme.sidebarActive
+                        onActivated: root.toggleChannel(5)
+                        KeyNavigation.up: btn8SR
+                        KeyNavigation.left: btn8LFE
+                        KeyNavigation.down: allChannelsBtn
+                    }
+                }
+            }
+
+            // ── Wide "All Channels" tile, shared below every layout. Becomes
+            //    "Stop All" once anything is playing so the label always states
+            //    what pressing it will do. ──
             FocusButton {
-                id: testToneFlScope
-                KeyNavigation.up: profileDropdownScope
-                KeyNavigation.right: testToneCScope
-                KeyNavigation.down: testToneRlScope
-                text: "Front L"
-                fillActive: root.channelActive[0]
+                id: allChannelsBtn
+                Layout.fillWidth: true
+                text: root.anyChannelActive ? "Stop All" : "All Channels"
+                fillActive: root.anyChannelActive
                 fillColor: Theme.sidebarActive
-                onActivated: root.toggleChannel(0)
-            }
-
-            FocusButton {
-                id: testToneCScope
-                KeyNavigation.up: profileDropdownScope
-                KeyNavigation.left: testToneFlScope
-                KeyNavigation.right: testToneFrScope
-                KeyNavigation.down: testToneLfeScope
-                text: "Center"
-                fillActive: root.channelActive[2]
-                fillColor: Theme.sidebarActive
-                onActivated: root.toggleChannel(2)
-            }
-
-            FocusButton {
-                id: testToneFrScope
-                KeyNavigation.up: profileDropdownScope
-                KeyNavigation.left: testToneCScope
-                KeyNavigation.down: testToneRrScope
-                text: "Front R"
-                fillActive: root.channelActive[1]
-                fillColor: Theme.sidebarActive
-                onActivated: root.toggleChannel(1)
-            }
-        }
-
-        // Row 2: Rear L | LFE/Sub | Rear R
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 16
-
-            FocusButton {
-                id: testToneRlScope
-                KeyNavigation.up: testToneFlScope
-                KeyNavigation.right: testToneLfeScope
-                KeyNavigation.down: testToneAllScope
-                text: "Rear L"
-                fillActive: root.channelActive[4]
-                fillColor: Theme.sidebarActive
-                onActivated: root.toggleChannel(4)
-            }
-
-            FocusButton {
-                id: testToneLfeScope
-                KeyNavigation.up: testToneCScope
-                KeyNavigation.left: testToneRlScope
-                KeyNavigation.right: testToneRrScope
-                KeyNavigation.down: testToneAllScope
-                text: "LFE/Sub"
-                fillActive: root.channelActive[3]
-                fillColor: Theme.sidebarActive
-                onActivated: root.toggleChannel(3)
-            }
-
-            FocusButton {
-                id: testToneRrScope
-                KeyNavigation.up: testToneFrScope
-                KeyNavigation.left: testToneLfeScope
-                KeyNavigation.down: testToneAllScope
-                text: "Rear R"
-                fillActive: root.channelActive[5]
-                fillColor: Theme.sidebarActive
-                onActivated: root.toggleChannel(5)
-            }
-        }
-
-        // Row 3: All channels
-        FocusButton {
-            id: testToneAllScope
-            KeyNavigation.up: testToneLfeScope
-            text: "All channels"
-            fillActive: root.allChannelsActive
-            fillColor: Theme.sidebarActive
-            onActivated: root.setAllChannels(!root.allChannelsActive)
-        }
-
-        // Conditional "now playing" popup — appears below the grid only while a
-        // tone is active, explaining how to turn it off.
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            radius: Units.radiusMD
-            visible: root.anyChannelActive
-            color: Theme.darkMode ? Qt.rgba(Theme.ember.r, Theme.ember.g, Theme.ember.b, 0.18) : Qt.rgba(Theme.navy.r, Theme.navy.g, Theme.navy.b, 0.12)
-            border.width: 2
-            border.color: Theme.ember
-
-            Text {
-                anchors.fill: parent
-                anchors.leftMargin: 24
-                anchors.rightMargin: 24
-                verticalAlignment: Text.AlignVCenter
-                text: "♪  Playing: " + root.activeLabels + "   —   press a speaker (or All channels) again to turn it off"
-                font.pixelSize: Theme.fontSmall
-                font.bold: true
-                color: Theme.textPrimary
-                elide: Text.ElideRight
-            }
-        }
-
-        // ---------------------------------------------------------------
-        // Format / sample-rate card (read-only — not in focus chain)
-        // ---------------------------------------------------------------
-        SectionHeader {
-            text: "Format"
-        }
-
-        ReadonlyInfoCard {
-            Text {
-                id: formatLabel
-                width: parent.width
-                text: root.formatInfo
-                font.pixelSize: Theme.fontSmall
-                font.family: "monospace"
-                color: Theme.textPrimary
-                wrapMode: Text.Wrap
+                onActivated: root.setAllChannels(!root.anyChannelActive)
+                KeyNavigation.up: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4RL : (root.channelCount === 8 ? btn8RL : btn6RL))
             }
         }
 
@@ -552,7 +914,7 @@ FocusScope {
         }
 
         HintBar {
-            text: "Use A to open the output device dropdown"
+            text: root.anyChannelActive ? "A: stop tone   ·   B: back" : "A: play a test tone on the focused speaker   ·   B: back"
         }
     }
 }
