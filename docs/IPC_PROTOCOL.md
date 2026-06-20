@@ -1084,7 +1084,8 @@ and cross-platform (`reqwest`), served like `sunshine-status`.
 Config comes from the **`[plex]` section** of `~/.config/game-shell/config.toml`:
 
 - `url` — server base, e.g. `https://plex.example.com`
-- `token` (inline) or `token_file` (path to a `0600` file) — an `X-Plex-Token`
+- `token_file` — path to a `0600` file (under `~/.config/game-shell/`) holding an
+  `X-Plex-Token`. Token-file only; inline tokens are not supported.
 
 The token never leaves the daemon: the reply embeds ready-to-load, tokenized
 poster URLs (`/photo/:/transcode?…&X-Plex-Token=…`) so the QML `Image` loads art

@@ -6,8 +6,11 @@
 # sections only turn on the LAN control surface and the optional Plex / Steam
 # home-screen widgets.
 #
-# The shared bearer token is NEVER inline — it lives in a separate 0600 file that
-# [http].token_file points at. Generate one:
+# ALL tokens (HTTP bearer, Plex, Steam) are by reference only — never inline.
+# Each lives in a separate file that the matching `*_token_file` points at. Every
+# token file MUST be mode 0600 AND live under ~/.config/game-shell/ — the daemon
+# refuses to start on a world-readable token file or a path that escapes the
+# config dir. Generate the bearer token:
 #   install -m600 /dev/null ~/.config/game-shell/http-token
 #   openssl rand -hex 32 > ~/.config/game-shell/http-token
 #
@@ -51,9 +54,9 @@
 # On Deck / Recently Added hubs on the home screen. BOTH a url and a token are
 # required or the widget collapses even when toggled on in settings.
 #url = "http://plex-host:32400"
-# Either an inline token …
-#token = "your-plex-token"
-# … or a path to a token file (preferred; keep it 0600):
+# The Plex token is by reference only (a 0600 file inside ~/.config/game-shell/);
+# inline tokens are not supported (same policy as [http]). Must be mode 0600 and
+# live under the config dir or the daemon refuses to start.
 #token_file = "~/.config/game-shell/plex-token"
 
 # --- Steam library row (optional) --------------------------------------------
@@ -62,7 +65,8 @@
 # gaming PC to enumerate and launch installed Steam games. BOTH url and token
 # are required or the Steam row collapses; the token must match the host's token.
 #url = "http://gaming-pc:47995"
-#token = "must-match-host-token"
+# Token by reference only (0600 file under ~/.config/game-shell/); inline tokens
+# are not supported. The token must match the host's GAME_SHELL_HOST_TOKEN.
 #token_file = "~/.config/game-shell/steam-token"
 
 # --- Observability: logs + metrics (optional) --------------------------------

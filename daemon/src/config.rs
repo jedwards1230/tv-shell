@@ -533,8 +533,12 @@ pub fn save_bindings(path: &Path, bindings: &[Binding]) -> std::io::Result<()> {
     let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let existing = std::fs::read_to_string(path).ok();
     let json = build_settings_json(existing.as_deref(), bindings);
+    // Bump the self-write generation only AFTER the write succeeds: if the write
+    // fails, the file is unchanged, so the watcher must NOT treat a later external
+    // edit as daemon-originated (which would suppress a legitimate reload).
+    atomic_write(path, json)?;
     note_self_write();
-    atomic_write(path, json)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -888,8 +892,11 @@ pub fn set_config(path: &Path, updates: &serde_json::Value) -> std::io::Result<S
             "set-config body must be a JSON object",
         )
     })?;
-    note_self_write();
+    // Bump the self-write generation only AFTER the write succeeds (see
+    // save_bindings): a failed write leaves the file unchanged, so a later
+    // external edit must still fire a config:changed reload.
     atomic_write(path, &merged)?;
+    note_self_write();
     Ok(merged)
 }
 

@@ -136,9 +136,9 @@ pub struct CecConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct PlexConfig {
     pub url: Option<String>,
-    /// Inline token (convenient for an optional widget) …
-    pub token: Option<String>,
-    /// … or a path to a file holding the token (preferred; keep it 0600).
+    /// Path to a `0600` file holding the Plex token. Inline tokens are NOT
+    /// supported (matching the HTTP bearer-token policy) — a secret pasted into
+    /// config.toml leaks via backups/CI/config-management/shared-host reads.
     pub token_file: Option<String>,
 }
 
@@ -147,7 +147,8 @@ pub struct PlexConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct SteamConfig {
     pub url: Option<String>,
-    pub token: Option<String>,
+    /// Path to a `0600` file holding the Steam/host token. Inline tokens are NOT
+    /// supported (same rationale as Plex / the HTTP bearer token).
     pub token_file: Option<String>,
 }
 
@@ -213,7 +214,9 @@ fn config_dir() -> PathBuf {
 }
 
 /// Expand a leading `~/` (or bare `~`) in a config path to `$HOME`. Other paths
-/// pass through unchanged. Token/config files are commonly written with `~`.
+/// pass through unchanged. Used for non-secret output paths (e.g.
+/// `metrics_textfile`) where the operator may legitimately point outside the
+/// config dir; secret token files go through [`resolve_token_path`] instead.
 fn expand_tilde(p: &str) -> PathBuf {
     if let Some(rest) = p.strip_prefix("~/") {
         if let Some(home) = std::env::var_os("HOME") {
@@ -226,6 +229,44 @@ fn expand_tilde(p: &str) -> PathBuf {
         }
     }
     PathBuf::from(p)
+}
+
+/// Resolve a **token file** path and confine it to the config dir (CWE-22 guard).
+///
+/// A token file holds a secret the daemon reads with its own privileges, so a
+/// config writer must not be able to point it at arbitrary paths
+/// (`../../../etc/shadow`, `/tmp/attacker`). After tilde-expansion the path is
+/// canonicalized and required to live within `~/.config/game-shell/`; anything
+/// escaping the config dir is a hard error (refuse startup). Canonicalizing also
+/// resolves `..`/symlinks, so a symlink inside the config dir pointing out is
+/// caught too.
+///
+/// NOTE: this is intentionally NOT applied to `metrics_textfile` — that is an
+/// OUTPUT the operator legitimately points outside the config dir (e.g.
+/// node_exporter's `/var/lib/node_exporter/textfile/`), not a secret the daemon
+/// reads. Output-path safety there is bounded by filesystem permissions, not by
+/// confinement to the config dir.
+fn resolve_token_path(p: &str, field: &str) -> anyhow::Result<PathBuf> {
+    let expanded = expand_tilde(p);
+    let canonical = expanded.canonicalize().map_err(|e| {
+        anyhow::anyhow!(
+            "{field} {}: cannot resolve token file path: {e}",
+            expanded.display()
+        )
+    })?;
+    let config_dir = config_dir()
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("cannot resolve config dir for {field} validation: {e}"))?;
+    if !canonical.starts_with(&config_dir) {
+        return Err(anyhow::anyhow!(
+            "{field} {} escapes the config directory {} — a token file must live \
+             under ~/.config/game-shell/ (refusing to read a secret from an \
+             arbitrary path)",
+            canonical.display(),
+            config_dir.display()
+        ));
+    }
+    Ok(canonical)
 }
 
 impl DaemonConfig {
@@ -263,34 +304,43 @@ impl DaemonConfig {
         parse_bind("mcp.bind", self.mcp.bind.as_deref())
     }
 
-    /// Resolve the shared bearer token from `[http].token_file`. Returns `None`
-    /// when no token file is configured, the file is missing, or it is empty —
-    /// all of which mean "no token" (fail-closed when auth is enabled).
-    ///
-    /// Reads (and warns) if the token file is group/other-accessible: a bearer
-    /// token in a world-readable file is a leak, but we still load it (the
-    /// operator's intent is clear) and log loudly so it's noticed.
-    pub fn http_token(&self) -> Option<String> {
-        let path = self.http.token_file.as_deref()?;
-        read_token_file(&expand_tilde(path), "http.token_file")
+    /// Resolve the shared bearer token from `[http].token_file`. `Ok(None)` when
+    /// no token file is configured or it is empty (both mean "no token" →
+    /// fail-closed when auth is enabled). `Err` when the path escapes the config
+    /// dir (CWE-22) or the file is group/other-accessible (fail-closed: a leaked
+    /// token must abort startup, not run with a compromised secret).
+    pub fn http_token(&self) -> anyhow::Result<Option<String>> {
+        match self.http.token_file.as_deref() {
+            Some(p) => read_token_file(
+                &resolve_token_path(p, "http.token_file")?,
+                "http.token_file",
+            ),
+            None => Ok(None),
+        }
     }
 
-    /// Resolve the Plex token: inline `token` wins, else `token_file`.
-    pub fn plex_token(&self) -> Option<String> {
-        resolve_service_token(
-            self.plex.token.as_deref(),
-            self.plex.token_file.as_deref(),
-            "plex.token_file",
-        )
+    /// Resolve the Plex token from `[plex].token_file` (token-file only; inline
+    /// tokens are not supported — see PlexConfig). Same fail-closed semantics as
+    /// [`http_token`].
+    pub fn plex_token(&self) -> anyhow::Result<Option<String>> {
+        match self.plex.token_file.as_deref() {
+            Some(p) => read_token_file(
+                &resolve_token_path(p, "plex.token_file")?,
+                "plex.token_file",
+            ),
+            None => Ok(None),
+        }
     }
 
-    /// Resolve the Steam token: inline `token` wins, else `token_file`.
-    pub fn steam_token(&self) -> Option<String> {
-        resolve_service_token(
-            self.steam.token.as_deref(),
-            self.steam.token_file.as_deref(),
-            "steam.token_file",
-        )
+    /// Resolve the Steam token from `[steam].token_file` (token-file only).
+    pub fn steam_token(&self) -> anyhow::Result<Option<String>> {
+        match self.steam.token_file.as_deref() {
+            Some(p) => read_token_file(
+                &resolve_token_path(p, "steam.token_file")?,
+                "steam.token_file",
+            ),
+            None => Ok(None),
+        }
     }
 
     /// Metrics textfile write interval in seconds, clamped to ≥1 so a `0` (which
@@ -318,7 +368,9 @@ impl DaemonConfig {
     /// downgrades the refusal to a loud warning — this is how game-client-1 keeps
     /// its intentional LAN + dev + no-auth dev loop.
     pub fn validate(&self) -> anyhow::Result<()> {
-        let token = self.http_token();
+        // Resolve the token eagerly so a path-traversal / world-readable token
+        // file aborts startup here (fail-closed), not silently as "no token".
+        let token = self.http_token()?;
         let auth_effectively_disabled = !self.http.auth_enabled || token.is_none();
 
         // The HTTP bridge always exposes its /dev/* tools, so a non-loopback
@@ -353,9 +405,14 @@ impl DaemonConfig {
     /// into `[dev].allow_insecure_lan`, log a loud warning and continue.
     fn refuse_or_warn(&self, surface: &str, addr: SocketAddr, why: &str) -> anyhow::Result<()> {
         if self.dev.allow_insecure_lan {
-            tracing::warn!(
+            // error!, not warn!: the escape hatch is a deliberate hole, and a
+            // forgotten `allow_insecure_lan = true` (e.g. a copy-pasted dev
+            // config) silently opens an unauthenticated RCE surface to the LAN.
+            // Logging at error level makes that impossible to miss at startup.
+            tracing::error!(
                 "config: {surface} bound to non-loopback {addr} with auth effectively \
-                 disabled — {why}. Permitted only because [dev].allow_insecure_lan = true."
+                 disabled — {why}. PERMITTED ONLY because [dev].allow_insecure_lan = true; \
+                 remove it unless this box intentionally runs an unauthenticated LAN dev loop."
             );
             Ok(())
         } else {
@@ -380,62 +437,51 @@ fn parse_bind(field: &str, value: Option<&str>) -> anyhow::Result<Option<SocketA
     }
 }
 
-/// Resolve a service token: a non-empty inline `token` wins; otherwise read the
-/// `token_file`. `None` when neither yields a non-empty value.
-fn resolve_service_token(
-    inline: Option<&str>,
-    token_file: Option<&str>,
-    field: &str,
-) -> Option<String> {
-    if let Some(t) = inline.filter(|t| !t.is_empty()) {
-        return Some(t.to_string());
-    }
-    read_token_file(&expand_tilde(token_file?), field)
-}
-
-/// Read a bearer/API token from a file: trim trailing whitespace/newline, treat
-/// empty as absent. Warns if the file is group/other-accessible (mode & 0o077).
-fn read_token_file(path: &Path, field: &str) -> Option<String> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!("config: {field} {} unreadable: {e}", path.display());
-            return None;
-        }
-    };
-    warn_if_world_accessible(path, field);
+/// Read a bearer/API token from a (config-dir-confined) file: trim trailing
+/// whitespace/newline, treat empty as `Ok(None)` ("no token" → fail-closed when
+/// auth is on). A group/other-accessible file is a hard `Err` (fail-closed): a
+/// world-readable secret lets any local user / co-hosted service assume daemon
+/// privileges, so the daemon refuses to start rather than run with a leaked token.
+fn read_token_file(path: &Path, field: &str) -> anyhow::Result<Option<String>> {
+    ensure_owner_only(path, field)?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("config: {field} {} unreadable: {e}", path.display()))?;
     let token = raw.trim();
     if token.is_empty() {
         tracing::warn!(
             "config: {field} {} is empty — treating as no token",
             path.display()
         );
-        None
+        Ok(None)
     } else {
-        Some(token.to_string())
+        Ok(Some(token.to_string()))
     }
 }
 
-/// Log a warning if a token file is readable by group/other (mode & 0o077 != 0).
-/// Unix-only check; a no-op elsewhere.
+/// Fail-closed if a token file is readable by group/other (mode & 0o077 != 0).
+/// Unix-only check; a no-op elsewhere (non-Unix has no POSIX mode bits).
 #[cfg(unix)]
-fn warn_if_world_accessible(path: &Path, field: &str) {
+fn ensure_owner_only(path: &Path, field: &str) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    if let Ok(meta) = std::fs::metadata(path) {
-        let mode = meta.permissions().mode();
-        if mode & 0o077 != 0 {
-            tracing::warn!(
-                "config: {field} {} is group/other-accessible (mode {:o}); a bearer token \
-                 should be 0600 (chmod 600 it)",
-                path.display(),
-                mode & 0o7777
-            );
-        }
+    let meta = std::fs::metadata(path)
+        .map_err(|e| anyhow::anyhow!("config: {field} {} stat failed: {e}", path.display()))?;
+    let mode = meta.permissions().mode();
+    if mode & 0o077 != 0 {
+        return Err(anyhow::anyhow!(
+            "config: {field} {} is group/other-accessible (mode {:o}); refusing to \
+             start — a bearer/API token must be private. Fix: chmod 600 {}",
+            path.display(),
+            mode & 0o7777,
+            path.display()
+        ));
     }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn warn_if_world_accessible(_path: &Path, _field: &str) {}
+fn ensure_owner_only(_path: &Path, _field: &str) -> anyhow::Result<()> {
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -510,7 +556,7 @@ mod tests {
 
             [plex]
             url = "http://plex:32400"
-            token = "plex-tok"
+            token_file = "/run/secrets/plex-token"
 
             [steam]
             url = "http://gaming-pc:47995"
@@ -525,8 +571,21 @@ mod tests {
         assert!(c.mcp.dev);
         assert!(c.cec.lifecycle);
         assert_eq!(c.plex.url.as_deref(), Some("http://plex:32400"));
-        assert_eq!(c.plex_token().as_deref(), Some("plex-tok")); // inline wins
+        // Plex/Steam are token-file only now (inline `token` is a rejected
+        // unknown field — verified in inline_token_is_rejected below).
+        assert_eq!(
+            c.plex.token_file.as_deref(),
+            Some("/run/secrets/plex-token")
+        );
         assert_eq!(c.http_bind().unwrap().unwrap().port(), 8089);
+    }
+
+    #[test]
+    fn inline_plex_steam_token_is_rejected() {
+        // #5: inline tokens are not supported; deny_unknown_fields rejects them so
+        // an operator can't paste a raw secret into config.toml.
+        assert!(DaemonConfig::parse("[plex]\ntoken = \"x\"\n").is_err());
+        assert!(DaemonConfig::parse("[steam]\ntoken = \"x\"\n").is_err());
     }
 
     #[test]
@@ -587,24 +646,90 @@ mod tests {
         c.validate().unwrap();
     }
 
-    #[test]
-    fn validate_lan_http_with_token_ok() {
-        // A resolvable token + auth on ⇒ not "effectively disabled" ⇒ allowed.
-        // (Use an inline-equivalent by pointing token_file at a temp file.)
-        let dir = std::env::temp_dir().join(format!(
-            "gs-cfgtok-{}-{:?}",
+    // Token-file tests mutate XDG_CONFIG_HOME (process-global, since config_dir()
+    // reads it), so they serialize on this guard to stay parallel-safe.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `f` with XDG_CONFIG_HOME pointed at a fresh temp dir whose
+    /// `game-shell/` subdir exists; cleans up after. Serialized via ENV_GUARD.
+    #[cfg(unix)]
+    fn with_temp_config_dir(f: impl FnOnce(&std::path::Path)) {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let base = std::env::temp_dir().join(format!(
+            "gs-cfgdir-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::create_dir_all(&dir);
-        let tok = dir.join("http-token");
-        std::fs::write(&tok, "a-long-secret\n").unwrap();
-        let mut c = DaemonConfig::default();
-        c.http.bind = Some("0.0.0.0:8089".to_string());
-        c.http.auth_enabled = true;
-        c.http.token_file = Some(tok.to_string_lossy().into_owned());
-        assert_eq!(c.http_token().as_deref(), Some("a-long-secret"));
-        c.validate().unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
+        let gs = base.join("game-shell");
+        std::fs::create_dir_all(&gs).unwrap();
+        let prev = std::env::var_os("XDG_CONFIG_HOME");
+        // SAFETY: serialized by ENV_GUARD; restored before returning.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &base) };
+        f(&gs);
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Write a token file at `<config-dir>/<name>` with mode `mode`.
+    #[cfg(unix)]
+    fn write_token(dir: &std::path::Path, name: &str, body: &str, mode: u32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(name);
+        std::fs::write(&p, body).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+        p
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_lan_http_with_0600_token_ok() {
+        // A resolvable 0600 token inside the config dir + auth on ⇒ not
+        // "effectively disabled" ⇒ allowed.
+        with_temp_config_dir(|gs| {
+            let tok = write_token(gs, "http-token", "a-long-secret\n", 0o600);
+            let mut c = DaemonConfig::default();
+            c.http.bind = Some("0.0.0.0:8089".to_string());
+            c.http.auth_enabled = true;
+            c.http.token_file = Some(tok.to_string_lossy().into_owned());
+            assert_eq!(c.http_token().unwrap().as_deref(), Some("a-long-secret"));
+            c.validate().unwrap();
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn token_file_world_readable_is_rejected() {
+        // #4: a group/other-accessible token file fails closed (hard error).
+        with_temp_config_dir(|gs| {
+            let tok = write_token(gs, "http-token", "secret\n", 0o644);
+            let mut c = DaemonConfig::default();
+            c.http.token_file = Some(tok.to_string_lossy().into_owned());
+            let err = c.http_token().unwrap_err().to_string();
+            assert!(err.contains("group/other-accessible"), "got: {err}");
+            // And validate() refuses to start because of it.
+            c.http.bind = Some("0.0.0.0:8089".to_string());
+            assert!(c.validate().is_err());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn token_file_outside_config_dir_is_rejected() {
+        // #1 (CWE-22): a token path escaping the config dir is a hard error even
+        // when the target exists and is 0600.
+        with_temp_config_dir(|_gs| {
+            // /etc/hostname exists on Linux CI; any readable file outside the
+            // config dir works to prove the confinement check fires.
+            let mut c = DaemonConfig::default();
+            c.http.token_file = Some("/etc/hostname".to_string());
+            let err = c.http_token().unwrap_err().to_string();
+            assert!(
+                err.contains("escapes the config directory") || err.contains("cannot resolve"),
+                "got: {err}"
+            );
+        });
     }
 }

@@ -186,7 +186,9 @@ fn main() -> anyhow::Result<()> {
         // bridge's auth-exempt GET /metrics route (#268).
         match daemon_cfg.http_bind() {
             Ok(Some(addr)) => {
-                let token = daemon_cfg.http_token();
+                // validate() already resolved + vetted the token file at startup
+                // (aborting on a bad path / perms), so this is Ok here.
+                let token = daemon_cfg.http_token().unwrap_or(None);
                 let auth_enabled = daemon_cfg.http.auth_enabled;
                 tokio::spawn(http::serve(
                     addr,
@@ -215,7 +217,8 @@ fn main() -> anyhow::Result<()> {
         {
             match daemon_cfg.mcp_bind() {
                 Ok(Some(addr)) => {
-                    let token = daemon_cfg.http_token();
+                    // Ok by construction — validate() vetted the token file at startup.
+                    let token = daemon_cfg.http_token().unwrap_or(None);
                     let auth_enabled = daemon_cfg.http.auth_enabled;
                     tokio::spawn(mcp::serve(
                         addr,

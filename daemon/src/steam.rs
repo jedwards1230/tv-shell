@@ -45,7 +45,9 @@ pub(crate) fn config() -> Option<(String, String)> {
         .trim()
         .trim_end_matches('/')
         .to_string();
-    let token = cfg.steam_token()?;
+    // steam_token() is Result; startup validate() already vetted token files, so
+    // a hard error or missing token here just means "widget not configured".
+    let token = cfg.steam_token().ok().flatten()?;
     if base.is_empty() || token.is_empty() {
         return None;
     }

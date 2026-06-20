@@ -45,7 +45,10 @@ pub(crate) fn config() -> Option<(String, String)> {
         .trim()
         .trim_end_matches('/')
         .to_string();
-    let token = cfg.plex_token()?;
+    // plex_token() is Result (a bad token-file path / perms is an error), but
+    // startup validate() already vetted token files, so here a hard error or a
+    // missing token just means "widget not configured" → collapse it.
+    let token = cfg.plex_token().ok().flatten()?;
     if base.is_empty() || token.is_empty() {
         return None;
     }
