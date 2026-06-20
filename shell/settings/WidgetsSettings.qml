@@ -12,6 +12,12 @@ import "../components/lib"
 // (→ sidebar → Home). Two levels only (list → config); the former L2 servers
 // page was folded into the Moonlight config page. This keeps the frequent on/off
 // task at one focus stop instead of scrolling past every widget's config.
+//
+// Intentionally NOT migrated onto SettingsPageBase: this is a two-mode
+// list/config-loader drill-in nav (mode-switched implicitHeight) with its own
+// _back() B/Escape stack and an applyDeepTarget override (the moonlight
+// deep-link). It does not map to the base's single-content-slot scaffold without
+// rewriting the drill-in nav. Kept on a bare FocusScope by design.
 FocusScope {
     id: root
 
