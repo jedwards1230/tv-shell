@@ -1,0 +1,10 @@
+module components
+singleton Theme 1.0 Theme.qml
+singleton Units 1.0 Units.qml
+singleton InputMode 1.0 InputMode.qml
+singleton SettingsStore 1.0 SettingsStore.qml
+singleton IconTheme 1.0 IconTheme.qml
+singleton NotificationManager 1.0 NotificationManager.qml
+singleton NetworkManager 1.0 NetworkManager.qml
+QuickActions 1.0 QuickActions.qml
+QuickActionButton 1.0 QuickActionButton.qml

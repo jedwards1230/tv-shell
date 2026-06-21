@@ -1,11 +1,15 @@
+# QML formatting (qmlformat). On PRs it auto-formats and pushes a fix commit; on
+# main it fails if anything is unformatted.
+#
+# Invoked by the CI orchestrator (.github/workflows/ci.yml), which decides via
+# path-based change detection whether any .qml changed. ci.yml passes the write
+# permission + secrets needed for the auto-format push. ci.yml is the single
+# required-check surface.
+
 name: Lint
 
 on:
-  push:
-    branches: [main]
-    paths: ['**/*.qml']
-  pull_request:
-    paths: ['**/*.qml']
+  workflow_call:
 
 permissions:
   contents: write

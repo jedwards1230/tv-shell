@@ -1,0 +1,121 @@
+# CI orchestrator — the single source of truth for required status checks.
+#
+# THE PROBLEM this solves: a path-filtered workflow (on.pull_request.paths) only
+# *triggers* when those paths change, so it can't be a required check — a PR that
+# doesn't touch those paths would leave the check "waiting for status" forever and
+# never be mergeable. See https://docs.github.com/actions for the gory details.
+#
+# THE PATTERN: this workflow has NO top-level `paths:` filter, so it runs on every
+# PR and always reports. A `changes` job (dorny/paths-filter) detects which areas
+# changed; each area is a reusable workflow called only when its area changed; and
+# a final `ci-gate` job aggregates the results. Mark ONLY `CI / ci-gate` as the
+# required status check in branch protection / rulesets — it always runs, and it
+# treats skipped area jobs as success, so unrelated PRs pass cleanly.
+#
+# Area workflows (rust.yml / host.yml / qml-test.yml / lint.yml) are reusable
+# (`on: workflow_call`); they keep their own focused logic + docs and are only
+# invoked from here. Release workflows (release-*.yml) are tag-triggered and live
+# outside this orchestrator.
+
+name: CI
+
+run-name: "CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}"
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Detect which areas changed so each reusable workflow runs only when relevant.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      host: ${{ steps.filter.outputs.host }}
+      qml: ${{ steps.filter.outputs.qml }}
+      qmlformat: ${{ steps.filter.outputs.qmlformat }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # A change to the orchestrator itself re-runs every area (the leading
+          # '.github/workflows/ci.yml' line in each filter), so CI changes are
+          # always exercised.
+          filters: |
+            rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'daemon/**'
+              - 'protocol/**'
+              - '.github/workflows/rust.yml'
+              - '.github/workflows/ci.yml'
+            host:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'host/**'
+              - 'protocol/**'
+              - '.github/workflows/host.yml'
+              - '.github/workflows/ci.yml'
+            qml:
+              - 'shell/**/*.qml'
+              - 'shell/**/qmldir'
+              - 'tests/qml/**'
+              - '.github/workflows/qml-test.yml'
+              - '.github/workflows/ci.yml'
+            qmlformat:
+              - '**/*.qml'
+              - '.github/workflows/lint.yml'
+              - '.github/workflows/ci.yml'
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    uses: ./.github/workflows/rust.yml
+
+  host:
+    needs: changes
+    if: needs.changes.outputs.host == 'true'
+    uses: ./.github/workflows/host.yml
+
+  qml:
+    needs: changes
+    if: needs.changes.outputs.qml == 'true'
+    uses: ./.github/workflows/qml-test.yml
+
+  qmlformat:
+    needs: changes
+    if: needs.changes.outputs.qmlformat == 'true'
+    # The auto-format push needs write + secrets; reusable workflows take the
+    # caller job's permissions/secrets.
+    permissions:
+      contents: write
+    secrets: inherit
+    uses: ./.github/workflows/lint.yml
+
+  # The ONLY required check. Always runs; fails if any area job failed/was
+  # cancelled. Skipped area jobs (their area didn't change) count as success.
+  ci-gate:
+    needs: [changes, rust, host, qml, qmlformat]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify no required job failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "A required CI job failed or was cancelled:"
+          echo "  changes=${{ needs.changes.result }}"
+          echo "  rust=${{ needs.rust.result }}"
+          echo "  host=${{ needs.host.result }}"
+          echo "  qml=${{ needs.qml.result }}"
+          echo "  qmlformat=${{ needs.qmlformat.result }}"
+          exit 1
+      - name: All required jobs passed or were skipped
+        run: echo "CI gate green."

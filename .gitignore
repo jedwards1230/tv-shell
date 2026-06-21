@@ -2,3 +2,6 @@ aqtinstall.log
 worktrees/
 tmp/
 target/
+
+# Assembled module for headless QML tests (tests/qml/run.sh)
+tests/qml/.build/

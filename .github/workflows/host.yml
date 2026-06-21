@@ -10,16 +10,17 @@
 # graph is never pulled in — a bare `cargo build` on Windows would try the daemon
 # and fail. The daemon has its own Linux-only CI in rust.yml.
 
+# Invoked by the CI orchestrator (.github/workflows/ci.yml), which decides via
+# path-based change detection whether the host crate changed. Kept as a separate
+# reusable workflow so the host's cross-platform matrix + rationale stay in one
+# focused file; ci.yml just calls it (and is the single required-check surface).
+
 name: Host
 
 run-name: "Host CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
-  push:
-    branches: [main]
-    paths: ['Cargo.toml', 'host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
-  pull_request:
-    paths: ['Cargo.toml', 'host/**', 'protocol/**', 'Cargo.lock', '.github/workflows/host.yml']
+  workflow_call:
 
 permissions:
   contents: read

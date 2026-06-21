@@ -385,4 +385,39 @@ mod tests {
         let it = &parse_items(&v, BASE, TOKEN, 10)[0];
         assert_eq!(it["art"], "");
     }
+
+    // --- Schema-lock contract ----------------------------------------------
+    // The home-screen `PlexWidget` binds a fixed set of per-item keys. The
+    // value tests above pin behaviour; this one pins the *shape* — exactly
+    // these keys, nothing more, with the JSON types the QML relies on — so a
+    // refactor that renames or drops a field fails CI instead of silently
+    // blanking the widget. (See docs/IPC_PROTOCOL.md; same intent as the
+    // status/JSON-shape locks in the ipc.rs end-to-end test.)
+    #[test]
+    fn item_schema_is_locked() {
+        let v = container(json!([{
+            "type": "movie",
+            "title": "Contract",
+            "year": 2020,
+            "thumb": "/library/metadata/1/thumb/1",
+            "viewOffset": 1,
+            "duration": 2,
+        }]));
+        let items = parse_items(&v, BASE, TOKEN, 10);
+        let obj = items[0].as_object().expect("item is a JSON object");
+
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["art", "kind", "progress", "subtitle", "title"],
+            "PlexWidget item key set changed — update the QML binding too"
+        );
+
+        assert!(obj["title"].is_string());
+        assert!(obj["subtitle"].is_string());
+        assert!(obj["kind"].is_string());
+        assert!(obj["art"].is_string());
+        assert!(obj["progress"].is_number());
+    }
 }

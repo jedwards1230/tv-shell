@@ -868,9 +868,19 @@ mod tests {
             .write_all(format!("{line}\n").as_bytes())
             .await
             .unwrap();
-        let mut buf = vec![0u8; 256];
-        let n = stream.read(&mut buf).await.unwrap();
-        String::from_utf8_lossy(&buf[..n]).trim_end().to_string()
+        // Replies are newline-framed (LinesCodec). Read until the first '\n'
+        // so large replies (e.g. `list-apps` on a host with many .desktop
+        // files) aren't truncated mid-JSON by a fixed-size single read.
+        let mut acc = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let n = stream.read(&mut byte).await.unwrap();
+            if n == 0 || byte[0] == b'\n' {
+                break;
+            }
+            acc.push(byte[0]);
+        }
+        String::from_utf8_lossy(&acc).trim_end().to_string()
     }
 
     #[tokio::test]
@@ -1026,6 +1036,15 @@ mod tests {
             send_line(&mut s, "intent overlay:bogus").await,
             "error:unknown intent 'overlay:bogus'"
         );
+        // Lock the rest of the coarse vocabulary that scripts/super-intent.sh
+        // and the nav drawer ride on (bare Super -> menu, Super+Backspace ->
+        // home-hold, Super+Right -> overlay:session). A rename here would break
+        // the Hyprland binds silently.
+        assert_eq!(send_line(&mut s, "intent menu").await, "ok");
+        assert_eq!(send_line(&mut s, "intent home-hold").await, "ok");
+        assert_eq!(send_line(&mut s, "intent power").await, "ok");
+        assert_eq!(send_line(&mut s, "intent settings").await, "ok");
+        assert_eq!(send_line(&mut s, "intent overlay:session").await, "ok");
 
         // Rumble control surface: a well-formed command round-trips the runtime
         // (the fake replies ok); a malformed body is a stateless usage error.
@@ -1039,6 +1058,13 @@ mod tests {
         // token is rejected; a bare command is a stateless usage error.
         assert_eq!(send_line(&mut s, "key up").await, "ok");
         assert_eq!(send_line(&mut s, "key select").await, "ok");
+        // The full D-pad/back nav vocabulary the QML KeyNavigation chains and
+        // the screenshot-automation `key <name>` channel depend on (see
+        // docs/qa-screenshot-views.md "two CLI channels").
+        assert_eq!(send_line(&mut s, "key down").await, "ok");
+        assert_eq!(send_line(&mut s, "key left").await, "ok");
+        assert_eq!(send_line(&mut s, "key right").await, "ok");
+        assert_eq!(send_line(&mut s, "key back").await, "ok");
         assert_eq!(
             send_line(&mut s, "key sideways").await,
             "error:unknown key 'sideways'"
