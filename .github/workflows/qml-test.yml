@@ -3,18 +3,18 @@
 # Runs the stock Qt `qmltestrunner` under QT_QPA_PLATFORM=offscreen — no
 # Quickshell, no compositor, no GPU needed. Exercises real Quickshell-free
 # components (QuickActions, …) against stub singletons; see tests/qml/README.md.
-# Path-filtered to QML + the harness so unrelated PRs don't trigger it.
+#
+# Invoked by the CI orchestrator (.github/workflows/ci.yml), which decides via
+# path-based change detection whether the shell QML / test harness changed, so
+# unrelated PRs never reach this workflow. ci.yml is the single required-check
+# surface.
 
 name: QML Test
 
 run-name: "QML Test — ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
-  push:
-    branches: [main]
-    paths: ['shell/**/*.qml', 'shell/**/qmldir', 'tests/qml/**', '.github/workflows/qml-test.yml']
-  pull_request:
-    paths: ['shell/**/*.qml', 'shell/**/qmldir', 'tests/qml/**', '.github/workflows/qml-test.yml']
+  workflow_call:
 
 permissions:
   contents: read

@@ -9,20 +9,19 @@
 # command is `-p game-shell-input`-scoped so the host crate (cross-platform, CI'd
 # separately in host.yml) is never dragged into the daemon's Linux/cec build. The
 # workspace shares one target dir at the repo ROOT, so the build output is at
-# `../target/release/...` from `working-directory: daemon`. Path-filtered to the
-# daemon + its shared `protocol` crate + the workspace lock so QML-only PRs don't
-# trigger it.
+# `../target/release/...` from `working-directory: daemon`.
+#
+# Invoked by the CI orchestrator (.github/workflows/ci.yml), which decides via
+# path-based change detection whether the daemon/protocol crates changed, so
+# QML-only PRs never reach this workflow. ci.yml is the single required-check
+# surface.
 
 name: Rust
 
 run-name: "Rust CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
-  push:
-    branches: [main]
-    paths: ['Cargo.toml', 'daemon/**', 'protocol/**', 'Cargo.lock', '.github/workflows/rust.yml']
-  pull_request:
-    paths: ['Cargo.toml', 'daemon/**', 'protocol/**', 'Cargo.lock', '.github/workflows/rust.yml']
+  workflow_call:
 
 permissions:
   contents: read
