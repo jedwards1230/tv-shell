@@ -22,8 +22,7 @@ TestCase {
 
     Component {
         id: qaComp
-        QuickActions {
-        }
+        QuickActions {}
     }
 
     // Fresh instance per test; reset shared singleton state first.
@@ -87,9 +86,9 @@ TestCase {
     function test_return_on_notifications() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "notificationCenterRequested"
-            });
+            "target": qa,
+            "signalName": "notificationCenterRequested"
+        });
         qa.currentIndex = 0;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
@@ -98,9 +97,9 @@ TestCase {
     function test_return_on_settings() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "settingsRequested"
-            });
+            "target": qa,
+            "signalName": "settingsRequested"
+        });
         qa.currentIndex = 1;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
@@ -109,9 +108,9 @@ TestCase {
     function test_return_on_network() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "networkRequested"
-            });
+            "target": qa,
+            "signalName": "networkRequested"
+        });
         qa.currentIndex = 3;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
@@ -120,9 +119,9 @@ TestCase {
     function test_return_on_volume() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "volumeRequested"
-            });
+            "target": qa,
+            "signalName": "volumeRequested"
+        });
         qa.currentIndex = 4;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
@@ -131,9 +130,9 @@ TestCase {
     function test_return_on_power() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "powerRequested"
-            });
+            "target": qa,
+            "signalName": "powerRequested"
+        });
         qa.currentIndex = 5;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
@@ -156,9 +155,9 @@ TestCase {
     function test_down_requests_focus_handoff() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "focusDownRequested"
-            });
+            "target": qa,
+            "signalName": "focusDownRequested"
+        });
         keyClick(Qt.Key_Down);
         compare(spy.count, 1);
     }
@@ -166,9 +165,9 @@ TestCase {
     function test_up_requests_focus_handoff() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "focusUpRequested"
-            });
+            "target": qa,
+            "signalName": "focusUpRequested"
+        });
         keyClick(Qt.Key_Up);
         compare(spy.count, 1);
     }
@@ -177,16 +176,15 @@ TestCase {
         var qa = newQA();
         verify(qa.escapeRequestsSettings);
         var spy = createTemporaryObject(spyComp, testCase, {
-                "target": qa,
-                "signalName": "settingsRequested"
-            });
+            "target": qa,
+            "signalName": "settingsRequested"
+        });
         keyClick(Qt.Key_Escape);
         compare(spy.count, 1);
     }
 
     Component {
         id: spyComp
-        SignalSpy {
-        }
+        SignalSpy {}
     }
 }
