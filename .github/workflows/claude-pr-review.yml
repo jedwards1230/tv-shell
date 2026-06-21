@@ -1,7 +1,7 @@
-# Claude PR review — calls the shared reusable workflow in
+# PR review — calls the shared reusable workflow in
 # jedwards1230/release-workflows (claude-code-action@v1, Haiku, review-team +
 # public marketplace + github_ci by default).
-name: Claude PR Review
+name: PR Review
 
 on:
   pull_request:
@@ -28,3 +28,17 @@ jobs:
           propagation, the gamepad/input daemon lifecycle and key/intent IPC.
         - No hardcoded host paths/IPs that belong in config.
         Do NOT re-flag qmlformat/rustfmt/clippy — CI owns those.
+
+  pr-review:
+    name: PR Review
+    if: always()
+    needs: [review]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check review result
+        run: |
+          result="${{ needs.review.result }}"
+          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
+            echo "PR Review passed (result: $result)"; exit 0
+          fi
+          echo "PR Review failed (result: $result)"; exit 1
