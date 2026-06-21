@@ -94,16 +94,12 @@ const TV_ADDR: i32 = 0;
 const WAKE_ACTIVE_SOURCE_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// Whether daemon-owned CEC lifecycle (wake-on-start/resume + standby-on-
-/// suspend/SIGTERM) is enabled. Read from `GAME_SHELL_CEC_LIFECYCLE`: enabled
-/// only when the value is exactly `"1"` or `"true"`. **Default OFF** so a plain
-/// `cargo run`, CI, or a dev box never drives a real CEC bus — it's opted into
-/// on the deploy host via `daemon.env`. The manual `cec-*` IPC commands are
-/// unaffected by this flag.
+/// suspend/SIGTERM) is enabled. Read from `[cec].lifecycle` in `config.toml`.
+/// **Default OFF** so a plain `cargo run`, CI, or a dev box never drives a real
+/// CEC bus — it's opted into on the deploy host. The manual `cec-*` IPC commands
+/// are unaffected by this flag.
 pub fn lifecycle_enabled() -> bool {
-    matches!(
-        std::env::var("GAME_SHELL_CEC_LIFECYCLE").as_deref(),
-        Ok("1") | Ok("true")
-    )
+    crate::daemon_config::global().cec.lifecycle
 }
 
 // ---------------------------------------------------------------------------

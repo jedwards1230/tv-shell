@@ -11,9 +11,9 @@ import "../components/lib"
 // page). Values are now read from the daemon via IPC (#164):
 //   sys-status     -> {os, kernel, hostname, uptime}
 //   storage-status -> [{mount, size, used, avail, pct}, …]
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: contentColumn.implicitHeight + 2 * Theme.padding
+    hintText: "Updates automatically"
 
     property string osName: ""
     property string kernelVersion: ""
@@ -134,10 +134,12 @@ FocusScope {
         return (n / 1024).toFixed(1) + " KiB";
     }
 
+    // Single content column (a child of the base's content slot). It is NOT
+    // anchors-filled — the SettingsPageBase scaffold supplies the page padding
+    // and the trailing spacer + HintBar (via hintText).
     ColumnLayout {
         id: contentColumn
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         SectionHeader {
@@ -369,10 +371,6 @@ FocusScope {
                     }
                 }
             }
-        }
-
-        HintBar {
-            text: "Updates automatically"
         }
     }
 }

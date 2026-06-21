@@ -156,26 +156,26 @@ FocusScope {
     Keys.onPressed: event => {
         switch (event.key) {
         case Qt.Key_Left:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root._btn > 0)
                 root._btn--;
             event.accepted = true;
             break;
         case Qt.Key_Right:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root._btn < 3)
                 root._btn++;
             event.accepted = true;
             break;
         case Qt.Key_Up:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root.previousRow) {
                 root.previousRow.forceActiveFocus();
                 event.accepted = true;
             }
             break;
         case Qt.Key_Down:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root.nextRow) {
                 root.nextRow.forceActiveFocus();
                 event.accepted = true;
@@ -183,14 +183,14 @@ FocusScope {
             break;
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             root._activate();
             event.accepted = true;
             break;
         case Qt.Key_X:
             // Context action (gamepad X face → daemon altAction → KEY_X): ask the
             // host to open the quit popover.
-            Theme.exitMouseMode();
+            InputMode.exitMouseMode();
             if (root.hasPlayer)
                 root.contextRequested();
             event.accepted = true;

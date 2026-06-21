@@ -13,9 +13,9 @@ import "../components/lib"
 //   net-status     -> {connectivity, primaryType, hasWifi, ipv4, gateway, dns, activeConnections:[{name,type,device,speed}]}
 //   net-wifi-list  -> [{ssid, signal, security, inUse}]
 //   net-wifi-rescan -> ok|error (NetworkManager RequestScan)
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: netMainCol.implicitHeight + 2 * Theme.padding
+    hintText: "Network configuration is read-only"
 
     property var activeConnections: []
     property string ipAddress: ""
@@ -87,30 +87,23 @@ FocusScope {
     }
 
     // Bounded one-shot ping for the Test connection action.
-    // `-c 3 -W 2` ensures it exits within ~6 s regardless of host reachability.
-    property string pingOutput: ""
-
-    Process {
+    // Bounded one-shot ping for the Test connection action, via the daemon's
+    // net-ping IPC (count 3). Fail-soft: an unreachable host comes back
+    // reachable:false / rttMs:null — rendered as "Failed", never an error.
+    SocketClient {
         id: pingTest
-        command: ["bash", "-c", "ping -c 3 -W 2 1.1.1.1 2>&1"]
-        stdout: SplitParser {
-            onRead: line => {
-                root.pingOutput += line + "\n";
-            }
-        }
-        onExited: (code, status) => {
-            if (code === 0) {
-                // Extract average RTT from the ping summary line, e.g.
-                // "rtt min/avg/max/mdev = 12.3/14.5/16.7/1.2 ms"
-                let match = root.pingOutput.match(/= [\d.]+\/([\d.]+)\//);
-                if (match)
-                    root.testResult = "OK — " + Math.round(parseFloat(match[1])) + " ms avg";
+        onResponseReceived: line => {
+            try {
+                let obj = JSON.parse(line);
+                if (obj.reachable)
+                    root.testResult = (obj.rttMs !== null && obj.rttMs !== undefined) ? "OK — " + Math.round(obj.rttMs) + " ms avg" : "OK";
                 else
-                    root.testResult = "OK";
-            } else {
+                    root.testResult = "Failed";
+            } catch (e) {
                 root.testResult = "Failed";
             }
         }
+        onRequestFailed: root.testResult = "Failed"
     }
 
     function refresh() {
@@ -139,10 +132,11 @@ FocusScope {
         testButtonScope.forceActiveFocus();
     }
 
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: netMainCol
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         // Connection status
@@ -298,8 +292,7 @@ FocusScope {
                     anchors.fill: parent
                     onActivated: {
                         root.testResult = "Testing…";
-                        root.pingOutput = "";
-                        pingTest.running = true;
+                        pingTest.request("net-ping", "1.1.1.1 3");
                     }
                 }
             }
@@ -428,16 +421,6 @@ FocusScope {
             Layout.preferredHeight: Units.gridUnit * 3
             visible: !root.hasWifi || root.wifiNetworks.length === 0
             line: !root.hasWifi ? "No WiFi adapter detected" : "No WiFi networks found"
-        }
-
-        // Absorb remaining vertical space so content top-packs and the hint
-        // pins to the bottom (mirrors ControllerSettings.qml).
-        Item {
-            Layout.fillHeight: true
-        }
-
-        HintBar {
-            text: "Network configuration is read-only"
         }
     }
 }

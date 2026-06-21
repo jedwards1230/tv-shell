@@ -13,7 +13,7 @@ Item {
     // True when this card represents a currently-running window — renders an
     // ember status dot beside the name.
     property bool running: false
-    property bool isFocused: (activeFocus && !Theme.mouseMode) || (mouseArea.containsMouse && Theme.mouseMode)
+    property bool isFocused: (activeFocus && !InputMode.mouseMode) || (mouseArea.containsMouse && InputMode.mouseMode)
     default property alias iconContent: iconArea.data
 
     signal activated
@@ -26,7 +26,7 @@ Item {
     Connections {
         target: Theme
         function onMouseModeChanged() {
-            if (!Theme.mouseMode && mouseArea.containsMouse) {
+            if (!InputMode.mouseMode && mouseArea.containsMouse) {
                 if (root.ListView.view)
                     root.ListView.view.currentIndex = root.ListView.view.indexAt(root.x, root.y);
                 root.forceActiveFocus();
@@ -47,7 +47,7 @@ Item {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             // Hover flips to mouse-mode only on a GENUINE pointer move, filtered
-            // by Theme.pointerMoved (global-coords delta). We deliberately do NOT
+            // by InputMode.pointerMoved (global-coords delta). We deliberately do NOT
             // re-add onEntered: containsMouse flips when a row scrolls a card
             // under a *stationary* cursor, which would hijack controller-nav
             // focus mid-nav (#45). Coords mapped to the scene root (null) — a
@@ -56,10 +56,10 @@ Item {
             // used anywhere in this codebase, mapToItem is — easy to swap.)
             onPositionChanged: mouse => {
                 let p = mapToItem(null, mouse.x, mouse.y);
-                Theme.pointerMoved(p.x, p.y);
+                InputMode.pointerMoved(p.x, p.y);
             }
             onClicked: {
-                Theme.enterMouseMode();
+                InputMode.enterMouseMode();
                 root.forceActiveFocus();
                 root.activated();
             }

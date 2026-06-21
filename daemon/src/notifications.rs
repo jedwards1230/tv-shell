@@ -93,19 +93,6 @@ pub fn notifications_to_json(notifications: &[Notification]) -> String {
     serde_json::to_string(notifications).unwrap_or_else(|_| "[]".to_string())
 }
 
-/// Atomically write `contents` to `path` (write a sibling temp file, then
-/// rename over the target) so a crash mid-write can't leave a torn/corrupt
-/// file. QML is the sole, serial writer, so lost-update races aren't reachable
-/// in practice; this guards against partial writes.
-fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
-}
-
 /// Read the notifications file and return all stored entries (up to
 /// [`MAX_ENTRIES`]) as a compact JSON array (the `get-notifications` response
 /// body). Missing/invalid file -> `[]`.
@@ -127,7 +114,7 @@ pub fn record_notification(path: &Path, entry: Notification) -> std::io::Result<
         .map(|t| parse_notifications(&t))
         .unwrap_or_default();
     let updated = record(existing, entry);
-    atomic_write(path, &notifications_to_json(&updated))
+    crate::config::atomic_write(path, notifications_to_json(&updated))
 }
 
 /// Overwrite the notifications file with the given list (capped at
@@ -136,7 +123,7 @@ pub fn record_notification(path: &Path, entry: Notification) -> std::io::Result<
 pub fn set_notifications(path: &Path, entries: Vec<Notification>) -> std::io::Result<()> {
     let _guard = FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let updated = set_all(entries);
-    atomic_write(path, &notifications_to_json(&updated))
+    crate::config::atomic_write(path, notifications_to_json(&updated))
 }
 
 /// Current wall-clock time in unix seconds (float), like Python `time.time()`.

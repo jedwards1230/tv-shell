@@ -49,7 +49,7 @@ config/
   game-shell.desktop     # Wayland session entry (installer rewrites Exec to prefix)
   targets.json.example   # Copy-runnable streaming targets (single-line JSON)
   targets.yaml.example   # Annotated streaming-target field reference (docs only)
-  daemon.env.example     # Per-machine daemon options (HTTP/MCP, CEC, Plex, Steam)
+  config.toml.example    # Per-machine daemon options (HTTP/MCP, CEC, Plex, Steam)
   hyprland.conf.example  # Per-machine display/HDR override example
 packaging/               # PKGBUILD / install layout (see #147)
 scripts/
@@ -64,8 +64,9 @@ Per-machine config lives under `~/.config/game-shell/` and is seeded from the
 `config/*.example` files on install — see [docs/INSTALL.md](docs/INSTALL.md#3-configure).
 Streaming targets are stored in `targets.json` as single-line JSON (managed in-UI
 via MoonlightSettings; `config/targets.yaml.example` documents the fields). Daemon
-options (LAN bridge, CEC, Plex/Steam widgets) go in the optional `daemon.env`
-(`config/daemon.env.example`).
+options (LAN bridge, CEC, Plex/Steam widgets) go in the optional typed
+`config.toml` (`config/config.toml.example`); the shared bearer token lives in a
+separate `0600` file referenced by `[http] token_file`.
 
 ## Observability
 
@@ -73,7 +74,8 @@ The daemon logs to the **systemd journal** when run as a `systemd --user` unit
 (`journalctl --user -u game-shell-input`; quickshell output under `-t
 game-shell-quickshell`), falling back to stderr otherwise. It also exports
 **Prometheus metrics** — an auth-exempt `GET /metrics` on the optional LAN bridge
-and/or a node_exporter textfile (`GAME_SHELL_METRICS_TEXTFILE`). See
+and/or a node_exporter textfile (`[observability].metrics_textfile` in
+`config.toml`). See
 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) and
 [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md).
 

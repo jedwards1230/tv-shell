@@ -66,6 +66,9 @@ tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# Typed daemon config (~/.config/game-shell/config.toml). Cross-platform pure
+# Rust; replaces the old daemon.env KEY=VALUE loader.
+toml = "0.8"
 # Pure-Rust .desktop parser (cross-platform): drives app discovery (apps.rs).
 # Deliberately NOT Linux-gated so the parse/filter logic unit-tests on macOS.
 # default-features = false drops the optional `gettext` feature (and its C

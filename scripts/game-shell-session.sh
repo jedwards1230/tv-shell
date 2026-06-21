@@ -15,10 +15,9 @@ export GAME_SHELL_SOCK="/run/user/$(id -u)/game-shell-input.sock"
 # super-intent.sh (and friends) by name regardless of install prefix.
 export PATH="$SHELL_DIR/scripts:$PATH"
 
-# Optional per-machine daemon overrides (HTTP bridge bind, auth toggle, etc.) —
-# not tracked in the repo so a box can opt into the LAN HTTP bridge locally.
-DAEMON_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/daemon.env"
-if [ -f "$DAEMON_ENV" ]; then set -a; . "$DAEMON_ENV"; set +a; fi
+# Per-machine daemon options (HTTP/MCP/CEC/Plex/Steam) are NOT sourced here
+# anymore — the daemon reads a typed ~/.config/game-shell/config.toml directly,
+# so the bearer token never enters this script's (or any child's) environment.
 
 # Start the Rust input/backend daemon. It is the sole backend: gamepad
 # grab/release, settings I/O, app discovery, Bluetooth/network/power, Hyprland
@@ -30,8 +29,9 @@ if [ -f "$DAEMON_ENV" ]; then set -a; . "$DAEMON_ENV"; set +a; fi
 # (node_exporter's systemd collector sees per-unit usage with zero app code), and
 # single-instance + restart semantics (which also kills the recurring "duplicate
 # quickshell instance"-style stacking from a re-launched session). The daemon
-# self-discovers everything it needs (install root from its own path, socket,
-# daemon.env), so the unit needs no env wiring from here.
+# self-discovers everything it needs (install root from its own path, socket) and
+# reads its typed config from ~/.config/game-shell/config.toml directly, so the
+# unit needs no env wiring from here.
 #
 # Fallback: if `systemctl --user` is unavailable (no user systemd manager, no
 # user bus) OR a dev override `GAME_SHELL_INPUT_BIN` is set (the unit's ExecStart

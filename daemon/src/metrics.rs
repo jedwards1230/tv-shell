@@ -358,20 +358,9 @@ pub fn render_blocking(counters: &Metrics, build: Option<BuildInfo>) -> String {
 
 // ─── node_exporter textfile-collector writer ─────────────────────────────────
 
-/// Default render/write interval in seconds when `GAME_SHELL_METRICS_INTERVAL`
-/// is unset or unparseable.
-const DEFAULT_INTERVAL_SECS: u64 = 15;
-
-/// Parse the write interval from `GAME_SHELL_METRICS_INTERVAL` (seconds).
-/// Falls back to [`DEFAULT_INTERVAL_SECS`] when unset, unparseable, or zero
-/// (a zero interval would be a busy-loop).
-fn interval_secs() -> u64 {
-    std::env::var("GAME_SHELL_METRICS_INTERVAL")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
+// The metrics write interval now comes from `[observability].metrics_interval`
+// (default 15, clamped to ≥1 by `DaemonConfig::metrics_interval_secs()`); there
+// is no longer a local DEFAULT_INTERVAL_SECS const here.
 
 /// Atomically write `text` to `path` via the temp-file + rename pattern the
 /// node_exporter textfile collector requires (it reads `*.prom` files and a
@@ -410,27 +399,31 @@ fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 }
 
 /// Background task: periodically render the metrics exposition text and write it
-/// atomically to the path in `GAME_SHELL_METRICS_TEXTFILE`.
+/// atomically to `textfile_path` (from `[observability].metrics_textfile`).
 ///
-/// **Disabled when the env var is unset** — the task returns immediately and no
-/// file is ever written. This is the PRIMARY metrics path (node_exporter
-/// textfile collector); the `/metrics` HTTP route is the portable alternative.
+/// **Disabled when `textfile_path` is `None`/empty** — the task returns
+/// immediately and no file is ever written. This is the PRIMARY metrics path
+/// (node_exporter textfile collector); the `/metrics` HTTP route is the portable
+/// alternative. `interval_secs` comes from `[observability].metrics_interval`
+/// (already clamped ≥1 by `DaemonConfig::metrics_interval_secs`).
 ///
 /// Mirrors the fire-and-forget spawn pattern of the other daemon actors: it logs
 /// and degrades gracefully (a failed write is logged at warn, not fatal) and
 /// never panics the daemon.
-pub async fn run_textfile_writer(counters: Arc<Metrics>) {
-    let Ok(path_str) = std::env::var("GAME_SHELL_METRICS_TEXTFILE") else {
-        // Unset → writer disabled (no file). The /metrics route is unaffected.
-        tracing::debug!("metrics: GAME_SHELL_METRICS_TEXTFILE unset, textfile writer disabled");
+pub async fn run_textfile_writer(
+    counters: Arc<Metrics>,
+    textfile_path: Option<String>,
+    interval_secs: u64,
+) {
+    let Some(path_str) = textfile_path.filter(|p| !p.is_empty()) else {
+        // Unset/empty → writer disabled (no file). The /metrics route is unaffected.
+        tracing::debug!(
+            "metrics: [observability].metrics_textfile unset, textfile writer disabled"
+        );
         return;
     };
-    if path_str.is_empty() {
-        tracing::debug!("metrics: GAME_SHELL_METRICS_TEXTFILE empty, textfile writer disabled");
-        return;
-    }
     let path = std::path::PathBuf::from(path_str);
-    let secs = interval_secs();
+    let secs = interval_secs;
     tracing::info!(
         "metrics: writing textfile-collector metrics to {} every {secs}s",
         path.display()
@@ -599,11 +592,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn interval_secs_defaults_when_unset() {
-        // The env var is process-global; only assert the default branch via the
-        // parsing helper contract (no env mutation to keep tests parallel-safe).
-        // A zero or garbage value must fall back to the default.
-        assert_eq!(DEFAULT_INTERVAL_SECS, 15);
-    }
+    // The interval default/clamp now lives in
+    // `DaemonConfig::metrics_interval_secs()` and is tested in daemon_config.rs.
 }

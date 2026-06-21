@@ -8,8 +8,8 @@ screen, and launch a game into Big Picture before Moonlight streams it.
 ```
 game-client (TV)                          gaming PC (Steam host)
   game-shell-input daemon ──HTTP :47995──▶ game-shell-host
-    GAME_SHELL_STEAM_URL                     GAME_SHELL_HOST_TOKEN
-    GAME_SHELL_STEAM_TOKEN  (bearer, must match the host token)
+    [steam] url   (config.toml)              GAME_SHELL_HOST_TOKEN  (env)
+    [steam] token (bearer, must match the host token)
 ```
 
 It never touches Sunshine config, so other Moonlight clients are unaffected.
@@ -118,20 +118,23 @@ firewall to port 47995. See the role for the full variable list.
 
 Point the daemon at the host and give it the **same token**:
 
-```bash
-# ~/.config/game-shell/daemon.env on the game-client
-GAME_SHELL_STEAM_URL=http://<host-ip>:47995
-GAME_SHELL_STEAM_TOKEN=<same token as GAME_SHELL_HOST_TOKEN>
+```toml
+# ~/.config/game-shell/config.toml on the game-client
+[steam]
+url = "http://<host-ip>:47995"
+# Either inline …
+token = "<same token as GAME_SHELL_HOST_TOKEN>"
+# … or, preferred, a 0600 file: token_file = "~/.config/game-shell/steam-token"
 ```
 
 Restart the daemon to pick it up. In the homelab this is wired by the
 `game_client_common` role (`game_shell_steam_url` / `game_shell_steam_token` in
 `host_vars/gaming-client.yaml`).
 
-Keep the token private: it's the same secret on both machines in plaintext, so
-store `daemon.env` (and the host env file) `chmod 0600`, keep it out of shell
-history, and vault it in any config repo. It isn't rotated by default — rotate it
-on both ends together if it leaks.
+Keep the token private: it's the same secret on both machines in plaintext. Prefer
+`token_file` and `chmod 0600` it (the host's own env file too), keep it out of
+shell history, and vault it in any config repo. It isn't rotated by default —
+rotate it on both ends together if it leaks.
 
 ## Verify
 

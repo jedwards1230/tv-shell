@@ -15,9 +15,9 @@ import "../components/lib"
 //   bt-list, bt-connect <mac>, bt-disconnect <mac>, bt-pair <mac>, bt-trust <mac>
 // Streamed events consumed: bt:device:<json>, bt:device-removed:<mac>,
 //   bt:powered:on|off, bt:scanning:on|off
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: btMainCol.implicitHeight + 2 * Theme.padding
+    hintText: root.powered ? "A: Connect/Disconnect  |  Scan to find new devices" : "Turn on Bluetooth to manage devices"
 
     property bool powered: false
     property bool scanning: false
@@ -302,10 +302,11 @@ FocusScope {
         powerToggleScope.forceActiveFocus();
     }
 
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: btMainCol
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         // Bluetooth section header
@@ -516,16 +517,6 @@ FocusScope {
                     btPair.pair(root.availableDevices[currentIndex].mac);
                 }
             }
-        }
-
-        // Absorb remaining vertical space so the lists pack at the top and the
-        // hint sits at the bottom (mirrors ControllerSettings.qml).
-        Item {
-            Layout.fillHeight: true
-        }
-
-        HintBar {
-            text: root.powered ? "A: Connect/Disconnect  |  Scan to find new devices" : "Turn on Bluetooth to manage devices"
         }
     }
 }

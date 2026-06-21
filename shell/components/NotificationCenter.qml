@@ -50,7 +50,7 @@ FocusScope {
 
     // Backdrop
     DimmedBackdrop {
-        dimLevel: 0.85
+        // dimLevel defaults to Theme.scrimOpacity (canonical modal scrim).
         onClicked: root.opened = false
     }
 

@@ -17,9 +17,13 @@ daemon writes a `.prom` file and an existing node_exporter picks it up:
 1. Pick a textfile directory node_exporter watches, e.g.
    `/var/lib/node_exporter/textfile/`, and start node_exporter with
    `--collector.textfile.directory=/var/lib/node_exporter/textfile`.
-2. Point the daemon at a `.prom` file **inside** that directory:
-   `GAME_SHELL_METRICS_TEXTFILE=/var/lib/node_exporter/textfile/game-shell.prom`
-   (optionally `GAME_SHELL_METRICS_INTERVAL=15`).
+2. Point the daemon at a `.prom` file **inside** that directory via
+   `~/.config/game-shell/config.toml`:
+   ```toml
+   [observability]
+   metrics_textfile = "/var/lib/node_exporter/textfile/game-shell.prom"
+   #metrics_interval = 15
+   ```
 3. The daemon renders every interval and writes atomically (temp file +
    `rename`), so node_exporter never reads a half-written file. The metrics then
    appear on node_exporter's own `/metrics` alongside the `node_*` series, and

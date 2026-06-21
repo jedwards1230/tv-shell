@@ -264,14 +264,31 @@ Item {
             if (exitCode !== 0 && root.shellState === "appRunning")
                 root.appClosed();
             else
-                ensureFullscreen.running = true;
+                ensureFullscreenQuery.request("hypr-active");
         }
     }
 
-    // Window rule only applies at creation — restore fullscreen on resume
+    // Window rule only applies at creation — restore fullscreen on resume.
+    // Read the active window's fullscreen state via the daemon's hypr-active IPC
+    // (no hyprctl shell-out for the read); if it's not fullscreen, toggle it on.
+    SocketClient {
+        id: ensureFullscreenQuery
+        onResponseReceived: line => {
+            try {
+                let obj = JSON.parse(line);
+                if (obj.fullscreen === false)
+                    ensureFullscreen.running = true;
+            } catch (e) {
+                console.log("AppLifecycleManager: failed to parse hypr-active:", e);
+            }
+        }
+    }
+
+    // The fullscreen toggle stays a one-shot hyprctl dispatch (a write/action,
+    // not a read — per the daemon read / shell-out write split).
     Process {
         id: ensureFullscreen
-        command: ["bash", "-c", "FS=$(hyprctl activewindow -j | grep -o '\"fullscreen\": [0-9]*' | grep -o '[0-9]*'); [ \"$FS\" = \"0\" ] && hyprctl dispatch fullscreen 0; exit 0"]
+        command: ["hyprctl", "dispatch", "fullscreen", "0"]
     }
 
     function _handleWindowQueryResult(clients) {
@@ -298,6 +315,10 @@ Item {
         onClientsReceived: clients => {
             let apps = (root.applications || []);
             let windows = [];
+            // Set of window classes currently present — used by the
+            // launched-app fast-path below to detect a still-running tracked app
+            // without re-running the full WindowMatcher scan.
+            let seenClasses = {};
             // One entry PER WINDOW (no class dedup) so the home row can show a
             // card per running window and focus/close each one individually.
             for (let i = 0; i < clients.length; i++) {
@@ -305,6 +326,8 @@ Item {
                 let cls = c["class"] || "";
                 if (cls === "" || cls.indexOf("quickshell") >= 0)
                     continue;
+
+                seenClasses[cls] = true;
 
                 let iconName = (c["initialClass"] || cls).toLowerCase();
                 let appIcon = iconName;

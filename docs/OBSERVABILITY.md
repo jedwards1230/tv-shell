@@ -25,13 +25,20 @@ There are two signals:
 - **stdout** (the original compact `fmt` layer) otherwise, and always on
   non-Linux.
 
-Selection is automatic but overridable:
+Selection is automatic but overridable via `[observability]` in
+`~/.config/game-shell/config.toml`:
+
+| Config key (`[observability]`) | Values | Effect |
+|---|---|---|
+| `log_journal` | `true` | Force the journald layer on. |
+| | `false` | Force stdout (no journald). |
+| | _omitted_ (default) | **Auto**: use journald when `JOURNAL_STREAM` is set (i.e. launched under a systemd unit) and the journal socket is reachable; otherwise stdout. |
+
+The log level/targets remain an env var (NOT a config key), so the standard
+`RUST_LOG=… game-shell-input` workflow is unchanged:
 
 | Env var | Values | Effect |
 |---|---|---|
-| `GAME_SHELL_LOG_JOURNAL` | `1` / `true` | Force the journald layer on. |
-| | `0` / `false` | Force stdout (no journald). |
-| | _unset_ (default) | **Auto**: use journald when `JOURNAL_STREAM` is set (i.e. launched under a systemd unit) and the journal socket is reachable; otherwise stdout. |
 | `RUST_LOG` | e.g. `info`, `game_shell_input=debug` | Standard `EnvFilter` syntax. Honoured identically on **both** paths. Default `info`. |
 
 If the journald layer is requested but the journal socket cannot be opened, the
@@ -49,10 +56,10 @@ journalctl --user -u game-shell-input -p warning # warnings and above
 journalctl --user -u game-shell-input -o json    # structured fields
 ```
 
-Raise verbosity by setting `RUST_LOG` in the daemon environment
-(`config/daemon.env`), e.g. `RUST_LOG=game_shell_input=debug`. The `publish`
-chokepoint at `debug` is a full event tracer (intents, combos, `pad:*`,
-input-mode, controller-wake).
+Raise verbosity by setting the `RUST_LOG` env var (it stays an env var, not a
+config key), e.g. `RUST_LOG=game_shell_input=debug game-shell-input`. The
+`publish` chokepoint at `debug` is a full event tracer (intents, combos,
+`pad:*`, input-mode, controller-wake).
 
 ---
 
@@ -97,20 +104,20 @@ A background task periodically renders the exposition text and writes it
 **atomically** (temp file + `rename(2)`, as the textfile collector requires) to a
 `.prom` file.
 
-| Env var | Default | Effect |
+| Config key (`[observability]`) | Default | Effect |
 |---|---|---|
-| `GAME_SHELL_METRICS_TEXTFILE` | _unset_ → **writer disabled** | Absolute path to the `.prom` file to write (e.g. `/var/lib/node_exporter/textfile/game-shell.prom`). |
-| `GAME_SHELL_METRICS_INTERVAL` | `15` | Render/write interval in seconds. Zero/garbage falls back to the default. |
+| `metrics_textfile` | _omitted_ → **writer disabled** | Absolute path to the `.prom` file to write (e.g. `/var/lib/node_exporter/textfile/game-shell.prom`). |
+| `metrics_interval` | `15` | Render/write interval in seconds. `0` falls back to the default. |
 
-When `GAME_SHELL_METRICS_TEXTFILE` is unset, **no file is written** — the
-textfile path is opt-in. The `/metrics` HTTP route is unaffected by this setting.
+When `metrics_textfile` is omitted, **no file is written** — the textfile path is
+opt-in. The `/metrics` HTTP route is unaffected by this setting.
 
 Point node_exporter's textfile collector at the file's **directory** (see
 [`examples/README.md`](../examples/README.md)).
 
 ### Option B — scrape `/metrics` (portable alternative)
 
-When the HTTP bridge is bound (`GAME_SHELL_HTTP_BIND`), it serves:
+When the HTTP bridge is bound (`[http].bind` in config.toml), it serves:
 
 ```
 GET /metrics  →  200, Content-Type: text/plain; version=0.0.4; charset=utf-8
@@ -127,15 +134,18 @@ curl -s http://<host>:<port>/metrics
 
 ---
 
-## Environment variable summary
+## Configuration summary
 
-| Variable | Default | Purpose |
+Everything below is `[observability]` in `~/.config/game-shell/config.toml`,
+except `RUST_LOG` which stays a standard env var:
+
+| Setting | Default | Purpose |
 |---|---|---|
-| `GAME_SHELL_LOG_JOURNAL` | auto | `1`/`0` to force journald on/off; unset = auto-detect. |
-| `RUST_LOG` | `info` | `EnvFilter` log level/targets (both logging paths). |
-| `GAME_SHELL_METRICS_TEXTFILE` | unset (disabled) | Path to the `.prom` textfile-collector output. |
-| `GAME_SHELL_METRICS_INTERVAL` | `15` | Textfile render/write interval (seconds). |
+| `[observability].log_journal` | auto | `true`/`false` to force journald on/off; omitted = auto-detect. |
+| `RUST_LOG` (env) | `info` | `EnvFilter` log level/targets (both logging paths). |
+| `[observability].metrics_textfile` | omitted (disabled) | Path to the `.prom` textfile-collector output. |
+| `[observability].metrics_interval` | `15` | Textfile render/write interval (seconds). |
 
-See [`config/daemon.env.example`](../config/daemon.env.example) for copy-runnable
-defaults and [`examples/`](../examples/) for a starter Grafana dashboard and a
-Prometheus scrape snippet.
+See [`config/config.toml.example`](../config/config.toml.example) for
+copy-runnable defaults and [`examples/`](../examples/) for a starter Grafana
+dashboard and a Prometheus scrape snippet.

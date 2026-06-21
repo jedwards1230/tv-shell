@@ -1218,9 +1218,18 @@ impl PadDevice {
 
     /// Re-read this pad's battery from sysfs and, if it changed, emit
     /// `pad:battery:{id,level,charging}` (#100). A no-op for wired pads (no
-    /// matching `power_supply`). Called on join and on the periodic poll.
+    /// matching `power_supply`). Used on the (synchronous) pad-join path; the
+    /// periodic poll instead offloads the sysfs read and calls [`apply_battery`].
     fn poll_battery(&mut self, sh: &mut Shared) {
-        let Some(state) = read_pad_battery(&self.name) else {
+        self.apply_battery(sh, read_pad_battery(&self.name));
+    }
+
+    /// Apply an already-read battery state: if it changed, emit
+    /// `pad:battery:{id,level,charging}` (#100). `None` (wired pad / no supply)
+    /// is left as the current state and emits nothing. Pure of I/O so the sysfs
+    /// read can be offloaded to the blocking pool by the periodic poll arm.
+    fn apply_battery(&mut self, sh: &mut Shared, state: Option<BatteryState>) {
+        let Some(state) = state else {
             return; // no battery reported (wired pad) -> nothing to emit
         };
         if self.battery == Some(state) {
@@ -1899,17 +1908,14 @@ pub async fn run(
     for b in &bindings {
         button_map.insert(b.button, b.key);
     }
-    // Parse per-player and per-game binding overrides (#104).
-    let (per_player_bindings, per_game_bindings) = {
-        let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok());
-        let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-        (
-            config::parse_per_player_bindings(&doc),
-            config::parse_per_game_bindings(&doc),
-        )
-    };
+    // Parse per-player/per-game binding overrides (#104) and rumbleEnabled from a
+    // single settings.json read, offloaded to the blocking pool so the input
+    // runtime's startup isn't stalled on disk I/O (consistent with
+    // apply_config_changed's later reads).
+    let startup_doc = read_settings_doc().await;
+    let per_player_bindings = config::parse_per_player_bindings(&startup_doc);
+    let per_game_bindings = config::parse_per_game_bindings(&startup_doc);
+    let rumble_enabled = config::rumble_enabled_from(&startup_doc);
 
     let (kb, mouse) = match build_uinput(&button_map) {
         Ok(v) => v,
@@ -1953,7 +1959,9 @@ pub async fn run(
         home_hold_active: false,
         presenter: Presenter::Shell,
         session_active: true,
-        rumble_enabled: config::rumble_enabled(&config::settings_path()),
+        // rumble_enabled is derived from the single offloaded startup settings
+        // read (M3), superseding origin/main's inline config::rumble_enabled call.
+        rumble_enabled,
         metrics,
     };
     let mut fleet = Fleet::new();
@@ -1963,7 +1971,7 @@ pub async fn run(
             // Control commands from the IPC server.
             ctrl = control_rx.recv() => {
                 match ctrl {
-                    Some(c) => if !handle_control(&mut sh, &mut fleet, c) { break },
+                    Some(c) => if !handle_control(&mut sh, &mut fleet, c).await { break },
                     None => break,
                 }
             }
@@ -2000,8 +2008,27 @@ pub async fn run(
             // `pad:battery:*`. A no-op for wired pads.
             _ = tokio::time::sleep(Duration::from_secs(2)) => {
                 try_join(&mut sh, &mut fleet);
-                for pad in fleet.pads.values_mut() {
-                    pad.poll_battery(&mut sh);
+                // Offload the per-pad sysfs battery scan to the blocking pool so the
+                // input loop stays responsive while walking /sys/class/power_supply.
+                let names: Vec<(RawFd, String)> = fleet
+                    .pads
+                    .iter()
+                    .map(|(fd, pad)| (*fd, pad.name.clone()))
+                    .collect();
+                if !names.is_empty() {
+                    let results = tokio::task::spawn_blocking(move || {
+                        names
+                            .into_iter()
+                            .map(|(fd, name)| (fd, read_pad_battery(&name)))
+                            .collect::<Vec<_>>()
+                    })
+                    .await
+                    .unwrap_or_default();
+                    for (fd, state) in results {
+                        if let Some(pad) = fleet.pads.get_mut(&fd) {
+                            pad.apply_battery(&mut sh, state);
+                        }
+                    }
                 }
             }
             // External config:changed signal (#163): the file-watch actor
@@ -2014,7 +2041,7 @@ pub async fn run(
             // would defeat receiver_count()==0 fast-paths.
             _ = config_changed.notified() => {
                 tracing::debug!("input: config_changed notified, refreshing caches");
-                apply_config_changed(&mut sh);
+                apply_config_changed(&mut sh).await;
             }
         }
     }
@@ -2103,23 +2130,43 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
 
 // --- control handling ----------------------------------------------------
 
-/// Refresh the input runtime's in-memory caches from disk (#163, #108).
+/// Read and parse `settings.json` off the input runtime's event loop.
 ///
-/// Called by both the `Control::ConfigChanged` arm (IPC `set-config` path)
-/// and the `config_changed.notified()` select arm (file-watch path), so the
-/// two sources always apply identical logic.
-fn apply_config_changed(sh: &mut Shared) {
-    sh.rumble_enabled = config::rumble_enabled(&config::settings_path());
-    let doc: Option<serde_json::Value> = std::fs::read_to_string(config::settings_path())
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok());
-    let doc = doc.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-    sh.per_player_bindings = config::parse_per_player_bindings(&doc);
-    sh.per_game_bindings = config::parse_per_game_bindings(&doc);
+/// The actual disk read + JSON parse runs on Tokio's blocking pool via
+/// `spawn_blocking`, so the single input task stays responsive to gamepad
+/// events and timers while waiting. A missing/garbage file degrades to an empty
+/// object (matching the prior inline `unwrap_or` behavior). If the blocking task
+/// somehow fails to join (runtime shutting down), it also degrades to empty.
+async fn read_settings_doc() -> serde_json::Value {
+    tokio::task::spawn_blocking(|| {
+        std::fs::read_to_string(config::settings_path())
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()))
+    })
+    .await
+    .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+}
+
+/// Apply an already-read settings document to the input runtime's in-memory
+/// caches (#163, #108). Pure (no I/O) so the disk read can be offloaded by the
+/// caller; both refresh paths converge here so they apply identical logic.
+fn apply_config_doc(sh: &mut Shared, doc: &serde_json::Value) {
+    sh.rumble_enabled = config::rumble_enabled_from(doc);
+    sh.per_player_bindings = config::parse_per_player_bindings(doc);
+    sh.per_game_bindings = config::parse_per_game_bindings(doc);
+}
+
+/// Refresh the input runtime's caches from disk, reading `settings.json` off the
+/// event loop. Called by both the `Control::ConfigChanged` arm (IPC `set-config`
+/// path) and the `config_changed.notified()` select arm (file-watch path).
+async fn apply_config_changed(sh: &mut Shared) {
+    let doc = read_settings_doc().await;
+    apply_config_doc(sh, &doc);
 }
 
 /// Returns false to stop the loop (shutdown).
-fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
+async fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
     match ctrl {
         Control::Grab(r) => {
             grab_all(sh, fleet);
@@ -2224,7 +2271,7 @@ fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bool {
         }
         Control::ConfigChanged => {
             // set-config or file-watch: refresh cached settings (#108, #104, #163).
-            apply_config_changed(sh);
+            apply_config_changed(sh).await;
         }
         Control::SetActiveGame { id, reply } => {
             // Set or clear the active game for per-game binding lookup (#104).

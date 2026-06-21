@@ -71,7 +71,7 @@ config/
   game-shell-input.service    # systemd --user unit for the daemon (install.sh rewrites ExecStart to the prefix; see docs/SYSTEMD_SETUP.md)
   targets.json.example        # Copy-runnable streaming targets → ~/.config/game-shell/targets.json
   targets.yaml.example        # Annotated streaming-target field reference (docs only)
-  daemon.env.example          # Per-machine daemon options → ~/.config/game-shell/daemon.env
+  config.toml.example         # Per-machine daemon options (typed TOML) → ~/.config/game-shell/config.toml
 daemon/                      # Rust backend daemon (game-shell-input) — sole backend
   src/                       # input/uinput, ipc, config, apps, bluetooth, network, power, hyprland, health
   README.md                  # daemon architecture + phase notes
@@ -117,7 +117,7 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 
 - **Streaming targets**: Loaded from `~/.config/game-shell/targets.json` at startup (single-line JSON — see gotchas). The path is resolved client-side by the `Paths` QML singleton (`$GAME_SHELL_TARGETS` env → else `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json`); a missing file is a clean no-op (empty target list, no crash). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.
 - **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `streamingViewMode`, `controllerDebug` (QML-owned) and `keyBindings` (daemon-owned). The **daemon is the sole writer** — `SettingsStore` reads via `get-config` and hands QML-owned keys to `set-config` (read-modify-write), so QML never formats config JSON itself. All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore.
-- **Config locations & paths**: The shell is prefix-agnostic. Per-user config lives under `~/.config/game-shell/` (`settings.json`, `targets.json`, optional `daemon.env`, optional `hyprland-local.conf`); system defaults conventionally under `/etc/game-shell/`. The install prefix is resolved at runtime — never hardcode `/opt/game-shell`. Env vars: `GAME_SHELL_DIR` (install root; exported by the session script, also derived from `current_exe`), `GAME_SHELL_INPUT_BIN` (override the daemon binary path for the re-exec/dev-override hook; falls back to `$GAME_SHELL_DIR/bin/game-shell-input`), `GAME_SHELL_TARGETS` (override the streaming-targets file path), `GAME_SHELL_SOCK` (daemon IPC socket). `/opt/game-shell` survives only as a documented last-ditch fallback in `game-shell-session.sh` and the daemon's `install_root()`.
+- **Config locations & paths**: The shell is prefix-agnostic. Per-user config lives under `~/.config/game-shell/` (`settings.json`, `targets.json`, optional **`config.toml`** — typed per-machine daemon options, read directly by the daemon via `daemon_config.rs`; optional `hyprland-local.conf`); system defaults conventionally under `/etc/game-shell/`. The install prefix is resolved at runtime — never hardcode `/opt/game-shell`. Env vars (runtime/session only — **not** per-machine config, which is `config.toml`): `GAME_SHELL_DIR` (install root; exported by the session script, also derived from `current_exe`), `GAME_SHELL_INPUT_BIN` (override the daemon binary path for the re-exec/dev-override hook; falls back to `$GAME_SHELL_DIR/bin/game-shell-input`), `GAME_SHELL_TARGETS` (override the streaming-targets file path), `GAME_SHELL_SOCK` (daemon IPC socket). `/opt/game-shell` survives only as a documented last-ditch fallback in `game-shell-session.sh` and the daemon's `install_root()`.
 - **App discovery & recents**: `AppDiscoveryManager` (apps via `list-apps`) and `RecentsTracker` (`get-recents` / `record-launch`) read JSON straight from the daemon, which owns the `.desktop` scanning (`freedesktop-desktop-entry` crate) and recents file. QML no longer parses `.desktop` files. The QML side talks to the daemon over a native `Quickshell.Io` socket via `SocketClient.qml` — the old per-call `python3 -c` Unix-socket shims were retired.
 - **Input daemon IPC**: See [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) for the full protocol specification. QML sends commands via Unix socket; the daemon streams events to subscribers.
 - **Input & state**: [docs/INPUT_AND_STATE.md](docs/INPUT_AND_STATE.md) is the canonical reference for the shell's state machine (`idle`/`launching`/`streaming`/`reconnecting`/`appRunning`), focus model, the per-context input-semantics matrix, B/Escape back precedence, and the `intent` control surface. Read it before changing any input/focus/nav code.
@@ -136,14 +136,15 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 | `moonlight` | Game streaming client (`stream`, `list`, `pair`) |
 
 Besides the owner-only Unix-socket IPC, the daemon can expose a **network-facing
-control surface** — an HTTP bridge and an MCP server, both opt-in via env, sharing
-one bearer token, both thin adapters over `daemon/src/bridge_core.rs`. See
+control surface** — an HTTP bridge and an MCP server, both opt-in via
+`config.toml` (`[http]`/`[mcp]`), sharing one bearer token (`[http].token_file`),
+both thin adapters over `daemon/src/bridge_core.rs`. See
 [`docs/CONTROL_SURFACE.md`](docs/CONTROL_SURFACE.md) (and the Agent-Native Dev Loop
 under Development). The daemon also emits **observability** signals — structured
-journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM` /
-`GAME_SHELL_LOG_JOURNAL`) and Prometheus metrics via an auth-exempt `GET /metrics`
-route plus an optional node_exporter textfile writer
-(`GAME_SHELL_METRICS_TEXTFILE`); full catalogue in
+journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM`, overridable by
+`[observability].log_journal`) and Prometheus metrics via an auth-exempt
+`GET /metrics` route plus an optional node_exporter textfile writer
+(`[observability].metrics_textfile`); full catalogue in
 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
 
 The table above reflects the deliberate split: the daemon owns all *reads* of
@@ -152,8 +153,8 @@ write/action commands (`nmcli` join, `wpctl`, `hyprctl dispatch`, `systemctl`).
 **HDMI-CEC** lives in the daemon (`cec-*` IPC, deployed and verified on gaming-client
 with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtime).
 CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
-`cecFocusOnWake` (default `true`), both within the `GAME_SHELL_CEC_LIFECYCLE`
-master env gate.
+`cecFocusOnWake` (default `true`), both within the `[cec].lifecycle` master gate
+(in `config.toml`).
 
 ## Development
 
@@ -216,10 +217,13 @@ makes the shell **drivable and observable as MCP tools**, so an agent runs a ful
 3. `take_screenshot` — **see** the result; `get_status` / `get_logs` — diagnose.
 4. Compare against intent, repeat.
 
-Enable on the deploy host: set `GAME_SHELL_MCP_BIND` (+ `GAME_SHELL_HTTP_TOKEN`),
-and `GAME_SHELL_MCP_DEV` for the deploy/build/restart tools. Point an MCP client at
-`http://<host>/mcp`. This is the in-repo, distribution-agnostic version of the
-external screenshot/deploy automation — no host-management tooling required.
+Enable on the deploy host in `~/.config/game-shell/config.toml`: set `[mcp].bind`
+(+ `[http].token_file` pointing at a 0600 token file), and `[mcp].dev = true` for
+the deploy/build/restart tools. Point an MCP client at `http://<host>/mcp`. Note
+the daemon REFUSES to start with a non-loopback bind + dev tools + auth-off
+unless `[dev].allow_insecure_lan = true` (the intentional opt-in game-client-1
+uses). This is the in-repo, distribution-agnostic version of the external
+screenshot/deploy automation — no host-management tooling required.
 
 ## Design Constraints
 

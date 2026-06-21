@@ -664,16 +664,6 @@ const READ_TIMEOUT_SECS: u64 = 5;
 /// senders.
 const DEV_TIMEOUT_SECS: u64 = 180;
 
-/// Parse `GAME_SHELL_HTTP_AUTH_ENABLED` from the environment.
-/// Returns `true` (auth enabled) unless the value is exactly `"0"` or `"false"`.
-/// When unset, auth is enabled (secure by default).
-pub fn read_auth_enabled() -> bool {
-    match std::env::var("GAME_SHELL_HTTP_AUTH_ENABLED") {
-        Ok(val) => val != "0" && val != "false",
-        Err(_) => true, // unset → enabled
-    }
-}
-
 /// Bind a TCP listener to `addr` and serve the LAN HTTP control bridge until
 /// the process exits.
 ///
@@ -795,13 +785,6 @@ pub async fn serve(
 }
 
 // ─── Unit tests (pure parser — runs on any host) ────────────────────────────
-
-#[cfg(test)]
-/// Helper used in unit tests to exercise the auth-enabled parsing logic
-/// without touching the real environment.
-fn parse_auth_enabled_val(val: &str) -> bool {
-    val != "0" && val != "false"
-}
 
 #[cfg(test)]
 mod tests {
@@ -1098,22 +1081,6 @@ mod tests {
         assert!(!ct_eq_str("Bearer secret123", "Bearer secret124"));
         assert!(!ct_eq_str("Bearer a", "Bearer bb"));
         assert!(!ct_eq_str("", "Bearer x"));
-    }
-
-    // ── read_auth_enabled / parse_auth_enabled_val ───────────────────────────
-
-    #[test]
-    fn auth_enabled_val_disabled_for_zero_and_false() {
-        assert!(!parse_auth_enabled_val("0"));
-        assert!(!parse_auth_enabled_val("false"));
-    }
-
-    #[test]
-    fn auth_enabled_val_enabled_for_other_values() {
-        assert!(parse_auth_enabled_val("1"));
-        assert!(parse_auth_enabled_val("true"));
-        assert!(parse_auth_enabled_val("yes"));
-        assert!(parse_auth_enabled_val(""));
     }
 
     // ── parse_query ──────────────────────────────────────────────────────────

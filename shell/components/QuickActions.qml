@@ -75,25 +75,25 @@ FocusScope {
     // key means controller/keyboard is driving — flip out of mouse-mode (#45),
     // no daemon round-trip.
     Keys.onLeftPressed: {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         if (currentIndex > 0)
             currentIndex--;
     }
     Keys.onRightPressed: {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         if (currentIndex < _iconCount - 1)
             currentIndex++;
     }
     Keys.onDownPressed: {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         root.focusDownRequested();
     }
     Keys.onUpPressed: {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         root.focusUpRequested();
     }
     Keys.onEscapePressed: event => {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         if (root.escapeRequestsSettings) {
             root.settingsRequested();
         } else {
@@ -103,7 +103,7 @@ FocusScope {
         }
     }
     Keys.onReturnPressed: {
-        Theme.exitMouseMode();
+        InputMode.exitMouseMode();
         root._activate(currentIndex);
     }
 
@@ -138,7 +138,7 @@ FocusScope {
     Connections {
         target: Theme
         function onMouseModeChanged() {
-            if (Theme.mouseMode)
+            if (InputMode.mouseMode)
                 return;
             if (notifGlyph.hovered) {
                 root.currentIndex = 0;
@@ -196,7 +196,7 @@ FocusScope {
                 imgSize: root.imgSize
                 iconPath: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/" + (NotificationManager.unreadCount > 0 ? "notification-active.svg" : "notification-inactive.svg") : ""
                 fallbackGlyph: "\u{1F514}"
-                fallbackColor: notifGlyph.hovered && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                fallbackColor: notifGlyph.hovered && InputMode.mouseMode ? Theme.textPrimary : Theme.textMuted
                 a11yName: root._labels[0]
                 onActivated: root.notificationCenterRequested()
 
@@ -219,7 +219,7 @@ FocusScope {
                 imgSize: root.imgSize
                 iconPath: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/configure.svg" : ""
                 fallbackGlyph: "⚙"
-                fallbackColor: settingsGlyph.hovered && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                fallbackColor: settingsGlyph.hovered && InputMode.mouseMode ? Theme.textPrimary : Theme.textMuted
                 a11yName: root._labels[1]
                 onActivated: root.settingsRequested()
             }
@@ -297,7 +297,7 @@ FocusScope {
                 imgSize: root.imgSize
                 iconPath: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/system-shutdown.svg" : ""
                 fallbackGlyph: "⏻"
-                fallbackColor: powerGlyph.hovered && Theme.mouseMode ? Theme.textPrimary : Theme.textMuted
+                fallbackColor: powerGlyph.hovered && InputMode.mouseMode ? Theme.textPrimary : Theme.textMuted
                 a11yName: root._labels[5]
                 onActivated: root.powerRequested()
             }
@@ -310,7 +310,7 @@ FocusScope {
         anchors.topMargin: Units.spacingSM
         anchors.horizontalCenter: parent.horizontalCenter
         text: {
-            if (Theme.mouseMode) {
+            if (InputMode.mouseMode) {
                 if (notifGlyph.hovered)
                     return root._labels[0];
                 if (settingsGlyph.hovered)

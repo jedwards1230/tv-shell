@@ -5,8 +5,8 @@
 # (the primary path; see examples/README.md). The /metrics route is auth-exempt,
 # so no bearer token is needed here.
 #
-# Requires the HTTP bridge to be bound: set GAME_SHELL_HTTP_BIND in the daemon
-# environment (e.g. 0.0.0.0:8089). Replace <host> and the port to match.
+# Requires the HTTP bridge to be bound: set [http].bind in config.toml
+# (e.g. 0.0.0.0:8089). Replace <host> and the port to match.
 #
 # Drop this under `scrape_configs:` in your prometheus.yml.
 

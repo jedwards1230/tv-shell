@@ -139,6 +139,28 @@ pub enum Command {
     NetWifiList,
     /// Trigger a Wi-Fi rescan (`RequestScan`).
     NetWifiRescan,
+    /// `net-throughput <iface>` -> compact JSON object
+    /// `{iface,rxBytes,txBytes}` of the interface's cumulative byte counters
+    /// (from `/sys/class/net/<iface>/statistics`). Raw counters, not a rate —
+    /// the caller computes the delta. Stateless; not routed through the NM actor.
+    /// An error (unknown iface, non-Linux) degrades to
+    /// `{iface,rxBytes:0,txBytes:0,error:"…"}` rather than a protocol error.
+    NetThroughput {
+        iface: String,
+    },
+    /// `net-throughput` with a missing `<iface>` body.
+    NetThroughputUsage,
+    /// `net-ping <host> [count]` -> compact JSON object
+    /// `{host,reachable,rttMs}` from a bounded `ping`. `rttMs` is the average
+    /// RTT when reachable, JSON `null` otherwise. Stateless + cross-platform
+    /// (subprocess), served like `sunshine-status`. Fail-soft: an unreachable
+    /// host is `reachable:false`, never a protocol error.
+    NetPing {
+        host: String,
+        count: u32,
+    },
+    /// `net-ping` with a missing `<host>` body.
+    NetPingUsage,
 
     // --- Phase 3: Power / idle (zbus / logind + UPower) ---
     /// Whether the system can suspend -> `yes` / `no` / `error:*`.
@@ -564,6 +586,31 @@ impl Command {
                             port: port.to_string(),
                         },
                         _ => Command::SunshineStatusUsage,
+                    };
+                }
+                // `net-throughput <iface>`: a single interface-name token. A
+                // missing body is a usage error. `command_body` enforces the word
+                // boundary so e.g. `net-throughputX` is not mistaken for it.
+                if let Some(body) = command_body(cmd, "net-throughput") {
+                    return match body.split_whitespace().next() {
+                        Some(iface) => Command::NetThroughput {
+                            iface: iface.to_string(),
+                        },
+                        None => Command::NetThroughputUsage,
+                    };
+                }
+                // `net-ping <host> [count]`: a host token + optional ping count
+                // (defaults to 1, clamped 1..=10 by the handler). A missing host
+                // is a usage error. `command_body` enforces the word boundary so
+                // e.g. `net-pingX` is not mistaken for `net-ping`.
+                if let Some(body) = command_body(cmd, "net-ping") {
+                    let mut toks = body.split_whitespace();
+                    return match toks.next() {
+                        Some(host) => Command::NetPing {
+                            host: host.to_string(),
+                            count: toks.next().and_then(|t| t.parse::<u32>().ok()).unwrap_or(1),
+                        },
+                        None => Command::NetPingUsage,
                     };
                 }
                 // `wol <host>`: a single host token (the IP/hostname the shell
@@ -1067,6 +1114,16 @@ pub fn resp_sunshine_status_usage() -> String {
 /// Usage line for `wol` issued without a `<host>` body.
 pub fn resp_wol_usage() -> String {
     "error:usage: wol <host>".to_string()
+}
+
+/// Usage line for `net-throughput` issued without an `<iface>` body.
+pub fn resp_net_throughput_usage() -> String {
+    "error:usage: net-throughput <iface>".to_string()
+}
+
+/// Usage line for `net-ping` issued without a `<host>` body.
+pub fn resp_net_ping_usage() -> String {
+    "error:usage: net-ping <host> [count]".to_string()
 }
 
 /// Usage line for `steam-launch` issued without a numeric `<appid>` body.
@@ -1760,6 +1817,79 @@ mod tests {
     #[test]
     fn wol_usage_string() {
         assert_eq!(resp_wol_usage(), "error:usage: wol <host>");
+    }
+
+    #[test]
+    fn parses_net_throughput_body() {
+        assert_eq!(
+            Command::parse("net-throughput eth0"),
+            Command::NetThroughput {
+                iface: "eth0".into()
+            }
+        );
+        // Surrounding whitespace trimmed; only the first token is the iface.
+        assert_eq!(
+            Command::parse("  net-throughput   wlan0  "),
+            Command::NetThroughput {
+                iface: "wlan0".into()
+            }
+        );
+        // Missing iface -> usage; bare command -> usage.
+        assert_eq!(
+            Command::parse("net-throughput"),
+            Command::NetThroughputUsage
+        );
+        assert_eq!(
+            Command::parse("net-throughput   "),
+            Command::NetThroughputUsage
+        );
+        // Word boundary: `net-throughputX` is NOT net-throughput.
+        assert_eq!(Command::parse("net-throughputX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_net_ping_body() {
+        // Host only -> count defaults to 1.
+        assert_eq!(
+            Command::parse("net-ping 1.1.1.1"),
+            Command::NetPing {
+                host: "1.1.1.1".into(),
+                count: 1
+            }
+        );
+        // Host + explicit count.
+        assert_eq!(
+            Command::parse("net-ping 1.1.1.1 3"),
+            Command::NetPing {
+                host: "1.1.1.1".into(),
+                count: 3
+            }
+        );
+        // Non-numeric count falls back to the default.
+        assert_eq!(
+            Command::parse("net-ping host abc"),
+            Command::NetPing {
+                host: "host".into(),
+                count: 1
+            }
+        );
+        // Missing host -> usage; bare command -> usage.
+        assert_eq!(Command::parse("net-ping"), Command::NetPingUsage);
+        assert_eq!(Command::parse("net-ping   "), Command::NetPingUsage);
+        // Word boundary: `net-pingX` is NOT net-ping.
+        assert_eq!(Command::parse("net-pingX"), Command::Unknown);
+    }
+
+    #[test]
+    fn net_read_usage_strings() {
+        assert_eq!(
+            resp_net_throughput_usage(),
+            "error:usage: net-throughput <iface>"
+        );
+        assert_eq!(
+            resp_net_ping_usage(),
+            "error:usage: net-ping <host> [count]"
+        );
     }
 
     #[test]

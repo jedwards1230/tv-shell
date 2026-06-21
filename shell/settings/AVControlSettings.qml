@@ -30,12 +30,9 @@ import "../components/lib"
 // contentLoader.item.forceActiveFocus() delegates focus into the focus:true
 // child (wakeScope). A plain Item swallows focus and the page becomes
 // unnavigable when entered via the Right d-pad.
-FocusScope {
+SettingsPageBase {
     id: root
-    // SettingsApp sizes the scroll pane from item.implicitHeight; without this
-    // the pane height is 0 and lower controls become unreachable (mirror the
-    // other settings pages). Derived from the content column's implicit size.
-    implicitHeight: avMainCol.implicitHeight + 2 * Theme.padding
+    hintText: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
 
     property bool cecAvailable: false
     property var devices: []
@@ -272,10 +269,11 @@ FocusScope {
     }
 
     // --- UI ---
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: avMainCol
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         // Header with status
@@ -676,11 +674,6 @@ FocusScope {
                     }
                 }
             }
-        }
-
-        // Hint bar
-        HintBar {
-            text: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
         }
     }
 }

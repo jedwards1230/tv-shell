@@ -56,13 +56,61 @@ copy-runnable starting point is `config/targets.json.example`. You can also
 manage targets in-UI (Settings ▸ Widgets ▸ Moonlight). **Never pretty-print this
 file** — the shell parses it line-by-line.
 
-### Daemon env — `daemon.env` (optional)
+### Daemon config — `config.toml` (optional)
 
-Per-machine daemon options, sourced by the session wrapper before the daemon
-starts: the LAN HTTP bridge / MCP server binds and token, CEC lifecycle, and the
-optional Plex / Steam home-screen widgets. Every key is documented inline in
-`config/daemon.env.example`. Keep it `chmod 600` (the installer does this) — it
-can hold tokens. Leave it untouched and the shell still boots fully.
+Per-machine daemon options, read directly by the daemon at startup: the LAN HTTP
+bridge / MCP server binds, the auth toggle, CEC lifecycle, and the optional Plex /
+Steam home-screen widgets. Every key is documented inline in
+`config/config.toml.example`. The shared bearer token is **never inline** — it
+lives in a separate `0600` file that `[http] token_file` points at (e.g.
+`openssl rand -hex 32 > ~/.config/game-shell/http-token`). Leave the file
+untouched and the shell still boots fully.
+
+> **Startup safety check:** the daemon **refuses to start** if a control surface
+> is bound to a non-loopback address with dev tools on and auth effectively off
+> (an unauthenticated RCE surface). Set `[dev] allow_insecure_lan = true` to
+> override that on a box that genuinely wants the unauthenticated LAN dev loop.
+
+#### Migrating an existing deploy (daemon.env → config.toml)
+
+This release replaced the old `daemon.env` env file with `config.toml`. The
+session script no longer sources `daemon.env`, so a box that relied on it for the
+LAN bridge / MCP server **will silently lose those settings** (the surface just
+won't come up) — and a box that ran a non-loopback bind with dev tools + no auth
+will now hit the startup-refusal above. On such a box the deploy is no longer just
+"restart the shell"; do it in this order so the daemon doesn't refuse to start:
+
+1. Run the installer/migration so the new tree + `config.toml.example` are in place.
+2. **Write `~/.config/game-shell/config.toml`** translating the box's old
+   `daemon.env` (and, if it ran LAN + dev + no-auth, include `[dev]
+   allow_insecure_lan = true` — without it the daemon refuses to start). The old
+   `GAME_SHELL_*` env vars map to typed keys: HTTP/MCP → `[http]`/`[mcp]`, CEC →
+   `[cec].lifecycle`, Plex/Steam → `[plex]`/`[steam]`, and observability
+   (`GAME_SHELL_LOG_JOURNAL` / `GAME_SHELL_METRICS_TEXTFILE` /
+   `GAME_SHELL_METRICS_INTERVAL`) → `[observability]`. Only `RUST_LOG` stays an
+   env var.
+3. **Then** restart the daemon/shell.
+
+For the canonical agent-native dev box (LAN bind + dev tools + auth off on a
+trusted, firewalled single-user LAN), the equivalent `config.toml` is:
+
+```toml
+[http]
+bind = "0.0.0.0:8089"
+auth_enabled = false
+
+[mcp]
+bind = "0.0.0.0:8090"
+dev = true
+
+[dev]
+# Required: without this the daemon refuses to start (LAN bind + dev + no auth).
+allow_insecure_lan = true
+```
+
+To **lock such a box down** instead of preserving the insecure loop, drop the
+`[dev]` block, set `[http] auth_enabled = true`, and point `[http] token_file` at
+a `0600` token file (`openssl rand -hex 32 > ~/.config/game-shell/http-token`).
 
 ### Display tuning — `hyprland-local.conf` (optional)
 
@@ -78,8 +126,8 @@ specific (SDDM `autologin`, plasmalogin, GDM) and intentionally left to you.
 
 ## Optional: LAN control surface
 
-Setting `GAME_SHELL_HTTP_BIND` / `GAME_SHELL_MCP_BIND` in `daemon.env` exposes the
-daemon's control surface (screenshots, intents, MCP tools) over the network. See
+Setting `[http] bind` / `[mcp] bind` in `config.toml` exposes the daemon's control
+surface (screenshots, intents, MCP tools) over the network. See
 [CONTROL_SURFACE.md](CONTROL_SURFACE.md). Firewall those ports yourself.
 
 ## Verify

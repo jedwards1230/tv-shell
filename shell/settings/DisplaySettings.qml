@@ -5,9 +5,9 @@ import Quickshell.Io
 import "../components"
 import "../components/lib"
 
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: contentColumn.implicitHeight + 2 * Theme.padding
+    hintText: "A: Open/apply  |  B: Close dropdown  |  HDR note: applies live via hyprctl"
 
     property var monitors: []
     property int selectedMonitor: 0
@@ -191,10 +191,11 @@ FocusScope {
         return hr + ":00 " + ampm;
     }
 
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: contentColumn
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         SectionHeader {
@@ -227,23 +228,14 @@ FocusScope {
 
             KeyNavigation.down: hdrToggleScope
 
-            delegate: Rectangle {
+            delegate: SettingsListRow {
                 required property int index
                 required property var modelData
                 width: monitorList.width
-                height: 180
-                radius: Units.radiusMD
-                color: monitorList.currentIndex === index && monitorList.activeFocus ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
+                itemHeight: 180
+                selected: monitorList.currentIndex === index && monitorList.activeFocus
 
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
-
-                property bool isSel: monitorList.currentIndex === index && monitorList.activeFocus
+                property bool isSel: selected
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -919,10 +911,6 @@ FocusScope {
             }
 
             KeyNavigation.up: lightStartScope
-        }
-
-        HintBar {
-            text: "A: Open/apply  |  B: Close dropdown  |  HDR note: applies live via hyprctl"
         }
     }
 }

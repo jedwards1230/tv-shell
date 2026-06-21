@@ -6,15 +6,23 @@ import Qt5Compat.GraphicalEffects
 import "../components"
 import "../components/lib"
 
-Rectangle {
+FocusScope {
     id: root
-    color: Theme.background
     visible: false
 
     signal closed
 
     property int currentSection: 0
     property int _pendingSection: 0
+
+    // Opaque panel background. Lives as a child Rectangle now that the root is a
+    // FocusScope (C4) rather than a Rectangle — the FocusScope properly delegates
+    // focus into the sidebar/page, so the old "root is a plain Rectangle so
+    // forceActiveFocus() won't steal focus" workarounds are gone.
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.background
+    }
 
     // ── Public API ──────────────────────────────────────────────────────────
     // The only surface shell.qml / ShellLayout should call. The internals
@@ -25,8 +33,8 @@ Rectangle {
 
     // open() — show the panel on its first section, mirroring the fresh-open path
     // in openSection() (visible=true then forceActiveFocus; onVisibleChanged drives
-    // the focusTimer that lands focus on the sidebar — the root is a plain
-    // Rectangle, so this does not steal focus back).
+    // the focusTimer that lands focus on the sidebar). The FocusScope root forwards
+    // focus to its focused child, so the sidebar ends up focused either way.
     function open() {
         if (visible) {
             forceActiveFocus();
@@ -279,9 +287,9 @@ Rectangle {
                         color: {
                             if (root.currentSection === index)
                                 return Theme.sidebarActive;
-                            if (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode)
+                            if (sidebarList.currentIndex === index && sidebarList.activeFocus && !InputMode.mouseMode)
                                 return Theme.surfaceHover;
-                            if (sidebarMA.containsMouse && Theme.mouseMode)
+                            if (sidebarMA.containsMouse && InputMode.mouseMode)
                                 return Theme.surfaceHover;
                             return "transparent";
                         }
@@ -294,7 +302,7 @@ Rectangle {
 
                         // Left accent bar on focused item
                         FocusAccentBar {
-                            active: (sidebarList.currentIndex === index && sidebarList.activeFocus && !Theme.mouseMode) || (sidebarMA.containsMouse && Theme.mouseMode)
+                            active: (sidebarList.currentIndex === index && sidebarList.activeFocus && !InputMode.mouseMode) || (sidebarMA.containsMouse && InputMode.mouseMode)
                         }
 
                         RowLayout {
@@ -360,7 +368,7 @@ Rectangle {
                         Connections {
                             target: Theme
                             function onMouseModeChanged() {
-                                if (!Theme.mouseMode && sidebarMA.containsMouse) {
+                                if (!InputMode.mouseMode && sidebarMA.containsMouse) {
                                     sidebarList.currentIndex = index;
                                     sidebarList.forceActiveFocus();
                                 }
@@ -399,12 +407,8 @@ Rectangle {
                             currentIndex++;
                     }
 
-                    Keys.onPressed: event => {
-                        if (event.key === Qt.Key_B && !event.modifiers) {
-                            root.closed();
-                            event.accepted = true;
-                        }
-                    }
+                    // B/Escape on the sidebar bubbles up to the root's unified
+                    // _back() handler (#5 C5) — no sidebar-local Key_B handler.
                 }
 
                 // Back hint
@@ -560,17 +564,24 @@ Rectangle {
         }
     }
 
-    // Global key handling — B / Escape is hierarchical. The controller B button
-    // arrives as Escape, so this is the handler the pad actually hits (the
-    // Key_B handlers cover a literal keyboard 'B'). From inside a settings page
-    // it backs focus out to the sidebar; from the sidebar it closes the panel
-    // and returns Home. So: page -> B -> sidebar -> B -> Home.
-    Keys.onEscapePressed: {
+    // Global back handling — B / Escape is hierarchical and UNIFIED (#5 C5).
+    // The controller B button arrives as Escape; a literal keyboard 'B' is the
+    // other source. Both now route through one _back(): from inside a settings
+    // page it backs focus out to the sidebar; from the sidebar it closes the
+    // panel and returns Home. So: page -> B -> sidebar -> B -> Home, identically
+    // for Escape and keyboard-B.
+    //
+    // Behavior change: keyboard-B on the sidebar now CLOSES the panel (via this
+    // unified path). Previously the sidebar's own Key_B handler closed it while
+    // the root Key_B handler was a no-op on the sidebar — the two are now one.
+    function _back() {
         if (!sidebarList.activeFocus)
             returnToSidebar();
         else
             root.closed();
     }
+
+    Keys.onEscapePressed: root._back()
 
     function openSection(idx) {
         if (visible) {
@@ -578,9 +589,7 @@ Rectangle {
             sidebarList.currentIndex = idx;
             contentFlick.contentY = 0;
             // With a deep target pending, let the page load then apply it (which
-            // pulls focus into the page); otherwise focus the sidebar. The root is
-            // a plain Rectangle (not a FocusScope), so a trailing
-            // root.forceActiveFocus() would steal focus back in the visible case.
+            // pulls focus into the page); otherwise focus the sidebar directly.
             if (root._pendingDeep !== "")
                 focusTimer.restart();
             else
@@ -621,10 +630,8 @@ Rectangle {
 
     Keys.onPressed: event => {
         if (event.key === Qt.Key_B && !event.modifiers) {
-            if (!sidebarList.activeFocus) {
-                returnToSidebar();
-                event.accepted = true;
-            }
+            root._back();
+            event.accepted = true;
         }
     }
 }

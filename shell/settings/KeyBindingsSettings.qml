@@ -6,6 +6,12 @@ import "../components/lib"
 // Binding IPC is routed through the SettingsStore singleton (which respects
 // GAME_SHELL_SOCK). See docs/IPC_PROTOCOL.md.
 // Commands used (via SettingsStore): get-bindings, set-binding, capture-next, capture-cancel
+//
+// Intentionally NOT migrated onto SettingsPageBase: this page uses an internal
+// self-scrolling fillHeight ListView, which is exactly the scroll model the base
+// forbids (#266 reachable-scroll-bottom). The base assumes content-sized height +
+// SettingsApp's outer-Flickable scroll-follow; forcing it here would break the
+// list's own scrolling. Kept on a bare FocusScope by design.
 FocusScope {
     id: root
     // KeyBindings uses an internal ListView that self-scrolls;

@@ -8,9 +8,9 @@ import "../components/lib"
 //                get-config, set-config (rumbleEnabled via SettingsStore)
 // Events consumed (subscribe): pad:connected / pad:disconnected / pad:index /
 //                pad:battery — folded into the live `pads` fleet model.
-FocusScope {
+SettingsPageBase {
     id: root
-    implicitHeight: ctrlMainCol.implicitHeight + 2 * Theme.padding
+    hintText: "A: Select  |  Auto-refreshes every 10s"
 
     // Diagnostic enumeration of EVERY controller-like input device the system
     // sees (incl. ungrabbed/virtual), from the daemon `list-input-devices` IPC.
@@ -312,10 +312,11 @@ FocusScope {
 
     // --- Layout ---
 
+    // Single content column (child of the base content slot). NOT anchors-filled
+    // — SettingsPageBase supplies the page padding + trailing spacer + HintBar.
     ColumnLayout {
         id: ctrlMainCol
-        anchors.fill: parent
-        anchors.margins: Theme.padding
+        Layout.fillWidth: true
         spacing: Units.spacingLG
 
         // === Connected Controllers (fleet — player slot + battery) ===
@@ -486,21 +487,12 @@ FocusScope {
             KeyNavigation.up: refreshScope
             KeyNavigation.down: grabScope
 
-            delegate: Rectangle {
+            delegate: SettingsListRow {
                 required property int index
                 required property var modelData
                 width: controllerList.width
-                height: 180
-                radius: Units.radiusMD
-                color: controllerList.currentIndex === index && controllerList.activeFocus ? Theme.surfaceHover : Theme.surface
-                border.width: 2
-                border.color: Theme.surfaceBorder
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 150
-                    }
-                }
+                itemHeight: 180
+                selected: controllerList.currentIndex === index && controllerList.activeFocus
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -851,14 +843,6 @@ FocusScope {
                     }
                 }
             }
-        }
-
-        Item {
-            Layout.fillHeight: true
-        }
-
-        HintBar {
-            text: "A: Select  |  Auto-refreshes every 10s"
         }
     }
 }

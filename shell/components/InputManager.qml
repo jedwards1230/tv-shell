@@ -248,7 +248,7 @@ Item {
 
     Process {
         id: endSessionProc
-        command: ["/usr/local/bin/end-game-session"]
+        command: [Paths.endSessionCmd]
     }
 
     SocketClient {
@@ -265,10 +265,10 @@ Item {
                 // Daemon right-stick->cursor hint. Post-#45 this is just ONE
                 // source for mouse-mode among QML's own pointer/key events;
                 // route it through the same helper so it can't fight them.
-                Theme.enterMouseMode();
+                InputMode.enterMouseMode();
                 root.inputModeChanged("mouse");
             } else if (line === "input-mode:controller") {
-                Theme.exitMouseMode();
+                InputMode.exitMouseMode();
                 root.inputModeChanged("controller");
             } else if (line === "controller-wake") {
                 root.controllerWake();

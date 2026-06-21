@@ -32,12 +32,19 @@ fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
     use tokio::sync::{broadcast, mpsc, Notify};
 
-    // Load daemon.env before anything else so GAME_SHELL_HTTP_BIND and
-    // other vars are available even when the session wrapper didn't source
-    // the file (#165).
-    session_env::load_daemon_env();
+    // Load the typed config (~/.config/game-shell/config.toml) FIRST — before
+    // tracing init, so the logging backend can be driven by
+    // [observability].log_journal. A missing file is fine (all-default ⇒ no
+    // control surface); a malformed file or an unsafe combination (LAN bind +
+    // dev tools + no auth, without [dev].allow_insecure_lan) is a hard startup
+    // failure (the `?` surfaces it to stderr even before tracing is up). Validate
+    // BEFORE installing the global / opening any socket.
+    let daemon_cfg = game_shell_input::daemon_config::DaemonConfig::load()?;
+    daemon_cfg.validate()?;
 
-    init_tracing();
+    init_tracing(daemon_cfg.observability.log_journal);
+
+    game_shell_input::daemon_config::init_global(daemon_cfg.clone());
 
     let uid = unsafe { libc::getuid() };
     let sock_path = std::env::var("GAME_SHELL_SOCK")
@@ -120,13 +127,16 @@ fn main() -> anyhow::Result<()> {
 
         // Metrics textfile-collector writer (observability): periodically renders
         // the Prometheus/OpenMetrics exposition and writes it atomically to
-        // GAME_SHELL_METRICS_TEXTFILE. Disabled (no file) when the env var is
+        // [observability].metrics_textfile. Disabled (no file) when that key is
         // unset. Fire-and-forget like the actors above — logs and degrades
         // gracefully, never panics. The `/metrics` HTTP route is unaffected.
         {
             let writer_metrics = Arc::clone(&metrics);
+            let textfile = daemon_cfg.observability.metrics_textfile.clone();
+            let interval = daemon_cfg.metrics_interval_secs();
             tokio::spawn(async move {
-                game_shell_input::metrics::run_textfile_writer(writer_metrics).await;
+                game_shell_input::metrics::run_textfile_writer(writer_metrics, textfile, interval)
+                    .await;
             });
         }
 
@@ -168,38 +178,36 @@ fn main() -> anyhow::Result<()> {
             db_state,
         ));
 
-        // LAN HTTP control bridge (#151): opt-in via GAME_SHELL_HTTP_BIND.
-        // When the env var is unset (the default), no socket is opened and no
-        // control surface is exposed. When set, it must be a `host:port`
-        // address the operator has bound to a trusted LAN interface.
-        if let Ok(bind_str) = std::env::var("GAME_SHELL_HTTP_BIND") {
-            match bind_str.parse::<std::net::SocketAddr>() {
-                Ok(addr) => {
-                    let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
-                    // Read auth-enabled flag here so it is logged once at startup
-                    // alongside the bind address, before the task is spawned.
-                    let auth_enabled = http::read_auth_enabled();
-                    tokio::spawn(http::serve(
-                        addr,
-                        token,
-                        auth_enabled,
-                        control_tx.clone(),
-                        events_tx.clone(),
-                        shutdown.clone(),
-                        reexec_flag.clone(),
-                        Arc::clone(&metrics),
-                    ));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "GAME_SHELL_HTTP_BIND={bind_str:?} is not a valid host:port address: {e}"
-                    );
-                }
+        // LAN HTTP control bridge (#151): opt-in via [http].bind in config.toml.
+        // Absent ⇒ no socket is opened and no control surface is exposed. The
+        // address + the dangerous-combo refusal were already parsed/validated
+        // above (DaemonConfig::validate), so http_bind() here is infallible-by-
+        // construction; we still match defensively. The metrics handle backs the
+        // bridge's auth-exempt GET /metrics route (#268).
+        match daemon_cfg.http_bind() {
+            Ok(Some(addr)) => {
+                // validate() already resolved + vetted the token file at startup
+                // (aborting on a bad path / perms), so this is Ok here.
+                let token = daemon_cfg.http_token().unwrap_or(None);
+                let auth_enabled = daemon_cfg.http.auth_enabled;
+                tokio::spawn(http::serve(
+                    addr,
+                    token,
+                    auth_enabled,
+                    control_tx.clone(),
+                    events_tx.clone(),
+                    shutdown.clone(),
+                    reexec_flag.clone(),
+                    Arc::clone(&metrics),
+                ));
             }
+            Ok(None) => {}
+            Err(e) => tracing::warn!("{e}"),
         }
 
-        // MCP server (#mcp-bridge): opt-in via GAME_SHELL_MCP_BIND.
-        // When the env var is unset (the default), no socket is opened.
+        // MCP server (#mcp-bridge): opt-in via [mcp].bind in config.toml.
+        // Absent ⇒ no socket is opened. The dangerous-combo refusal already ran
+        // in DaemonConfig::validate above.
         // Pass a child token so the MCP server stops cleanly whenever the
         // shared shutdown token is cancelled (signal or re-exec). The single
         // CancellationToken design (Fix 1) eliminates the previous race where
@@ -207,27 +215,25 @@ fn main() -> anyhow::Result<()> {
         // select!, leaving the daemon stuck with no re-exec.
         #[cfg(feature = "mcp")]
         {
-            if let Ok(bind_str) = std::env::var("GAME_SHELL_MCP_BIND") {
-                match bind_str.parse::<std::net::SocketAddr>() {
-                    Ok(addr) => {
-                        let token = std::env::var("GAME_SHELL_HTTP_TOKEN").ok();
-                        let auth_enabled = http::read_auth_enabled();
-                        tokio::spawn(mcp::serve(
-                            addr,
-                            token,
-                            auth_enabled,
-                            control_tx.clone(),
-                            events_tx.clone(),
-                            shutdown.clone(),
-                            reexec_flag.clone(),
-                        ));
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "GAME_SHELL_MCP_BIND={bind_str:?} is not a valid host:port address: {e}"
-                        );
-                    }
+            match daemon_cfg.mcp_bind() {
+                Ok(Some(addr)) => {
+                    // Ok by construction — validate() vetted the token file at startup.
+                    let token = daemon_cfg.http_token().unwrap_or(None);
+                    let auth_enabled = daemon_cfg.http.auth_enabled;
+                    tokio::spawn(mcp::serve(
+                        addr,
+                        token,
+                        auth_enabled,
+                        daemon_cfg.mcp.dev,
+                        daemon_cfg.mcp.allowed_hosts.clone(),
+                        control_tx.clone(),
+                        events_tx.clone(),
+                        shutdown.clone(),
+                        reexec_flag.clone(),
+                    ));
                 }
+                Ok(None) => {}
+                Err(e) => tracing::warn!("{e}"),
             }
         }
 
@@ -366,20 +372,19 @@ fn spawn_dbus_actors(
 
 /// Decide whether to log to the systemd journal.
 ///
-/// `GAME_SHELL_LOG_JOURNAL` is the escape hatch: `1`/`true` force journald on,
-/// `0`/`false` force it off (stdout). When unset (the default), auto-detect: a
-/// systemd-spawned service has `JOURNAL_STREAM` set, which means our stdout is
-/// already wired to the journal — but the `tracing-journald` layer adds
-/// structured fields + syslog priority mapping that plain stdout loses, so we
-/// prefer it when the journal socket is reachable.
+/// `[observability].log_journal` is the escape hatch: `Some(true)` forces
+/// journald on, `Some(false)` forces it off (stdout). When `None` (the default),
+/// auto-detect: a systemd-spawned service has `JOURNAL_STREAM` set, which means
+/// our stdout is already wired to the journal — but the `tracing-journald` layer
+/// adds structured fields + syslog priority mapping that plain stdout loses, so
+/// we prefer it when the journal socket is reachable.
 #[cfg(target_os = "linux")]
-fn want_journal() -> bool {
-    match std::env::var("GAME_SHELL_LOG_JOURNAL").ok().as_deref() {
-        Some("1") | Some("true") => true,
-        Some("0") | Some("false") => false,
-        // Unset/other → auto: the presence of JOURNAL_STREAM means we were
-        // launched under journald's control (systemd unit / `systemd-run`).
-        _ => std::env::var_os("JOURNAL_STREAM").is_some(),
+fn want_journal(log_journal: Option<bool>) -> bool {
+    match log_journal {
+        Some(v) => v,
+        // None → auto: the presence of JOURNAL_STREAM means we were launched
+        // under journald's control (systemd unit / `systemd-run`).
+        None => std::env::var_os("JOURNAL_STREAM").is_some(),
     }
 }
 
@@ -387,11 +392,11 @@ fn want_journal() -> bool {
 ///
 /// **Linux**: log to the systemd journal via `tracing-journald` when a journal
 /// is available (structured fields + syslog priority mapping), otherwise fall
-/// back to the plain stdout `fmt` layer. `GAME_SHELL_LOG_JOURNAL` forces the
-/// choice (`1`/`0`). The `RUST_LOG`/`EnvFilter` behaviour (default `info`) is
+/// back to the plain stdout `fmt` layer. `[observability].log_journal` forces
+/// the choice. The `RUST_LOG`/`EnvFilter` behaviour (default `info`) is
 /// identical on both paths.
 #[cfg(target_os = "linux")]
-fn init_tracing() {
+fn init_tracing(log_journal: Option<bool>) {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
 
@@ -402,7 +407,7 @@ fn init_tracing() {
 
     // Try journald when requested/auto-detected; fall back to stdout on any
     // failure (no journal socket) so the daemon is never left without logging.
-    if want_journal() {
+    if want_journal(log_journal) {
         match tracing_journald::layer() {
             Ok(journald) => {
                 tracing_subscriber::registry()

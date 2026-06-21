@@ -18,7 +18,7 @@ MprisPlayerBase {
         id: card
         width: parent.width
         implicitHeight: cardRow.implicitHeight + Units.spacingLG * 2
-        focused: root.activeFocus && !Theme.mouseMode
+        focused: root.activeFocus && !InputMode.mouseMode
         scaleEnabled: false
 
         RowLayout {
@@ -174,7 +174,7 @@ MprisPlayerBase {
                     Layout.preferredWidth: openRow.implicitWidth + Units.spacingLG * 2
                     Layout.alignment: Qt.AlignVCenter
                     radius: height / 2
-                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 0
+                    readonly property bool focused: root.activeFocus && !InputMode.mouseMode && root._btn === 0
                     color: focused ? Theme.crimson : Theme.surface
                     opacity: root._canOpen ? 1.0 : 0.35
                     border.width: focused ? Units.borderMedium : Units.borderThin
@@ -225,7 +225,7 @@ MprisPlayerBase {
                     Layout.preferredWidth: Units.gridUnit * 2.2
                     Layout.preferredHeight: Units.gridUnit * 2.2
                     radius: width / 2
-                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 1
+                    readonly property bool focused: root.activeFocus && !InputMode.mouseMode && root._btn === 1
                     color: focused ? Theme.surfaceHover : "transparent"
                     opacity: root._canPrev ? 1.0 : 0.35
                     border.width: focused ? Units.borderMedium : 0
@@ -270,7 +270,7 @@ MprisPlayerBase {
                     Layout.preferredWidth: Units.gridUnit * 2.8
                     Layout.preferredHeight: Units.gridUnit * 2.8
                     radius: width / 2
-                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 2
+                    readonly property bool focused: root.activeFocus && !InputMode.mouseMode && root._btn === 2
                     color: focused ? Theme.crimson : Theme.surface
                     opacity: root._canToggle ? 1.0 : 0.35
                     border.width: focused ? Units.borderMedium : Units.borderThin
@@ -362,7 +362,7 @@ MprisPlayerBase {
                     Layout.preferredWidth: Units.gridUnit * 2.2
                     Layout.preferredHeight: Units.gridUnit * 2.2
                     radius: width / 2
-                    readonly property bool focused: root.activeFocus && !Theme.mouseMode && root._btn === 3
+                    readonly property bool focused: root.activeFocus && !InputMode.mouseMode && root._btn === 3
                     color: focused ? Theme.surfaceHover : "transparent"
                     opacity: root._canNext ? 1.0 : 0.35
                     border.width: focused ? Units.borderMedium : 0

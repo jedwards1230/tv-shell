@@ -168,7 +168,7 @@ async fn active_window_json() -> String {
 }
 
 /// Reshape Hyprland's verbose `j/activewindow` object down to the
-/// `{class,title,address}` wire contract. Empty body or no `class` -> `{}`.
+/// `{class,title,address,fullscreen}` wire contract. Empty body or no `class` -> `{}`.
 fn parse_active(body: &str) -> String {
     let trimmed = body.trim();
     if trimmed.is_empty() {
@@ -180,12 +180,27 @@ fn parse_active(body: &str) -> String {
     }
 }
 
-/// Serialize the `{class,title,address}` subset of one window object.
+/// Interpret Hyprland's `fullscreen` field as a bool. Across Hyprland versions
+/// this has been a bool *or* an integer fullscreen-mode (0 = none/windowed,
+/// nonzero = a fullscreen mode such as 1 = fullscreen, 2 = maximized). Treat
+/// `true` or any nonzero integer as fullscreen; absent/`false`/0 as not.
+fn is_fullscreen(v: &Value) -> bool {
+    match v.get("fullscreen") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_i64().map(|i| i != 0).unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Serialize the `{class,title,address,fullscreen}` subset of one window object.
+/// `fullscreen` lets QML read the active window's fullscreen state on the initial
+/// `hypr-active` query, before any live `hypr:fullscreen` event arrives.
 fn active_entry(v: &Value) -> String {
     json!({
         "class": v.get("class").and_then(Value::as_str).unwrap_or(""),
         "title": v.get("title").and_then(Value::as_str).unwrap_or(""),
         "address": v.get("address").and_then(Value::as_str).unwrap_or(""),
+        "fullscreen": is_fullscreen(v),
     })
     .to_string()
 }
@@ -369,14 +384,40 @@ mod tests {
 
     #[test]
     fn active_reshapes_to_contract() {
-        // Hyprland's j/activewindow is verbose; we keep only class/title/address.
+        // Hyprland's j/activewindow is verbose; we keep only
+        // class/title/address/fullscreen.
         let body = r#"{"address":"0x55","class":"steam","title":"Steam, Big Picture","pid":42,"workspace":{"id":1,"name":"1"}}"#;
         let out = parse_active(body);
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v.get("class").unwrap(), "steam");
         assert_eq!(v.get("title").unwrap(), "Steam, Big Picture");
         assert_eq!(v.get("address").unwrap(), "0x55");
+        assert_eq!(v.get("fullscreen").unwrap(), false); // absent -> false
         assert!(v.get("pid").is_none()); // dropped
+    }
+
+    #[test]
+    fn active_fullscreen_field_handles_bool_and_int() {
+        // bool true
+        let v: Value = serde_json::from_str(&parse_active(
+            r#"{"class":"a","title":"","address":"0x1","fullscreen":true}"#,
+        ))
+        .unwrap();
+        assert_eq!(v.get("fullscreen").unwrap(), true);
+
+        // integer fullscreen-mode: nonzero -> true (e.g. 1 = fullscreen, 2 = maximized)
+        let v: Value = serde_json::from_str(&parse_active(
+            r#"{"class":"a","title":"","address":"0x1","fullscreen":2}"#,
+        ))
+        .unwrap();
+        assert_eq!(v.get("fullscreen").unwrap(), true);
+
+        // integer 0 -> false (windowed)
+        let v: Value = serde_json::from_str(&parse_active(
+            r#"{"class":"a","title":"","address":"0x1","fullscreen":0}"#,
+        ))
+        .unwrap();
+        assert_eq!(v.get("fullscreen").unwrap(), false);
     }
 
     #[test]

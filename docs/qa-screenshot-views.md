@@ -38,7 +38,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on the All Apps entry (never strands) |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
 | A10 | Controller battery glyph | wireless pad connected reporting charge | 🔋+% beside QuickActions; ⚡ when charging; crimson ≤15%; hidden when only wired pads or none (#100) |
-| A11 | Plex widget — On Deck + Recently Added | `GAME_SHELL_PLEX_*` env set and Settings ▸ Widgets ▸ Plex on | two poster rows (`PlexWidget`), size-scaled (small/medium); On Deck shows a resume bar; Recently Added carries the dynamic chips (A4) |
+| A11 | Plex widget — On Deck + Recently Added | `[plex]` configured in config.toml and Settings ▸ Widgets ▸ Plex on | two poster rows (`PlexWidget`), size-scaled (small/medium); On Deck shows a resume bar; Recently Added carries the dynamic chips (A4) |
 | A11b | Plex server-down notice | as A11 but Plex unreachable (down / 5xx) | inline `ServiceStatusNotice`: "Plex unavailable" — both Plex rails collapse, focus chain still walks (service-health bus) |
 
 ## A12. Library — secondary browse surface

@@ -97,10 +97,7 @@ pub fn record_launch(path: &Path, entry: Recent) -> std::io::Result<()> {
         .map(|t| parse_recents(&t))
         .unwrap_or_default();
     let updated = record(existing, entry);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, recents_to_json(&updated))
+    crate::config::atomic_write(path, recents_to_json(&updated))
 }
 
 /// Current wall-clock time in unix seconds (float), like Python `time.time()`.

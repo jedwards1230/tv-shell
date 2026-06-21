@@ -556,39 +556,17 @@ FocusScope {
                     spacing: 24
                     Layout.alignment: Qt.AlignVCenter
 
-                    Text {
-                        id: heroClockText
+                    ClockText {
+                        kind: "time"
                         font.pixelSize: Theme.fontHero
                         font.bold: true
                         color: Theme.textPrimary
-
-                        Timer {
-                            interval: 1000
-                            running: true
-                            repeat: true
-                            triggeredOnStart: true
-                            onTriggered: {
-                                let now = new Date();
-                                heroClockText.text = now.toLocaleTimeString(Qt.locale(), "h:mm AP");
-                            }
-                        }
                     }
 
-                    Text {
-                        id: heroDateText
+                    ClockText {
+                        kind: "date"
                         font.pixelSize: Theme.fontTitle
                         color: Theme.textSecondary
-
-                        Timer {
-                            interval: 60000
-                            running: true
-                            repeat: true
-                            triggeredOnStart: true
-                            onTriggered: {
-                                let now = new Date();
-                                heroDateText.text = now.toLocaleDateString(Qt.locale(), "dddd, MMMM d");
-                            }
-                        }
                     }
                 }
 
@@ -814,7 +792,7 @@ FocusScope {
                     required property int index
                     width: Math.round(Theme.cardWidth * 1.8)
                     height: Theme.cardHeight
-                    readonly property bool isFocused: (index === allAppsEntry.currentIndex && allAppsEntry.activeFocus && !Theme.mouseMode) || (allAppsMouse.containsMouse && Theme.mouseMode)
+                    readonly property bool isFocused: (index === allAppsEntry.currentIndex && allAppsEntry.activeFocus && !InputMode.mouseMode) || (allAppsMouse.containsMouse && InputMode.mouseMode)
                     z: isFocused ? 10 : 0
 
                     FocusFrame {
@@ -853,10 +831,10 @@ FocusScope {
                             cursorShape: Qt.PointingHandCursor
                             onPositionChanged: mouse => {
                                 let p = mapToItem(null, mouse.x, mouse.y);
-                                Theme.pointerMoved(p.x, p.y);
+                                InputMode.pointerMoved(p.x, p.y);
                             }
                             onClicked: {
-                                Theme.enterMouseMode();
+                                InputMode.enterMouseMode();
                                 allAppsEntry.currentIndex = 0;
                                 allAppsEntry.forceActiveFocus();
                                 root.libraryRequested();

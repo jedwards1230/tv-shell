@@ -9,13 +9,21 @@
 
 pub mod apps;
 pub mod config;
+// Typed daemon configuration (~/.config/game-shell/config.toml). Cross-platform
+// (toml + serde); replaces the old daemon.env env-var loader. Carries the
+// startup validate() that refuses an unauthenticated LAN control surface.
 pub mod controllerdb;
+pub mod daemon_config;
 pub mod device;
 pub mod health;
 pub mod ipc;
 // Moonlight local-config "forget" (creds-free unpair): line-based edits to
 // Moonlight.conf. Cross-platform — pure file editing, no Linux-only imports.
 pub mod moonlight;
+// Stateless network reads (net-throughput + net-ping) for the QML shell.
+// Cross-platform: pure parse helpers + a sysfs read (Linux) and a `ping`
+// subprocess, served like `wol`/`sunshine-status` — not via the NM D-Bus actor.
+pub mod netinfo;
 pub mod notifications;
 // Plex hubs fetch (On Deck + Recently Added) for the home-screen Plex widget.
 // Cross-platform: stateless reqwest + JSON, like `health` (Sunshine).

@@ -9,7 +9,8 @@
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
 use crate::{
-    apps, config, controllerdb, health, moonlight, notifications, plex, recents, steam, system, wol,
+    apps, config, controllerdb, health, moonlight, netinfo, notifications, plex, recents, steam,
+    system, wol,
 };
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
@@ -98,8 +99,19 @@ pub async fn serve(
     db_state: SharedControllerDbState,
 ) -> Result<()> {
     let _ = std::fs::remove_file(&sock_path);
-    let listener = UnixListener::bind(&sock_path)
-        .with_context(|| format!("binding unix socket at {sock_path}"))?;
+    // Create the socket private from the instant it exists. Binding then
+    // chmod'ing leaves a TOCTOU window where the socket carries the (umask-
+    // dependent, possibly world-accessible) default perms and another local
+    // process could connect. Tightening umask to 0o177 means the kernel creates
+    // the socket node 0o600 atomically at bind; we restore the prior umask right
+    // after. The explicit set_permissions below is then a belt-and-suspenders
+    // assertion (umask can only clear bits, never guarantee an exact mode).
+    let prev_umask = unsafe { libc::umask(0o177) };
+    let bind_result = UnixListener::bind(&sock_path);
+    unsafe {
+        libc::umask(prev_umask);
+    }
+    let listener = bind_result.with_context(|| format!("binding unix socket at {sock_path}"))?;
     std::fs::set_permissions(&sock_path, std::fs::Permissions::from_mode(0o600))
         .with_context(|| format!("chmod 0o600 on {sock_path}"))?;
     tracing::info!("Listening on {sock_path}");
@@ -312,6 +324,17 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         // degrades to `{"status":"error","reason":"no-mac"}`.
         Command::Wol { host } => Some(wol::handle_wol(host).await),
         Command::WolUsage => Some(protocol::resp_wol_usage()),
+        // Network reads for the QML shell (#M3): per-interface throughput
+        // counters (sysfs) and a bounded reachability/latency ping. Stateless +
+        // fail-soft like sunshine-status/wol — not routed through the NM actor.
+        Command::NetThroughput { iface } => {
+            Some(netinfo::handle_net_throughput(iface.clone()).await)
+        }
+        Command::NetThroughputUsage => Some(protocol::resp_net_throughput_usage()),
+        Command::NetPing { host, count } => {
+            Some(netinfo::handle_net_ping(host.clone(), *count).await)
+        }
+        Command::NetPingUsage => Some(protocol::resp_net_ping_usage()),
         // Plex hubs (On Deck + Recently Added) for the home-screen widget.
         // Stateless + cross-platform like `sunshine-status`; the server URL and
         // token come from the daemon env. Unconfigured/unreachable degrades to
@@ -534,6 +557,11 @@ async fn dispatch(
         // Wake-on-LAN is stateless (consumed by `dispatch_stateless`).
         | Command::Wol { .. }
         | Command::WolUsage
+        // Network reads (throughput/ping) are stateless (consumed by `dispatch_stateless`).
+        | Command::NetThroughput { .. }
+        | Command::NetThroughputUsage
+        | Command::NetPing { .. }
+        | Command::NetPingUsage
         // Plex hubs is stateless (consumed by `dispatch_stateless`).
         | Command::PlexHubs
         // Steam library/launch are stateless (consumed by `dispatch_stateless`).

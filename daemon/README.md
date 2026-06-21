@@ -56,10 +56,11 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `notifications.rs` | Notification history persistence (`record-notification` / `get-notifications` / `set-notifications` IPC) |
 | `plex.rs` | Plex hubs fetch for the home-screen Plex widget — `plex-hubs` IPC (cross-platform, stateless) |
 | `system.rs` | System/storage status reads for the System settings page — `sys-status` / `storage-status` IPC |
-| `session_env.rs` | Session-environment self-discovery + `daemon.env` loading (resolves `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`) |
+| `session_env.rs` | Session-environment self-discovery (resolves `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, install root) |
+| `daemon_config.rs` | Typed `~/.config/game-shell/config.toml` parse + startup `validate()` — the single per-machine config source |
 | `bridge_core.rs` | Shared action logic for the HTTP bridge and MCP server (intent dispatch, screenshot, status, log read) |
-| `http.rs` | LAN HTTP/1.1 control bridge (`GAME_SHELL_HTTP_BIND`) — `POST /intent`, `POST /key`, `GET /screenshot`, `/dev/*` |
-| `mcp.rs` | MCP server (`GAME_SHELL_MCP_BIND`, `--features mcp`) — 14 tools over streamable-HTTP at `/mcp` |
+| `http.rs` | LAN HTTP/1.1 control bridge (`[http].bind`) — `POST /intent`, `POST /key`, `GET /screenshot`, `/dev/*` |
+| `mcp.rs` | MCP server (`[mcp].bind`, `--features mcp`) — 14 tools over streamable-HTTP at `/mcp` |
 | `ipc.rs` | Unix-socket server, `broadcast` event fan-out, D-Bus command routing |
 | `main.rs` | Runtime wiring + signals + D-Bus actor spawn |
 
@@ -158,8 +159,8 @@ verified on gaming-client with static-linked libcec (no system libcec dependency
 **CEC focus toggles:** opening the libcec connection no longer auto-claims the
 active source (`activate_source(false)` in the builder). Daemon-start focus is
 gated by `cecFocusOnStartup` (default `false`) and resume-from-sleep focus by
-`cecFocusOnWake` (default `true`), both within the `GAME_SHELL_CEC_LIFECYCLE`
-master env gate. The manual `cec-active-source` IPC and standby-on-suspend are
+`cecFocusOnWake` (default `true`), both within the `[cec].lifecycle` master gate
+(in `config.toml`). The manual `cec-active-source` IPC and standby-on-suspend are
 unaffected.
 
 ## Network control surface (`http.rs` / `mcp.rs` / `bridge_core.rs`)
@@ -168,12 +169,12 @@ Beyond the owner-only Unix-socket IPC, the daemon can expose its
 intent/key/screenshot/dev surface over the network. Two opt-in adapters share one
 bearer token and a single action core (`bridge_core.rs`):
 
-- **HTTP bridge** (`http.rs`, `GAME_SHELL_HTTP_BIND`): a hand-rolled HTTP/1.1
+- **HTTP bridge** (`http.rs`, `[http].bind`): a hand-rolled HTTP/1.1
   listener — `POST /intent/<name>`, `POST /key/<name>`, `GET /screenshot`, and the
   `/dev/*` routes (status/logs/deploy/build/restart-shell/restart-daemon).
-- **MCP server** (`mcp.rs`, `GAME_SHELL_MCP_BIND`, `--features mcp`): the official
+- **MCP server** (`mcp.rs`, `[mcp].bind`, `--features mcp`): the official
   `rmcp` 1.7.0 SDK over streamable-HTTP at `/mcp`, exposing 14 tools (the dev tools
-  gated by `GAME_SHELL_MCP_DEV`). Feature-gated only, not OS-gated — compiles on
+  gated by `[mcp].dev`). Feature-gated only, not OS-gated — compiles on
   macOS.
 
 Both are unset (closed) by default. Auth, endpoint/tool reference, env vars, and
@@ -227,9 +228,10 @@ override), and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
 
 Logs go to the **systemd journal** when the daemon runs as a `systemd --user`
 unit (or any journal-attached context — auto-detected via `JOURNAL_STREAM`,
-overridable with `GAME_SHELL_LOG_JOURNAL=1`/`0`), else to **stderr**. Either way
-they ride `tracing`, filtered by `RUST_LOG` (default `info`). Read a unit's logs
-with `journalctl --user -u game-shell-input`. Tiers:
+overridable with `[observability].log_journal = true`/`false` in `config.toml`),
+else to **stderr**. Either way they ride `tracing`, filtered by the `RUST_LOG`
+env var (default `info`). Read a unit's logs with
+`journalctl --user -u game-shell-input`. Tiers:
 
 | Level | Shows |
 |-------|-------|
@@ -260,9 +262,9 @@ printf 'intent home\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"   # -> ok
 ## Metrics
 
 The daemon exports Prometheus/OpenMetrics two ways: an **auth-exempt `GET /metrics`**
-on the HTTP bridge, and/or an atomically-written **node_exporter textfile** (env
-`GAME_SHELL_METRICS_TEXTFILE`; refresh `GAME_SHELL_METRICS_INTERVAL`, default 15s;
-unset = off). One shared renderer feeds both (`metrics.rs`). Series are all
+on the HTTP bridge, and/or an atomically-written **node_exporter textfile**
+(`[observability].metrics_textfile`; refresh `[observability].metrics_interval`,
+default 15s; unset = off). One shared renderer feeds both (`metrics.rs`). Series are all
 `game_shell_*`: `build_info{sha,branch,version}` (current deployment), dev-action
 counters (`deploy_total{outcome}`, `build_total`, `restart_*_total`),
 input/intent/transition/pad counters, and cpu/mem/load/temp gauges (the gauges are
