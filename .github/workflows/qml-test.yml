@@ -12,9 +12,9 @@ run-name: "QML Test — ${{ github.event_name }} on ${{ github.ref_name }} by @$
 on:
   push:
     branches: [main]
-    paths: ['shell/**/*.qml', 'tests/qml/**', '.github/workflows/qml-test.yml']
+    paths: ['shell/**/*.qml', 'shell/**/qmldir', 'tests/qml/**', '.github/workflows/qml-test.yml']
   pull_request:
-    paths: ['shell/**/*.qml', 'tests/qml/**', '.github/workflows/qml-test.yml']
+    paths: ['shell/**/*.qml', 'shell/**/qmldir', 'tests/qml/**', '.github/workflows/qml-test.yml']
 
 permissions:
   contents: read

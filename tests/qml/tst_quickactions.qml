@@ -114,6 +114,12 @@ TestCase {
         qa.currentIndex = 3;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
+        // The overlay anchors itself beside the glyph, so the rect must carry
+        // the glyph's real dimensions (w/h come from item.width/height = iconSize).
+        var rect = spy.signalArguments[0][0];
+        verify(rect !== null && rect !== undefined);
+        compare(rect.w, qa.iconSize);
+        compare(rect.h, qa.iconSize);
     }
 
     function test_return_on_volume() {
@@ -125,6 +131,10 @@ TestCase {
         qa.currentIndex = 4;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
+        var rect = spy.signalArguments[0][0];
+        verify(rect !== null && rect !== undefined);
+        compare(rect.w, qa.iconSize);
+        compare(rect.h, qa.iconSize);
     }
 
     function test_return_on_power() {

@@ -41,6 +41,12 @@ that import graph directly.
 - **The real components under test** (e.g. `shell/components/QuickActions.qml`),
   copied verbatim — so the tests exercise production code with **zero drift**.
 
+The "zero drift" guarantee applies only to the **tested components** (copied
+verbatim). The **stub singletons are hand-maintained shims** — they reproduce a
+subset of the real singleton API and can fall behind it. Keep them in sync as
+the tested component set grows (a missing property surfaces as a binding error
+at test time, not a silent pass).
+
 The assembled dir declares `module components` (and `components.lib`), so the
 real files' bare singleton references and `import "lib"` resolve exactly as they
 do in the shell — just against stubs.
@@ -54,5 +60,10 @@ do in the shell — just against stubs.
 3. Add it to `tests/qml/stubs/qmldir` (or `stubs/lib/qmldir`).
 4. Add any singleton properties it newly relies on to the matching stub.
 5. Write `tst_<component>.qml` and run `./tests/qml/run.sh`.
+
+The copy list in `run.sh` is a manual checklist of each tested component's real
+dependencies. **If a test fails with a type/import-not-found error, a real
+dependency is probably missing from that list** (or its qmldir entry / stub
+property is absent).
 
 Currently covered: `QuickActions` (+ real `QuickActionButton`, `CountBadge`).

@@ -1043,6 +1043,7 @@ mod tests {
         assert_eq!(send_line(&mut s, "intent menu").await, "ok");
         assert_eq!(send_line(&mut s, "intent home-hold").await, "ok");
         assert_eq!(send_line(&mut s, "intent power").await, "ok");
+        assert_eq!(send_line(&mut s, "intent settings").await, "ok");
         assert_eq!(send_line(&mut s, "intent overlay:session").await, "ok");
 
         // Rumble control surface: a well-formed command round-trips the runtime
