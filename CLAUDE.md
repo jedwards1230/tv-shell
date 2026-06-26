@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+@CONTRIBUTING.md
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
@@ -184,12 +186,9 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.pn
 
 ### Rust Input Daemon
 
-For on-device / deploy builds, use the canonical script which sets the right feature flags:
+Install the built daemon binary to its resolved location:
 
 ```bash
-./scripts/build-daemon.sh   # equivalent to: cd daemon && cargo build --release --features cec,mcp
-# Install to the daemon binary's resolved location ($GAME_SHELL_DIR/bin by
-# default; $GAME_SHELL_INPUT_BIN overrides the exact path).
 install -m755 daemon/target/release/game-shell-input "$GAME_SHELL_DIR/bin/game-shell-input"
 ```
 
