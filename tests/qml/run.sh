@@ -34,6 +34,11 @@ cp "$here/stubs/lib/qmldir" "$build/components/lib/qmldir"
 cp "$shellc/QuickActions.qml" "$build/components/"
 cp "$shellc/QuickActionButton.qml" "$build/components/"
 cp "$shellc/lib/CountBadge.qml" "$build/components/lib/"
+# Widget base + WidgetHost are pure QtQuick (no Quickshell), so they run headless
+# against the stub WidgetRegistry + Stub*Widget shims under stubs/lib.
+cp "$shellc/lib/Widget.qml" "$build/components/lib/"
+cp "$shellc/lib/WidgetHost.qml" "$build/components/lib/"
+cp "$here/stubs/lib/"*.qml "$build/components/lib/"
 
 # 3. Run every tst_*.qml in tests/qml headless.
 echo "Running QML tests with: $runner (offscreen)"

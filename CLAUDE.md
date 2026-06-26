@@ -122,6 +122,22 @@ query (`previousRow`/`nextRow`/`firstRow`/`lastRow`, `canFocus`/`regionFocused`,
 so a widget extending it satisfies the contract for free and overrides only what it
 needs. `MprisPlayerBase` extends it (overriding `canFocus`/`focusFirstChild`).
 
+**`WidgetRegistry.qml`** (singleton) is the hand-written, ordered home-widget set
+(`moonlight → nowplaying → plex → recent`) — one entry per widget pairing its `id`
++ `Component` with its `enabled`/`size` bindings (flat `Theme.widget*`). It is the
+single place to add/reorder a home widget (no codegen — the repo forbids QML build
+tooling). **`WidgetHost.qml`** instantiates the registry set (Repeater + Loader)
+into a `ColumnLayout` and builds the generic vertical focus chain that replaces
+HomeScreen's former hand-wired `previousRow`/`nextRow` web: each widget's UP/DOWN
+neighbour resolves to the nearest preceding/following focusable widget's
+`lastRow`/`firstRow` (or the widget itself if single-stop), falling back to the
+host's `topAnchor`/`bottomAnchor` (HomeScreen wires those to the QuickActions row
+and the All Apps entry). HomeScreen attaches each widget's behaviour via
+`widgetHost.widgetById(id)`. The two now-playing renderers are now ONE
+`NowPlayingWidget` whose `size` selects a `NowPlayingCard` (medium) or
+`NowPlayingStripView` (small) visual leaf; `MediaWidget` is a thin host of the same
+`NowPlayingCard` for standalone use (e.g. SessionQAM).
+
 ## Key Data Flows
 
 - **Streaming targets**: Loaded from `~/.config/game-shell/targets.json` at startup (single-line JSON — see gotchas). The path is resolved client-side by the `Paths` QML singleton (`$GAME_SHELL_TARGETS` env → else `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json`); a missing file is a clean no-op (empty target list, no crash). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.

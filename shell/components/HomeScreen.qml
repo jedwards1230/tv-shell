@@ -6,15 +6,16 @@ import "lib"
 // standardized, individually-toggleable, individually-sized home widgets. The
 // full browse catalog lives in the secondary LibraryScreen (the "All Apps"
 // entry). Vertical layout, top→bottom:
-//   hero → Now-Playing widget → Plex widget → Recent (apps) widget → All Apps
+//   hero → Moonlight → Now-Playing → Plex → Recent (apps) → All Apps
 //
-// Standardized widget model (#249): each widget reads its own `enabled` + `size`
-// from SettingsStore (via Theme) and implements the duck-typed home-tile focus
-// contract (visible / regionFocused / focusFirstChild + previousRow/nextRow), so
-// HomeScreen drives focus from one ordered _contentRegions() list and the
-// Widgets settings page configures each uniformly. Now-Playing has two size
-// renderers — small = NowPlayingStrip, medium = MediaWidget (card + progress);
-// only the size-matching one is visible.
+// Standardized widget model (#249 Phase 2): each widget extends the `Widget` base
+// (the duck-typed home-tile focus contract: visible / regionFocused / canFocus /
+// firstRow / lastRow / focusFirstChild + previousRow/nextRow). A WidgetHost
+// instantiates the set from the WidgetRegistry and builds the vertical focus
+// chain generically, so HomeScreen no longer hand-wires per-widget neighbours; it
+// only owns the two terminal anchors (the QuickActions row above, the All Apps
+// entry below) and attaches each widget's behaviour via `widgetById`. Now-Playing
+// is ONE widget whose `size` selects its renderer (small = strip, medium = card).
 FocusScope {
     id: root
 
@@ -24,9 +25,14 @@ FocusScope {
     property var runningWindows: []
     property var pads: []
 
-    // The active Now-Playing renderer for the current size (used for the
-    // recents dedup + focus wiring). Both instances exist; one is visible.
-    readonly property var _npActive: Theme.widgetSpotifySize === "small" ? nowPlayingStrip : nowPlayingCard
+    // Standardized home widgets are instantiated by WidgetHost from the
+    // WidgetRegistry; these reactive aliases reach the live instances by id so the
+    // context-menu helpers, recents suppression, and hint bar can read each
+    // widget's state. Any may be null until its Loader resolves.
+    readonly property Item moonlightWidget: widgetHost.widgetById("moonlight")
+    readonly property Item nowPlayingWidget: widgetHost.widgetById("nowplaying")
+    readonly property Item plexWidget: widgetHost.widgetById("plex")
+    readonly property Item recentWidget: widgetHost.widgetById("recent")
 
     // Recent (apps) size: small = icon-only square tiles (label dropped),
     // medium = full icon + label cards. A reformat, not a scale.
@@ -57,22 +63,15 @@ FocusScope {
     signal libraryRequested
     signal userActivity
 
-    // Ordered focusable regions, top→bottom. Both Now-Playing renderers are
-    // listed; the hidden one reports focusFirstChild()===false and is skipped.
-    function _contentRegions() {
-        return [moonlightWidget, nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry];
-    }
-
     function _reanchorFocusIfNeeded() {
         if (!root.activeFocus)
             return;
         if (statusIcons.activeFocus || popoverMenu.activeFocus)
             return;
-        let regions = root._contentRegions();
-        for (let i = 0; i < regions.length; i++) {
-            if (regions[i] && regions[i].regionFocused)
-                return;
-        }
+        // Focus is still on the home content if any hosted widget region or the
+        // All Apps entry holds it; otherwise re-seat on the first focusable row.
+        if (widgetHost.regionFocused || allAppsEntry.regionFocused)
+            return;
         Qt.callLater(function () {
             if (root.activeFocus)
                 root._focusFirstVisibleRow();
@@ -325,21 +324,17 @@ FocusScope {
     }
 
     function _focusFirstVisibleRow() {
-        var regions = root._contentRegions();
-        for (var i = 0; i < regions.length; i++) {
-            if (regions[i] && regions[i].focusFirstChild())
-                return;
-        }
+        // Try the hosted widgets in order; the All Apps entry is the never-strand
+        // fallback (always focusable) so focus is never left in limbo.
+        if (!widgetHost.focusFirstVisible())
+            allAppsEntry.focusFirstChild();
     }
 
     function focusDefaultPosition() {
         Qt.callLater(function () {
             scrollView.contentY = 0;
-            var regions = root._contentRegions();
-            for (var i = 0; i < regions.length; i++) {
-                if (regions[i] && regions[i].focusFirstChild())
-                    return;
-            }
+            if (!widgetHost.focusFirstVisible())
+                allAppsEntry.focusFirstChild();
         });
     }
 
@@ -351,14 +346,14 @@ FocusScope {
     // settings page from this list instead of bespoke per-widget code; adding a
     // shadowing widget is just another descriptor entry. `configSurface` names
     // a Settings deep-link target for widgets needing richer config (Moonlight
-    // server management). The focus chain (previousRow/nextRow) and
-    // _contentRegions() stay hand-wired by design — the descriptor is additive
-    // metadata, not a focus rewrite (the duck-typed walk is fragile; see #249).
+    // server management). The focus chain is now built generically by WidgetHost;
+    // this descriptor is additive metadata (recents suppression), reading the live
+    // widget instances via the widgetById aliases.
     readonly property var _widgets: [
         {
             "id": "moonlight",
             "name": "Moonlight",
-            "region": moonlightWidget,
+            "region": root.moonlightWidget,
             "enabled": Theme.widgetMoonlightEnabled,
             "size": Theme.widgetMoonlightSize,
             "hideFromRecent": null,
@@ -369,7 +364,7 @@ FocusScope {
         {
             "id": "nowplaying",
             "name": "Now Playing",
-            "region": root._npActive,
+            "region": root.nowPlayingWidget,
             "enabled": Theme.widgetSpotifyEnabled,
             "size": Theme.widgetSpotifySize,
             "hideFromRecent": {
@@ -377,7 +372,7 @@ FocusScope {
                 "enabled": Theme.widgetSpotifyHideFromRecent,
                 // true ⇒ this Recent entry is the player the widget represents.
                 "matches": function (e) {
-                    var np = root._npActive;
+                    var np = root.nowPlayingWidget;
                     return np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "") && root._entryIsActivePlayer(e, np.playerDesktopEntry, np.playerIdentity);
                 }
             },
@@ -386,14 +381,14 @@ FocusScope {
         {
             "id": "plex",
             "name": "Plex",
-            "region": plexWidget,
+            "region": root.plexWidget,
             "enabled": Theme.widgetPlexEnabled,
             "size": Theme.widgetPlexSize,
             "hideFromRecent": {
                 "capable": true,
                 "enabled": Theme.widgetPlexHideFromRecent,
                 "matches": function (e) {
-                    return plexWidget.visible && root._entryIsPlex(e);
+                    return root.plexWidget && root.plexWidget.visible && root._entryIsPlex(e);
                 }
             },
             "configSurface": null
@@ -401,7 +396,7 @@ FocusScope {
         {
             "id": "recent",
             "name": "Recent",
-            "region": recentRow,
+            "region": root.recentWidget,
             "enabled": Theme.widgetRecentEnabled,
             "size": Theme.widgetRecentSize,
             "hideFromRecent": null,
@@ -619,158 +614,17 @@ FocusScope {
                 }
             }
 
-            // === Moonlight widget (servers rail → quick stream) ===
-            MoonlightWidget {
-                id: moonlightWidget
+            // === Standardized home widgets (Moonlight, Now Playing, Plex,
+            // Recent) — instantiated + focus-chained generically by WidgetHost
+            // from the WidgetRegistry. The QuickActions row above and the All Apps
+            // entry below remain HomeScreen-owned and are wired in as the host's
+            // top/bottom focus anchors; each widget's behaviour is attached below
+            // via widgetById (see the "Widget wiring" block). ===
+            WidgetHost {
+                id: widgetHost
                 Layout.fillWidth: true
-                widgetEnabled: Theme.widgetMoonlightEnabled
-                size: Theme.widgetMoonlightSize
-                targets: root.targets
-                shellState: root.shellState
-                previousRow: statusIcons
-                nextRow: root._npActive
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-                onStreamRequested: target => root.streamRequested(target)
-                onStreamQuitRequested: target => root.streamQuitRequested(target)
-                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
-                onContextRequested: root._moonlightContext()
-                onGameSelected: appid => root.launchSteamGame(appid)
-                onGameContextRequested: appid => root._steamGameContext(appid)
-                onOpenBigPictureRequested: root.launchSteamBigPicture()
-            }
-
-            // === Now Playing — small (strip) renderer ===
-            NowPlayingStrip {
-                id: nowPlayingStrip
-                Layout.fillWidth: true
-                widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "small"
-                previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
-                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-                onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
-                onContextRequested: root._mediaContext(nowPlayingStrip)
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
-            }
-
-            // === Now Playing — medium (card + progress) renderer ===
-            MediaWidget {
-                id: nowPlayingCard
-                Layout.fillWidth: true
-                widgetEnabled: Theme.widgetSpotifyEnabled && Theme.widgetSpotifySize === "medium"
-                previousRow: moonlightWidget.canFocus ? moonlightWidget.lastRow : statusIcons
-                nextRow: plexWidget.canFocus ? plexWidget.firstRow : recentRow
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-                onOpenAppRequested: (desktopEntry, identity) => root.openMediaApp(desktopEntry, identity)
-                onContextRequested: root._mediaContext(nowPlayingCard)
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
-            }
-
-            // === Plex widget (On Deck + Recently Added + dynamic chips) ===
-            PlexWidget {
-                id: plexWidget
-                Layout.fillWidth: true
-                widgetEnabled: Theme.widgetPlexEnabled
-                size: Theme.widgetPlexSize
-                previousRow: root._npActive
-                nextRow: recentRow
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-                onOpenPlexRequested: root.openPlexApp()
-                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
-            }
-
-            // === Recent (apps) widget ===
-            Text {
-                visible: Theme.widgetRecentEnabled && root._recentModel.length > 0
-                text: "Recent"
-                font.pixelSize: Theme.fontTitle
-                font.bold: true
-                color: Theme.textPrimary
-            }
-
-            NavigableRow {
-                id: recentRow
-                visible: Theme.widgetRecentEnabled && root._recentModel.length > 0
-                Layout.fillWidth: true
-                Layout.preferredHeight: visible ? Theme.rowHeight : 0
-                keyNavigationWraps: true
-                previousRow: plexWidget.canFocus ? plexWidget.lastRow : root._npActive
-                nextRow: allAppsEntry
-                model: root._recentModel
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
-
-                delegate: AppCard {
-                    required property int index
-                    required property var modelData
-                    iconOnly: root._recentSmall
-                    width: root._recentSmall ? Theme.cardHeight : Theme.cardWidth
-                    height: Theme.cardHeight
-                    app: modelData
-                    running: modelData.running === true
-                    focus: index === recentRow.currentIndex
-                    onActivated: {
-                        if (modelData.running === true)
-                            root.appFocusRequested(modelData.address);
-                        else
-                            root.launchApp(modelData);
-                    }
-                }
-
-                onContextRequested: {
-                    if (currentItem && currentIndex >= 0 && currentIndex < root._recentModel.length) {
-                        let entry = root._recentModel[currentIndex];
-                        let pos = currentItem.mapToItem(root, currentItem.width / 2, 0);
-                        popoverMenu.targetX = pos.x;
-                        popoverMenu.targetY = pos.y;
-                        if (entry.running === true) {
-                            let addr = entry.address;
-                            popoverMenu.actions = [
-                                {
-                                    label: "Resume",
-                                    action: function () {
-                                        root.appFocusRequested(addr);
-                                    }
-                                },
-                                {
-                                    label: "Quit App",
-                                    action: function () {
-                                        root.appCloseRequested(addr);
-                                    }
-                                }
-                            ];
-                        } else {
-                            let app = entry;
-                            popoverMenu.actions = [
-                                {
-                                    label: "Launch",
-                                    action: function () {
-                                        root.launchApp(app);
-                                    }
-                                }
-                            ];
-                        }
-                        popoverMenu.opened = true;
-                        popoverMenu.forceActiveFocus();
-                    }
-                }
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
+                topAnchor: statusIcons
+                bottomAnchor: allAppsEntry
             }
 
             // === All Apps entry (→ Library) ===
@@ -779,7 +633,9 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Theme.cardHeight
                 model: 1
-                previousRow: recentRow
+                // previousRow is bound by WidgetHost (bottomAnchor) to the last
+                // focusable widget's exit row, so Up/B from here lands correctly
+                // whichever widgets are enabled.
                 onActivated: root.libraryRequested()
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
@@ -848,8 +704,8 @@ FocusScope {
             HintBar {
                 muted: true
                 text: {
-                    if (recentRow.activeFocus) {
-                        let idx = recentRow.currentIndex;
+                    if (root.recentWidget && root.recentWidget.regionFocused) {
+                        let idx = root.recentWidget.currentIndex;
                         let model = root._recentModel;
                         let running = (idx >= 0 && idx < model.length && model[idx].running === true);
                         return (running ? "A: Resume" : "A: Launch") + "  |  X: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
@@ -866,8 +722,10 @@ FocusScope {
     // Moonlight server context menu (Resume / Quit a live session). Mirrors the
     // Library's stream-card context behavior, positioned over the focused card.
     function _moonlightContext() {
-        let target = moonlightWidget.currentTarget;
-        let card = moonlightWidget.currentCard;
+        if (!root.moonlightWidget)
+            return;
+        let target = root.moonlightWidget.currentTarget;
+        let card = root.moonlightWidget.currentCard;
         if (!target || !card)
             return;
         let pos = card.mapToItem(root, card.width / 2, 0);
@@ -882,7 +740,7 @@ FocusScope {
         // re-streams (Moonlight resumes an existing session); Quit Stream ends it.
         // Per-item `hint` keeps the footer correct (no "X: Set default" here).
         let hasControls = false;
-        if (moonlightWidget.currentOnline) {
+        if (root.moonlightWidget.currentOnline) {
             actions.push({
                 label: "Resume",
                 hint: "A: Resume",
@@ -951,7 +809,9 @@ FocusScope {
     // SteamCard's guard), positioned over it. Mirrors _moonlightContext's
     // mapToItem positioning, anchored on moonlightWidget.runningCard.
     function _steamGameContext(appid) {
-        let card = moonlightWidget.runningCard;
+        if (!root.moonlightWidget)
+            return;
+        let card = root.moonlightWidget.runningCard;
         if (!card)
             return;
         let pos = card.mapToItem(root, card.width / 2, 0);
@@ -985,6 +845,8 @@ FocusScope {
 
     // Shared Now-Playing context-menu opener (quit the player).
     function _mediaContext(widget) {
+        if (!widget)
+            return;
         let p = widget.player;
         if (!p || !p.canQuit)
             return;
@@ -1004,11 +866,175 @@ FocusScope {
         popoverMenu.forceActiveFocus();
     }
 
+    // Recent-row activation: focus a running window, or launch a non-running app.
+    function _recentActivate(entry) {
+        if (entry.running === true)
+            root.appFocusRequested(entry.address);
+        else
+            root.launchApp(entry);
+    }
+
+    // Recent-row context popover (Resume/Quit for a running app, Launch otherwise),
+    // positioned over the focused card.
+    function _recentContext(entry, card) {
+        if (!entry || !card)
+            return;
+        let pos = card.mapToItem(root, card.width / 2, 0);
+        popoverMenu.targetX = pos.x;
+        popoverMenu.targetY = pos.y;
+        if (entry.running === true) {
+            let addr = entry.address;
+            popoverMenu.actions = [
+                {
+                    label: "Resume",
+                    action: function () {
+                        root.appFocusRequested(addr);
+                    }
+                },
+                {
+                    label: "Quit App",
+                    action: function () {
+                        root.appCloseRequested(addr);
+                    }
+                }
+            ];
+        } else {
+            let app = entry;
+            popoverMenu.actions = [
+                {
+                    label: "Launch",
+                    action: function () {
+                        root.launchApp(app);
+                    }
+                }
+            ];
+        }
+        popoverMenu.opened = true;
+        popoverMenu.forceActiveFocus();
+    }
+
     PopoverMenu {
         id: popoverMenu
         onClosed: {
             popoverMenu.opened = false;
             root._focusFirstVisibleRow();
+        }
+    }
+
+    // === Widget wiring ===
+    // WidgetHost instantiates the standardized widgets from the registry; these
+    // Bindings push HomeScreen-owned inputs into the live instances and the
+    // Connections attach each widget's behaviour. Targets resolve via the
+    // widgetById aliases (null until a Loader resolves — each Binding/Connections
+    // sits idle until then).
+
+    // --- Moonlight ---
+    Binding {
+        target: root.moonlightWidget
+        property: "targets"
+        value: root.targets
+        when: root.moonlightWidget !== null
+    }
+    Binding {
+        target: root.moonlightWidget
+        property: "shellState"
+        value: root.shellState
+        when: root.moonlightWidget !== null
+    }
+    Connections {
+        target: root.moonlightWidget
+        ignoreUnknownSignals: true
+        function onEscaped() {
+            root.userActivity();
+            root.focusDefaultPosition();
+        }
+        function onStreamRequested(target) {
+            root.streamRequested(target);
+        }
+        function onStreamQuitRequested(target) {
+            root.streamQuitRequested(target);
+        }
+        function onEnsureVisibleRequested(item) {
+            scrollView.ensureVisible(item);
+        }
+        function onContextRequested() {
+            root._moonlightContext();
+        }
+        function onGameSelected(appid) {
+            root.launchSteamGame(appid);
+        }
+        function onGameContextRequested(appid) {
+            root._steamGameContext(appid);
+        }
+        function onOpenBigPictureRequested() {
+            root.launchSteamBigPicture();
+        }
+    }
+
+    // --- Now Playing ---
+    Connections {
+        target: root.nowPlayingWidget
+        ignoreUnknownSignals: true
+        function onEscaped() {
+            root.userActivity();
+            root.focusDefaultPosition();
+        }
+        function onOpenAppRequested(desktopEntry, identity) {
+            root.openMediaApp(desktopEntry, identity);
+        }
+        function onContextRequested() {
+            root._mediaContext(root.nowPlayingWidget);
+        }
+        function onActiveFocusChanged() {
+            if (root.nowPlayingWidget && root.nowPlayingWidget.activeFocus)
+                scrollView.ensureVisible(root.nowPlayingWidget);
+        }
+    }
+
+    // --- Plex ---
+    Connections {
+        target: root.plexWidget
+        ignoreUnknownSignals: true
+        function onEscaped() {
+            root.userActivity();
+            root.focusDefaultPosition();
+        }
+        function onOpenPlexRequested() {
+            root.openPlexApp();
+        }
+        function onEnsureVisibleRequested(item) {
+            scrollView.ensureVisible(item);
+        }
+    }
+
+    // --- Recent ---
+    Binding {
+        target: root.recentWidget
+        property: "model"
+        value: root._recentModel
+        when: root.recentWidget !== null
+    }
+    Binding {
+        target: root.recentWidget
+        property: "recentSmall"
+        value: root._recentSmall
+        when: root.recentWidget !== null
+    }
+    Connections {
+        target: root.recentWidget
+        ignoreUnknownSignals: true
+        function onEscaped() {
+            root.userActivity();
+            root.focusDefaultPosition();
+        }
+        function onEntryActivated(entry) {
+            root._recentActivate(entry);
+        }
+        function onEntryContextRequested(entry, card) {
+            root._recentContext(entry, card);
+        }
+        function onEnsureVisibleRequested(item) {
+            scrollView.ensureVisible(item);
         }
     }
 }
