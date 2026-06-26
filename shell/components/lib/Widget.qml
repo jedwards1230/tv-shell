@@ -32,6 +32,15 @@ FocusScope {
     // Optional render size (e.g. "small"/"medium"); only sized widgets use it.
     property string size: ""
 
+    // The widget's INTENDED visibility — a plain bool computed from its own state
+    // (widgetEnabled + content), overridden by sized/health-aware widgets.
+    // `visible` is bound to it so a subclass sets `wantVisible:` rather than
+    // `visible:`. WidgetHost reads `wantVisible` (not `visible`) to collapse a
+    // hidden widget's layout slot: reading the effective `visible` from the host's
+    // Loader would feed back through the parent chain and latch every widget off.
+    property bool wantVisible: true
+    visible: wantVisible
+
     // regionFocused lets HomeScreen's re-anchor net recognise this region;
     // canFocus lets the vertical-chain walk skip the widget when it can't take
     // focus (NavigableRow._focusable falls back to `visible` when absent).

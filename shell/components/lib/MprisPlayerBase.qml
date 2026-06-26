@@ -2,9 +2,11 @@ import QtQuick
 import Quickshell.Services.Mpris
 import "../"
 
-// Shared base for the two now-playing home widgets — MediaWidget (full card +
-// progress) and NowPlayingStrip (compact strip). Both are the same thing
-// behaviourally: pick the active MPRIS player, expose capability guards, run a
+// Shared base for the now-playing home widgets — the unified NowPlayingWidget
+// (size-switching home tile) and the standalone MediaWidget (SessionQAM). The
+// visuals are pure leaves (NowPlayingCard / NowPlayingStripView) handed this base
+// via `contentCard`. Behaviourally one thing: pick the active MPRIS player,
+// expose capability guards, run a
 // Prev / Play-Pause / Next transport with an "Open app" pill, and slot into the
 // home-screen vertical focus chain via the duck-typed home-tile contract
 // (regionFocused / focusFirstChild + previousRow/nextRow). Only the visual
@@ -84,7 +86,7 @@ Widget {
 
     readonly property bool _shown: hasPlayer && widgetEnabled
     implicitHeight: _shown && contentCard ? contentCard.implicitHeight : 0
-    visible: _shown
+    wantVisible: _shown
     height: implicitHeight
 
     // Draw a skip-track icon (two triangles + a bar) centred by construction.

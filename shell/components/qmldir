@@ -25,6 +25,10 @@ FocusFrame 1.0 FocusFrame.qml
 AppCard 1.0 AppCard.qml
 MarqueeText 1.0 MarqueeText.qml
 MediaWidget 1.0 MediaWidget.qml
+NowPlayingCard 1.0 NowPlayingCard.qml
+NowPlayingStripView 1.0 NowPlayingStripView.qml
+NowPlayingWidget 1.0 NowPlayingWidget.qml
+RecentWidget 1.0 RecentWidget.qml
 DimOverlay 1.0 DimOverlay.qml
 Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
@@ -34,7 +38,6 @@ SteamCard 1.0 SteamCard.qml
 WakeCard 1.0 WakeCard.qml
 SteamLibraryView 1.0 SteamLibraryView.qml
 SessionIndicator 1.0 SessionIndicator.qml
-NowPlayingStrip 1.0 NowPlayingStrip.qml
 MoonlightWidget 1.0 MoonlightWidget.qml
 FilterChips 1.0 FilterChips.qml
 LibraryScreen 1.0 LibraryScreen.qml
