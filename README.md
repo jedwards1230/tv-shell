@@ -96,6 +96,10 @@ and/or a node_exporter textfile (`[observability].metrics_textfile` in
 - Rust toolchain (to build `game-shell-input`)
 - Moonlight Qt (built from source)
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, lint, and PR instructions.
+
 ## License
 
 Game Shell is free software licensed under the **GNU General Public License v3.0
