@@ -20,6 +20,9 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     with:
       draft_on_blocking: true
+      extra_plugins: |
+        qml-quality@jedwards1230-plugins
+        rust-quality@jedwards1230-plugins
       focus: |
         game-shell is a Quickshell (QML) + Rust couch-gaming shell.
         - QML correctness: binding loops, unhandled signals, leaked Connections,
@@ -27,4 +30,5 @@ jobs:
         - Rust safety: unwrap()/expect()/panic! on fallible paths, error
           propagation, the gamepad/input daemon lifecycle and key/intent IPC.
         - No hardcoded host paths/IPs that belong in config.
+        - When the diff touches QML, prioritize the qml-quality:qml-reviewer agent; when it touches Rust, prioritize the rust-quality:rust-reviewer agent.
         Do NOT re-flag qmlformat/rustfmt/clippy — CI owns those.
