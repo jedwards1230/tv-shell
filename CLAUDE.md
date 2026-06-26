@@ -115,6 +115,13 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 `FocusFrame`, `NavigableRow`, `Drawer`, `SettingsButton`/`List`/`EmptyState`,
 `DimmedBackdrop`) are migrated into `lib/` opportunistically, not all at once.
 
+**`Widget.qml`** is the base type for home-screen widgets (Now Playing, Moonlight,
+Plex, Recent). It bakes in the duck-typed focus contract HomeScreen + NavigableRow
+query (`previousRow`/`nextRow`/`firstRow`/`lastRow`, `canFocus`/`regionFocused`,
+`focusFirstChild()`, `widgetEnabled`, `size`, `escaped`) with single-stop defaults,
+so a widget extending it satisfies the contract for free and overrides only what it
+needs. `MprisPlayerBase` extends it (overriding `canFocus`/`focusFirstChild`).
+
 ## Key Data Flows
 
 - **Streaming targets**: Loaded from `~/.config/game-shell/targets.json` at startup (single-line JSON — see gotchas). The path is resolved client-side by the `Paths` QML singleton (`$GAME_SHELL_TARGETS` env → else `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json`); a missing file is a clean no-op (empty target list, no crash). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.

@@ -25,3 +25,4 @@ SettingsDropdown 1.0 SettingsDropdown.qml
 StatCard 1.0 StatCard.qml
 StatusPill 1.0 StatusPill.qml
 VolumeBar 1.0 VolumeBar.qml
+Widget 1.0 Widget.qml
