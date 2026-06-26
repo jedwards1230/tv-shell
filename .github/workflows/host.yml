@@ -34,7 +34,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Build on stable (the host ships as a prebuilt binary from CI; its dep
       # closure requires Cargo >=1.85, so it is not bound to the daemon's 1.75).
