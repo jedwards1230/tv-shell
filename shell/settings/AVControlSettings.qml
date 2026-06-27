@@ -32,7 +32,7 @@ import "../components/lib"
 // unnavigable when entered via the Right d-pad.
 SettingsPageBase {
     id: root
-    hintText: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
+    hintText: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : root.cecUnavailableHint()
 
     property bool cecAvailable: false
     property var devices: []
@@ -50,15 +50,28 @@ SettingsPageBase {
     property string cecTransmitHealth: "unknown"
     property string cecHealthLastError: ""
 
+    // Why the adapter is unavailable, when it is (#22). The daemon distinguishes
+    // three cases via the `reason` field on a `transmit:"unavailable"` health
+    // reply — the page surfaces an accurate, actionable card per reason instead
+    // of one misleading "no CEC adapter" message:
+    //   "no_libcec"           — daemon built without libcec support
+    //   "no_adapter"          — built with libcec but no USB adapter present
+    //   "adapter_open_failed" — adapter present but won't open (hardware-wedged)
+    //   ""                    — not yet known / adapter is available (cleared)
+    property string cecUnavailableReason: ""
+
     // Parse a `cec-health` / `cec-test` reply or a `cec:health:` event payload
-    // (compact JSON: {"transmit":"ok"|"failing"|"unknown","since":<ms>,
-    // "lastError":<string|null>}). Defensive: any non-object reply (error:* from
-    // an old/unavailable daemon) or parse failure resolves to "unknown".
+    // (compact JSON: {"transmit":"ok"|"failing"|"unknown"|"unavailable",
+    // "reason":<null|"no_libcec"|"no_adapter"|"adapter_open_failed">,
+    // "since":<ms>,"lastError":<string|null>}). Defensive: any non-object reply
+    // (error:* from an old/unavailable daemon) or parse failure resolves to
+    // "unknown" and clears the unavailable reason.
     function applyHealth(jsonText) {
         var t = (jsonText || "").trim();
         if (t.length === 0 || t[0] !== "{") {
             root.cecTransmitHealth = "unknown";
             root.cecHealthLastError = "";
+            root.cecUnavailableReason = "";
             return;
         }
         try {
@@ -66,10 +79,60 @@ SettingsPageBase {
             var tx = obj.transmit;
             root.cecTransmitHealth = (tx === "ok" || tx === "failing") ? tx : "unknown";
             root.cecHealthLastError = (obj.lastError !== undefined && obj.lastError !== null) ? String(obj.lastError) : "";
+            // Only an "unavailable" reply carries a meaningful reason; for any
+            // open/available state (ok/failing/unknown) the adapter works, so
+            // clear it. Unknown reason strings collapse to "" (generic copy).
+            if (tx === "unavailable") {
+                var r = obj.reason;
+                root.cecUnavailableReason = (r === "no_libcec" || r === "no_adapter" || r === "adapter_open_failed") ? r : "";
+            } else {
+                root.cecUnavailableReason = "";
+            }
         } catch (e) {
             console.log("AVControlSettings: failed to parse cec-health:", e);
             root.cecTransmitHealth = "unknown";
             root.cecHealthLastError = "";
+            root.cecUnavailableReason = "";
+        }
+    }
+
+    // --- Per-reason copy for the "HDMI-CEC unavailable" card + footer hint ---
+    // The card shows via the existing `!cecAvailable` gate; these drive its
+    // title/body (and the footer line) off `cecUnavailableReason` so a
+    // hardware-wedged adapter no longer reads as a missing one.
+    function cecUnavailableTitle() {
+        switch (root.cecUnavailableReason) {
+        case "no_adapter":
+            return "No CEC Adapter";
+        case "adapter_open_failed":
+            return "CEC Adapter Not Responding";
+        default:
+            // "no_libcec" and the not-yet-known fallback share the generic copy.
+            return "HDMI-CEC Not Available";
+        }
+    }
+
+    function cecUnavailableBody() {
+        switch (root.cecUnavailableReason) {
+        case "no_adapter":
+            return "No CEC adapter detected — plug in the USB CEC adapter.";
+        case "adapter_open_failed":
+            return "CEC adapter detected but not responding — re-seat the USB adapter or power-cycle the AVR (pull mains, not standby), then retry.";
+        default:
+            return "CEC requires the daemon built with libcec support.";
+        }
+    }
+
+    function cecUnavailableHint() {
+        switch (root.cecUnavailableReason) {
+        case "no_libcec":
+            return "HDMI-CEC unavailable — daemon built without libcec support";
+        case "no_adapter":
+            return "HDMI-CEC unavailable — no CEC adapter detected";
+        case "adapter_open_failed":
+            return "CEC adapter detected but not responding — re-seat it";
+        default:
+            return "HDMI-CEC unavailable";
         }
     }
 
@@ -494,33 +557,49 @@ SettingsPageBase {
             }
         }
 
-        // CEC unavailable message
+        // CEC unavailable message — reason-driven (#22). Still gated on the
+        // existing `!cecAvailable` state (cec-scan returns error:* in every
+        // unavailable case, including the wedged-at-open one), but the title +
+        // body now reflect WHY via cecUnavailableReason. The adapter_open_failed
+        // case is treated as a WARNING (ember title + border) because it's
+        // actionable — the adapter is physically present, just wedged.
         Rectangle {
+            id: unavailableCard
+            readonly property bool cecWedged: root.cecUnavailableReason === "adapter_open_failed"
+
             Layout.fillWidth: true
-            Layout.preferredHeight: 200
+            // Adapt to the wrapped body height so the longer wedged-adapter copy
+            // never clips; floor at the original 200 so the short cases are unchanged.
+            Layout.preferredHeight: Math.max(200, unavailableCol.implicitHeight + 64)
             radius: Units.radiusLG
             color: Theme.surface
             border.width: 2
-            border.color: Theme.surfaceBorder
+            border.color: cecWedged ? Theme.warning : Theme.surfaceBorder
             visible: !root.cecAvailable
 
             ColumnLayout {
+                id: unavailableCol
                 anchors.centerIn: parent
+                width: parent.width - 64
                 spacing: 16
 
                 Text {
-                    text: "HDMI-CEC Not Available"
+                    text: root.cecUnavailableTitle()
                     font.pixelSize: Theme.fontTitle
                     font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignHCenter
+                    color: unavailableCard.cecWedged ? Theme.warning : Theme.textPrimary
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                 }
 
                 Text {
-                    text: "CEC requires the daemon built with libcec support."
+                    text: root.cecUnavailableBody()
                     font.pixelSize: Theme.fontSmall
                     color: Theme.textSecondary
-                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                 }
             }
         }
