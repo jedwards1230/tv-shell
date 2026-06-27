@@ -1,0 +1,33 @@
+{
+  "frameworkVersion": "1.0.0",
+  "widgets": [
+    {
+      "id": "moonlight",
+      "name": "Moonlight",
+      "version": "1.0.0",
+      "minFrameworkVersion": "1.0.0",
+      "requires": ["moonlight-backend"]
+    },
+    {
+      "id": "nowplaying",
+      "name": "Now Playing",
+      "version": "1.0.0",
+      "minFrameworkVersion": "1.0.0",
+      "requires": ["mpris"]
+    },
+    {
+      "id": "plex",
+      "name": "Plex",
+      "version": "1.0.0",
+      "minFrameworkVersion": "1.0.0",
+      "requires": ["plex-backend"]
+    },
+    {
+      "id": "recent",
+      "name": "Recent",
+      "version": "1.0.0",
+      "minFrameworkVersion": "1.0.0",
+      "requires": []
+    }
+  ]
+}
