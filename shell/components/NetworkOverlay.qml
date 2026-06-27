@@ -312,18 +312,14 @@ FocusScope {
                     }
                     Text {
                         Layout.fillWidth: true
+                        // The daemon's ipv4 already carries the interface
+                        // (e.g. "enp3s0: 192.168.8.50"), so there's no separate
+                        // interface label — it would duplicate the iface.
                         text: root.ipAddress
                         font.pixelSize: Theme.fontHint
                         font.family: "monospace"
                         color: Theme.textSecondary
                         elide: Text.ElideRight
-                    }
-                    Text {
-                        visible: root.device !== ""
-                        text: root.device
-                        font.pixelSize: Theme.fontHint
-                        font.family: "monospace"
-                        color: Theme.textMuted
                     }
                 }
 
