@@ -33,11 +33,8 @@ Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
 PlexCard 1.0 PlexCard.qml
 PlexWidget 1.0 PlexWidget.qml
-SteamCard 1.0 SteamCard.qml
 WakeCard 1.0 WakeCard.qml
-SteamLibraryView 1.0 SteamLibraryView.qml
 SessionIndicator 1.0 SessionIndicator.qml
-MoonlightWidget 1.0 MoonlightWidget.qml
 LibraryScreen 1.0 LibraryScreen.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
 HyprctlClients 1.0 HyprctlClients.qml

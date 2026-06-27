@@ -1,0 +1,4 @@
+module shell.widgets.moonlight
+MoonlightWidget 1.0 MoonlightWidget.qml
+SteamLibraryView 1.0 SteamLibraryView.qml
+SteamCard 1.0 SteamCard.qml
