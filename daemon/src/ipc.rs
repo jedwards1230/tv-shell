@@ -611,6 +611,8 @@ async fn dispatch(
         | Command::CecPowerOn(_)
         | Command::CecPowerOff(_)
         | Command::CecActiveSource
+        | Command::CecHealth
+        | Command::CecTest
         | Command::CecAddrUsage(_) => return protocol::resp_unknown(),
     }
     .unwrap_or(fallback)
@@ -682,6 +684,16 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         }
         #[cfg(feature = "cec")]
         Command::CecActiveSource => request_dbus(&dbus.cec, CecReq::ActiveSource).await,
+        #[cfg(feature = "cec")]
+        Command::CecHealth => request_dbus(&dbus.cec, CecReq::Health).await,
+        #[cfg(feature = "cec")]
+        Command::CecTest => request_dbus(&dbus.cec, CecReq::Test).await,
+        // Without the `cec` feature, libcec isn't linked at all — health/test
+        // report the structured `no_libcec` unavailable JSON (so the AV Control
+        // page shows an accurate message) while the action/read commands keep the
+        // bare `resp_unsupported()`.
+        #[cfg(not(feature = "cec"))]
+        Command::CecHealth | Command::CecTest => protocol::cec_unavailable_json("no_libcec", 0),
         #[cfg(not(feature = "cec"))]
         Command::CecScan
         | Command::CecDevice(_)
@@ -702,6 +714,10 @@ async fn dispatch_dbus(_dbus: &DbusSenders, cmd: &Command) -> Option<String> {
     let resp = match cmd {
         Command::BtMacUsage(which) => protocol::resp_bt_mac_usage(which),
         Command::CecAddrUsage(which) => protocol::resp_cec_addr_usage(which),
+        // Non-Linux: libcec doesn't exist — health/test report the structured
+        // `no_libcec` unavailable JSON (so the AV Control page shows an accurate
+        // message) while the action/read commands keep the bare unsupported line.
+        Command::CecHealth | Command::CecTest => protocol::cec_unavailable_json("no_libcec", 0),
         Command::BtPowerStatus
         | Command::BtPowerOn
         | Command::BtPowerOff
@@ -1013,6 +1029,30 @@ mod tests {
             send_line(&mut s, "bt-connect").await,
             "error:usage: bt-connect <mac>"
         );
+
+        // CEC health/test report the structured `no_libcec` unavailable JSON
+        // when libcec ISN'T linked (feature/platform off, #19 follow-up), so the
+        // AV Control page can distinguish causes — NOT the bare error line. The
+        // other CEC commands keep the bare `unsupported` reply. Gated on
+        // `not(feature = "cec")`: with the feature ON but the actor absent
+        // (`cec: None` here), the structured arms aren't taken — health/test
+        // route through `request_dbus`'s `None` path to `unsupported` (covered by
+        // `cec_scan_unsupported_when_actor_absent`).
+        #[cfg(not(feature = "cec"))]
+        {
+            assert_eq!(
+                send_line(&mut s, "cec-health").await,
+                r#"{"transmit":"unavailable","reason":"no_libcec","since":0,"lastError":null}"#
+            );
+            assert_eq!(
+                send_line(&mut s, "cec-test").await,
+                r#"{"transmit":"unavailable","reason":"no_libcec","since":0,"lastError":null}"#
+            );
+            assert_eq!(
+                send_line(&mut s, "cec-scan").await,
+                "error:unsupported on this platform"
+            );
+        }
 
         // Intent control surface: a closed-vocabulary name is accepted; an
         // unknown name is rejected; a bare command is a usage error.

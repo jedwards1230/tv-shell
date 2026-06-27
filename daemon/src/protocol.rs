@@ -277,6 +277,18 @@ pub enum Command {
     /// `which` is the bare command word for the usage line (mirrors
     /// `BtMacUsage`).
     CecAddrUsage(&'static str),
+    /// `cec-health` — return the current CEC transmit-wedge health as a compact
+    /// JSON object `{transmit,reason,since,lastError}` (#19). Read-only: it
+    /// reports the last-known transmit state and never drives the bus. `reason`
+    /// is `null` while the adapter is open; when the adapter is unavailable the
+    /// reply is `{transmit:"unavailable",reason:…}` (`no_libcec` / `no_adapter` /
+    /// `adapter_open_failed`).
+    CecHealth,
+    /// `cec-test` — run an explicit on-demand, side-effect-free CEC poll probe,
+    /// update the transmit-health, emit `cec:health` on a change, and reply with
+    /// the same JSON object as `cec-health` (#19). The "Test CEC" button's
+    /// backend.
+    CecTest,
 
     /// `set-active-game <id>` — signal the current foreground game to the
     /// daemon. The daemon activates per-game binding overrides for `<id>` from
@@ -472,6 +484,8 @@ impl Command {
             // Phase 4 HDMI-CEC bare commands (no body).
             "cec-scan" => Command::CecScan,
             "cec-active-source" => Command::CecActiveSource,
+            "cec-health" => Command::CecHealth,
+            "cec-test" => Command::CecTest,
             "controllerdb-status" => Command::ControllerDbStatus,
             "controllerdb-refresh" => Command::ControllerDbRefresh,
             "sys-status" => Command::SysStatus,
@@ -825,6 +839,15 @@ pub enum Event {
     /// A CEC device's power status changed; payload is a compact JSON object
     /// `{addr,power}`. Wire: `cec:power:<json>`.
     CecPower(String),
+    /// The CEC transmit-wedge health state CHANGED (#19); payload is a compact
+    /// JSON object `{transmit,reason,since,lastError}` (same shape as the
+    /// `cec-health` reply). Broadcast only on a real transition (not on every
+    /// probe), so the AV Control page's status line updates without polling. Also
+    /// broadcast ONCE when the libcec open handshake fails, carrying
+    /// `transmit:"unavailable"` + the open-failure `reason` so the page can show
+    /// the accurate "no adapter" vs "adapter wedged — re-seat it" message. Wire:
+    /// `cec:health:<json>`.
+    CecHealth(String),
 
     // --- Config live-reload ---
     /// `settings.json` was modified by an **external** writer (SSH / Ansible /
@@ -897,6 +920,7 @@ impl fmt::Display for Event {
             Event::HyprCloseWindow(address) => write!(f, "hypr:closewindow:{address}"),
             Event::CecDevice(json) => write!(f, "cec:device:{json}"),
             Event::CecPower(json) => write!(f, "cec:power:{json}"),
+            Event::CecHealth(json) => write!(f, "cec:health:{json}"),
             Event::ConfigChanged => f.write_str("config:changed"),
             Event::ScreenshotFlash => f.write_str("screenshot:flash"),
             Event::ServiceHealth(json) => write!(f, "health:{json}"),
@@ -1104,6 +1128,167 @@ pub fn cec_power_json(addr: &str, power_word: &str) -> String {
         "power": power_word,
     })
     .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// CEC transmit-wedge health (#19).
+// ---------------------------------------------------------------------------
+
+/// The transmit-health of the CEC adapter: whether the last transmit op
+/// succeeded, returned `TransmitFailed`, or has not been attempted yet.
+///
+/// game-client-1's Pulse-Eight USB CEC adapter periodically enters a "transmit
+/// wedge": libcec opens fine and can RECEIVE, but every TRANSMIT (power-on,
+/// active-source, the poll probe) returns `TransmitFailed`. This enum is the
+/// observable health surface the AV Control page reads via `cec-health`. Pure
+/// (no `cec-rs` types) so the state machine + JSON shape are unit-tested in the
+/// default (C-free) build leg even though the libcec actor that drives it is
+/// feature-gated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CecTransmitHealth {
+    /// No transmit attempted yet / indeterminate.
+    Unknown,
+    /// The last transmit succeeded.
+    Ok,
+    /// The last transmit returned `TransmitFailed` (the wedge).
+    Failing,
+}
+
+impl CecTransmitHealth {
+    /// The wire word for the `transmit` field of [`cec_health_json`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CecTransmitHealth::Unknown => "unknown",
+            CecTransmitHealth::Ok => "ok",
+            CecTransmitHealth::Failing => "failing",
+        }
+    }
+}
+
+/// The CEC transmit-wedge health state: the [`CecTransmitHealth`] variant, the
+/// epoch-millis of the last state CHANGE, and the last transmit error when
+/// failing.
+///
+/// `record_success` / `record_failure` mutate it and return whether the variant
+/// actually CHANGED, so the actor broadcasts `cec:health` only on real
+/// transitions (not on every probe). The clock value is passed in (epoch millis)
+/// to keep the transitions deterministic in unit tests. Pure — no `cec-rs`
+/// types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CecHealthState {
+    transmit: CecTransmitHealth,
+    since_millis: u64,
+    last_error: Option<String>,
+}
+
+impl CecHealthState {
+    /// A fresh state in the `Unknown` variant, stamped `now_millis`.
+    pub fn new(now_millis: u64) -> Self {
+        Self {
+            transmit: CecTransmitHealth::Unknown,
+            since_millis: now_millis,
+            last_error: None,
+        }
+    }
+
+    /// The current transmit-health variant.
+    pub fn transmit(&self) -> CecTransmitHealth {
+        self.transmit
+    }
+
+    /// Epoch-millis of the last state change.
+    pub fn since_millis(&self) -> u64 {
+        self.since_millis
+    }
+
+    /// The last transmit error string (present only while failing).
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    /// Record a successful transmit. On a variant change (→ `Ok`) bumps `since`
+    /// to `now_millis`, clears `last_error`, and returns `true`. A repeat success
+    /// (already `Ok`) is a no-op returning `false`, so no spurious `cec:health`
+    /// is emitted.
+    pub fn record_success(&mut self, now_millis: u64) -> bool {
+        if self.transmit == CecTransmitHealth::Ok {
+            return false;
+        }
+        self.transmit = CecTransmitHealth::Ok;
+        self.since_millis = now_millis;
+        self.last_error = None;
+        true
+    }
+
+    /// Record a failed transmit with its error string. On a variant change
+    /// (→ `Failing`) bumps `since` to `now_millis` and returns `true`. When
+    /// already `Failing` the variant does NOT change, so `since` is KEPT (the
+    /// wedge's onset time) and `false` is returned — but the freshest
+    /// `last_error` is still stored so a later `cec-health` read reports it.
+    pub fn record_failure(&mut self, err: &str, now_millis: u64) -> bool {
+        let changed = self.transmit != CecTransmitHealth::Failing;
+        self.transmit = CecTransmitHealth::Failing;
+        if changed {
+            self.since_millis = now_millis;
+        }
+        self.last_error = Some(err.to_string());
+        changed
+    }
+
+    /// Build the wire JSON for this state (the `cec-health` / `cec-test` reply
+    /// and the `cec:health:<json>` event payload). An AVAILABLE state (the
+    /// adapter is open) always carries a `null` `reason` — the `reason` field is
+    /// only populated when the adapter is UNAVAILABLE (see
+    /// [`cec_unavailable_json`]).
+    pub fn to_json(&self) -> String {
+        cec_health_json(
+            self.transmit.as_str(),
+            None,
+            self.since_millis,
+            self.last_error.as_deref(),
+        )
+    }
+}
+
+/// Build the compact-JSON body for the CEC transmit-health (`cec-health` /
+/// `cec-test` reply and the `cec:health:<json>` event payload). Pure — no
+/// `cec-rs` types — so it compiles and unit-tests in the default (C-free) leg.
+/// `transmit_word` is `"ok"|"failing"|"unknown"|"unavailable"`; `reason` is the
+/// unavailable reason word (`None` → JSON `null`, used for all available states);
+/// `since_millis` the epoch millis of the last state change; `last_error` the
+/// transmit error when failing (`None` → JSON `null`).
+///
+/// Field order is fixed by `serde_json`'s `preserve_order` feature, so the wire
+/// bytes are stable: `{"transmit":"WORD","reason":"…"|null,"since":N,
+/// "lastError":"…"|null}`. The `reason` key sits right after `transmit`.
+pub fn cec_health_json(
+    transmit_word: &str,
+    reason: Option<&str>,
+    since_millis: u64,
+    last_error: Option<&str>,
+) -> String {
+    serde_json::json!({
+        "transmit": transmit_word,
+        "reason": reason,
+        "since": since_millis,
+        "lastError": last_error,
+    })
+    .to_string()
+}
+
+/// Build the compact-JSON body for an UNAVAILABLE CEC adapter — the structured
+/// reply that now replaces the bare `error:libcec unavailable` for `cec-health`
+/// and `cec-test` (and the `cec:health:<json>` event broadcast when the open
+/// handshake fails). `transmit` is fixed to `"unavailable"`, `reason` is one of
+/// `no_libcec` / `no_adapter` / `adapter_open_failed`, and `lastError` is always
+/// `null` (the actionable signal is the `reason`, not a transmit error). Pure —
+/// no `cec-rs` types — so it is callable from the non-`cec`/non-Linux ipc.rs arms
+/// and unit-tested in the default leg.
+///
+/// Wire bytes: `{"transmit":"unavailable","reason":"REASON","since":N,
+/// "lastError":null}`.
+pub fn cec_unavailable_json(reason: &str, since_millis: u64) -> String {
+    cec_health_json("unavailable", Some(reason), since_millis, None)
 }
 
 /// Usage line for `sunshine-status` issued without a `<host> <port>` body.
@@ -2313,6 +2498,151 @@ mod tests {
         assert_eq!(
             resp_cec_addr_usage("cec-power-on"),
             "error:usage: cec-power-on <addr>"
+        );
+    }
+
+    #[test]
+    fn cec_health_and_test_parse_as_bare_commands() {
+        assert_eq!(Command::parse("cec-health"), Command::CecHealth);
+        assert_eq!(Command::parse("cec-test"), Command::CecTest);
+        // Whitespace is trimmed (mirrors the other bare CEC commands).
+        assert_eq!(Command::parse("  cec-health  "), Command::CecHealth);
+        // A word-boundary collision must NOT match (not mistaken for the command).
+        assert_ne!(Command::parse("cec-healthy"), Command::CecHealth);
+        assert_ne!(Command::parse("cec-tested"), Command::CecTest);
+    }
+
+    #[test]
+    fn cec_health_json_is_compact_ordered() {
+        // Field order is fixed (preserve_order): transmit, reason, since,
+        // lastError. Available states always carry a null `reason`.
+        assert_eq!(
+            cec_health_json("ok", None, 1000, None),
+            r#"{"transmit":"ok","reason":null,"since":1000,"lastError":null}"#
+        );
+        assert_eq!(
+            cec_health_json(
+                "failing",
+                None,
+                2500,
+                Some("active-source failed: TransmitFailed")
+            ),
+            r#"{"transmit":"failing","reason":null,"since":2500,"lastError":"active-source failed: TransmitFailed"}"#
+        );
+        assert_eq!(
+            cec_health_json("unknown", None, 0, None),
+            r#"{"transmit":"unknown","reason":null,"since":0,"lastError":null}"#
+        );
+    }
+
+    #[test]
+    fn cec_unavailable_json_carries_reason_and_null_last_error() {
+        // Each of the three unavailable reasons: transmit="unavailable",
+        // the given reason word, lastError always null. `no_libcec` is the
+        // static reply used by the non-cec / non-Linux ipc.rs arms (since:0).
+        assert_eq!(
+            cec_unavailable_json("no_libcec", 0),
+            r#"{"transmit":"unavailable","reason":"no_libcec","since":0,"lastError":null}"#
+        );
+        assert_eq!(
+            cec_unavailable_json("no_adapter", 1234),
+            r#"{"transmit":"unavailable","reason":"no_adapter","since":1234,"lastError":null}"#
+        );
+        assert_eq!(
+            cec_unavailable_json("adapter_open_failed", 5678),
+            r#"{"transmit":"unavailable","reason":"adapter_open_failed","since":5678,"lastError":null}"#
+        );
+    }
+
+    #[test]
+    fn cec_health_state_starts_unknown() {
+        let s = CecHealthState::new(100);
+        assert_eq!(s.transmit(), CecTransmitHealth::Unknown);
+        assert_eq!(s.since_millis(), 100);
+        assert_eq!(s.last_error(), None);
+        // Available state → reason is null.
+        assert_eq!(
+            s.to_json(),
+            r#"{"transmit":"unknown","reason":null,"since":100,"lastError":null}"#
+        );
+    }
+
+    #[test]
+    fn cec_health_unknown_to_ok_records_change_and_since() {
+        let mut s = CecHealthState::new(100);
+        // Unknown → Ok is a real transition: bumps `since`, returns true.
+        assert!(s.record_success(200));
+        assert_eq!(s.transmit(), CecTransmitHealth::Ok);
+        assert_eq!(s.since_millis(), 200);
+        assert_eq!(s.last_error(), None);
+    }
+
+    #[test]
+    fn cec_health_repeat_success_is_no_change() {
+        let mut s = CecHealthState::new(100);
+        assert!(s.record_success(200));
+        // A second success keeps the variant: no change, `since` is KEPT.
+        assert!(!s.record_success(300));
+        assert_eq!(s.transmit(), CecTransmitHealth::Ok);
+        assert_eq!(s.since_millis(), 200);
+    }
+
+    #[test]
+    fn cec_health_ok_to_failing_records_error_and_new_since() {
+        let mut s = CecHealthState::new(100);
+        s.record_success(200);
+        // Ok → Failing is a real transition: records the error + a new `since`.
+        assert!(s.record_failure("power-on failed: TransmitFailed", 500));
+        assert_eq!(s.transmit(), CecTransmitHealth::Failing);
+        assert_eq!(s.since_millis(), 500);
+        assert_eq!(s.last_error(), Some("power-on failed: TransmitFailed"));
+    }
+
+    #[test]
+    fn cec_health_failing_to_failing_keeps_since_but_refreshes_error() {
+        let mut s = CecHealthState::new(100);
+        s.record_failure("first error", 500);
+        // Failing → Failing is NOT a change: `since` is kept (the wedge onset),
+        // returns false, but the freshest error is stored for the next read.
+        assert!(!s.record_failure("second error", 900));
+        assert_eq!(s.transmit(), CecTransmitHealth::Failing);
+        assert_eq!(s.since_millis(), 500);
+        assert_eq!(s.last_error(), Some("second error"));
+    }
+
+    #[test]
+    fn cec_health_failing_to_ok_clears_error() {
+        let mut s = CecHealthState::new(100);
+        s.record_failure("transient wedge", 500);
+        // Failing → Ok is a real transition: clears the error + bumps `since`.
+        assert!(s.record_success(1200));
+        assert_eq!(s.transmit(), CecTransmitHealth::Ok);
+        assert_eq!(s.since_millis(), 1200);
+        assert_eq!(s.last_error(), None);
+        assert_eq!(
+            s.to_json(),
+            r#"{"transmit":"ok","reason":null,"since":1200,"lastError":null}"#
+        );
+    }
+
+    #[test]
+    fn cec_health_json_round_trips_through_event() {
+        // The health builder output is exactly what the CecHealth event wraps.
+        let body = cec_health_json("failing", None, 4242, Some("wedged"));
+        assert_eq!(
+            Event::CecHealth(body).to_string(),
+            r#"cec:health:{"transmit":"failing","reason":null,"since":4242,"lastError":"wedged"}"#
+        );
+    }
+
+    #[test]
+    fn cec_unavailable_json_round_trips_through_event() {
+        // The unavailable builder output is also wrapped verbatim by CecHealth,
+        // so the open-handshake-failure broadcast carries the structured reason.
+        let body = cec_unavailable_json("adapter_open_failed", 9000);
+        assert_eq!(
+            Event::CecHealth(body).to_string(),
+            r#"cec:health:{"transmit":"unavailable","reason":"adapter_open_failed","since":9000,"lastError":null}"#
         );
     }
 

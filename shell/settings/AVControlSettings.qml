@@ -32,12 +32,109 @@ import "../components/lib"
 // unnavigable when entered via the Right d-pad.
 SettingsPageBase {
     id: root
-    hintText: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : "HDMI-CEC unavailable — daemon reports no CEC adapter"
+    hintText: root.cecAvailable ? "A: Set as default input  |  Auto-refresh every 30s" : root.cecUnavailableHint()
 
     property bool cecAvailable: false
     property var devices: []
     property string statusText: "Checking CEC availability..."
     property string actionFeedback: ""
+
+    // CEC transmit-link health (#19). The adapter periodically "wedges": it
+    // still OPENS and can RECEIVE (so cec-scan returns [] and cecAvailable stays
+    // true) but every TRANSMIT fails, leaving the user unable to reclaim the AVR
+    // input from the couch. The daemon now tracks transmit health and exposes it
+    // over IPC; this property drives the CEC link status line below.
+    //   "ok"      — transmits are succeeding
+    //   "failing" — adapter open + receiving but transmits fail (wedged)
+    //   "unknown" — not yet probed / old daemon / parse error
+    property string cecTransmitHealth: "unknown"
+    property string cecHealthLastError: ""
+
+    // Why the adapter is unavailable, when it is (#22). The daemon distinguishes
+    // three cases via the `reason` field on a `transmit:"unavailable"` health
+    // reply — the page surfaces an accurate, actionable card per reason instead
+    // of one misleading "no CEC adapter" message:
+    //   "no_libcec"           — daemon built without libcec support
+    //   "no_adapter"          — built with libcec but no USB adapter present
+    //   "adapter_open_failed" — adapter present but won't open (hardware-wedged)
+    //   ""                    — not yet known / adapter is available (cleared)
+    property string cecUnavailableReason: ""
+
+    // Parse a `cec-health` / `cec-test` reply or a `cec:health:` event payload
+    // (compact JSON: {"transmit":"ok"|"failing"|"unknown"|"unavailable",
+    // "reason":<null|"no_libcec"|"no_adapter"|"adapter_open_failed">,
+    // "since":<ms>,"lastError":<string|null>}). Defensive: any non-object reply
+    // (error:* from an old/unavailable daemon) or parse failure resolves to
+    // "unknown" and clears the unavailable reason.
+    function applyHealth(jsonText) {
+        var t = (jsonText || "").trim();
+        if (t.length === 0 || t[0] !== "{") {
+            root.cecTransmitHealth = "unknown";
+            root.cecHealthLastError = "";
+            root.cecUnavailableReason = "";
+            return;
+        }
+        try {
+            var obj = JSON.parse(t);
+            var tx = obj.transmit;
+            root.cecTransmitHealth = (tx === "ok" || tx === "failing") ? tx : "unknown";
+            root.cecHealthLastError = (obj.lastError !== undefined && obj.lastError !== null) ? String(obj.lastError) : "";
+            // Only an "unavailable" reply carries a meaningful reason; for any
+            // open/available state (ok/failing/unknown) the adapter works, so
+            // clear it. Unknown reason strings collapse to "" (generic copy).
+            if (tx === "unavailable") {
+                var r = obj.reason;
+                root.cecUnavailableReason = (r === "no_libcec" || r === "no_adapter" || r === "adapter_open_failed") ? r : "";
+            } else {
+                root.cecUnavailableReason = "";
+            }
+        } catch (e) {
+            console.log("AVControlSettings: failed to parse cec-health:", e);
+            root.cecTransmitHealth = "unknown";
+            root.cecHealthLastError = "";
+            root.cecUnavailableReason = "";
+        }
+    }
+
+    // --- Per-reason copy for the "HDMI-CEC unavailable" card + footer hint ---
+    // The card shows via the existing `!cecAvailable` gate; these drive its
+    // title/body (and the footer line) off `cecUnavailableReason` so a
+    // hardware-wedged adapter no longer reads as a missing one.
+    function cecUnavailableTitle() {
+        switch (root.cecUnavailableReason) {
+        case "no_adapter":
+            return "No CEC Adapter";
+        case "adapter_open_failed":
+            return "CEC Adapter Not Responding";
+        default:
+            // "no_libcec" and the not-yet-known fallback share the generic copy.
+            return "HDMI-CEC Not Available";
+        }
+    }
+
+    function cecUnavailableBody() {
+        switch (root.cecUnavailableReason) {
+        case "no_adapter":
+            return "No CEC adapter detected — plug in the USB CEC adapter.";
+        case "adapter_open_failed":
+            return "CEC adapter detected but not responding — re-seat the USB adapter or power-cycle the AVR (pull mains, not standby), then retry.";
+        default:
+            return "CEC requires the daemon built with libcec support.";
+        }
+    }
+
+    function cecUnavailableHint() {
+        switch (root.cecUnavailableReason) {
+        case "no_libcec":
+            return "HDMI-CEC unavailable — daemon built without libcec support";
+        case "no_adapter":
+            return "HDMI-CEC unavailable — no CEC adapter detected";
+        case "adapter_open_failed":
+            return "CEC adapter detected but not responding — re-seat it";
+        default:
+            return "HDMI-CEC unavailable";
+        }
+    }
 
     // Friendly label for a CEC logical address (no OSD name in cec-rs 12.0.1).
     function nameForAddress(addr) {
@@ -164,6 +261,11 @@ SettingsPageBase {
                 } catch (e) {
                     console.log("AVControlSettings: failed to parse cec:power event:", e);
                 }
+            } else if (line.startsWith("cec:health:")) {
+                // Live transmit-health change — same JSON shape as cec-health.
+                // Slice by the known prefix length (the value contains colons in
+                // a lastError string), mirroring the cec:device: handling above.
+                root.applyHealth(line.substring("cec:health:".length));
             }
         }
     }
@@ -209,6 +311,44 @@ SettingsPageBase {
         }
     }
 
+    // Transmit-health poll: request `cec-health`, receive the compact health
+    // JSON object (or error:* → "unknown"). Polled on the same cadence as
+    // cec-scan so the status line stays fresh; live changes also arrive via the
+    // cec:health:* subscribe event below.
+    SocketClient {
+        id: healthClient
+        onResponseReceived: line => root.applyHealth(line)
+        onRequestFailed: {
+            root.cecTransmitHealth = "unknown";
+            root.cecHealthLastError = "";
+        }
+    }
+
+    // On-demand transmit probe behind the "Test CEC" button. `cec-test` runs a
+    // probe and replies the same health JSON — feed it to applyHealth so the
+    // status line updates immediately, and surface a one-line result via the
+    // shared actionFeedback mechanism.
+    SocketClient {
+        id: testClient
+        onResponseReceived: line => {
+            root.applyHealth(line);
+            var t = (line || "").trim();
+            if (t.length === 0 || t[0] !== "{")
+                root.actionFeedback = "CEC test failed";
+            else if (root.cecTransmitHealth === "ok")
+                root.actionFeedback = "CEC link OK";
+            else if (root.cecTransmitHealth === "failing")
+                root.actionFeedback = "CEC transmit failing";
+            else
+                root.actionFeedback = "CEC status unknown";
+            feedbackTimer.restart();
+        }
+        onRequestFailed: {
+            root.actionFeedback = "CEC test failed";
+            feedbackTimer.restart();
+        }
+    }
+
     // --- Timers ---
     Timer {
         id: autoRefresh
@@ -217,6 +357,7 @@ SettingsPageBase {
         repeat: true
         onTriggered: {
             scanClient.request("cec-scan");
+            healthClient.request("cec-health");
         }
     }
 
@@ -233,17 +374,20 @@ SettingsPageBase {
         interval: 5000
         onTriggered: {
             scanClient.request("cec-scan");
+            healthClient.request("cec-health");
         }
     }
 
     Component.onCompleted: {
         scanClient.request("cec-scan");
+        healthClient.request("cec-health");
         cecEvents.start();
     }
 
     onVisibleChanged: {
         if (visible) {
             scanClient.request("cec-scan");
+            healthClient.request("cec-health");
             cecEvents.start();
         } else {
             cecEvents.stop();
@@ -295,12 +439,56 @@ SettingsPageBase {
             FocusButton {
                 id: refreshScope
                 visible: root.cecAvailable
+                KeyNavigation.right: testScope
                 KeyNavigation.down: focusStartupScope
                 text: "Refresh"
                 onActivated: {
                     root.statusText = "Scanning...";
                     scanClient.request("cec-scan");
+                    healthClient.request("cec-health");
                 }
+            }
+
+            // Test CEC button — on-demand transmit probe (cec-test). Sits beside
+            // Refresh; both are only visible/focusable when CEC is available.
+            FocusButton {
+                id: testScope
+                visible: root.cecAvailable
+                KeyNavigation.left: refreshScope
+                KeyNavigation.down: focusStartupScope
+                text: "Test CEC"
+                onActivated: {
+                    root.actionFeedback = "Testing CEC…";
+                    feedbackTimer.stop();
+                    testClient.request("cec-test");
+                }
+            }
+        }
+
+        // CEC link status line (#19). Surfaces the transmit-wedge state the
+        // device list can't: the adapter opens + receives (so cecAvailable is
+        // true and devices may even be listed) while every transmit fails.
+        // Hidden when CEC is unavailable — the "HDMI-CEC Not Available" card
+        // below owns that state, so the two never show together.
+        Text {
+            Layout.fillWidth: true
+            visible: root.cecAvailable
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontBody
+            font.bold: root.cecTransmitHealth === "failing"
+            text: {
+                if (root.cecTransmitHealth === "ok")
+                    return "CEC link: OK";
+                if (root.cecTransmitHealth === "failing")
+                    return "CEC transmit failing — the adapter may be wedged. Re-seat the USB adapter or power-cycle the AVR (pull mains, not standby), then retry.";
+                return "CEC link: checking…";
+            }
+            color: {
+                if (root.cecTransmitHealth === "ok")
+                    return Theme.online;
+                if (root.cecTransmitHealth === "failing")
+                    return Theme.warning;
+                return Theme.textSecondary;
             }
         }
 
@@ -370,33 +558,49 @@ SettingsPageBase {
             }
         }
 
-        // CEC unavailable message
+        // CEC unavailable message — reason-driven (#22). Still gated on the
+        // existing `!cecAvailable` state (cec-scan returns error:* in every
+        // unavailable case, including the wedged-at-open one), but the title +
+        // body now reflect WHY via cecUnavailableReason. The adapter_open_failed
+        // case is treated as a WARNING (ember title + border) because it's
+        // actionable — the adapter is physically present, just wedged.
         Rectangle {
+            id: unavailableCard
+            readonly property bool cecWedged: root.cecUnavailableReason === "adapter_open_failed"
+
             Layout.fillWidth: true
-            Layout.preferredHeight: 200
+            // Adapt to the wrapped body height so the longer wedged-adapter copy
+            // never clips; floor at the original 200 so the short cases are unchanged.
+            Layout.preferredHeight: Math.max(200, unavailableCol.implicitHeight + 64)
             radius: Units.radiusLG
             color: Theme.surface
             border.width: 2
-            border.color: Theme.surfaceBorder
+            border.color: cecWedged ? Theme.warning : Theme.surfaceBorder
             visible: !root.cecAvailable
 
             ColumnLayout {
+                id: unavailableCol
                 anchors.centerIn: parent
+                width: parent.width - 64
                 spacing: 16
 
                 Text {
-                    text: "HDMI-CEC Not Available"
+                    text: root.cecUnavailableTitle()
                     font.pixelSize: Theme.fontTitle
                     font.bold: true
-                    color: Theme.textPrimary
-                    Layout.alignment: Qt.AlignHCenter
+                    color: unavailableCard.cecWedged ? Theme.warning : Theme.textPrimary
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                 }
 
                 Text {
-                    text: "CEC requires the daemon built with libcec support."
+                    text: root.cecUnavailableBody()
                     font.pixelSize: Theme.fontSmall
                     color: Theme.textSecondary
-                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                 }
             }
         }
@@ -532,7 +736,7 @@ SettingsPageBase {
                         // (CEC rescans reassign root.devices) — acceptable, the
                         // KeyNavigation binding re-evaluates.
                         KeyNavigation.up: index > 0 ? deviceRepeater.itemAt(index - 1) : wakeScope
-                        KeyNavigation.down: index < deviceRepeater.count - 1 ? deviceRepeater.itemAt(index + 1) : null
+                        KeyNavigation.down: index < deviceRepeater.count - 1 ? deviceRepeater.itemAt(index + 1) : focusStartupScope
 
                         // Controller path for "Set as default": Return/Enter on the
                         // focused row toggles that device as the preferred default
