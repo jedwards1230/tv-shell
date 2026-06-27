@@ -28,7 +28,6 @@ MediaWidget 1.0 MediaWidget.qml
 NowPlayingCard 1.0 NowPlayingCard.qml
 NowPlayingStripView 1.0 NowPlayingStripView.qml
 NowPlayingWidget 1.0 NowPlayingWidget.qml
-RecentWidget 1.0 RecentWidget.qml
 DimOverlay 1.0 DimOverlay.qml
 Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
