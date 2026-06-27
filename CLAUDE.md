@@ -55,11 +55,6 @@ shell/                       # QML shell — Quickshell config root (-c game-she
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)
       SettingsButtonGroup.qml#   Horizontal chip selector (D-pad)
       HintBar.qml            #   Bottom-of-page hint text
-      Widget.qml             #   Home-widget base (focus/visibility contract)
-      WidgetRegistry.qml     #   Singleton — ordered home-widget set (id+Component, sorted by persisted order)
-      WidgetHost.qml         #   Instantiates the registry + builds the generic focus chain
-      WidgetManifests.qml    #   Singleton — per-widget manifest data (id/name/version/requires/config schema)
-      widgetConfig.js        #   Pure migrator: legacy flat widget* keys → widgets.<id>.* subtree
       qmldir                 #   lib registry — `module components.lib`
     qmldir                   # Component registry — `module components`
   settings/                  # Settings module (own qmldir — `module shell.settings`)
@@ -79,6 +74,14 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     WidgetList.qml           #   L0 — widget list: order model, reorder/toggle/configure
     WidgetConfig.qml         #   L1 — manifest-driven per-widget config (+ inlined Moonlight)
     qmldir                   #   `module shell.widgets`
+    lib/                     # Widget framework (own qmldir — `module shell.widgets.lib`)
+      Widget.qml             #   Home-widget base (focus/visibility contract)
+      WidgetHost.qml         #   Instantiates the registry + builds the generic focus chain
+      WidgetRegistry.qml     #   Singleton — ordered home-widget set (id+Component, by persisted order)
+      WidgetManifests.qml    #   Singleton — per-widget manifest data (id/name/version/requires/config schema)
+      widgetConfig.js        #   Pure migrator: legacy flat widget* keys → widgets.<id>.* subtree
+      FilterChips.qml        #   Shared chip-strip filter (used by Plex + Moonlight Steam view)
+      qmldir                 #   `module shell.widgets.lib`
     # Reaches shared singletons/atoms via `import "../components"` and the lib
     # via `import "../components/lib"` (same relative-dir mechanism settings/ uses).
 widgets-index.json            # Machine-readable widget catalog (id/name/version/minFrameworkVersion/requires).
@@ -121,7 +124,7 @@ Import convention (verified on-device):
 - **A flat `components/` file** (e.g. `HomeScreen.qml` and the home widgets like
   `MoonlightWidget`/`PlexWidget`/`RecentWidget`/`NowPlayingCard`) accesses **sibling
   `components` types** (`AppCard`, `NavigableRow`, `FocusFrame`, `MarqueeText`,
-  `FilterChips`, `SteamLibraryView`, …) **implicitly** — Quickshell resolves
+  `SteamLibraryView`, …) **implicitly** — Quickshell resolves
   same-directory types, so **no import is needed** for them. Such a file adds **only**
   `import "lib"`, and that solely for the `components.lib` types it uses (e.g.
   `PointerTrackingArea`, `MprisPlayerBase`). **Never add `import "../"` to a flat
@@ -331,7 +334,7 @@ screenshot/deploy automation — no host-management tooling required.
 - **SplitParser reads line-by-line**: Any JSON loaded via `cat` + `SplitParser` must be single-line. Never pretty-print `targets.json` or `settings.json`.
 - **Theme.qml is an Item, not QtObject**: Quickshell 0.3.0 can't host Process/Timer children inside QtObject. The singleton uses Item as its root type.
 - **`image://icon/` for Freedesktop icons**: Use `Image { source: "image://icon/" + iconName }` to load icons from the system theme. Falls back to nothing if the icon doesn't exist — provide a letter-initial fallback.
-- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`. There are **four** registries — flat components go in `components/qmldir` (`module components`); shared library components go in `components/lib/qmldir` (`module components.lib`); settings pages go in `settings/qmldir` (`module shell.settings`); the Widgets app's parts go in `widgets/qmldir` (`module shell.widgets`). Cross-module reach uses relative-dir imports of the target directory's qmldir: a `lib/` file uses `import "../"` to see parent singletons; a page uses `import "lib"` for library types; a **settings or widgets page** uses `import "../components"` (singletons/atoms) + `import "../components/lib"` (lib types). All are the same mechanism — a relative directory import pulls that dir's qmldir types into bare scope (see [Shared Component Library](#shared-component-library-lib)).
+- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`. There are **five** registries — flat components go in `components/qmldir` (`module components`); shared library components go in `components/lib/qmldir` (`module components.lib`); settings pages go in `settings/qmldir` (`module shell.settings`); the Widgets app's parts go in `widgets/qmldir` (`module shell.widgets`); the widget framework (Widget/WidgetHost/WidgetRegistry/WidgetManifests/FilterChips) goes in `widgets/lib/qmldir` (`module shell.widgets.lib`). Cross-module reach uses relative-dir imports of the target directory's qmldir: a `lib/` file uses `import "../"` to see parent singletons; a page uses `import "lib"` for library types; a **settings or widgets page** uses `import "../components"` (singletons/atoms) + `import "../components/lib"` (lib types). All are the same mechanism — a relative directory import pulls that dir's qmldir types into bare scope (see [Shared Component Library](#shared-component-library-lib)).
 - **WAYLAND_DISPLAY may vary**: Usually `wayland-1` but try `wayland-0` if grim/hyprctl fails.
 - **Hyprland instance signature**: Multiple instances may exist in `/run/user/1000/hypr/`; use `tail -1` for the latest.
 - **Theme property renames cascade**: `Theme.text` → `Theme.textPrimary` will also hit `Theme.textDim` producing `Theme.textPrimaryDim`. Replace longest matches first.
@@ -349,4 +352,4 @@ screenshot/deploy automation — no host-management tooling required.
 
   This is a deliberate deviation from the org's PR-label-driven `ai-release.yml` convention: the artifacts are versioned independently within one monorepo, so the tag prefix (not a merged-PR `semver:*` label) selects what to release. Release notes come from `generate_release_notes`.
 
-- **Widget index consistency** (`widgets.yml`, reusable): `scripts/check-widgets-index.py` asserts that `widgets-index.json` is in-sync with `shell/components/lib/WidgetManifests.qml`. **`WidgetManifests.qml` is the authoring SSOT** — update it first, then update `widgets-index.json` to match. The check runs in CI whenever either file (or the script itself) changes; a drift fails the check and blocks merge. A PR that doesn't touch either file skips the check (no wedging). To push a widget release tag: bump `version` in both files, merge to main, then push `widget-<id>-v<X.Y.Z>`.
+- **Widget index consistency** (`widgets.yml`, reusable): `scripts/check-widgets-index.py` asserts that `widgets-index.json` is in-sync with `shell/widgets/lib/WidgetManifests.qml`. **`WidgetManifests.qml` is the authoring SSOT** — update it first, then update `widgets-index.json` to match. The check runs in CI whenever either file (or the script itself) changes; a drift fails the check and blocks merge. A PR that doesn't touch either file skips the check (no wedging). To push a widget release tag: bump `version` in both files, merge to main, then push `widget-<id>-v<X.Y.Z>`.
