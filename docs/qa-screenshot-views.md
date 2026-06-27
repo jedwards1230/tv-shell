@@ -68,7 +68,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | C18 | Stream overlay (`StreamOverlay`) | launching / reconnecting / error | needs active/failing stream |
 | C19 | Error log viewer (`ErrorLogViewer`) | notification center → error log | wtype |
 | C20 | Volume QAM popover (`VolumeOverlay`) | home QuickActions idx 5 → Return; also reachable from the nav drawer; also `intent overlay:volume` (socket) | wtype |
-| C21 | Network QAM popover (`NetworkOverlay`) | home QuickActions idx 4 → Return; also reachable from the nav drawer; also `intent overlay:network` (socket) | wtype |
+| C21 | Network QAM popover (`NetworkOverlay`) | home QuickActions idx 4 → Return; also reachable from the nav drawer; also `intent overlay:network` (socket). On a **wired/ethernet** link it's status-only — the disconnect/disable toggle (and its confirm + divider + "A: Toggle" hint) are hidden so the couch can't strand a wired box; the toggle appears **only on Wi-Fi**. | wtype |
 
 ## D. Settings panel + pages + substates
 | # | View | How to reach / notes |
