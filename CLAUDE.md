@@ -82,8 +82,29 @@ shell/                       # QML shell — Quickshell config root (-c game-she
       widgetConfig.js        #   Pure migrator: legacy flat widget* keys → widgets.<id>.* subtree
       FilterChips.qml        #   Shared chip-strip filter (used by Plex + Moonlight Steam view)
       qmldir                 #   `module shell.widgets.lib`
-    # Reaches shared singletons/atoms via `import "../components"` and the lib
-    # via `import "../components/lib"` (same relative-dir mechanism settings/ uses).
+    moonlight/               # Moonlight widget family (`module shell.widgets.moonlight`)
+      MoonlightWidget.qml    #   Home widget: Moonlight servers + Steam library
+      SteamLibraryView.qml   #   Steam library grid (Steam sidecar)
+      SteamCard.qml          #   Steam game poster card
+      qmldir                 #   `module shell.widgets.moonlight`
+    nowplaying/              # Now Playing widget family (`module shell.widgets.nowplaying`)
+      NowPlayingWidget.qml   #   Home widget: size-switching MPRIS now-playing
+      NowPlayingStripView.qml#   Compact transport strip (small size)
+      qmldir                 #   `module shell.widgets.nowplaying`
+                             #   (NowPlayingCard stays in components/ — shared with MediaWidget/SessionQAM)
+    plex/                    # Plex widget family (`module shell.widgets.plex`)
+      PlexWidget.qml         #   Home widget: Plex On Deck + Recently Added
+      PlexCard.qml           #   Plex poster card
+      qmldir                 #   `module shell.widgets.plex`
+    recent/                  # Recent widget (`module shell.widgets.recent`)
+      RecentWidget.qml       #   Home widget: recently launched apps
+      qmldir                 #   `module shell.widgets.recent`
+    # WidgetsApp/List/Config + lib/ reach shared singletons/atoms via
+    # `import "../components"` and the lib via `import "../components/lib"`.
+    # Each per-widget dir (moonlight/nowplaying/plex/recent) is one level deeper:
+    # `import "../lib"` for the framework, `import "../../components"` for
+    # singletons/atoms, `import "../../components/lib"` for lib types; same-dir
+    # siblings resolve implicitly.
 widgets-index.json            # Machine-readable widget catalog (id/name/version/minFrameworkVersion/requires).
                              # Generated/kept in-sync with WidgetManifests.qml — see SSOT note below.
 config/
@@ -121,16 +142,24 @@ Import convention (verified on-device):
   `SettingsStore`) and sibling atoms (`SettingsButton`) via an **unnamed relative
   import** at the top of the file: `import "../"` — those names then resolve bare,
   exactly as in the flat `components/` module.
-- **A flat `components/` file** (e.g. `HomeScreen.qml` and the home widgets like
-  `MoonlightWidget`/`PlexWidget`/`RecentWidget`/`NowPlayingCard`) accesses **sibling
-  `components` types** (`AppCard`, `NavigableRow`, `FocusFrame`, `MarqueeText`,
-  `SteamLibraryView`, …) **implicitly** — Quickshell resolves
-  same-directory types, so **no import is needed** for them. Such a file adds **only**
-  `import "lib"`, and that solely for the `components.lib` types it uses (e.g.
-  `PointerTrackingArea`, `MprisPlayerBase`). **Never add `import "../"` to a flat
-  `components/` file** — from `components/` that points at `shell/`, not at
-  `components/`, so it does not provide sibling types and is used by no file here
+- **A flat `components/` file** (e.g. `HomeScreen.qml`, `NowPlayingCard.qml`,
+  `MediaWidget.qml`) accesses **sibling `components` types** (`AppCard`,
+  `NavigableRow`, `FocusFrame`, `MarqueeText`, …) **implicitly** — Quickshell
+  resolves same-directory types, so **no import is needed** for them. Such a file
+  adds **only** `import "lib"`, and that solely for the `components.lib` types it
+  uses (e.g. `PointerTrackingArea`, `MprisPlayerBase`). **Never add `import "../"`
+  to a flat `components/` file** — from `components/` that points at `shell/`, not
+  at `components/`, so it does not provide sibling types and is used by no file here
   (verify: `grep -l 'import "\.\./"' shell/components/*.qml` returns nothing).
+- **A per-widget dir** (`widgets/moonlight/`, `widgets/nowplaying/`,
+  `widgets/plex/`, `widgets/recent/`) is two levels under `shell/`. Its files reach
+  the widget framework via `import "../lib"` (`Widget`, `FilterChips`), the flat
+  `components` singletons/atoms via `import "../../components"` (`Theme`, `Units`,
+  `InputMode`, `NavigableRow`, `StreamCard`, `FocusFrame`, …), and `components.lib`
+  types via `import "../../components/lib"` (`ServiceMonitor`, `ServiceStatusNotice`,
+  `PointerTrackingArea`, `MprisPlayerBase`). Types in the **same** widget dir resolve
+  implicitly. (`NowPlayingCard` stays in `components/`, so `nowplaying/` reaches it
+  via `import "../../components"`.)
 - **A `lib/` file reaching a sibling `lib/` type** — a `components.lib` type or
   **singleton** in the same directory (e.g. `WidgetHost.qml` using the
   `WidgetRegistry` singleton, or any lib file using `MprisPlayerBase`) — resolves it
@@ -334,7 +363,7 @@ screenshot/deploy automation — no host-management tooling required.
 - **SplitParser reads line-by-line**: Any JSON loaded via `cat` + `SplitParser` must be single-line. Never pretty-print `targets.json` or `settings.json`.
 - **Theme.qml is an Item, not QtObject**: Quickshell 0.3.0 can't host Process/Timer children inside QtObject. The singleton uses Item as its root type.
 - **`image://icon/` for Freedesktop icons**: Use `Image { source: "image://icon/" + iconName }` to load icons from the system theme. Falls back to nothing if the icon doesn't exist — provide a letter-initial fallback.
-- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`. There are **five** registries — flat components go in `components/qmldir` (`module components`); shared library components go in `components/lib/qmldir` (`module components.lib`); settings pages go in `settings/qmldir` (`module shell.settings`); the Widgets app's parts go in `widgets/qmldir` (`module shell.widgets`); the widget framework (Widget/WidgetHost/WidgetRegistry/WidgetManifests/FilterChips) goes in `widgets/lib/qmldir` (`module shell.widgets.lib`). Cross-module reach uses relative-dir imports of the target directory's qmldir: a `lib/` file uses `import "../"` to see parent singletons; a page uses `import "lib"` for library types; a **settings or widgets page** uses `import "../components"` (singletons/atoms) + `import "../components/lib"` (lib types). All are the same mechanism — a relative directory import pulls that dir's qmldir types into bare scope (see [Shared Component Library](#shared-component-library-lib)).
+- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`. There are **nine** registries — flat components go in `components/qmldir` (`module components`); shared library components go in `components/lib/qmldir` (`module components.lib`); settings pages go in `settings/qmldir` (`module shell.settings`); the Widgets app's parts go in `widgets/qmldir` (`module shell.widgets`); the widget framework (Widget/WidgetHost/WidgetRegistry/WidgetManifests/FilterChips) goes in `widgets/lib/qmldir` (`module shell.widgets.lib`); and each home-widget family owns its own dir + qmldir — `widgets/moonlight/` (`module shell.widgets.moonlight`), `widgets/nowplaying/` (`module shell.widgets.nowplaying`), `widgets/plex/` (`module shell.widgets.plex`), `widgets/recent/` (`module shell.widgets.recent`). Cross-module reach uses relative-dir imports of the target directory's qmldir: a `lib/` file uses `import "../"` to see parent singletons; a page uses `import "lib"` for library types; a **settings or widgets page** uses `import "../components"` (singletons/atoms) + `import "../components/lib"` (lib types). All are the same mechanism — a relative directory import pulls that dir's qmldir types into bare scope (see [Shared Component Library](#shared-component-library-lib)).
 - **WAYLAND_DISPLAY may vary**: Usually `wayland-1` but try `wayland-0` if grim/hyprctl fails.
 - **Hyprland instance signature**: Multiple instances may exist in `/run/user/1000/hypr/`; use `tail -1` for the latest.
 - **Theme property renames cascade**: `Theme.text` → `Theme.textPrimary` will also hit `Theme.textDim` producing `Theme.textPrimaryDim`. Replace longest matches first.
