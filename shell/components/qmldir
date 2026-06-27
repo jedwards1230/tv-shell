@@ -26,8 +26,6 @@ AppCard 1.0 AppCard.qml
 MarqueeText 1.0 MarqueeText.qml
 MediaWidget 1.0 MediaWidget.qml
 NowPlayingCard 1.0 NowPlayingCard.qml
-NowPlayingStripView 1.0 NowPlayingStripView.qml
-NowPlayingWidget 1.0 NowPlayingWidget.qml
 DimOverlay 1.0 DimOverlay.qml
 Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml

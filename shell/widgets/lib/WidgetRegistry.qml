@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import "../../components"
 import "../moonlight"
+import "../nowplaying"
 import "../recent"
 
 // Hand-written home-widget registry (#249 Phase 2/3). The single, ordered source
