@@ -215,7 +215,14 @@ impl Sidecar {
                 .header("Content-Type", "application/json")
                 .body(body.to_string());
         }
-        req.send().await?.error_for_status()?;
+        let resp = req.send().await?.error_for_status()?;
+        // Drain + discard the response under a hard cap so a rogue/compromised
+        // sidecar can't OOM us by streaming an unbounded body. The POST already
+        // succeeded (2xx) and these endpoints' response bodies are irrelevant to
+        // the caller — capping the drain keeps it a real DoS guard, matching
+        // get_json()/get_classified().
+        const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
+        let _ = read_body_capped(resp, MAX_RESPONSE_BYTES).await?;
         Ok(())
     }
 }
