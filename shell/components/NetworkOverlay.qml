@@ -267,7 +267,11 @@ FocusScope {
         // a single intentional block, not two fragments with a gap between them.
         Rectangle {
             Layout.fillWidth: true
-            height: statusCol.implicitHeight + Units.spacingLG * 2
+            // Size via Layout.preferredHeight (not plain `height`) so the parent
+            // ColumnLayout positions the next row (HintBar) below the card — a
+            // plain `height` is not reflected in the layout, which lets the hint
+            // overlap the card.
+            Layout.preferredHeight: statusCol.implicitHeight + Units.spacingLG * 2
             radius: Units.radiusMD
             color: Theme.cardBackground
             border.width: Units.borderThin
@@ -344,7 +348,6 @@ FocusScope {
                     id: speedRow
                     visible: root.device !== ""
                     Layout.fillWidth: true
-                    Layout.topMargin: Units.spacingSM
                     spacing: Units.spacingXL
 
                     Text {
