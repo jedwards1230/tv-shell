@@ -128,6 +128,14 @@ Import convention (verified on-device):
   `components/` file** — from `components/` that points at `shell/`, not at
   `components/`, so it does not provide sibling types and is used by no file here
   (verify: `grep -l 'import "\.\./"' shell/components/*.qml` returns nothing).
+- **A `lib/` file reaching a sibling `lib/` type** — a `components.lib` type or
+  **singleton** in the same directory (e.g. `WidgetHost.qml` using the
+  `WidgetRegistry` singleton, or any lib file using `MprisPlayerBase`) — resolves it
+  **implicitly via same-directory resolution; no `import "."` is needed** (and none
+  is used — `WidgetHost` references `WidgetRegistry` with no `import "."` and renders
+  on-device). Singletons included: a same-directory `pragma Singleton` resolves the
+  same way. `import "../"` from a `lib/` file is **only** for reaching PARENT
+  (`components`) singletons, never for same-`lib` siblings.
 - **A page consumes the library** with `import "lib"` — `lib/` types
   (`SettingsDropdown`, `SettingsButtonGroup`, `HintBar`, …) then resolve bare.
 - Every new `lib/` type must be added to `shell/components/lib/qmldir`.
