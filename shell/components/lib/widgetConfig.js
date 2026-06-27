@@ -102,6 +102,60 @@ function _overlayLegacy(widgets, obj) {
     setSize("recent", "widgetRecentSize");
 }
 
+// === Immutable per-widget config mutators (#249 / #281) ===
+// Each returns a NEW widgets object (deep-cloned), never mutating the input.
+// SettingsStore.setWidget / setWidgetPref / setWidgetOrder delegate here and then
+// REASSIGN `store.widgets` to the result. Reassignment is what fires the QML
+// `widgetsChanged` signal, so every binding reading `SettingsStore.widget(id)`
+// (the HomeScreen recent-suppression catalog, the WidgetRegistry enabled/size/
+// order entries, the Widgets page rows) re-evaluates. An IN-PLACE mutation of the
+// nested object would notify nothing and silently break that live update — keeping
+// the mutation here, behind headless immutability tests (tst_widgetreact.qml),
+// makes that regression impossible to land without a red test.
+//
+// `defaults` is `defaultSubtree(manifests)`; it materialises a fully-defaulted
+// entry only when the id is entirely absent (matching the old setters' `if
+// (!copy[id]) copy[id] = widget(id)` fallback — with no existing entry, widget(id)
+// resolves to exactly the default subtree entry).
+function _ensureWidget(widgets, id, defaults) {
+    if (widgets[id])
+        return;
+    widgets[id] = (defaults && defaults[id]) ? _deepCopy(defaults[id]) : {
+        "enabled": true,
+        "order": 0,
+        "size": "medium",
+        "prefs": {}
+    };
+}
+
+// Set a top-level per-widget key (enabled / order / size).
+function setWidget(widgets, id, key, value, defaults) {
+    var copy = _deepCopy(widgets || {});
+    _ensureWidget(copy, id, defaults);
+    copy[id][key] = value;
+    return copy;
+}
+
+// Set a per-widget pref (under widgets.<id>.prefs).
+function setPref(widgets, id, prefKey, value, defaults) {
+    var copy = _deepCopy(widgets || {});
+    _ensureWidget(copy, id, defaults);
+    if (!copy[id].prefs || typeof copy[id].prefs !== "object")
+        copy[id].prefs = {};
+    copy[id].prefs[prefKey] = value;
+    return copy;
+}
+
+// Reorder: widgets.<id>.order = position for each id in orderedIds.
+function setOrder(widgets, orderedIds, defaults) {
+    var copy = _deepCopy(widgets || {});
+    for (var i = 0; i < orderedIds.length; i++) {
+        _ensureWidget(copy, orderedIds[i], defaults);
+        copy[orderedIds[i]].order = i;
+    }
+    return copy;
+}
+
 // migrate(settingsObj, manifests) → { widgets, changed }.
 //   - If settingsObj.widgets is already a non-empty object: fill any missing
 //     per-widget keys from defaults (so the subtree is always complete) and

@@ -336,45 +336,33 @@ Item {
         return out;
     }
 
-    // Deep-copy the subtree so the reassignment is a distinct object (bindings
-    // reading store.widgets re-fire) and never mutate the live one in place.
-    function _widgetsCopy() {
-        return store.widgets ? JSON.parse(JSON.stringify(store.widgets)) : {};
+    // Default subtree for the setters' "materialise a missing entry" fallback.
+    function _widgetDefaults() {
+        return WidgetConfig.defaultSubtree(WidgetManifests.manifests);
     }
+
+    // The widget-config setters delegate the immutable update to widgetConfig.js
+    // (one tested place — see its "Immutable per-widget config mutators" block),
+    // then REASSIGN store.widgets to the returned NEW object. Reassignment is what
+    // fires widgetsChanged so every binding reading widget(id) re-evaluates; an
+    // in-place mutation would notify nothing. tst_widgetreact.qml guards this.
 
     // Set a top-level per-widget key (enabled / order / size), then persist.
     function setWidget(id, key, value) {
-        var copy = store._widgetsCopy();
-        if (!copy[id])
-            copy[id] = store.widget(id);
-        copy[id][key] = value;
-        store.widgets = copy;
+        store.widgets = WidgetConfig.setWidget(store.widgets, id, key, value, store._widgetDefaults());
         store.save();
     }
 
     // Set a per-widget pref (under widgets.<id>.prefs), then persist.
     function setWidgetPref(id, prefKey, value) {
-        var copy = store._widgetsCopy();
-        if (!copy[id])
-            copy[id] = store.widget(id);
-        if (!copy[id].prefs || typeof copy[id].prefs !== "object")
-            copy[id].prefs = {};
-        copy[id].prefs[prefKey] = value;
-        store.widgets = copy;
+        store.widgets = WidgetConfig.setPref(store.widgets, id, prefKey, value, store._widgetDefaults());
         store.save();
     }
 
     // Reorder: assign widgets.<id>.order = position for each id in orderedIds,
     // then persist once. Used by the Widgets page reorder UI.
     function setWidgetOrder(orderedIds) {
-        var copy = store._widgetsCopy();
-        for (var i = 0; i < orderedIds.length; i++) {
-            var id = orderedIds[i];
-            if (!copy[id])
-                copy[id] = store.widget(id);
-            copy[id].order = i;
-        }
-        store.widgets = copy;
+        store.widgets = WidgetConfig.setOrder(store.widgets, orderedIds, store._widgetDefaults());
         store.save();
     }
 
