@@ -234,8 +234,14 @@ FocusScope {
             // Widgets (index 2)
             // No freedesktop "widgets" action icon exists, and game-client-1 has
             // no system icon theme anyway — so this is glyph-only (iconPath: ""),
-            // exactly like the Theme toggle. The ▦ grid glyph matches the nav
-            // drawer's Widgets entry so the two affordances read as the same thing.
+            // exactly like the Theme toggle. Use ⊞ (U+229E SQUARED PLUS) — a
+            // square split into four tiles, the "grid-view / app-tiles" reading
+            // for Widgets. It's a Mathematical Operators glyph (same family the
+            // sibling symbol glyphs ⚙/♫/⏻ come from), so it renders at a
+            // consistent weight and sits centered in its slot — unlike the old
+            // ▦ (U+25A6), a Geometric-Shapes box that the font draws undersized
+            // and off-baseline next to the others. No glyphOffsetY needed: like
+            // the other siblings (only the low-sitting ☾/☀/◐ theme glyph nudges).
             QuickActionButton {
                 id: widgetsGlyph
                 index: 2
@@ -244,7 +250,7 @@ FocusScope {
                 iconSize: root.iconSize
                 imgSize: root.imgSize
                 iconPath: ""
-                fallbackGlyph: "\u{25A6}"
+                fallbackGlyph: "\u{229E}"
                 fallbackColor: widgetsGlyph.hovered && InputMode.mouseMode ? Theme.textPrimary : Theme.textMuted
                 a11yName: root._labels[2]
                 onActivated: root.widgetsRequested()
