@@ -212,9 +212,9 @@ FocusScope {
             if (root._confirmStep === 1 && root._focusRow === 0)
                 root._focusRow = 1;
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.isWired) {
-                // Wired link: no disable affordance — A is a no-op.
-            } else if (root._focusRow === 0) {
+            if (root.isWired)
+            // Wired link: no disable affordance — A is a no-op.
+            {} else if (root._focusRow === 0) {
                 // Toggle row — A activates
                 if (root.ifaceUp) {
                     // First press enters confirm step
