@@ -32,18 +32,9 @@ Item {
     readonly property bool reduceMotion: SettingsStore.reduceMotion  // #109
     readonly property real textScale: SettingsStore.textScale          // #110
 
-    // === Home-screen widget toggles (persisted via SettingsStore) ===
-    readonly property bool widgetSpotifyEnabled: SettingsStore.widgetSpotifyEnabled
-    readonly property string widgetSpotifySize: SettingsStore.widgetSpotifySize
-    readonly property bool widgetSpotifyHideFromRecent: SettingsStore.widgetSpotifyHideFromRecent
-    readonly property bool widgetPlexEnabled: SettingsStore.widgetPlexEnabled
-    readonly property string widgetPlexSize: SettingsStore.widgetPlexSize
-    readonly property bool widgetPlexHideFromRecent: SettingsStore.widgetPlexHideFromRecent
-    readonly property bool widgetRecentEnabled: SettingsStore.widgetRecentEnabled
-    readonly property string widgetRecentSize: SettingsStore.widgetRecentSize
-    readonly property bool widgetMoonlightEnabled: SettingsStore.widgetMoonlightEnabled
-    // "small" (server cards) | "medium" (smaller Steam posters) | "large" (full Steam posters)
-    readonly property string widgetMoonlightSize: SettingsStore.widgetMoonlightSize
+    // Home-screen widget config moved to the namespaced widgets.<id>.* subtree
+    // (#249 Phase 3) — read it via SettingsStore.widget(id), not Theme. The flat
+    // per-widget passthroughs were removed.
     property int _currentHour: new Date().getHours()
 
     // === Auto theme schedule (#231, persisted via SettingsStore) ===

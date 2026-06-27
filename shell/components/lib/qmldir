@@ -27,4 +27,5 @@ StatusPill 1.0 StatusPill.qml
 VolumeBar 1.0 VolumeBar.qml
 Widget 1.0 Widget.qml
 WidgetHost 1.0 WidgetHost.qml
+singleton WidgetManifests 1.0 WidgetManifests.qml
 singleton WidgetRegistry 1.0 WidgetRegistry.qml

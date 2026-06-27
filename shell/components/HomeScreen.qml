@@ -36,7 +36,7 @@ FocusScope {
 
     // Recent (apps) size: small = icon-only square tiles (label dropped),
     // medium = full icon + label cards. A reformat, not a scale.
-    readonly property bool _recentSmall: Theme.widgetRecentSize === "small"
+    readonly property bool _recentSmall: SettingsStore.widget("recent").size === "small"
 
     readonly property var _batteryPad: {
         var best = null;
@@ -338,69 +338,45 @@ FocusScope {
         });
     }
 
-    // === Data-driven widget catalog (#249 follow-up) ===
-    // One descriptor per home widget, pairing its identity + persisted config
-    // (enabled / size) with its live `region` and — for widgets that shadow a
-    // running window — a generalized `hideFromRecent` capability (matcher +
-    // user toggle). HomeScreen drives Recent-row suppression and the Widgets
-    // settings page from this list instead of bespoke per-widget code; adding a
-    // shadowing widget is just another descriptor entry. `configSurface` names
-    // a Settings deep-link target for widgets needing richer config (Moonlight
-    // server management). The focus chain is now built generically by WidgetHost;
-    // this descriptor is additive metadata (recents suppression), reading the live
-    // widget instances via the widgetById aliases.
+    // === Hide-from-Recent descriptors (#249 follow-up) ===
+    // One descriptor per home widget that may SHADOW a running window, pairing its
+    // id with a generalized `hideFromRecent` capability (matcher + user toggle).
+    // HomeScreen drives Recent-row suppression from this list (see _recentModel);
+    // adding a shadowing widget is just another entry. The user toggle now reads
+    // the namespaced widgets.<id>.prefs.hideFromRecent. The focus chain is built
+    // generically by WidgetHost; this is additive metadata only, reading the live
+    // widget instances via the widgetById aliases. moonlight/recent don't shadow a
+    // window (hideFromRecent: null).
     readonly property var _widgets: [
         {
             "id": "moonlight",
-            "name": "Moonlight",
-            "region": root.moonlightWidget,
-            "enabled": Theme.widgetMoonlightEnabled,
-            "size": Theme.widgetMoonlightSize,
-            "hideFromRecent": null,
-            "configSurface": {
-                "settingsId": "moonlight"
-            }
+            "hideFromRecent": null
         },
         {
             "id": "nowplaying",
-            "name": "Now Playing",
-            "region": root.nowPlayingWidget,
-            "enabled": Theme.widgetSpotifyEnabled,
-            "size": Theme.widgetSpotifySize,
             "hideFromRecent": {
                 "capable": true,
-                "enabled": Theme.widgetSpotifyHideFromRecent,
+                "enabled": SettingsStore.widget("nowplaying").prefs.hideFromRecent,
                 // true ⇒ this Recent entry is the player the widget represents.
                 "matches": function (e) {
                     var np = root.nowPlayingWidget;
                     return np && np.visible && (np.playerDesktopEntry !== "" || np.playerIdentity !== "") && root._entryIsActivePlayer(e, np.playerDesktopEntry, np.playerIdentity);
                 }
-            },
-            "configSurface": null
+            }
         },
         {
             "id": "plex",
-            "name": "Plex",
-            "region": root.plexWidget,
-            "enabled": Theme.widgetPlexEnabled,
-            "size": Theme.widgetPlexSize,
             "hideFromRecent": {
                 "capable": true,
-                "enabled": Theme.widgetPlexHideFromRecent,
+                "enabled": SettingsStore.widget("plex").prefs.hideFromRecent,
                 "matches": function (e) {
                     return root.plexWidget && root.plexWidget.visible && root._entryIsPlex(e);
                 }
-            },
-            "configSurface": null
+            }
         },
         {
             "id": "recent",
-            "name": "Recent",
-            "region": root.recentWidget,
-            "enabled": Theme.widgetRecentEnabled,
-            "size": Theme.widgetRecentSize,
-            "hideFromRecent": null,
-            "configSurface": null
+            "hideFromRecent": null
         }
     ]
 
