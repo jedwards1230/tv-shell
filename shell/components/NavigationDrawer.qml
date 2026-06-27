@@ -10,6 +10,7 @@ Drawer {
     property bool overlayMode: false
 
     signal settingsRequested
+    signal widgetsSelected
     signal notificationCenterRequested
     signal powerRequested
     signal networkRequested(var anchorRect)
@@ -84,6 +85,11 @@ Drawer {
                     label: "Home",
                     icon: "\u{1F3E0}",
                     action: "home"
+                },
+                {
+                    label: "Widgets",
+                    icon: "\u{25A6}",
+                    action: "widgets"
                 }
             ]
             focus: true
@@ -216,6 +222,9 @@ Drawer {
         switch (items[index].action) {
         case "home":
             root.homeSelected();
+            break;
+        case "widgets":
+            root.widgetsSelected();
             break;
         }
     }

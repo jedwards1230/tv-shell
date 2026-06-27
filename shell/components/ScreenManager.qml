@@ -24,11 +24,12 @@ QtObject {
     // Wired by the host — the manager toggles these, never creates them.
     property var libraryScreen
     property var settingsApp
+    property var widgetsScreen
     property var homeFocusTimer   // host's debounced "refocus Home" timer
 
     // Which screen owns the secondary layer. Informational single-source-of-truth
     // for now (no binding depends on it yet) + a hook for future screens.
-    property string active: "home"   // "home" | "library" | "settings"
+    property string active: "home"   // "home" | "library" | "settings" | "widgets"
     signal screenChanged(string id)
 
     // push(id, params) — show a secondary screen.
@@ -55,6 +56,17 @@ QtObject {
             screenChanged(active);
             return true;
         }
+        if (id === "widgets") {
+            widgetsScreen.visible = true;
+            widgetsScreen.forceActiveFocus();
+            if (params && params.target)
+                widgetsScreen.applyDeepTarget(params.target);
+            else
+                widgetsScreen.focusFirst();
+            active = "widgets";
+            screenChanged(active);
+            return true;
+        }
         popToHome();
         return true;
     }
@@ -68,6 +80,8 @@ QtObject {
             settingsApp.close();
         if (libraryScreen)
             libraryScreen.visible = false;
+        if (widgetsScreen)
+            widgetsScreen.visible = false;
         active = "home";
         screenChanged(active);
         if (refocus !== false && homeFocusTimer)
