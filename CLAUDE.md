@@ -49,7 +49,7 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     SettingsEmptyState.qml   # Reusable empty-state card
     MarqueeText.qml          # Scrolling text for long names
     Drawer.qml               # Reusable slide-in drawer (any edge)
-    NavigationDrawer.qml     # Left nav drawer (Home, Settings)
+    NavigationDrawer.qml     # Left nav drawer (Home + QuickActions row; Widgets via the QuickAction)
     StreamOverlay.qml        # Reconnecting/error overlay
     lib/                     # Shared reusable component library (own qmldir module)
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)

@@ -80,16 +80,13 @@ Drawer {
             id: navList
             Layout.fillWidth: true
             Layout.preferredHeight: contentHeight
+            // Widgets is reached via the QuickActions row below (idx 2) / the
+            // `intent settings:widgets` path — no redundant drawer row for it.
             model: [
                 {
                     label: "Home",
                     icon: "\u{1F3E0}",
                     action: "home"
-                },
-                {
-                    label: "Widgets",
-                    icon: "\u{25A6}",
-                    action: "widgets"
                 }
             ]
             focus: true
@@ -226,9 +223,6 @@ Drawer {
         switch (items[index].action) {
         case "home":
             root.homeSelected();
-            break;
-        case "widgets":
-            root.widgetsSelected();
             break;
         }
     }

@@ -14,9 +14,9 @@ are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 ## Home screen index map (QuickActions, top-right)
 
 `0=Notifications, 1=Settings, 2=Widgets, 3=Theme toggle, 4=Network, 5=Volume, 6=Power`.
-The Widgets glyph (▦, index 2) opens the Widgets app (same target as the nav-drawer
-Widgets entry); it's glyph-only (no system icon theme on game-client-1), matching the
-drawer's ▦. Left/Right move; Return activates; Down drops focus into the content regions below.
+The Widgets glyph (⊞, index 2) opens the Widgets app — the **only** entry point for
+it in the chrome now (the redundant nav-drawer Widgets row was removed). It's
+glyph-only (no system icon theme on game-client-1). Left/Right move; Return activates; Down drops focus into the content regions below.
 **Focus does not always start on this row** — with Continue/New content present it
 starts on a card, so press **Up** first to reach the QuickActions row before
 Left/Right.
@@ -35,7 +35,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | A2 | Now Playing — medium | MPRIS active, size = medium (default) | `MediaWidget` card: cover art + progress bar + transport row |
 | A3 | Now Playing — small | MPRIS active, size = small (Widgets page ▸ Now Playing) | `NowPlayingStrip` slim strip; both sizes collapse when nothing plays |
 | A4 | Plex Recently Added — dynamic chips | Plex healthy, ≥2 media categories present | `FilterChips` show All + only categories present (no Music pill on a music-less library); re-filter live on item `kind` |
-| A4b | Widgets app — list (L0) + config (L1) | nav drawer ▸ Widgets, QuickActions ▸ Widgets (idx 2), or `intent settings:widgets` (socket, rerouted) | The **Widgets app** (`WidgetsApp`, `shell.widgets` module — peer of Home/Library/Settings, no longer a Settings sidebar page). Schema-driven from the per-widget manifests. **L0 (`WidgetList`)**: rows (Moonlight/Now Playing/Plex/Recent) sorted by saved order, each one focus stop — **A** opens that widget's config (drill into L1), **X** toggles enable/disable in place, **←/→** reorder the widget (persists `widgets.<id>.order`, plasma-bigscreen style). **L1 (`WidgetConfig`)**: the Enabled toggle + manifest controls (Size + prefs like Hide-from-Recent, and — Moonlight only — the full server-management surface inlined below Size). **B** steps back (config → list → Home). Hint bar reads `A: Configure   X: Enable/Disable   ←→: Reorder   B: Back`. |
+| A4b | Widgets app — list (L0) + config (L1) | QuickActions ▸ Widgets (idx 2) or `intent settings:widgets` (socket, rerouted) — no longer a nav-drawer row | The **Widgets app** (`WidgetsApp`, `shell.widgets` module — peer of Home/Library/Settings, no longer a Settings sidebar page). Schema-driven from the per-widget manifests. **L0 (`WidgetList`)**: rows (Moonlight/Now Playing/Plex/Recent) sorted by saved order, each one focus stop — **A** opens that widget's config (drill into L1), **X** toggles enable/disable in place, **←/→** reorder the widget (persists `widgets.<id>.order`, plasma-bigscreen style). **L1 (`WidgetConfig`)**: the Enabled toggle + manifest controls (Size + prefs like Hide-from-Recent, and — Moonlight only — the full server-management surface inlined below Size). **B** steps back (config → list → Home). Hint bar reads `A: Configure   X: Enable/Disable   ←→: Reorder   B: Back`. |
 | A5 | All Apps entry | always present | single tile; A → opens the Library surface (A12) |
 | A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on the All Apps entry (never strands) |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
