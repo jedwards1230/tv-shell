@@ -1271,20 +1271,28 @@ drives the bus.
 **Response:** A compact single-line JSON object:
 
 ```json
-{"transmit":"ok","since":1719500000000,"lastError":null}
+{"transmit":"ok","reason":null,"since":1719500000000,"lastError":null}
 ```
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `transmit` | string | `"ok"` (last transmit succeeded), `"failing"` (last transmit returned `TransmitFailed`), or `"unknown"` (none attempted yet / indeterminate) |
-| `since` | number | Epoch **milliseconds** (UTC) of the last state CHANGE |
-| `lastError` | string \| null | The last transmit error string while `failing`, else `null` |
+| `transmit` | string | `"ok"` (last transmit succeeded), `"failing"` (last transmit returned `TransmitFailed`), `"unknown"` (none attempted yet / indeterminate), or `"unavailable"` (the adapter isn't open — see `reason`) |
+| `reason` | string \| null | `null` whenever the adapter is **open** (`transmit` ∈ {ok,failing,unknown}); otherwise the unavailable cause: `"no_libcec"` (daemon built without `--features cec`, or non-Linux), `"no_adapter"` (libcec found ZERO adapters — no hardware), or `"adapter_open_failed"` (an adapter IS present but the libcec open handshake failed — the hardware "wedge"; the actionable truth is "adapter detected but not responding — re-seat it") |
+| `since` | number | Epoch **milliseconds** (UTC) of the last state CHANGE (`0` for the static `no_libcec` reply) |
+| `lastError` | string \| null | The last transmit error string while `failing`, else `null` (always `null` when `unavailable`) |
 
 The health state is also refreshed automatically as a side effect of `cec-scan`
 (so the QML 30s scan poll keeps the line fresh), and a `cec:health:<json>` event
-is broadcast whenever the state changes. Feature/platform off: `error:unsupported
-on this platform\n`; actor present but libcec unavailable: `error:libcec
-unavailable\n`.
+is broadcast whenever the state changes — including once when the libcec open
+handshake fails, carrying `transmit:"unavailable"` + the `reason`.
+
+For `cec-health` and `cec-test` the unavailable cases now return this **structured
+JSON** (`{"transmit":"unavailable","reason":…}`) instead of the old bare
+`error:libcec unavailable\n` / `error:unsupported on this platform\n` — so the AV
+Control page can show an accurate per-cause message. The other CEC commands
+(`cec-scan` / `cec-device` / `cec-power-on` / `cec-power-off` /
+`cec-active-source`) still reply the bare `error:unsupported on this platform\n`
+(feature/platform off) or `error:libcec unavailable\n` (adapter absent/wedged).
 
 ### `cec-test` (#19)
 
@@ -1293,9 +1301,11 @@ Message>` to the TV at logical addr 0 — no power/input change), update the
 transmit-health, broadcast `cec:health` if it changed, and reply with the same
 JSON object as `cec-health`. This is the "Test CEC" button's backend.
 
-**Response:** The health JSON object (same shape as `cec-health`). Feature/platform
-off: `error:unsupported on this platform\n`; actor present but libcec unavailable:
-`error:libcec unavailable\n`.
+**Response:** The health JSON object (same shape as `cec-health`, including the
+`reason` field). When the adapter isn't open it returns the same structured
+`{"transmit":"unavailable","reason":…}` object as `cec-health` (`no_libcec` when
+the feature/platform is off, `no_adapter` / `adapter_open_failed` when the open
+handshake failed) — not a bare `error:` line.
 
 ### Session-lifecycle CEC (`[cec] lifecycle`)
 
@@ -1905,14 +1915,15 @@ live without re-polling.
 |-------|---------|---------|
 | `cec:device:<json>` | A CEC device was discovered or updated (emitted per device after a `cec-scan` and after a `cec-device`) | `{"logicalAddress":N,"powerStatus":"<word>"}` (same shape as a `cec-scan` element) |
 | `cec:power:<json>` | A CEC device's power status changed (emitted after `cec-power-on` / `cec-power-off`) | `{"addr":"N","power":"<word>"}` — `addr` is the wire string the command received; `<word>` is `on`/`standby`/`waking`/`sleeping`/`unknown` |
-| `cec:health:<json>` (#19) | The CEC transmit-wedge health state CHANGED (broadcast only on a real transition — from a transmit op, the `cec-scan` side-effect refresh, or `cec-test` — not on every probe) | `{"transmit":"ok"\|"failing"\|"unknown","since":N,"lastError":"…"\|null}` (same shape as the `cec-health` reply) |
+| `cec:health:<json>` (#19) | The CEC transmit-wedge health state CHANGED (broadcast only on a real transition — from a transmit op, the `cec-scan` side-effect refresh, or `cec-test` — not on every probe), **plus** once when the libcec open handshake fails (carrying `transmit:"unavailable"` + the `reason`) | `{"transmit":"ok"\|"failing"\|"unknown"\|"unavailable","reason":<null\|"no_libcec"\|"no_adapter"\|"adapter_open_failed">,"since":N,"lastError":"…"\|null}` (same shape as the `cec-health` reply; `reason` is `null` while the adapter is open) |
 
 Example wire lines:
 
 ```
 cec:device:{"logicalAddress":0,"powerStatus":"on"}
 cec:power:{"addr":"5","power":"on"}
-cec:health:{"transmit":"failing","since":1719500000000,"lastError":"active-source failed: TransmitFailed"}
+cec:health:{"transmit":"failing","reason":null,"since":1719500000000,"lastError":"active-source failed: TransmitFailed"}
+cec:health:{"transmit":"unavailable","reason":"adapter_open_failed","since":1719500000000,"lastError":null}
 ```
 
 ### Config Live-Reload

@@ -517,10 +517,33 @@ fn standby_all(conn: &cec_rs::CecConnection, events_tx: &broadcast::Sender<Event
 // Blocking worker: owns the CecConnection for its lifetime.
 // ---------------------------------------------------------------------------
 
-/// Reply `error:libcec unavailable` to every pending request, then return.
-/// Used when libcec can't be initialised so a missing/asleep adapter never
-/// wedges a client (mirrors `power.rs`'s drain-on-unavailable).
-fn drain_unavailable(rx: &std_mpsc::Receiver<WorkerReq>) {
+/// Map a libcec open-handshake failure to the wire `reason` word surfaced on the
+/// AV Control page (#19 follow-up). `open()` runs `libcec_detect_adapters`
+/// internally and returns `NoAdapterFound` when ZERO adapters are present (no
+/// hardware) versus `AdapterOpenFailed` when an adapter IS found but
+/// `libcec_open` fails — the hardware "wedge" where the actionable truth is
+/// "adapter detected but not responding — re-seat it", NOT "no adapter".
+///
+/// `LibInitFailed` / `CallbackRegistrationFailed` (and the earlier
+/// `builder.build()` failure, handled by passing the constant directly) all mean
+/// libcec is present but the connection couldn't be brought up, so they map to
+/// `adapter_open_failed` too. `TransmitFailed` can't occur on open (it's a
+/// transmit-time error) but falls into the same bucket defensively.
+fn open_failure_reason(e: &cec_rs::CecConnectionResultError) -> &'static str {
+    match e {
+        cec_rs::CecConnectionResultError::NoAdapterFound => "no_adapter",
+        _ => "adapter_open_failed",
+    }
+}
+
+/// Reply to every pending request when libcec can't be brought up so a
+/// missing/wedged adapter never wedges a client (mirrors `power.rs`'s
+/// drain-on-unavailable). `reason` is the structured open-failure reason word
+/// (`no_adapter` / `adapter_open_failed`): `Health` and `Test` requests get the
+/// STRUCTURED unavailable JSON (`{transmit:"unavailable",reason,…}`) so the AV
+/// Control page can show an accurate per-case message; every OTHER request kind
+/// keeps the bare `error:libcec unavailable` line.
+fn drain_unavailable(rx: &std_mpsc::Receiver<WorkerReq>, reason: &str) {
     while let Ok(req) = rx.recv() {
         let err = protocol::resp_error("libcec unavailable");
         match req {
@@ -545,11 +568,14 @@ fn drain_unavailable(rx: &std_mpsc::Receiver<WorkerReq>) {
             WorkerReq::StandbyAll(tx) => {
                 let _ = tx.send(err);
             }
+            // Health/Test get the structured unavailable reply (with the reason),
+            // not the bare error, so the page distinguishes no_adapter from
+            // adapter_open_failed.
             WorkerReq::Health(tx) => {
-                let _ = tx.send(err);
+                let _ = tx.send(protocol::cec_unavailable_json(reason, now_millis()));
             }
             WorkerReq::Test(tx) => {
-                let _ = tx.send(err);
+                let _ = tx.send(protocol::cec_unavailable_json(reason, now_millis()));
             }
             WorkerReq::Shutdown => break,
         }
@@ -600,10 +626,20 @@ fn blocking_worker(
     let cfg = match builder.build() {
         Ok(c) => c,
         Err(e) => {
+            // A build failure means libcec is present but the connection couldn't
+            // be brought up, so it's the `adapter_open_failed` ("re-seat it")
+            // class — same actionable message as a failed open.
+            let reason = "adapter_open_failed";
             tracing::warn!(
-                "cec: failed to build CecConnectionCfg ({e:?}); replying error to all requests"
+                "cec: failed to build CecConnectionCfg ({e:?}); replying unavailable ({reason}) to all requests"
             );
-            drain_unavailable(&rx);
+            // Broadcast once so subscribers (the AV Control page) update promptly
+            // without waiting for a Health/Test request.
+            let _ = events_tx.send(Event::CecHealth(protocol::cec_unavailable_json(
+                reason,
+                now_millis(),
+            )));
+            drain_unavailable(&rx, reason);
             return;
         }
     };
@@ -612,10 +648,19 @@ fn blocking_worker(
     let mut conn = match cfg.open() {
         Ok(c) => c,
         Err(e) => {
+            // Distinguish "no hardware" (NoAdapterFound) from "adapter present but
+            // won't open" (AdapterOpenFailed, the Pulse-Eight wedge) so the page
+            // shows the right message. open() runs libcec_detect_adapters first.
+            let reason = open_failure_reason(&e);
             tracing::warn!(
-                "cec: failed to open libcec connection ({e:?}); replying error to all requests"
+                "cec: failed to open libcec connection ({e:?}); replying unavailable ({reason}) to all requests"
             );
-            drain_unavailable(&rx);
+            // Broadcast once so subscribers update promptly (no Health/Test wait).
+            let _ = events_tx.send(Event::CecHealth(protocol::cec_unavailable_json(
+                reason,
+                now_millis(),
+            )));
+            drain_unavailable(&rx, reason);
             return;
         }
     };
