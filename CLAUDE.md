@@ -110,6 +110,16 @@ Import convention (verified on-device):
   `SettingsStore`) and sibling atoms (`SettingsButton`) via an **unnamed relative
   import** at the top of the file: `import "../"` — those names then resolve bare,
   exactly as in the flat `components/` module.
+- **A flat `components/` file** (e.g. `HomeScreen.qml` and the home widgets like
+  `MoonlightWidget`/`PlexWidget`/`RecentWidget`/`NowPlayingCard`) accesses **sibling
+  `components` types** (`AppCard`, `NavigableRow`, `FocusFrame`, `MarqueeText`,
+  `FilterChips`, `SteamLibraryView`, …) **implicitly** — Quickshell resolves
+  same-directory types, so **no import is needed** for them. Such a file adds **only**
+  `import "lib"`, and that solely for the `components.lib` types it uses (e.g.
+  `PointerTrackingArea`, `MprisPlayerBase`). **Never add `import "../"` to a flat
+  `components/` file** — from `components/` that points at `shell/`, not at
+  `components/`, so it does not provide sibling types and is used by no file here
+  (verify: `grep -l 'import "\.\./"' shell/components/*.qml` returns nothing).
 - **A page consumes the library** with `import "lib"` — `lib/` types
   (`SettingsDropdown`, `SettingsButtonGroup`, `HintBar`, …) then resolve bare.
 - Every new `lib/` type must be added to `shell/components/lib/qmldir`.
