@@ -73,6 +73,8 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     qmldir                   #   `module shell.settings`
     # Pages reach shared singletons/atoms via `import "../components"` and the
     # lib via `import "../components/lib"` (same relative-dir mechanism lib/ uses).
+widgets-index.json            # Machine-readable widget catalog (id/name/version/minFrameworkVersion/requires).
+                             # Generated/kept in-sync with WidgetManifests.qml — see SSOT note below.
 config/
   hyprland.conf               # Generic monitor default + `source` hook for a per-machine override
   hyprland.conf.example       # Machine-specific display example (LG C2/Denon HDR) → ~/.config/game-shell/hyprland-local.conf
@@ -91,6 +93,7 @@ scripts/
   install-deps.sh             # Distro-aware system dependency installer
   game-shell-session.sh       # Session wrapper launched by SDDM
   super-intent.sh             # Hyprland Super binds -> intents (Super=menu/drawer, +Escape=home, +Backspace=reset, +Right=overlay:session)
+  check-widgets-index.py      # Consistency check: asserts widgets-index.json mirrors WidgetManifests.qml (run by CI)
 ```
 
 ### Shared Component Library (`lib/`)
@@ -297,8 +300,11 @@ screenshot/deploy automation — no host-management tooling required.
 - **QML formatting** (`lint.yml`, reusable): `qmlformat` (Qt 6.8). On PRs, unformatted files are auto-fixed and pushed (needs `contents: write` + `secrets: inherit`, passed by `ci.yml`). On main, unformatted files fail the check.
 - **Rust CI** (`rust.yml` / `host.yml`, reusable): `rust.yml` builds/lints/tests the daemon (`game-shell-input`) on Linux — a default leg plus a `--features cec` leg (static-libcec, on `rust:1-trixie`). `host.yml` builds/lints/tests the cross-platform host + protocol crates on Linux/macOS/Windows. Both stay `-p`-scoped so the daemon's Linux-only graph never leaks into the host's cross-platform build; `ci.yml`'s change detection (not per-workflow `paths:`) decides whether each runs, so a QML-only PR triggers neither.
 - **Headless QML tests** (`qml-test.yml`, reusable): `qmltestrunner` under `QT_QPA_PLATFORM=offscreen` runs the layout/navigation suite in `tests/qml/` (see `tests/qml/README.md`).
-- **Releases — per-binary tags**: artifacts are released by pushing a per-binary tag, not on merge-to-main:
+- **Releases — three independent tag streams**: releases are triggered by pushing a version tag, not on merge-to-main. There are three independent streams:
   - `host-v<semver>` → `release-host.yml` builds `game-shell-host` for linux-musl / macOS (arm64+x86_64) / windows and publishes one Release with all binaries + `checksums.txt`. Consumed by the homelab `desktop-common` Ansible role (`install_method: fetch`).
   - `input-v<semver>` → `release-input.yml` builds `game-shell-input` (`--features cec,mcp`, linux-gnu) and publishes its binary + `checksums.txt`.
+  - `widget-<id>-v<semver>` → `release-widget.yml` publishes a notes-only GitHub Release for the named widget. No binary is built — QML is interpreted at runtime. The workflow validates that `<id>` exists in `widgets-index.json` and that `<semver>` matches its recorded version before publishing. Example: `widget-moonlight-v1.1.0`.
 
-  This is a deliberate deviation from the org's PR-label-driven `ai-release.yml` convention: the two binaries are versioned independently within one monorepo, so the tag prefix (not a merged-PR `semver:*` label) selects what to build. Release notes come from `generate_release_notes`.
+  This is a deliberate deviation from the org's PR-label-driven `ai-release.yml` convention: the artifacts are versioned independently within one monorepo, so the tag prefix (not a merged-PR `semver:*` label) selects what to release. Release notes come from `generate_release_notes`.
+
+- **Widget index consistency** (`widgets.yml`, reusable): `scripts/check-widgets-index.py` asserts that `widgets-index.json` is in-sync with `shell/components/lib/WidgetManifests.qml`. **`WidgetManifests.qml` is the authoring SSOT** — update it first, then update `widgets-index.json` to match. The check runs in CI whenever either file (or the script itself) changes; a drift fails the check and blocks merge. A PR that doesn't touch either file skips the check (no wedging). To push a widget release tag: bump `version` in both files, merge to main, then push `widget-<id>-v<X.Y.Z>`.
