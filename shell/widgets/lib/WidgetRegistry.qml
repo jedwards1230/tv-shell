@@ -1,6 +1,6 @@
 pragma Singleton
 import QtQuick
-import "../"
+import "../../components"
 
 // Hand-written home-widget registry (#249 Phase 2/3). The single, ordered source
 // of truth for which standardized widgets the home screen renders. NOT codegen —

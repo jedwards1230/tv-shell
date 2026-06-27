@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import components.lib
-import "../../shell/components/lib/widgetConfig.js" as WidgetConfig
+import "../../shell/widgets/lib/widgetConfig.js" as WidgetConfig
 
 // Regression guard for namespaced widget-config reactivity (#249 Phase 3, #281).
 //

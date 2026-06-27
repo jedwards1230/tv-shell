@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "lib"
+import "../widgets/lib"
 
 // Home screen — the "glance + jump back in" overview (#249), composed of
 // standardized, individually-toggleable, individually-sized home widgets. The

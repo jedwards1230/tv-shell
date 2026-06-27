@@ -1,8 +1,8 @@
 pragma Singleton
 import Quickshell.Io
 import QtQuick
-import "lib"
-import "lib/widgetConfig.js" as WidgetConfig
+import "../widgets/lib"
+import "../widgets/lib/widgetConfig.js" as WidgetConfig
 
 // Centralized settings I/O for game-shell — the QML-side façade over
 // ~/.config/game-shell/settings.json.

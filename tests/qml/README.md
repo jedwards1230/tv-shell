@@ -71,7 +71,7 @@ Currently covered: `QuickActions` (+ real `QuickActionButton`, `CountBadge`),
 config migrator `widgetConfig.js` (`tst_widgetmigrate.qml`).
 
 The migrator test imports the **real** `widgetConfig.js` by source path
-(`../../shell/components/lib/widgetConfig.js`, a pure `.pragma library` module) and
+(`../../shell/widgets/lib/widgetConfig.js`, a pure `.pragma library` module) and
 the **real** `WidgetManifests` singleton (copied into the assembled `components.lib`
 module by `run.sh`, since it is pure-data with no Quickshell imports). That keeps
 the migration invariants (fresh-install defaults, legacy flat-key preservation,

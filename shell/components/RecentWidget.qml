@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "lib"
+import "../widgets/lib"
 
 // Home-screen Recent (apps) widget (#249) — the "Recent" header + a horizontal
 // rail of recently-used / running apps. Extends Widget (a FocusScope hosting the

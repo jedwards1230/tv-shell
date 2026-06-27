@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Services.Mpris
 import "../"
+import "../../widgets/lib"
 
 // Shared base for the now-playing home widgets — the unified NowPlayingWidget
 // (size-switching home tile) and the standalone MediaWidget (SessionQAM). The

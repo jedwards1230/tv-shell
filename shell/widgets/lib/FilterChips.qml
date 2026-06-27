@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import "lib"
+import "../../components"
 
 // Horizontal chip strip for the home Plex widget (#249). Implements the home-tile
 // focus contract (visible / regionFocused / focusFirstChild) and walks

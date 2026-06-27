@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "lib"
+import "../widgets/lib"
 
 // Steam-library poster view — the medium/large rendering of the unified Moonlight
 // home widget (MoonlightWidget hosts this; it is NOT an independently-enableable

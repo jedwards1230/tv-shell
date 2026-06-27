@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
 import components.lib
-import "../../shell/components/lib/widgetConfig.js" as WidgetConfig
+import "../../shell/widgets/lib/widgetConfig.js" as WidgetConfig
 
 // Headless tests for the namespaced widget-config migrator (#249 Phase 3).
 // widgetConfig.js is a pure `.pragma library` module imported by its real source

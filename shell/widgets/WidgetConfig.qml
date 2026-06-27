@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Window
+import "lib"
 import "../components"
 import "../components/lib"
 

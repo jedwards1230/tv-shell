@@ -1,0 +1,6 @@
+module shell.widgets.lib
+Widget 1.0 Widget.qml
+WidgetHost 1.0 WidgetHost.qml
+singleton WidgetRegistry 1.0 WidgetRegistry.qml
+singleton WidgetManifests 1.0 WidgetManifests.qml
+FilterChips 1.0 FilterChips.qml

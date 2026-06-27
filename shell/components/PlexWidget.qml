@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "lib"
+import "../widgets/lib"
 
 // Home-screen Plex widget (#249) — ONE poster row with a segmented header that
 // flips between "Up Next" (continue-watching / On Deck) and "Recently Added"

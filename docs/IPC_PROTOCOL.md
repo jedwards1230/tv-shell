@@ -271,7 +271,7 @@ framework owns (still opaque to the daemon). Shape:
 
 `enabled` and `order` are framework keys for every widget; `size` and the
 `prefs.*` entries are declared by each widget's manifest
-(`shell/components/lib/WidgetManifests.qml`). On load, `SettingsStore`
+(`shell/widgets/lib/WidgetManifests.qml`). On load, `SettingsStore`
 one-shot-migrates the legacy flat `widget<Name>Enabled/Size/HideFromRecent`
 keys into this subtree (`widgetSpotify*` → `nowplaying`), preserving existing
 values; the daemon's shallow merge leaves the old flat keys on disk untouched

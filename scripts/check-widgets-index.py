@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-QML_PATH = ROOT / "shell/components/lib/WidgetManifests.qml"
+QML_PATH = ROOT / "shell/widgets/lib/WidgetManifests.qml"
 INDEX_PATH = ROOT / "widgets-index.json"
 
 

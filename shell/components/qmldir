@@ -39,7 +39,6 @@ WakeCard 1.0 WakeCard.qml
 SteamLibraryView 1.0 SteamLibraryView.qml
 SessionIndicator 1.0 SessionIndicator.qml
 MoonlightWidget 1.0 MoonlightWidget.qml
-FilterChips 1.0 FilterChips.qml
 LibraryScreen 1.0 LibraryScreen.qml
 NavigationDrawer 1.0 NavigationDrawer.qml
 HyprctlClients 1.0 HyprctlClients.qml

@@ -77,7 +77,7 @@ jobs:
               - '.github/workflows/ci.yml'
             widgets:
               - 'widgets-index.json'
-              - 'shell/components/lib/WidgetManifests.qml'
+              - 'shell/widgets/lib/WidgetManifests.qml'
               - 'scripts/check-widgets-index.py'
               - '.github/workflows/widgets.yml'
               - '.github/workflows/ci.yml'
