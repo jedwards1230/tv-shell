@@ -3,10 +3,19 @@
 //! `mpsc` of [`CecReq`] and pushes `cec:*` [`Event`]s onto the shared broadcast
 //! bus.
 //!
-//! Handles: READ via `cec-scan` / `cec-device`, ACTIONS via `cec-power-on` /
-//! `cec-power-off` / `cec-active-source`. Pushes `cec:device:<json>` events
-//! when devices are discovered/updated and `cec:power:<json>` when power status
-//! changes.
+//! Handles: READ via `cec-scan` / `cec-device` / `cec-health`, ACTIONS via
+//! `cec-power-on` / `cec-power-off` / `cec-active-source`, plus an on-demand
+//! `cec-test` poll probe. Pushes `cec:device:<json>` events when devices are
+//! discovered/updated, `cec:power:<json>` when power status changes, and
+//! `cec:health:<json>` when the transmit-wedge health state changes.
+//!
+//! **Transmit-wedge health (#19).** The Pulse-Eight adapter periodically enters
+//! a state where libcec opens + RECEIVES fine but every TRANSMIT returns
+//! `TransmitFailed`. A pure [`protocol::CecHealthState`] in the blocking worker
+//! tracks the last transmit outcome (Unknown/Ok/Failing); every transmit site
+//! (power on/off, active-source, wake/standby) and a side-effect-free poll probe
+//! (folded into `cec-scan` and run explicitly by `cec-test`) update it, and a
+//! `cec:health` event fires on each real transition.
 //!
 //! **Remote input -> navigation.** When the `GAME_SHELL_CEC_LIFECYCLE` flag is
 //! on, the worker registers a libcec key-press callback. Each TV/AVR remote
@@ -71,6 +80,14 @@ pub enum CecReq {
     PowerOff { addr: String, reply: Reply },
     /// `cec-active-source` -> `ok` / `error:*`.
     ActiveSource(Reply),
+    /// `cec-health` -> the current transmit-wedge health as a compact JSON object
+    /// `{transmit,since,lastError}` (#19). READ-ONLY: it returns the last-known
+    /// transmit state and never touches the bus, so it's safe to poll cheaply.
+    Health(Reply),
+    /// `cec-test` -> run an explicit side-effect-free CEC poll probe, update the
+    /// transmit-health, emit `cec:health` on a change, and reply with the same
+    /// JSON object as `cec-health` (#19).
+    Test(Reply),
     /// Lifecycle wake (start / resume-from-suspend): power on AVR (addr 5) then
     /// TV (addr 0), then claim active source. Replies `ok` / `error:*`. A no-op
     /// (still replying `ok`) when the lifecycle flag is off OR when the
@@ -165,6 +182,8 @@ enum WorkerReq {
     ActiveSource(std_mpsc::SyncSender<String>),
     WakeSequence(std_mpsc::SyncSender<String>),
     StandbyAll(std_mpsc::SyncSender<String>),
+    Health(std_mpsc::SyncSender<String>),
+    Test(std_mpsc::SyncSender<String>),
     Shutdown,
 }
 
@@ -342,6 +361,107 @@ fn with_cec_reconnect<T, E: std::fmt::Debug>(
 }
 
 // ---------------------------------------------------------------------------
+// Transmit-wedge health tracking (#19).
+// ---------------------------------------------------------------------------
+
+/// Current wall-clock as epoch milliseconds (UTC). Used to stamp the `since`
+/// field of a CEC health transition. A pre-epoch clock (impossible in practice)
+/// degrades to `0` rather than panicking — this runs on a long-lived daemon.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Fold a transmit outcome into `health` and broadcast `cec:health` IFF the
+/// variant CHANGED (so subscribers see only real transitions, not every probe).
+/// `ok` = the transmit round-tripped; `err` is the failure message recorded when
+/// `ok` is false. Centralizes the record-then-maybe-emit step shared by every
+/// transmit site (power on/off, active-source, wake/standby, the poll probe).
+fn note_health(
+    health: &mut protocol::CecHealthState,
+    events_tx: &broadcast::Sender<Event>,
+    ok: bool,
+    err: &str,
+) {
+    let changed = if ok {
+        health.record_success(now_millis())
+    } else {
+        health.record_failure(err, now_millis())
+    };
+    if changed {
+        let _ = events_tx.send(Event::CecHealth(health.to_json()));
+    }
+}
+
+/// A side-effect-free CEC transmit probe used to refresh the transmit-health.
+///
+/// **cec-rs 12.0.1 API finding.** There is NO dedicated `poll_device` / ping
+/// wrapper in cec-rs 12.0.1. The only primitives that BOTH transmit AND return a
+/// `Result` are `send_power_on_devices` / `send_standby_devices` /
+/// `set_active_source` (all have side effects — they power/standby a device or
+/// steal the active source) and the generic `transmit(CecCommand)`. A CEC
+/// **POLL** message — `opcode_set = false`, empty parameters, the `<Polling
+/// Message>` / "ping" — has NO side effect: it's just the header byte,
+/// transmitted and ACK-checked, exactly what libcec uses internally for device
+/// detection. So we hand-build a POLL `CecCommand` addressed to the TV (logical
+/// addr 0) and send it via `transmit`, which returns `Err(TransmitFailed)` on a
+/// wedged adapter — the clean failing-signal that `get_device_power_status`
+/// cannot give (it swallows transmit failures into `Unknown`).
+///
+/// The initiator is our own primary logical address (queried from libcec; falls
+/// back to `Unregistered` if unavailable) so the poll is well-formed. This
+/// deliberately does NOT route through `with_cec_reconnect`: the probe is a
+/// health READ, not a recovery driver, so a failing poll must not trigger a
+/// reopen storm on the Pulse-Eight adapter.
+///
+/// Caveat: a poll to addr 0 ACKs whenever the TV is plugged in (CEC devices ACK
+/// polls even in standby), so on this AV setup it's a faithful bus-alive check.
+/// If the TV were fully unplugged a healthy adapter would still report failing —
+/// acceptable here (game-client-1 always has a TV on the bus), and the scan path
+/// only falls back to the poll when the bus shows zero devices.
+fn poll_probe(conn: &cec_rs::CecConnection) -> Result<(), cec_rs::CecConnectionResultError> {
+    let initiator = conn
+        .get_logical_addresses()
+        .ok()
+        .map(|la| cec_rs::CecLogicalAddress::from(la.primary))
+        .unwrap_or(cec_rs::CecLogicalAddress::Unregistered);
+    let poll = cec_rs::CecCommand {
+        initiator,
+        destination: cec_rs::CecLogicalAddress::Tv,
+        ack: false,
+        eom: false,
+        // `opcode_set = false` makes this a POLL message; the opcode value itself
+        // is ignored on the wire, but the field must hold a valid variant.
+        opcode: cec_rs::CecOpcode::None,
+        parameters: cec_rs::CecDatapacket(arrayvec::ArrayVec::new()),
+        opcode_set: false,
+        transmit_timeout: std::time::Duration::from_millis(1000),
+    };
+    conn.transmit(poll)
+}
+
+/// Run the poll probe and fold its outcome into `health`, emitting `cec:health`
+/// on a change. Returns the current health JSON (the `cec-test` reply body).
+fn run_poll_probe(
+    conn: &cec_rs::CecConnection,
+    health: &mut protocol::CecHealthState,
+    events_tx: &broadcast::Sender<Event>,
+) -> String {
+    match poll_probe(conn) {
+        Ok(()) => note_health(health, events_tx, true, ""),
+        Err(e) => note_health(
+            health,
+            events_tx,
+            false,
+            &format!("cec-test poll failed: {e:?}"),
+        ),
+    }
+    health.to_json()
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle sequences (blocking-worker context only — they touch libcec).
 // ---------------------------------------------------------------------------
 
@@ -423,6 +543,12 @@ fn drain_unavailable(rx: &std_mpsc::Receiver<WorkerReq>) {
                 let _ = tx.send(err);
             }
             WorkerReq::StandbyAll(tx) => {
+                let _ = tx.send(err);
+            }
+            WorkerReq::Health(tx) => {
+                let _ = tx.send(err);
+            }
+            WorkerReq::Test(tx) => {
                 let _ = tx.send(err);
             }
             WorkerReq::Shutdown => break,
@@ -561,6 +687,11 @@ fn blocking_worker(
     // adapter (see `REOPEN_COOLDOWN`). `None` until the first reopen.
     let mut last_reopen: Option<std::time::Instant> = None;
 
+    // Transmit-wedge health (#19). Starts `Unknown` (no transmit attempted yet);
+    // every transmit site below folds its outcome in via `note_health`, which
+    // broadcasts `cec:health` only on a real variant transition.
+    let mut health = protocol::CecHealthState::new(now_millis());
+
     while let Ok(req) = rx.recv() {
         match req {
             WorkerReq::Scan(tx) => {
@@ -568,6 +699,18 @@ fn blocking_worker(
                 let devices = scan_devices(&conn);
                 for obj in &devices {
                     let _ = events_tx.send(Event::CecDevice(obj.clone()));
+                }
+                // Health refresh side effect (#19): so the QML 30s `cec-scan`
+                // poll keeps the status line fresh with no user action. A
+                // non-empty sweep means polls round-tripped (the adapter
+                // transmits) -> success. An EMPTY sweep is ambiguous (a wedged
+                // adapter OR genuinely no devices), so disambiguate with ONE
+                // side-effect-free poll probe — never `with_cec_reconnect`, so a
+                // failing probe can't churn the adapter.
+                if !devices.is_empty() {
+                    note_health(&mut health, &events_tx, true, "");
+                } else {
+                    run_poll_probe(&conn, &mut health, &events_tx);
                 }
                 let _ = tx.send(format!("[{}]", devices.join(",")));
             }
@@ -595,13 +738,18 @@ fn blocking_worker(
                             c.send_power_on_devices(logical)
                         }) {
                             Ok(()) => {
+                                note_health(&mut health, &events_tx, true, "");
                                 let ps = conn.get_device_power_status(logical);
                                 let payload =
                                     protocol::cec_power_json(&addr, power_status_word(ps));
                                 let _ = events_tx.send(Event::CecPower(payload));
                                 protocol::resp_ok()
                             }
-                            Err(e) => protocol::resp_error(&format!("power-on failed: {e:?}")),
+                            Err(e) => {
+                                let msg = format!("power-on failed: {e:?}");
+                                note_health(&mut health, &events_tx, false, &msg);
+                                protocol::resp_error(&msg)
+                            }
                         }
                     }
                     None => protocol::resp_error(&format!("invalid address {addr}")),
@@ -616,13 +764,18 @@ fn blocking_worker(
                             c.send_standby_devices(logical)
                         }) {
                             Ok(()) => {
+                                note_health(&mut health, &events_tx, true, "");
                                 let ps = conn.get_device_power_status(logical);
                                 let payload =
                                     protocol::cec_power_json(&addr, power_status_word(ps));
                                 let _ = events_tx.send(Event::CecPower(payload));
                                 protocol::resp_ok()
                             }
-                            Err(e) => protocol::resp_error(&format!("power-off failed: {e:?}")),
+                            Err(e) => {
+                                let msg = format!("power-off failed: {e:?}");
+                                note_health(&mut health, &events_tx, false, &msg);
+                                protocol::resp_error(&msg)
+                            }
                         }
                     }
                     None => protocol::resp_error(&format!("invalid address {addr}")),
@@ -636,8 +789,15 @@ fn blocking_worker(
                     match with_cec_reconnect(&mut conn, &mut last_reopen, "active-source", |c| {
                         c.set_active_source(cec_rs::CecDeviceType::PlaybackDevice)
                     }) {
-                        Ok(()) => protocol::resp_ok(),
-                        Err(e) => protocol::resp_error(&format!("active-source failed: {e:?}")),
+                        Ok(()) => {
+                            note_health(&mut health, &events_tx, true, "");
+                            protocol::resp_ok()
+                        }
+                        Err(e) => {
+                            let msg = format!("active-source failed: {e:?}");
+                            note_health(&mut health, &events_tx, false, &msg);
+                            protocol::resp_error(&msg)
+                        }
                     };
                 let _ = tx.send(resp);
             }
@@ -654,6 +814,15 @@ fn blocking_worker(
                         resp = wake_sequence(&conn, &events_tx);
                     }
                 }
+                // Fold the wake transmits into health: success on the bare `ok`
+                // wire string, failure on a leading `error:` (record the message).
+                let ok = resp == protocol::resp_ok();
+                note_health(
+                    &mut health,
+                    &events_tx,
+                    ok,
+                    resp.strip_prefix("error:").unwrap_or(&resp),
+                );
                 let _ = tx.send(resp);
             }
             WorkerReq::StandbyAll(tx) => {
@@ -665,6 +834,24 @@ fn blocking_worker(
                         resp = standby_all(&conn, &events_tx);
                     }
                 }
+                let ok = resp == protocol::resp_ok();
+                note_health(
+                    &mut health,
+                    &events_tx,
+                    ok,
+                    resp.strip_prefix("error:").unwrap_or(&resp),
+                );
+                let _ = tx.send(resp);
+            }
+            WorkerReq::Health(tx) => {
+                // Read-only: report the last-known transmit-health without
+                // touching the bus.
+                let _ = tx.send(health.to_json());
+            }
+            WorkerReq::Test(tx) => {
+                // Explicit on-demand poll probe: refresh health (emits `cec:health`
+                // on a change) and reply with the current health JSON.
+                let resp = run_poll_probe(&conn, &mut health, &events_tx);
                 let _ = tx.send(resp);
             }
             WorkerReq::Shutdown => break,
@@ -768,6 +955,16 @@ pub async fn run(
             }
             CecReq::ActiveSource(reply) => {
                 let _ = reply.send(forward(&work_tx, WorkerReq::ActiveSource).await);
+            }
+            // Read-only health query and the on-demand poll probe — both forward
+            // to the blocking worker (which owns the health state + libcec). Not
+            // gated by the lifecycle flag: the AV Control page must read health on
+            // dev/CI hosts too, and the poll probe is side-effect-free.
+            CecReq::Health(reply) => {
+                let _ = reply.send(forward(&work_tx, WorkerReq::Health).await);
+            }
+            CecReq::Test(reply) => {
+                let _ = reply.send(forward(&work_tx, WorkerReq::Test).await);
             }
             // Lifecycle reqs are no-ops (reply `ok` without touching the bus)
             // when the lifecycle flag is off, so suspend/resume/SIGTERM wiring

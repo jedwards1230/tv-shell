@@ -277,6 +277,15 @@ pub enum Command {
     /// `which` is the bare command word for the usage line (mirrors
     /// `BtMacUsage`).
     CecAddrUsage(&'static str),
+    /// `cec-health` — return the current CEC transmit-wedge health as a compact
+    /// JSON object `{transmit,since,lastError}` (#19). Read-only: it reports the
+    /// last-known transmit state and never drives the bus.
+    CecHealth,
+    /// `cec-test` — run an explicit on-demand, side-effect-free CEC poll probe,
+    /// update the transmit-health, emit `cec:health` on a change, and reply with
+    /// the same JSON object as `cec-health` (#19). The "Test CEC" button's
+    /// backend.
+    CecTest,
 
     /// `set-active-game <id>` — signal the current foreground game to the
     /// daemon. The daemon activates per-game binding overrides for `<id>` from
@@ -472,6 +481,8 @@ impl Command {
             // Phase 4 HDMI-CEC bare commands (no body).
             "cec-scan" => Command::CecScan,
             "cec-active-source" => Command::CecActiveSource,
+            "cec-health" => Command::CecHealth,
+            "cec-test" => Command::CecTest,
             "controllerdb-status" => Command::ControllerDbStatus,
             "controllerdb-refresh" => Command::ControllerDbRefresh,
             "sys-status" => Command::SysStatus,
@@ -825,6 +836,12 @@ pub enum Event {
     /// A CEC device's power status changed; payload is a compact JSON object
     /// `{addr,power}`. Wire: `cec:power:<json>`.
     CecPower(String),
+    /// The CEC transmit-wedge health state CHANGED (#19); payload is a compact
+    /// JSON object `{transmit,since,lastError}` (same shape as the `cec-health`
+    /// reply). Broadcast only on a real transition (not on every probe), so the
+    /// AV Control page's status line updates without polling. Wire:
+    /// `cec:health:<json>`.
+    CecHealth(String),
 
     // --- Config live-reload ---
     /// `settings.json` was modified by an **external** writer (SSH / Ansible /
@@ -897,6 +914,7 @@ impl fmt::Display for Event {
             Event::HyprCloseWindow(address) => write!(f, "hypr:closewindow:{address}"),
             Event::CecDevice(json) => write!(f, "cec:device:{json}"),
             Event::CecPower(json) => write!(f, "cec:power:{json}"),
+            Event::CecHealth(json) => write!(f, "cec:health:{json}"),
             Event::ConfigChanged => f.write_str("config:changed"),
             Event::ScreenshotFlash => f.write_str("screenshot:flash"),
             Event::ServiceHealth(json) => write!(f, "health:{json}"),
@@ -1102,6 +1120,140 @@ pub fn cec_power_json(addr: &str, power_word: &str) -> String {
     serde_json::json!({
         "addr": addr,
         "power": power_word,
+    })
+    .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// CEC transmit-wedge health (#19).
+// ---------------------------------------------------------------------------
+
+/// The transmit-health of the CEC adapter: whether the last transmit op
+/// succeeded, returned `TransmitFailed`, or has not been attempted yet.
+///
+/// game-client-1's Pulse-Eight USB CEC adapter periodically enters a "transmit
+/// wedge": libcec opens fine and can RECEIVE, but every TRANSMIT (power-on,
+/// active-source, the poll probe) returns `TransmitFailed`. This enum is the
+/// observable health surface the AV Control page reads via `cec-health`. Pure
+/// (no `cec-rs` types) so the state machine + JSON shape are unit-tested in the
+/// default (C-free) build leg even though the libcec actor that drives it is
+/// feature-gated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CecTransmitHealth {
+    /// No transmit attempted yet / indeterminate.
+    Unknown,
+    /// The last transmit succeeded.
+    Ok,
+    /// The last transmit returned `TransmitFailed` (the wedge).
+    Failing,
+}
+
+impl CecTransmitHealth {
+    /// The wire word for the `transmit` field of [`cec_health_json`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CecTransmitHealth::Unknown => "unknown",
+            CecTransmitHealth::Ok => "ok",
+            CecTransmitHealth::Failing => "failing",
+        }
+    }
+}
+
+/// The CEC transmit-wedge health state: the [`CecTransmitHealth`] variant, the
+/// epoch-millis of the last state CHANGE, and the last transmit error when
+/// failing.
+///
+/// `record_success` / `record_failure` mutate it and return whether the variant
+/// actually CHANGED, so the actor broadcasts `cec:health` only on real
+/// transitions (not on every probe). The clock value is passed in (epoch millis)
+/// to keep the transitions deterministic in unit tests. Pure — no `cec-rs`
+/// types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CecHealthState {
+    transmit: CecTransmitHealth,
+    since_millis: u64,
+    last_error: Option<String>,
+}
+
+impl CecHealthState {
+    /// A fresh state in the `Unknown` variant, stamped `now_millis`.
+    pub fn new(now_millis: u64) -> Self {
+        Self {
+            transmit: CecTransmitHealth::Unknown,
+            since_millis: now_millis,
+            last_error: None,
+        }
+    }
+
+    /// The current transmit-health variant.
+    pub fn transmit(&self) -> CecTransmitHealth {
+        self.transmit
+    }
+
+    /// Epoch-millis of the last state change.
+    pub fn since_millis(&self) -> u64 {
+        self.since_millis
+    }
+
+    /// The last transmit error string (present only while failing).
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    /// Record a successful transmit. On a variant change (→ `Ok`) bumps `since`
+    /// to `now_millis`, clears `last_error`, and returns `true`. A repeat success
+    /// (already `Ok`) is a no-op returning `false`, so no spurious `cec:health`
+    /// is emitted.
+    pub fn record_success(&mut self, now_millis: u64) -> bool {
+        if self.transmit == CecTransmitHealth::Ok {
+            return false;
+        }
+        self.transmit = CecTransmitHealth::Ok;
+        self.since_millis = now_millis;
+        self.last_error = None;
+        true
+    }
+
+    /// Record a failed transmit with its error string. On a variant change
+    /// (→ `Failing`) bumps `since` to `now_millis` and returns `true`. When
+    /// already `Failing` the variant does NOT change, so `since` is KEPT (the
+    /// wedge's onset time) and `false` is returned — but the freshest
+    /// `last_error` is still stored so a later `cec-health` read reports it.
+    pub fn record_failure(&mut self, err: &str, now_millis: u64) -> bool {
+        let changed = self.transmit != CecTransmitHealth::Failing;
+        self.transmit = CecTransmitHealth::Failing;
+        if changed {
+            self.since_millis = now_millis;
+        }
+        self.last_error = Some(err.to_string());
+        changed
+    }
+
+    /// Build the wire JSON for this state (the `cec-health` / `cec-test` reply
+    /// and the `cec:health:<json>` event payload).
+    pub fn to_json(&self) -> String {
+        cec_health_json(
+            self.transmit.as_str(),
+            self.since_millis,
+            self.last_error.as_deref(),
+        )
+    }
+}
+
+/// Build the compact-JSON body for the CEC transmit-health (`cec-health` /
+/// `cec-test` reply and the `cec:health:<json>` event payload). Pure — no
+/// `cec-rs` types — so it compiles and unit-tests in the default (C-free) leg.
+/// `transmit_word` is `"ok"|"failing"|"unknown"`; `since_millis` the epoch
+/// millis of the last state change; `last_error` the transmit error when failing
+/// (`None` → JSON `null`).
+///
+/// Field order is fixed by `serde_json`'s `preserve_order` feature, so the wire
+/// bytes are stable: `{"transmit":"WORD","since":N,"lastError":"…"|null}`.
+pub fn cec_health_json(transmit_word: &str, since_millis: u64, last_error: Option<&str>) -> String {
+    serde_json::json!({
+        "transmit": transmit_word,
+        "since": since_millis,
+        "lastError": last_error,
     })
     .to_string()
 }
@@ -2313,6 +2465,118 @@ mod tests {
         assert_eq!(
             resp_cec_addr_usage("cec-power-on"),
             "error:usage: cec-power-on <addr>"
+        );
+    }
+
+    #[test]
+    fn cec_health_and_test_parse_as_bare_commands() {
+        assert_eq!(Command::parse("cec-health"), Command::CecHealth);
+        assert_eq!(Command::parse("cec-test"), Command::CecTest);
+        // Whitespace is trimmed (mirrors the other bare CEC commands).
+        assert_eq!(Command::parse("  cec-health  "), Command::CecHealth);
+        // A word-boundary collision must NOT match (not mistaken for the command).
+        assert_ne!(Command::parse("cec-healthy"), Command::CecHealth);
+        assert_ne!(Command::parse("cec-tested"), Command::CecTest);
+    }
+
+    #[test]
+    fn cec_health_json_is_compact_ordered() {
+        // Field order is fixed (preserve_order): transmit, since, lastError.
+        assert_eq!(
+            cec_health_json("ok", 1000, None),
+            r#"{"transmit":"ok","since":1000,"lastError":null}"#
+        );
+        assert_eq!(
+            cec_health_json(
+                "failing",
+                2500,
+                Some("active-source failed: TransmitFailed")
+            ),
+            r#"{"transmit":"failing","since":2500,"lastError":"active-source failed: TransmitFailed"}"#
+        );
+        assert_eq!(
+            cec_health_json("unknown", 0, None),
+            r#"{"transmit":"unknown","since":0,"lastError":null}"#
+        );
+    }
+
+    #[test]
+    fn cec_health_state_starts_unknown() {
+        let s = CecHealthState::new(100);
+        assert_eq!(s.transmit(), CecTransmitHealth::Unknown);
+        assert_eq!(s.since_millis(), 100);
+        assert_eq!(s.last_error(), None);
+        assert_eq!(
+            s.to_json(),
+            r#"{"transmit":"unknown","since":100,"lastError":null}"#
+        );
+    }
+
+    #[test]
+    fn cec_health_unknown_to_ok_records_change_and_since() {
+        let mut s = CecHealthState::new(100);
+        // Unknown → Ok is a real transition: bumps `since`, returns true.
+        assert!(s.record_success(200));
+        assert_eq!(s.transmit(), CecTransmitHealth::Ok);
+        assert_eq!(s.since_millis(), 200);
+        assert_eq!(s.last_error(), None);
+    }
+
+    #[test]
+    fn cec_health_repeat_success_is_no_change() {
+        let mut s = CecHealthState::new(100);
+        assert!(s.record_success(200));
+        // A second success keeps the variant: no change, `since` is KEPT.
+        assert!(!s.record_success(300));
+        assert_eq!(s.transmit(), CecTransmitHealth::Ok);
+        assert_eq!(s.since_millis(), 200);
+    }
+
+    #[test]
+    fn cec_health_ok_to_failing_records_error_and_new_since() {
+        let mut s = CecHealthState::new(100);
+        s.record_success(200);
+        // Ok → Failing is a real transition: records the error + a new `since`.
+        assert!(s.record_failure("power-on failed: TransmitFailed", 500));
+        assert_eq!(s.transmit(), CecTransmitHealth::Failing);
+        assert_eq!(s.since_millis(), 500);
+        assert_eq!(s.last_error(), Some("power-on failed: TransmitFailed"));
+    }
+
+    #[test]
+    fn cec_health_failing_to_failing_keeps_since_but_refreshes_error() {
+        let mut s = CecHealthState::new(100);
+        s.record_failure("first error", 500);
+        // Failing → Failing is NOT a change: `since` is kept (the wedge onset),
+        // returns false, but the freshest error is stored for the next read.
+        assert!(!s.record_failure("second error", 900));
+        assert_eq!(s.transmit(), CecTransmitHealth::Failing);
+        assert_eq!(s.since_millis(), 500);
+        assert_eq!(s.last_error(), Some("second error"));
+    }
+
+    #[test]
+    fn cec_health_failing_to_ok_clears_error() {
+        let mut s = CecHealthState::new(100);
+        s.record_failure("transient wedge", 500);
+        // Failing → Ok is a real transition: clears the error + bumps `since`.
+        assert!(s.record_success(1200));
+        assert_eq!(s.transmit(), CecTransmitHealth::Ok);
+        assert_eq!(s.since_millis(), 1200);
+        assert_eq!(s.last_error(), None);
+        assert_eq!(
+            s.to_json(),
+            r#"{"transmit":"ok","since":1200,"lastError":null}"#
+        );
+    }
+
+    #[test]
+    fn cec_health_json_round_trips_through_event() {
+        // The health builder output is exactly what the CecHealth event wraps.
+        let body = cec_health_json("failing", 4242, Some("wedged"));
+        assert_eq!(
+            Event::CecHealth(body).to_string(),
+            r#"cec:health:{"transmit":"failing","since":4242,"lastError":"wedged"}"#
         );
     }
 

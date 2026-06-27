@@ -32,7 +32,7 @@ path = "src/main.rs"
 # static libcec.a references glibc ≥2.38 C23 symbols (`__isoc23_sscanf` etc.), so
 # the build/runtime host needs glibc ≥2.38 (CachyOS / glibc 2.43 satisfies this;
 # CI's cec leg runs on Debian Trixie for the same reason — not bookworm/2.36).
-cec = ["dep:cec-rs", "libcec-sys/static"]
+cec = ["dep:cec-rs", "dep:arrayvec", "libcec-sys/static"]
 
 # MCP server via rmcp 1.7.0 (the official Model Context Protocol Rust SDK).
 # OFF by default — same rationale as `cec`: the default build leg (CI + macOS
@@ -172,3 +172,11 @@ cec-rs = { version = "12.0.1", optional = true }
 # so Cargo unifies them to one copy; keep it in lockstep if cec-rs bumps it.
 # Stays optional so the default (no-cec) Linux build never compiles it.
 libcec-sys = { version = "9.0.2", optional = true }
+# Pure-Rust, no C/TLS (musl-safe). Used ONLY under the `cec` feature to build an
+# empty `CecDatapacket(ArrayVec::new())` for the side-effect-free POLL probe
+# (#19) — cec-rs 12.0.1 exposes no `poll_device` wrapper, so the poll is a
+# hand-built POLL `CecCommand` via `transmit()`, and its empty parameter packet
+# needs `arrayvec`. Version matches cec-rs 12.0.1's transitive pin (`0.7.x`) so
+# Cargo unifies them to one copy; keep it in lockstep if cec-rs bumps it. Stays
+# optional so the default (no-cec) build never compiles it.
+arrayvec = { version = "0.7", optional = true }

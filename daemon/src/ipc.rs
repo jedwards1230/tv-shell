@@ -611,6 +611,8 @@ async fn dispatch(
         | Command::CecPowerOn(_)
         | Command::CecPowerOff(_)
         | Command::CecActiveSource
+        | Command::CecHealth
+        | Command::CecTest
         | Command::CecAddrUsage(_) => return protocol::resp_unknown(),
     }
     .unwrap_or(fallback)
@@ -682,12 +684,18 @@ async fn dispatch_dbus(dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         }
         #[cfg(feature = "cec")]
         Command::CecActiveSource => request_dbus(&dbus.cec, CecReq::ActiveSource).await,
+        #[cfg(feature = "cec")]
+        Command::CecHealth => request_dbus(&dbus.cec, CecReq::Health).await,
+        #[cfg(feature = "cec")]
+        Command::CecTest => request_dbus(&dbus.cec, CecReq::Test).await,
         #[cfg(not(feature = "cec"))]
         Command::CecScan
         | Command::CecDevice(_)
         | Command::CecPowerOn(_)
         | Command::CecPowerOff(_)
-        | Command::CecActiveSource => protocol::resp_unsupported(),
+        | Command::CecActiveSource
+        | Command::CecHealth
+        | Command::CecTest => protocol::resp_unsupported(),
         Command::CecAddrUsage(which) => protocol::resp_cec_addr_usage(which),
         _ => return None,
     };
@@ -725,7 +733,9 @@ async fn dispatch_dbus(_dbus: &DbusSenders, cmd: &Command) -> Option<String> {
         | Command::CecDevice(_)
         | Command::CecPowerOn(_)
         | Command::CecPowerOff(_)
-        | Command::CecActiveSource => protocol::resp_unsupported(),
+        | Command::CecActiveSource
+        | Command::CecHealth
+        | Command::CecTest => protocol::resp_unsupported(),
         _ => return None,
     };
     Some(resp)
