@@ -39,7 +39,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use game_shell_protocol::{LaunchRequest, LibraryEntry, LibraryResponse};
+use game_shell_protocol::{LaunchRequest, LibraryEntry, LibraryResponse, StatusResponse};
 use serde_json::json;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
@@ -240,7 +240,7 @@ async fn quit_game(
 async fn status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<StatusResponse>, StatusCode> {
     authorize(&state, &headers)?;
     // Both probes touch the OS off-band (a `/proc`/VDF read and a blocking
     // loopback HTTP GET to Sunshine); keep them off the async reactor.
@@ -250,11 +250,14 @@ async fn status(
     let streaming = tokio::task::spawn_blocking(steam::streaming)
         .await
         .unwrap_or(false);
-    Ok(Json(json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "running_appid": running,
-        "streaming": streaming,
-    })))
+    // Serialized through the shared `StatusResponse` type so the daemon parses the
+    // same contract — byte-identical to the previous hand-rolled
+    // `json!({version, running_appid, streaming})` (same fields, same order).
+    Ok(Json(StatusResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        running_appid: running,
+        streaming,
+    }))
 }
 
 /// `GET /art/{appid}` — serve the local Steam portrait library art (capsule,

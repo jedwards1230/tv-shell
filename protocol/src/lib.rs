@@ -3,7 +3,14 @@
 //! These types are the single source of truth for the JSON shape exchanged
 //! between `game-shell-host` (the cross-platform sidecar that enumerates and
 //! launches Steam games on the gaming PC) and `game-shell-input` (the daemon on
-//! the TV client that proxies `GET /library` / `POST /launch` for the QML shell).
+//! the TV client that proxies `GET /library` / `POST /launch` / `GET /status`
+//! for the QML shell). The daemon reaches the host over **HTTP on the LAN** — the
+//! host runs on a separate machine (the gaming PC; see `docs/HOST_SETUP.md`), so
+//! the daemon is an HTTP *client*, not a process supervisor: it does not spawn,
+//! health-restart, or otherwise manage the host's lifecycle. Both sides
+//! (de)serialize through these types so the wire shape can't drift — the host
+//! serializes them in its axum handlers (`host/src/main.rs`), and the daemon
+//! deserializes the responses in `daemon/src/steam.rs`.
 //!
 //! Pure serde, no I/O — so both crates depend on it without dragging in either
 //! one's heavier graph (axum on the host, evdev/cec on the daemon).
@@ -32,14 +39,41 @@ pub struct LibraryEntry {
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct LibraryResponse {
     /// Installed games, real titles only (runtime junk filtered out host-side).
+    /// `#[serde(default)]` keeps a body that omits `games` entirely deserializing
+    /// to an empty library rather than failing — matching the daemon's previous
+    /// lenient `Value`-based parse (a missing array was treated as "empty, ok").
+    #[serde(default)]
     pub games: Vec<LibraryEntry>,
 }
 
-/// Request body for `POST /launch`.
+/// Request body for `POST /launch` (and `POST /quit`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct LaunchRequest {
     /// The Steam appid to launch via `steam://rungameid/<appid>`.
     pub appid: u32,
+}
+
+/// Response body for `GET /status` — the host's liveness + foreground-game probe.
+///
+/// All fields default so the daemon's parse stays resilient to a host that omits
+/// one (matching the previous best-effort `Value` parse: a missing `running_appid`
+/// is "nothing running", a missing `streaming` is `false`). The daemon treats a
+/// successful `GET /status` as the reachability signal; this body carries the
+/// foreground-game id and stream state it reads alongside that.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct StatusResponse {
+    /// `game-shell-host` package version (`CARGO_PKG_VERSION`). Informational; the
+    /// daemon does not act on it today.
+    #[serde(default)]
+    pub version: String,
+    /// The foreground Steam appid on the host, or `None` when nothing is running
+    /// (or detection found no match). Serialized as JSON `null` when absent.
+    /// `u32` to match [`LibraryEntry::appid`] / [`LaunchRequest::appid`].
+    #[serde(default)]
+    pub running_appid: Option<u32>,
+    /// Whether a Moonlight/Sunshine stream is active on the host.
+    #[serde(default)]
+    pub streaming: bool,
 }
 
 #[cfg(test)]
@@ -74,5 +108,67 @@ mod tests {
     #[test]
     fn empty_library_default() {
         assert!(LibraryResponse::default().games.is_empty());
+    }
+
+    #[test]
+    fn library_response_missing_games_is_empty() {
+        // A body that omits `games` entirely must deserialize to an empty library
+        // (not error) — preserving the daemon's previous lenient parse where a
+        // missing array meant "empty, ok".
+        let back: LibraryResponse = serde_json::from_str("{}").unwrap();
+        assert!(back.games.is_empty());
+    }
+
+    #[test]
+    fn launch_request_serializes_appid_only() {
+        // The POST body the daemon sends for /launch and /quit must stay exactly
+        // `{"appid":N}` — the host parses this same type.
+        assert_eq!(
+            serde_json::to_string(&LaunchRequest { appid: 730 }).unwrap(),
+            r#"{"appid":730}"#
+        );
+    }
+
+    #[test]
+    fn status_response_roundtrips() {
+        let s = StatusResponse {
+            version: "1.2.3".to_string(),
+            running_appid: Some(730),
+            streaming: true,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        // Field order is declaration order — keep it byte-stable with the host's
+        // previous hand-rolled `json!({version, running_appid, streaming})`.
+        assert_eq!(
+            json,
+            r#"{"version":"1.2.3","running_appid":730,"streaming":true}"#
+        );
+        let back: StatusResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn status_response_running_null_when_idle() {
+        let s = StatusResponse {
+            version: "0.1.0".to_string(),
+            running_appid: None,
+            streaming: false,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(
+            json,
+            r#"{"version":"0.1.0","running_appid":null,"streaming":false}"#
+        );
+    }
+
+    #[test]
+    fn status_response_defaults_on_missing_fields() {
+        // A partial body must not fail the parse: missing version → "", missing
+        // running_appid → None, missing streaming → false.
+        let back: StatusResponse = serde_json::from_str("{}").unwrap();
+        assert_eq!(back, StatusResponse::default());
+        assert_eq!(back.version, "");
+        assert!(back.running_appid.is_none());
+        assert!(!back.streaming);
     }
 }
