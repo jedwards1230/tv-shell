@@ -252,6 +252,8 @@ FocusScope {
                 iconPath: ""
                 fallbackGlyph: "\u{229E}"
                 fallbackColor: widgetsGlyph.hovered && InputMode.mouseMode ? Theme.textPrimary : Theme.textMuted
+                // ⊞ sits a touch low in the font box like ☾/☀/◐ — nudge up.
+                glyphOffsetY: -Math.round(root.imgSize * 0.06)
                 a11yName: root._labels[2]
                 onActivated: root.widgetsRequested()
             }
@@ -271,7 +273,7 @@ FocusScope {
                 fallbackGlyph: Theme.themeMode === "dark" ? "☾" : Theme.themeMode === "light" ? "☀" : "◐"
                 fallbackColor: Theme.textPrimary
                 // These glyphs sit low in the font box vs the others — nudge up.
-                glyphOffsetY: -Math.round(root.imgSize * 0.08)
+                glyphOffsetY: -Math.round(root.imgSize * 0.12)
                 a11yName: root._labels[3]
                 onActivated: {
                     if (Theme.themeMode === "auto")
