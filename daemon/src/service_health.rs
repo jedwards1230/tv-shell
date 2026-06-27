@@ -144,16 +144,15 @@ pub async fn probe_plex() -> ServiceStatus {
 }
 
 /// Probe the Steam host helper (game-shell-host) for reachability. Returns
-/// `Disabled` when unconfigured, otherwise the classification of a lightweight
-/// authenticated `GET /status` (cheaper than the full library fetch; 401 ⇒
-/// Error/bad token, 5xx ⇒ Unreachable).
+/// `Disabled` when unconfigured, otherwise the classification of the sidecar's
+/// lightweight authenticated `GET /status` (cheaper than the full library fetch;
+/// 401 ⇒ Error/bad token, 5xx ⇒ Unreachable). Delegates to
+/// [`crate::sidecar::Sidecar::probe`] so the probe and the data path share one
+/// HTTP client policy and one URL.
 pub async fn probe_steam() -> ServiceStatus {
-    match crate::steam::config() {
+    match crate::steam::sidecar() {
         None => ServiceStatus::Disabled,
-        Some((base, token)) => {
-            let url = format!("{base}/status");
-            probe_get(&url, &[("Authorization", &format!("Bearer {token}"))]).await
-        }
+        Some(sc) => sc.probe().await,
     }
 }
 
