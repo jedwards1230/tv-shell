@@ -195,6 +195,10 @@ Drawer {
                     root.closed();
                     root.settingsRequested();
                 }
+                onWidgetsRequested: {
+                    root.closed();
+                    root.widgetsSelected();
+                }
                 onNotificationCenterRequested: {
                     root.closed();
                     root.notificationCenterRequested();

@@ -13,8 +13,10 @@ are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 
 ## Home screen index map (QuickActions, top-right)
 
-`0=Notifications, 1=Settings, 2=Theme toggle, 3=Network, 4=Volume, 5=Power`.
-Left/Right move; Return activates; Down drops focus into the content regions below.
+`0=Notifications, 1=Settings, 2=Widgets, 3=Theme toggle, 4=Network, 5=Volume, 6=Power`.
+The Widgets glyph (▦, index 2) opens the Widgets app (same target as the nav-drawer
+Widgets entry); it's glyph-only (no system icon theme on game-client-1), matching the
+drawer's ▦. Left/Right move; Return activates; Down drops focus into the content regions below.
 **Focus does not always start on this row** — with Continue/New content present it
 starts on a card, so press **Up** first to reach the QuickActions row before
 Left/Right.
@@ -33,7 +35,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | A2 | Now Playing — medium | MPRIS active, size = medium (default) | `MediaWidget` card: cover art + progress bar + transport row |
 | A3 | Now Playing — small | MPRIS active, size = small (Widgets page ▸ Now Playing) | `NowPlayingStrip` slim strip; both sizes collapse when nothing plays |
 | A4 | Plex Recently Added — dynamic chips | Plex healthy, ≥2 media categories present | `FilterChips` show All + only categories present (no Music pill on a music-less library); re-filter live on item `kind` |
-| A4b | Widgets page — list + drill-in (top-level) | nav drawer ▸ Widgets, or `intent settings:widgets` (socket, rerouted) | The **top-level Widgets surface** (`WidgetsScreen`, peer of Home/Library/Settings — no longer a Settings sidebar page). Schema-driven from the per-widget manifests: list of widget rows (Moonlight/Now Playing/Plex/Recent) sorted by saved order, each one focus stop — **A** toggles enable in place, **X** drills into that widget's config (Size + manifest prefs like Hide-from-Recent, and — Moonlight only — the full server-management surface inlined below Size), **←/→** reorder the widget (persists `widgets.<id>.order`, plasma-bigscreen style). **B** steps back (config → list → Home). |
+| A4b | Widgets app — list (L0) + config (L1) | nav drawer ▸ Widgets, QuickActions ▸ Widgets (idx 2), or `intent settings:widgets` (socket, rerouted) | The **Widgets app** (`WidgetsApp`, `shell.widgets` module — peer of Home/Library/Settings, no longer a Settings sidebar page). Schema-driven from the per-widget manifests. **L0 (`WidgetList`)**: rows (Moonlight/Now Playing/Plex/Recent) sorted by saved order, each one focus stop — **A** opens that widget's config (drill into L1), **X** toggles enable/disable in place, **←/→** reorder the widget (persists `widgets.<id>.order`, plasma-bigscreen style). **L1 (`WidgetConfig`)**: the Enabled toggle + manifest controls (Size + prefs like Hide-from-Recent, and — Moonlight only — the full server-management surface inlined below Size). **B** steps back (config → list → Home). Hint bar reads `A: Configure   X: Enable/Disable   ←→: Reorder   B: Back`. |
 | A5 | All Apps entry | always present | single tile; A → opens the Library surface (A12) |
 | A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on the All Apps entry (never strands) |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
@@ -61,18 +63,18 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | C13 | Notification center | QuickActions idx 0 → Return | wtype |
 | C14 | Notification center — empty | as above, no notifications | wtype |
 | C15 | Notification toast (`NotificationToast`) | trigger a notification | transient; timing-sensitive |
-| C16 | Power overlay (`PowerOverlay`) | QuickActions idx 5 → Return | wtype |
+| C16 | Power overlay (`PowerOverlay`) | QuickActions idx 6 → Return | wtype |
 | C17 | Session conflict dialog (`SessionDialog`) | real stream conflict | needs live conflict / mock |
 | C18 | Stream overlay (`StreamOverlay`) | launching / reconnecting / error | needs active/failing stream |
 | C19 | Error log viewer (`ErrorLogViewer`) | notification center → error log | wtype |
-| C20 | Volume QAM popover (`VolumeOverlay`) | home QuickActions idx 4 → Return; also reachable from the nav drawer; also `intent overlay:volume` (socket) | wtype |
-| C21 | Network QAM popover (`NetworkOverlay`) | home QuickActions idx 3 → Return; also reachable from the nav drawer; also `intent overlay:network` (socket) | wtype |
+| C20 | Volume QAM popover (`VolumeOverlay`) | home QuickActions idx 5 → Return; also reachable from the nav drawer; also `intent overlay:volume` (socket) | wtype |
+| C21 | Network QAM popover (`NetworkOverlay`) | home QuickActions idx 4 → Return; also reachable from the nav drawer; also `intent overlay:network` (socket) | wtype |
 
 ## D. Settings panel + pages + substates
 | # | View | How to reach / notes |
 |---|------|----------------------|
 | D20 | Settings sidebar (panel open) | QuickActions idx 1 → Return |
-| D21–31 | Pages: Audio, Bluetooth, Network, Display (+Appearance/theme), Controllers, Key Bindings, AV Control, Accessibility, Power, System (+Storage). **Widgets is no longer a sidebar page** — it's the top-level `WidgetsScreen` surface (A4b); `intent settings:widgets` reroutes there. **Moonlight server management is no longer a sidebar page** either — it's inlined on the Widgets ▸ Moonlight config page; `intent settings:moonlight` / `settings:streaming` reroute there too. | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. Each sidebar page is also directly reachable via `intent settings:<id>` (socket) — id slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`, `keybindings`, `avcontrol`, `accessibility`, `power`, `system`. `widgets` reroutes to the top-level Widgets surface; `streaming`/`moonlight` reroute to its Widgets ▸ Moonlight config page (none are sidebar pages). Theme mode selector (auto/light/dark) is part of the **Display** page. Free-space storage readout is part of the **System** page. Display page (#127): now reads monitors via daemon `hypr-monitors` IPC (replaces `hyprctl monitors -j` shell-out); shows live HDR status (read-only, driven by daemon `hdr` field), HDR toggle (persists + applies via `hyprctl keyword monitor` with/without `bitdepth,10,cm,hdr` suffix), separate Refresh Rate dropdown (filters `availableModes` to current resolution), Night Light toggle + color-temperature dropdown (applies via `hyprsunset`, requires hyprsunset), Overscan stepper (persists safe-area pct). |
+| D21–31 | Pages: Audio, Bluetooth, Network, Display (+Appearance/theme), Controllers, Key Bindings, AV Control, Accessibility, Power, System (+Storage). **Widgets is no longer a sidebar page** — it's the top-level Widgets app (A4b); `intent settings:widgets` reroutes there. **Moonlight server management is no longer a sidebar page** either — it's inlined on the Widgets ▸ Moonlight config page; `intent settings:moonlight` / `settings:streaming` reroute there too. | Down/Up move the sidebar **cursor only** — the content pane does **not** follow it. Press **Return** to load the focused page (focus stays on the sidebar). `Right` then enters the *loaded* page's controls; it does **not** switch pages. So per page: Down/Up → **Return** → screenshot. Each sidebar page is also directly reachable via `intent settings:<id>` (socket) — id slugs: `audio`, `bluetooth`, `network`, `display`, `controllers`, `keybindings`, `avcontrol`, `accessibility`, `power`, `system`. `widgets` reroutes to the top-level Widgets app; `streaming`/`moonlight` reroute to its Widgets ▸ Moonlight config page (none are sidebar pages). Theme mode selector (auto/light/dark) is part of the **Display** page. Free-space storage readout is part of the **System** page. Display page (#127): now reads monitors via daemon `hypr-monitors` IPC (replaces `hyprctl monitors -j` shell-out); shows live HDR status (read-only, driven by daemon `hdr` field), HDR toggle (persists + applies via `hyprctl keyword monitor` with/without `bitdepth,10,cm,hdr` suffix), separate Refresh Rate dropdown (filters `availableModes` to current resolution), Night Light toggle + color-temperature dropdown (applies via `hyprsunset`, requires hyprsunset), Overscan stepper (persists safe-area pct). |
 | — | Bluetooth — scanning + device list | substate |
 | — | Network — Wi-Fi list / connect | substate |
 | — | Network — gateway/DNS card + test-connection result | substate (net-status now carries `gateway`, `dns`, and per-connection `speed`; page shows a Gateway/DNS read-only card and a Test-connection action with OK/Failed inline result) |
@@ -91,7 +93,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 
 ## E. Theme variants (multiplier)
 Capture at least **home, a settings page, notification center, power overlay** in
-both **light** and **dark** mode (toggle via QuickActions idx 2). Full rigor = every
+both **light** and **dark** mode (toggle via QuickActions idx 3). Full rigor = every
 view ×2.
 
 ## F. Input-mode variants

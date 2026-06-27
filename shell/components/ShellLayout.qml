@@ -232,6 +232,7 @@ FocusScope {
         onAppCloseRequested: address => root.appCloseRequested(address)
         onLibraryRequested: screens.push("library")
         onSettingsRequested: screens.push("settings")
+        onWidgetsRequested: screens.push("widgets")
         onNetworkRequested: anchorRect => networkOverlay.openAt(anchorRect)
         onVolumeRequested: anchorRect => volumeOverlay.openAt(anchorRect)
         onNotificationCenterRequested: {

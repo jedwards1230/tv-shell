@@ -56,6 +56,7 @@ FocusScope {
     signal appFocusRequested(string address)
     signal appCloseRequested(string address)
     signal settingsRequested
+    signal widgetsRequested
     signal notificationCenterRequested
     signal powerRequested
     signal networkRequested(var anchorRect)
@@ -576,6 +577,7 @@ FocusScope {
                     Layout.alignment: Qt.AlignTop | Qt.AlignRight
                     escapeRequestsSettings: false
                     onSettingsRequested: root.settingsRequested()
+                    onWidgetsRequested: root.widgetsRequested()
                     onNotificationCenterRequested: root.notificationCenterRequested()
                     onPowerRequested: root.powerRequested()
                     onNetworkRequested: anchorRect => root.networkRequested(anchorRect)

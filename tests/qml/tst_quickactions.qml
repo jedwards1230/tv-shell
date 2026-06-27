@@ -40,10 +40,10 @@ TestCase {
     function test_index_vocabulary() {
         var qa = newQA();
         // Index map is contract for the home screen + docs/qa-screenshot-views.md
-        // ("0=Notifications, 1=Settings, 2=Theme toggle, 3=Network, 4=Volume,
-        // 5=Power"). Lock the count + labels.
-        compare(qa._iconCount, 6);
-        compare(qa._labels, ["Notifications", "Settings", "Theme", "Network", "Volume", "Power"]);
+        // ("0=Notifications, 1=Settings, 2=Widgets, 3=Theme, 4=Network, 5=Volume,
+        // 6=Power"). Lock the count + labels.
+        compare(qa._iconCount, 7);
+        compare(qa._labels, ["Notifications", "Settings", "Widgets", "Theme", "Network", "Volume", "Power"]);
     }
 
     function test_initial_index_is_zero() {
@@ -61,19 +61,19 @@ TestCase {
     // --- D-pad navigation + clamping ---------------------------------------
     function test_right_advances_and_clamps_at_end() {
         var qa = newQA();
-        for (var i = 1; i <= 5; ++i) {
+        for (var i = 1; i <= 6; ++i) {
             keyClick(Qt.Key_Right);
             compare(qa.currentIndex, i);
         }
         // Already at the last action — Right must not wrap or overrun.
         keyClick(Qt.Key_Right);
-        compare(qa.currentIndex, 5);
+        compare(qa.currentIndex, 6);
     }
 
     function test_left_decrements_and_clamps_at_start() {
         var qa = newQA();
-        qa.currentIndex = 5;
-        for (var i = 4; i >= 0; --i) {
+        qa.currentIndex = 6;
+        for (var i = 5; i >= 0; --i) {
             keyClick(Qt.Key_Left);
             compare(qa.currentIndex, i);
         }
@@ -105,13 +105,24 @@ TestCase {
         compare(spy.count, 1);
     }
 
+    function test_return_on_widgets() {
+        var qa = newQA();
+        var spy = createTemporaryObject(spyComp, testCase, {
+            "target": qa,
+            "signalName": "widgetsRequested"
+        });
+        qa.currentIndex = 2;
+        keyClick(Qt.Key_Return);
+        compare(spy.count, 1);
+    }
+
     function test_return_on_network() {
         var qa = newQA();
         var spy = createTemporaryObject(spyComp, testCase, {
             "target": qa,
             "signalName": "networkRequested"
         });
-        qa.currentIndex = 3;
+        qa.currentIndex = 4;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
         // The overlay anchors itself beside the glyph, so the rect must carry
@@ -128,7 +139,7 @@ TestCase {
             "target": qa,
             "signalName": "volumeRequested"
         });
-        qa.currentIndex = 4;
+        qa.currentIndex = 5;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
         var rect = spy.signalArguments[0][0];
@@ -143,15 +154,15 @@ TestCase {
             "target": qa,
             "signalName": "powerRequested"
         });
-        qa.currentIndex = 5;
+        qa.currentIndex = 6;
         keyClick(Qt.Key_Return);
         compare(spy.count, 1);
     }
 
-    // --- Theme toggle cycle (index 2) --------------------------------------
+    // --- Theme toggle cycle (index 3) --------------------------------------
     function test_theme_toggle_cycles_auto_light_dark() {
         var qa = newQA();
-        qa.currentIndex = 2;
+        qa.currentIndex = 3;
         compare(SettingsStore.themeMode, "auto");
         keyClick(Qt.Key_Return);
         compare(SettingsStore.themeMode, "light");
