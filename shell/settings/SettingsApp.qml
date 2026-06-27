@@ -164,7 +164,7 @@ FocusScope {
                 component: avControlComp
             }
         ];
-        // Widgets is promoted to a top-level surface (WidgetsScreen), reached from
+        // Widgets is promoted to a top-level surface (WidgetsApp), reached from
         // the nav drawer / the `widgets` deep-link (intercepted in
         // ShellLayout.openSettings) — it is no longer a Settings sidebar page. The
         // demoted "moonlight"/"streaming" deep-links also reroute there.

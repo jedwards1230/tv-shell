@@ -2,6 +2,7 @@ import Quickshell.Io
 import QtQuick
 import "lib"
 import "../settings"
+import "../widgets"
 
 FocusScope {
     id: root
@@ -283,14 +284,16 @@ FocusScope {
         onClosed: screens.popToHome()
     }
 
-    // === Widgets (top-level surface, #249 Phase 3) ===
-    // Schema-driven widget arrange/configure page, peer of Home/Library/Settings.
-    // Sits over Home like Library; B/Escape at the list level closes it. The
-    // embedded MoonlightSettings (Widgets ▸ Moonlight) is self-contained.
-    WidgetsScreen {
+    // === Widgets app (top-level surface, #249 Phase 3) ===
+    // The Widgets "app" (own shell.widgets module: WidgetsApp + WidgetList +
+    // WidgetConfig) — peer of Home/Library/Settings, mirroring SettingsApp. Owns
+    // its visibility via the public API (open/openPage/close), so ScreenManager
+    // drives it without poking internals. Sits over Home like Library; B/Escape
+    // at the list level closes it. The embedded MoonlightSettings (Widgets ▸
+    // Moonlight config) is self-contained.
+    WidgetsApp {
         id: widgetsScreen
         anchors.fill: parent
-        visible: false
         z: 30
         focus: widgetsScreen.visible
         onUserActivity: root.userActivity()

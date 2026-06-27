@@ -57,15 +57,17 @@ QtObject {
             return true;
         }
         if (id === "widgets") {
-            widgetsScreen.visible = true;
-            widgetsScreen.forceActiveFocus();
+            // Through the WidgetsApp public API — never reach into its internals.
+            // A target (e.g. "moonlight") deep-links straight into that widget's
+            // config; otherwise open() lands on the widget list.
+            let ok = true;
             if (params && params.target)
-                widgetsScreen.applyDeepTarget(params.target);
+                ok = widgetsScreen.openPage(params.target);
             else
-                widgetsScreen.focusFirst();
+                widgetsScreen.open();
             active = "widgets";
             screenChanged(active);
-            return true;
+            return ok;
         }
         popToHome();
         return true;
@@ -80,8 +82,8 @@ QtObject {
             settingsApp.close();
         if (libraryScreen)
             libraryScreen.visible = false;
-        if (widgetsScreen)
-            widgetsScreen.visible = false;
+        if (widgetsScreen && widgetsScreen.visible)
+            widgetsScreen.close();
         active = "home";
         screenChanged(active);
         if (refocus !== false && homeFocusTimer)
