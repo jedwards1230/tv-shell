@@ -1,6 +1,10 @@
 pragma Singleton
 import QtQuick
 import "../../components"
+import "../moonlight"
+import "../nowplaying"
+import "../plex"
+import "../recent"
 
 // Hand-written home-widget registry (#249 Phase 2/3). The single, ordered source
 // of truth for which standardized widgets the home screen renders. NOT codegen —

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Effects
 import QtQuick.Layouts
+import "../../components"
 
 // Portrait poster card for the Steam widget (Recently Played / Library). Renders
 // the Steam CDN library poster (`library_600x900.jpg`) with an automatic

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import "lib"
+import "../../components"
+import "../../components/lib"
 
 // Now-playing SMALL visual — the compact transport strip (#249). A pure visual
 // leaf: all MPRIS selection, capability guards, transport actions, and the

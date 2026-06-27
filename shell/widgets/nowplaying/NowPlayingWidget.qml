@@ -1,5 +1,6 @@
 import QtQuick
-import "lib"
+import "../../components"
+import "../../components/lib"
 
 // Unified home-screen Now-Playing widget (#249) — ONE widget with a `size` that
 // selects which visual renders, replacing the former pair of complementary

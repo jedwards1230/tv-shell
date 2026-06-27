@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Effects
 import QtQuick.Layouts
+import "../../components"
 
 // Portrait poster card for the Plex widget (On Deck / Recently Added). Renders
 // the artwork the daemon baked a tokenized URL for, a resume-progress bar when
