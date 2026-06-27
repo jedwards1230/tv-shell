@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "lib"
+import "../widgets/lib"
 
 // Home-screen Moonlight widget — the single "jump into streaming" surface. It is
 // ONE widget with three sizes that render two different views (the user never
@@ -19,23 +20,21 @@ import "lib"
 // on the host (`steam-launch`) then starts the existing single-target Moonlight
 // stream. There is exactly one session — cards do not own a stream.
 //
-// Implements the duck-typed home-tile focus contract (visible / regionFocused /
-// canFocus / firstRow / lastRow / focusFirstChild + previousRow/nextRow),
-// delegating to whichever sub-view the current size renders, so HomeScreen drives
-// it from the same ordered region list as the other widgets.
-ColumnLayout {
+// Extends Widget (the home-screen widget base): a FocusScope hosting the existing
+// ColumnLayout. It satisfies the duck-typed home-tile focus contract (visible /
+// regionFocused / canFocus / firstRow / lastRow / focusFirstChild +
+// previousRow/nextRow) by delegating to whichever sub-view the current size
+// renders, so WidgetHost drives it from the same ordered region list as the
+// other widgets.
+Widget {
     id: root
 
-    property Item previousRow: null
-    property Item nextRow: null
-    property bool widgetEnabled: true
-    // "small" (server cards) | "medium" (smaller posters) | "large" (full posters).
-    property string size: "medium"
+    // The base defaults size to ""; Moonlight defaults to the Steam poster view.
+    size: "medium"
 
     property var targets: []
     property string shellState: "idle"
 
-    signal escaped
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
     signal ensureVisibleRequested(var item)
@@ -60,8 +59,6 @@ ColumnLayout {
     // enforce "one session": it only starts a stream on game-select when false.
     readonly property bool streaming: root._libraryView && steamView.streaming
 
-    spacing: Units.spacingMD
-
     // === View selection ===
     readonly property bool _serverView: root.size === "small"
     readonly property bool _libraryView: !_serverView
@@ -78,16 +75,18 @@ ColumnLayout {
     // `steamView.visible`: reading a Layout child's `visible` from this sibling
     // binding clobbered that child's `visible` binding (the "widget vanishes"
     // bug). `hasContent` carries the same condition without the read hazard.
-    visible: root.widgetEnabled && (_serverView ? _hasTargets : steamView.hasContent)
+    wantVisible: root.widgetEnabled && (_serverView ? _hasTargets : steamView.hasContent)
+
+    implicitWidth: col.implicitWidth
+    implicitHeight: root.wantVisible ? col.implicitHeight : 0
 
     // === Server-view sizing ===
     readonly property int _cardW: Theme.cardWidth
 
     // === Home-tile focus contract (delegates to the active sub-view) ===
-    readonly property var firstRow: _serverView ? serverRow : steamView.firstRow
-    readonly property var lastRow: _serverView ? serverRow : steamView.lastRow
-    readonly property bool canFocus: visible && (_serverView ? _hasTargets : steamView.canFocus)
-    readonly property bool regionFocused: _serverView ? serverRow.activeFocus : steamView.regionFocused
+    firstRow: _serverView ? serverRow : steamView.firstRow
+    lastRow: _serverView ? serverRow : steamView.lastRow
+    canFocus: visible && (_serverView ? _hasTargets : steamView.canFocus)
 
     // Context-menu passthrough for HomeScreen (server view only).
     readonly property var currentTarget: (_serverView && serverRow.currentIndex >= 0 && serverRow.currentIndex < root.targets.length) ? root.targets[serverRow.currentIndex] : null
@@ -110,66 +109,72 @@ ColumnLayout {
         return steamView.focusFirstChild();
     }
 
-    // Title — shown only for the server view; the library view carries its own
-    // header (the Recently Played / Library segment tabs).
-    Text {
-        Layout.fillWidth: true
-        visible: root._serverView
-        text: "Moonlight"
-        font.pixelSize: Theme.fontTitle
-        font.bold: true
-        color: Theme.textPrimary
-    }
+    ColumnLayout {
+        id: col
+        width: root.width
+        spacing: Units.spacingMD
 
-    // === small: server cards ===
-    NavigableRow {
-        id: serverRow
-        visible: root._serverView
-        Layout.fillWidth: true
-        Layout.preferredHeight: root._serverView ? Theme.cardHeight : 0
-        keyNavigationWraps: true
-        previousRow: root.previousRow
-        nextRow: root.nextRow
-        model: root.targets
-        onActiveFocusChanged: if (activeFocus)
-            root.ensureVisibleRequested(this)
-        onActivated: {
-            if (root.currentTarget)
-                root.streamRequested(root.currentTarget);
+        // Title — shown only for the server view; the library view carries its own
+        // header (the Recently Played / Library segment tabs).
+        Text {
+            Layout.fillWidth: true
+            visible: root._serverView
+            text: "Moonlight"
+            font.pixelSize: Theme.fontTitle
+            font.bold: true
+            color: Theme.textPrimary
         }
-        onContextRequested: root.contextRequested()
-        onEscaped: root.escaped()
 
-        delegate: StreamCard {
-            required property int index
-            required property var modelData
-            width: root._cardW
-            height: Theme.cardHeight
-            target: modelData
-            showProfile: true
-            shellState: root.shellState
-            focus: index === serverRow.currentIndex
-            onActivated: root.streamRequested(modelData)
+        // === small: server cards ===
+        NavigableRow {
+            id: serverRow
+            visible: root._serverView
+            Layout.fillWidth: true
+            Layout.preferredHeight: root._serverView ? Theme.cardHeight : 0
+            keyNavigationWraps: true
+            previousRow: root.previousRow
+            nextRow: root.nextRow
+            model: root.targets
+            onActiveFocusChanged: if (activeFocus)
+                root.ensureVisibleRequested(this)
+            onActivated: {
+                if (root.currentTarget)
+                    root.streamRequested(root.currentTarget);
+            }
+            onContextRequested: root.contextRequested()
+            onEscaped: root.escaped()
+
+            delegate: StreamCard {
+                required property int index
+                required property var modelData
+                width: root._cardW
+                height: Theme.cardHeight
+                target: modelData
+                showProfile: true
+                shellState: root.shellState
+                focus: index === serverRow.currentIndex
+                onActivated: root.streamRequested(modelData)
+            }
         }
-    }
 
-    // === medium / large: Steam library posters ===
-    SteamLibraryView {
-        id: steamView
-        // The parent decides WHICH view is active (medium/large) via `viewActive`;
-        // the child owns its own data-driven `visible`. We must NOT bind
-        // `visible:` here — doing so clobbers the persist-last-good binding and
-        // renders an empty zero-height column when the library data is good.
-        viewActive: root._libraryView
-        Layout.fillWidth: true
-        posterScale: root._posterScale
-        host: root._steamHost
-        previousRow: root.previousRow
-        nextRow: root.nextRow
-        onEscaped: root.escaped()
-        onGameSelected: appid => root.gameSelected(appid)
-        onGameContextRequested: appid => root.gameContextRequested(appid)
-        onOpenBigPictureRequested: root.openBigPictureRequested()
-        onEnsureVisibleRequested: item => root.ensureVisibleRequested(item)
+        // === medium / large: Steam library posters ===
+        SteamLibraryView {
+            id: steamView
+            // The parent decides WHICH view is active (medium/large) via `viewActive`;
+            // the child owns its own data-driven `visible`. We must NOT bind
+            // `visible:` here — doing so clobbers the persist-last-good binding and
+            // renders an empty zero-height column when the library data is good.
+            viewActive: root._libraryView
+            Layout.fillWidth: true
+            posterScale: root._posterScale
+            host: root._steamHost
+            previousRow: root.previousRow
+            nextRow: root.nextRow
+            onEscaped: root.escaped()
+            onGameSelected: appid => root.gameSelected(appid)
+            onGameContextRequested: appid => root.gameContextRequested(appid)
+            onOpenBigPictureRequested: root.openBigPictureRequested()
+            onEnsureVisibleRequested: item => root.ensureVisibleRequested(item)
+        }
     }
 }

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "lib"
+import "../widgets/lib"
 
 // Home-screen Plex widget (#249) — ONE poster row with a segmented header that
 // flips between "Up Next" (continue-watching / On Deck) and "Recently Added"
@@ -17,23 +18,18 @@ import "lib"
 // unconfigured/empty and shows a graceful `ServiceStatusNotice` when the server
 // is down.
 //
-// Focus contract (host uses these): `firstRow`/`lastRow` resolve to the first/
-// last *visible* internal region (segment chips, poster row); the internal chain
-// lets NavigableRow/FilterChips skip a hidden region.
-ColumnLayout {
+// Extends Widget (the home-screen widget base): a FocusScope hosting the existing
+// ColumnLayout. Focus contract (host uses these): `firstRow`/`lastRow` resolve to
+// the first/last *visible* internal region (segment chips, poster row); the
+// internal chain lets NavigableRow/FilterChips skip a hidden region.
+Widget {
     id: root
 
-    property Item previousRow: null
-    property Item nextRow: null
-    property bool widgetEnabled: true
-    // "small" | "medium" (large = future hero).
-    property string size: "medium"
+    // The base defaults size to ""; Plex defaults to the captioned poster row.
+    size: "medium"
 
-    signal escaped
     signal openPlexRequested
     signal ensureVisibleRequested(var item)
-
-    spacing: Units.spacingMD
 
     // === Data (populated from `plex-hubs`) ===
     property var onDeckItems: []
@@ -77,13 +73,15 @@ ColumnLayout {
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
-    visible: root.widgetEnabled && (plexMon.degraded || (plexMon.ok && (root._hasOnDeck || root._hasRecent)))
+    wantVisible: root.widgetEnabled && (plexMon.degraded || (plexMon.ok && (root._hasOnDeck || root._hasRecent)))
+
+    implicitWidth: col.implicitWidth
+    implicitHeight: root.wantVisible ? col.implicitHeight : 0
 
     // === Home-tile focus contract ===
-    readonly property var firstRow: segmentChips
-    readonly property var lastRow: posterRow
-    readonly property bool canFocus: visible && (root._hasOnDeck || root._hasRecent)
-    readonly property bool regionFocused: rowFocused
+    firstRow: segmentChips
+    lastRow: posterRow
+    canFocus: visible && (root._hasOnDeck || root._hasRecent)
 
     function focusFirstChild() {
         if (!root.canFocus)
@@ -132,75 +130,81 @@ ColumnLayout {
         }
     }
 
-    ServiceStatusNotice {
-        Layout.fillWidth: true
-        serviceName: "Plex"
-        status: plexMon.status
-    }
+    ColumnLayout {
+        id: col
+        width: root.width
+        spacing: Units.spacingMD
 
-    // === Header: segment chips + trailing "Open Plex" action chip ===
-    RowLayout {
-        Layout.fillWidth: true
-        visible: root._hasOnDeck || root._hasRecent
-        spacing: Units.spacingXL
-
-        FilterChips {
-            id: segmentChips
-            Layout.alignment: Qt.AlignVCenter
-            options: root._chipOptions
-            currentIndex: {
-                for (var i = 0; i < root._segmentOptions.length; i++) {
-                    if (root._segmentOptions[i].value === root._segment)
-                        return i;
-                }
-                return 0;
-            }
-            previousRow: root.previousRow
-            nextRow: posterRow
-            onFilterChanged: value => root._segment = value
-            onActionTriggered: value => root.openPlexRequested()
-            onEscaped: root.escaped()
-            // Defer so the Flickable geometry is settled (the widget may have been
-            // hidden — Plex down — and just re-revealed) before we scroll to it.
-            onActiveFocusChanged: if (activeFocus)
-                Qt.callLater(() => root.ensureVisibleRequested(segmentChips))
-        }
-
-        Item {
+        ServiceStatusNotice {
             Layout.fillWidth: true
+            serviceName: "Plex"
+            status: plexMon.status
         }
-    }
 
-    // === The one poster row (shows the active segment) ===
-    NavigableRow {
-        id: posterRow
-        visible: root._activeItems.length > 0
-        Layout.fillWidth: true
-        // Extra breathing room between the chip strip and the posters (on top of
-        // the ColumnLayout spacing) so the pills don't crowd the row below.
-        Layout.topMargin: Units.spacingMD
-        Layout.preferredHeight: root.plexRowHeight
-        keyNavigationWraps: true
-        previousRow: segmentChips
-        nextRow: root.nextRow
-        model: root._activeItems
-        onActiveFocusChanged: if (activeFocus)
-            Qt.callLater(() => root.ensureVisibleRequested(posterRow))
-        onActivated: root.openPlexRequested()
-        onEscaped: root.escaped()
+        // === Header: segment chips + trailing "Open Plex" action chip ===
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root._hasOnDeck || root._hasRecent
+            spacing: Units.spacingXL
 
-        delegate: PlexCard {
-            required property int index
-            required property var modelData
-            posterWidth: root.posterW
-            posterHeight: root.posterH
-            showCaption: root._showCaption
-            title: modelData.title || ""
-            subtitle: modelData.subtitle || ""
-            art: modelData.art || ""
-            progress: modelData.progress || 0
-            focus: index === posterRow.currentIndex
+            FilterChips {
+                id: segmentChips
+                Layout.alignment: Qt.AlignVCenter
+                options: root._chipOptions
+                currentIndex: {
+                    for (var i = 0; i < root._segmentOptions.length; i++) {
+                        if (root._segmentOptions[i].value === root._segment)
+                            return i;
+                    }
+                    return 0;
+                }
+                previousRow: root.previousRow
+                nextRow: posterRow
+                onFilterChanged: value => root._segment = value
+                onActionTriggered: value => root.openPlexRequested()
+                onEscaped: root.escaped()
+                // Defer so the Flickable geometry is settled (the widget may have been
+                // hidden — Plex down — and just re-revealed) before we scroll to it.
+                onActiveFocusChanged: if (activeFocus)
+                    Qt.callLater(() => root.ensureVisibleRequested(segmentChips))
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
+        }
+
+        // === The one poster row (shows the active segment) ===
+        NavigableRow {
+            id: posterRow
+            visible: root._activeItems.length > 0
+            Layout.fillWidth: true
+            // Extra breathing room between the chip strip and the posters (on top of
+            // the ColumnLayout spacing) so the pills don't crowd the row below.
+            Layout.topMargin: Units.spacingMD
+            Layout.preferredHeight: root.plexRowHeight
+            keyNavigationWraps: true
+            previousRow: segmentChips
+            nextRow: root.nextRow
+            model: root._activeItems
+            onActiveFocusChanged: if (activeFocus)
+                Qt.callLater(() => root.ensureVisibleRequested(posterRow))
             onActivated: root.openPlexRequested()
+            onEscaped: root.escaped()
+
+            delegate: PlexCard {
+                required property int index
+                required property var modelData
+                posterWidth: root.posterW
+                posterHeight: root.posterH
+                showCaption: root._showCaption
+                title: modelData.title || ""
+                subtitle: modelData.subtitle || ""
+                art: modelData.art || ""
+                progress: modelData.progress || 0
+                focus: index === posterRow.currentIndex
+                onActivated: root.openPlexRequested()
+            }
         }
     }
 }

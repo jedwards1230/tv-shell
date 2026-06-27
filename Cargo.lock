@@ -963,6 +963,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "futures",
  "game-shell-protocol",
+ "http",
  "libc",
  "libcec-sys",
  "notify-debouncer-full",

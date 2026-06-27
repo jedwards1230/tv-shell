@@ -10,6 +10,7 @@ Drawer {
     property bool overlayMode: false
 
     signal settingsRequested
+    signal widgetsSelected
     signal notificationCenterRequested
     signal powerRequested
     signal networkRequested(var anchorRect)
@@ -79,6 +80,8 @@ Drawer {
             id: navList
             Layout.fillWidth: true
             Layout.preferredHeight: contentHeight
+            // Widgets is reached via the QuickActions row below (idx 2) / the
+            // `intent settings:widgets` path — no redundant drawer row for it.
             model: [
                 {
                     label: "Home",
@@ -188,6 +191,10 @@ Drawer {
                 onSettingsRequested: {
                     root.closed();
                     root.settingsRequested();
+                }
+                onWidgetsRequested: {
+                    root.closed();
+                    root.widgetsSelected();
                 }
                 onNotificationCenterRequested: {
                     root.closed();

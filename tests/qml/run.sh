@@ -15,6 +15,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 build="$here/.build"
 shellc="$repo/shell/components"
+shellw="$repo/shell/widgets"
 
 runner="${QMLTESTRUNNER:-qmltestrunner}"
 if ! command -v "$runner" >/dev/null 2>&1; then
@@ -34,6 +35,16 @@ cp "$here/stubs/lib/qmldir" "$build/components/lib/qmldir"
 cp "$shellc/QuickActions.qml" "$build/components/"
 cp "$shellc/QuickActionButton.qml" "$build/components/"
 cp "$shellc/lib/CountBadge.qml" "$build/components/lib/"
+# Widget base + WidgetHost are pure QtQuick (no Quickshell), so they run headless
+# against the stub WidgetRegistry + Stub*Widget shims under stubs/lib. They now
+# live in shell/widgets/lib/ but are copied into the test's assembled
+# `components.lib` module (the test module name is a build-time fiction).
+cp "$shellw/lib/Widget.qml" "$build/components/lib/"
+cp "$shellw/lib/WidgetHost.qml" "$build/components/lib/"
+# WidgetManifests is a pure-data singleton (no Quickshell) — the real one runs
+# headless so tst_widgetmigrate exercises the production manifest defaults.
+cp "$shellw/lib/WidgetManifests.qml" "$build/components/lib/"
+cp "$here/stubs/lib/"*.qml "$build/components/lib/"
 
 # 3. Run every tst_*.qml in tests/qml headless.
 echo "Running QML tests with: $runner (offscreen)"

@@ -1,0 +1,86 @@
+# Per-widget release workflow.
+#
+# Triggered by pushing a `widget-<id>-v<semver>` tag
+# (e.g. `widget-moonlight-v1.0.0`). No binary is built — QML widgets are
+# interpreted at runtime by Quickshell. The workflow validates the tag's
+# <id> and <version> against widgets-index.json, then publishes a GitHub
+# Release with auto-generated notes.
+#
+# Tag scheme (see CLAUDE.md › CI):
+#   host-v*            → release-host.yml   (builds game-shell-host binaries)
+#   input-v*           → release-input.yml  (builds game-shell-input binary)
+#   widget-<id>-v*     → release-widget.yml (notes-only; no build artifact)
+#
+# The three streams are independent. Widget versions are per-widget, not
+# monorepo-wide. The two SSOT rules:
+#   1. WidgetManifests.qml is the authoring SSOT for id/version/requires.
+#   2. widgets-index.json must match (enforced by CI via widgets.yml).
+# Before pushing a widget-<id>-v<X.Y.Z> tag, bump the widget's `version`
+# field in both files and merge that change to main.
+
+name: Release Widget
+
+run-name: "Release Widget — ${{ github.ref_name }}"
+
+on:
+  push:
+    tags: ['widget-*-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Parse tag
+        id: tag
+        run: |
+          # Tag format: widget-<id>-v<semver>
+          # Example: widget-nowplaying-v1.2.3 → id=nowplaying, version=1.2.3
+          TAG="${GITHUB_REF_NAME}"
+          WITHOUT_PREFIX="${TAG#widget-}"          # strip leading 'widget-'
+          WIDGET_VERSION="${WITHOUT_PREFIX##*-v}"  # everything after last '-v'
+          WIDGET_ID="${WITHOUT_PREFIX%-v${WIDGET_VERSION}}"  # strip '-v<ver>' suffix
+          echo "id=${WIDGET_ID}" >> "$GITHUB_OUTPUT"
+          echo "version=${WIDGET_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Parsed tag: id=${WIDGET_ID} version=${WIDGET_VERSION}"
+
+      - name: Validate widget id and version against widgets-index.json
+        run: |
+          ID="${{ steps.tag.outputs.id }}"
+          VERSION="${{ steps.tag.outputs.version }}"
+
+          if [ ! -f widgets-index.json ]; then
+            echo "::error::widgets-index.json not found in repo root"
+            exit 1
+          fi
+
+          # Check the widget id exists in the index.
+          INDEX_VERSION=$(jq -r --arg id "$ID" \
+            '.widgets[] | select(.id == $id) | .version' widgets-index.json)
+          if [ -z "$INDEX_VERSION" ]; then
+            echo "::error::Widget id '${ID}' not found in widgets-index.json"
+            echo "Known ids: $(jq -r '[.widgets[].id] | join(", ")' widgets-index.json)"
+            exit 1
+          fi
+
+          # The tag version must match the version recorded in the index.
+          if [ "$VERSION" != "$INDEX_VERSION" ]; then
+            echo "::error::Tag version '${VERSION}' does not match widgets-index.json version '${INDEX_VERSION}' for widget '${ID}'"
+            echo "Bump the widget's version in WidgetManifests.qml + widgets-index.json and merge before pushing this tag."
+            exit 1
+          fi
+
+          echo "OK: widget '${ID}' version '${VERSION}' matches widgets-index.json"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Widget: ${{ steps.tag.outputs.id }} v${{ steps.tag.outputs.version }}"
+          generate_release_notes: true
+          fail_on_unmatched_files: false

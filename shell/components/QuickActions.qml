@@ -10,6 +10,7 @@ FocusScope {
     id: root
 
     signal settingsRequested
+    signal widgetsRequested
     signal notificationCenterRequested
     signal powerRequested
     // Network/Volume carry the originating glyph's scene-root rect so the
@@ -31,9 +32,9 @@ FocusScope {
     property bool escapeRequestsSettings: true
 
     // Must match the number of icon containers below
-    // (Notifications=0, Settings=1, Theme=2, Network=3, Volume=4, Power=5)
-    readonly property int _iconCount: 6
-    readonly property var _labels: ["Notifications", "Settings", "Theme", "Network", "Volume", "Power"]
+    // (Notifications=0, Settings=1, Widgets=2, Theme=3, Network=4, Volume=5, Power=6)
+    readonly property int _iconCount: 7
+    readonly property var _labels: ["Notifications", "Settings", "Widgets", "Theme", "Network", "Volume", "Power"]
     property int _labelHeight: Theme.fontHint + Units.spacingSM
 
     implicitWidth: Math.min(iconRow.implicitWidth, maxContentWidth)
@@ -116,6 +117,9 @@ FocusScope {
             root.settingsRequested();
             break;
         case 2:
+            root.widgetsRequested();
+            break;
+        case 3:
             if (Theme.themeMode === "auto")
                 SettingsStore.setThemeMode("light");
             else if (Theme.themeMode === "light")
@@ -123,13 +127,13 @@ FocusScope {
             else
                 SettingsStore.setThemeMode("auto");
             break;
-        case 3:
+        case 4:
             root.networkRequested(root._glyphRect(netGlyph));
             break;
-        case 4:
+        case 5:
             root.volumeRequested(root._glyphRect(volGlyph));
             break;
-        case 5:
+        case 6:
             root.powerRequested();
             break;
         }
@@ -146,17 +150,20 @@ FocusScope {
             } else if (settingsGlyph.hovered) {
                 root.currentIndex = 1;
                 root.forceActiveFocus();
-            } else if (themeGlyph.hovered) {
+            } else if (widgetsGlyph.hovered) {
                 root.currentIndex = 2;
                 root.forceActiveFocus();
-            } else if (netGlyph.hovered) {
+            } else if (themeGlyph.hovered) {
                 root.currentIndex = 3;
                 root.forceActiveFocus();
-            } else if (volGlyph.hovered) {
+            } else if (netGlyph.hovered) {
                 root.currentIndex = 4;
                 root.forceActiveFocus();
-            } else if (powerGlyph.hovered) {
+            } else if (volGlyph.hovered) {
                 root.currentIndex = 5;
+                root.forceActiveFocus();
+            } else if (powerGlyph.hovered) {
+                root.currentIndex = 6;
                 root.forceActiveFocus();
             }
         }
@@ -224,13 +231,40 @@ FocusScope {
                 onActivated: root.settingsRequested()
             }
 
-            // Theme toggle (index 2)
+            // Widgets (index 2)
+            // No freedesktop "widgets" action icon exists, and game-client-1 has
+            // no system icon theme anyway — so this is glyph-only (iconPath: ""),
+            // exactly like the Theme toggle. Use ⊞ (U+229E SQUARED PLUS) — a
+            // square split into four tiles, the "grid-view / app-tiles" reading
+            // for Widgets. It's a Mathematical Operators glyph (same family the
+            // sibling symbol glyphs ⚙/♫/⏻ come from), so it renders at a
+            // consistent weight and sits centered in its slot — unlike the old
+            // ▦ (U+25A6), a Geometric-Shapes box that the font draws undersized
+            // and off-baseline next to the others. No glyphOffsetY needed: like
+            // the other siblings (only the low-sitting ☾/☀/◐ theme glyph nudges).
+            QuickActionButton {
+                id: widgetsGlyph
+                index: 2
+                currentIndex: root.currentIndex
+                rowActiveFocus: root.activeFocus
+                iconSize: root.iconSize
+                imgSize: root.imgSize
+                iconPath: ""
+                fallbackGlyph: "\u{229E}"
+                fallbackColor: widgetsGlyph.hovered && InputMode.mouseMode ? Theme.textPrimary : Theme.textMuted
+                // ⊞ sits a touch low in the font box like ☾/☀/◐ — nudge up.
+                glyphOffsetY: -Math.round(root.imgSize * 0.06)
+                a11yName: root._labels[2]
+                onActivated: root.widgetsRequested()
+            }
+
+            // Theme toggle (index 3)
             // Simple monochrome glyph — intentionally colorless so it
             // reads the same in light and dark themes (no colored
             // weather artwork). Adapts to the theme text color.
             QuickActionButton {
                 id: themeGlyph
-                index: 2
+                index: 3
                 currentIndex: root.currentIndex
                 rowActiveFocus: root.activeFocus
                 iconSize: root.iconSize
@@ -239,8 +273,8 @@ FocusScope {
                 fallbackGlyph: Theme.themeMode === "dark" ? "☾" : Theme.themeMode === "light" ? "☀" : "◐"
                 fallbackColor: Theme.textPrimary
                 // These glyphs sit low in the font box vs the others — nudge up.
-                glyphOffsetY: -Math.round(root.imgSize * 0.08)
-                a11yName: root._labels[2]
+                glyphOffsetY: -Math.round(root.imgSize * 0.12)
+                a11yName: root._labels[3]
                 onActivated: {
                     if (Theme.themeMode === "auto")
                         SettingsStore.setThemeMode("light");
@@ -251,10 +285,10 @@ FocusScope {
                 }
             }
 
-            // Network (index 3)
+            // Network (index 4)
             QuickActionButton {
                 id: netGlyph
-                index: 3
+                index: 4
                 currentIndex: root.currentIndex
                 rowActiveFocus: root.activeFocus
                 iconSize: root.iconSize
@@ -268,14 +302,14 @@ FocusScope {
                 }
                 fallbackGlyph: NetworkManager.connected ? "⇅" : "⚠"
                 fallbackColor: NetworkManager.connected ? Theme.textMuted : Theme.warning
-                a11yName: root._labels[3]
+                a11yName: root._labels[4]
                 onActivated: root.networkRequested(root._glyphRect(netGlyph))
             }
 
-            // Volume (index 4)
+            // Volume (index 5)
             QuickActionButton {
                 id: volGlyph
-                index: 4
+                index: 5
                 currentIndex: root.currentIndex
                 rowActiveFocus: root.activeFocus
                 iconSize: root.iconSize
@@ -283,14 +317,14 @@ FocusScope {
                 iconPath: IconTheme.base ? "file://" + IconTheme.base + "/status/22/audio-volume-high.svg" : ""
                 fallbackGlyph: "♫"
                 fallbackColor: Theme.textMuted
-                a11yName: root._labels[4]
+                a11yName: root._labels[5]
                 onActivated: root.volumeRequested(root._glyphRect(volGlyph))
             }
 
-            // Power (index 5)
+            // Power (index 6)
             QuickActionButton {
                 id: powerGlyph
-                index: 5
+                index: 6
                 currentIndex: root.currentIndex
                 rowActiveFocus: root.activeFocus
                 iconSize: root.iconSize
@@ -298,7 +332,7 @@ FocusScope {
                 iconPath: IconTheme.base ? "file://" + IconTheme.base + "/actions/22/system-shutdown.svg" : ""
                 fallbackGlyph: "⏻"
                 fallbackColor: powerGlyph.hovered && InputMode.mouseMode ? Theme.textPrimary : Theme.textMuted
-                a11yName: root._labels[5]
+                a11yName: root._labels[6]
                 onActivated: root.powerRequested()
             }
         }
@@ -315,14 +349,16 @@ FocusScope {
                     return root._labels[0];
                 if (settingsGlyph.hovered)
                     return root._labels[1];
-                if (themeGlyph.hovered)
+                if (widgetsGlyph.hovered)
                     return root._labels[2];
-                if (netGlyph.hovered)
+                if (themeGlyph.hovered)
                     return root._labels[3];
-                if (volGlyph.hovered)
+                if (netGlyph.hovered)
                     return root._labels[4];
-                if (powerGlyph.hovered)
+                if (volGlyph.hovered)
                     return root._labels[5];
+                if (powerGlyph.hovered)
+                    return root._labels[6];
                 return "";
             }
             return (root.activeFocus && root.currentIndex >= 0 && root.currentIndex < root._labels.length) ? root._labels[root.currentIndex] : "";

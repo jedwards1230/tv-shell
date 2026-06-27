@@ -46,8 +46,9 @@ FocusScope {
     }
 
     // openPage(id) — deep-link to a section by slug; returns false for an unknown
-    // id so the caller can log it. Delegates to openSectionById, which also
-    // reroutes the demoted "moonlight"/"streaming" slugs onto Widgets ▸ Moonlight.
+    // id so the caller can log it. The "widgets"/"moonlight"/"streaming" slugs are
+    // intercepted in ShellLayout.openSettings (top-level Widgets surface), so they
+    // never reach here.
     function openPage(id) {
         return openSectionById(id);
     }
@@ -91,11 +92,6 @@ FocusScope {
     Component {
         id: avControlComp
         AVControlSettings {}
-    }
-
-    Component {
-        id: widgetsComp
-        WidgetsSettings {}
     }
 
     Component {
@@ -168,17 +164,10 @@ FocusScope {
                 component: avControlComp
             }
         ];
-        // Streaming/Moonlight server management is demoted out of the sidebar —
-        // it now lives inline on the Settings ▸ Widgets ▸ Moonlight config page.
-        // Deep-links to "moonlight"/"streaming" are rerouted there in
-        // openSectionById() so existing MCP/intent automation keeps working.
-        s.push({
-            id: "widgets",
-            name: "Widgets",
-            iconSource: "icons/widgets.svg",
-            fallback: "\u{25A6}",
-            component: widgetsComp
-        });
+        // Widgets is promoted to a top-level surface (WidgetsApp), reached from
+        // the nav drawer / the `widgets` deep-link (intercepted in
+        // ShellLayout.openSettings) — it is no longer a Settings sidebar page. The
+        // demoted "moonlight"/"streaming" deep-links also reroute there.
         s.push({
             id: "accessibility",
             name: "Accessibility",
@@ -213,12 +202,6 @@ FocusScope {
         }
     }
 
-    // A deep target to apply once the opened section's page has loaded — used to
-    // route a "moonlight"/"streaming" deep-link onto the Widgets ▸ Moonlight
-    // config page now that streaming has no sidebar entry of its own. "" = no
-    // deep target.
-    property string _pendingDeep: ""
-
     // Set by Return on the sidebar so the page is entered (focusFirst) once its
     // Loader has swapped in — see contentLoader.onLoaded. Entering a page is gated
     // on A: Right no longer crosses into the page, and Left no longer backs out.
@@ -227,14 +210,7 @@ FocusScope {
     Timer {
         id: focusTimer
         interval: 50
-        onTriggered: {
-            if (root._pendingDeep !== "" && contentLoader.item && contentLoader.item.applyDeepTarget) {
-                contentLoader.item.applyDeepTarget(root._pendingDeep);
-                root._pendingDeep = "";
-            } else {
-                sidebarList.forceActiveFocus();
-            }
-        }
+        onTriggered: sidebarList.forceActiveFocus()
     }
 
     RowLayout {
@@ -588,12 +564,7 @@ FocusScope {
             currentSection = idx;
             sidebarList.currentIndex = idx;
             contentFlick.contentY = 0;
-            // With a deep target pending, let the page load then apply it (which
-            // pulls focus into the page); otherwise focus the sidebar directly.
-            if (root._pendingDeep !== "")
-                focusTimer.restart();
-            else
-                sidebarList.forceActiveFocus();
+            sidebarList.forceActiveFocus();
             return;
         }
         _pendingSection = idx;
@@ -602,21 +573,16 @@ FocusScope {
     }
 
     function openSectionById(id) {
-        // Streaming/Moonlight is demoted out of the sidebar — reroute its
-        // deep-links onto the Widgets ▸ Moonlight config page (which now hosts
-        // server management inline).
-        let target = id;
-        if (id === "moonlight" || id === "streaming") {
-            target = "widgets";
-            _pendingDeep = "moonlight";
-        }
+        // Widgets is a top-level surface and the moonlight/streaming deep-links
+        // reroute to it — both are intercepted in ShellLayout.openSettings before
+        // SettingsApp is ever asked, so they never reach here. Any unknown slug
+        // returns false (the caller logs it); no crash.
         for (let i = 0; i < sections.length; i++) {
-            if (sections[i].id === target) {
+            if (sections[i].id === id) {
                 openSection(i);
                 return true;
             }
         }
-        _pendingDeep = "";
         return false;
     }
 

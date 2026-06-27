@@ -1,6 +1,8 @@
 pragma Singleton
 import Quickshell.Io
 import QtQuick
+import "../widgets/lib"
+import "../widgets/lib/widgetConfig.js" as WidgetConfig
 
 // Centralized settings I/O for game-shell — the QML-side façade over
 // ~/.config/game-shell/settings.json.
@@ -38,20 +40,14 @@ Item {
     property bool controllerDebug: false
     property bool rumbleEnabled: true             // gates daemon-fired rumble (#99)
     property bool reduceMotion: false             // suppress animations (#109)
-    // Home-screen widget toggles — hide a widget's UI without affecting any
-    // background/prewarm behaviour. Spotify off ⇒ the player falls back to the
-    // running row (the merged-model filter keys on the widget being visible).
-    property bool widgetSpotifyEnabled: true      // Now Playing (MPRIS) widget
-    property string widgetSpotifySize: "medium"   // "small" (strip) | "medium" (card + progress)
-    property bool widgetSpotifyHideFromRecent: true // hide the active player's app from the Recent row
-    property bool widgetPlexEnabled: true         // Plex (On Deck / Recently Added) widget
-    property string widgetPlexSize: "medium"      // "small" (compact posters) | "medium"
-    property bool widgetPlexHideFromRecent: true  // hide the Plex app from the Recent row
-    property bool widgetRecentEnabled: true       // Recent (running + recents app cards) widget
-    property string widgetRecentSize: "medium"    // "small" (compact) | "medium" (full app cards)
-    property bool widgetMoonlightEnabled: true    // Moonlight (unified stream + Steam-library) widget
-    // "small" (server cards) | "medium" (smaller Steam posters) | "large" (full Steam posters)
-    property string widgetMoonlightSize: "medium"
+    // Home-screen widget config — namespaced per widget (#249 Phase 3). The new
+    // QML SSOT for per-widget enabled/order/size/prefs, replacing the flat
+    // widget<Name>* keys. Shape: { <id>: {enabled, order, size, prefs:{...}} }.
+    // Populated by the migrator in loadProc (legacy flat keys are folded in once,
+    // then live under this subtree). Read via widget(id); write via setWidget /
+    // setWidgetPref / setWidgetOrder. save() emits this whole subtree as one key,
+    // so the daemon's shallow-merge replaces it wholesale.
+    property var widgets: ({})
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
     property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
     property bool nightLightEnabled: false       // drives hyprsunset
@@ -112,44 +108,8 @@ Item {
             t: "boolean"
         },
         {
-            key: "widgetSpotifyEnabled",
-            t: "boolean"
-        },
-        {
-            key: "widgetSpotifySize",
-            t: "string"
-        },
-        {
-            key: "widgetSpotifyHideFromRecent",
-            t: "boolean"
-        },
-        {
-            key: "widgetPlexEnabled",
-            t: "boolean"
-        },
-        {
-            key: "widgetPlexSize",
-            t: "string"
-        },
-        {
-            key: "widgetPlexHideFromRecent",
-            t: "boolean"
-        },
-        {
-            key: "widgetRecentEnabled",
-            t: "boolean"
-        },
-        {
-            key: "widgetRecentSize",
-            t: "string"
-        },
-        {
-            key: "widgetMoonlightEnabled",
-            t: "boolean"
-        },
-        {
-            key: "widgetMoonlightSize",
-            t: "string"
+            key: "widgets",
+            t: "object"
         },
         {
             key: "textScale",
@@ -261,6 +221,15 @@ Item {
                     if (row.key in obj && store._valueOk(row, obj[row.key]))
                         store[row.key] = obj[row.key];
                 }
+                // Namespaced widget config migration (#249 Phase 3): fold the
+                // legacy flat widget* keys into the widgets.<id>.* subtree on
+                // first load (and fill any missing keys when the subtree already
+                // exists), so accessors always see a complete, defaulted subtree.
+                // When the subtree was absent we persist it once (changed=true).
+                var r = WidgetConfig.migrate(obj, WidgetManifests.manifests);
+                store.widgets = r.widgets;
+                if (r.changed)
+                    store.save();
                 store.configLoaded();
             } catch (e) {
                 console.log("SettingsStore: failed to parse settings:", e);
@@ -335,44 +304,66 @@ Item {
         store._setKey("reduceMotion", enabled);
     }
 
-    function setWidgetSpotifyEnabled(enabled) {
-        store._setKey("widgetSpotifyEnabled", enabled);
+    // === Namespaced widget config accessors (#249 Phase 3) ===
+    // widget(id) → the per-widget subtree, ALWAYS fully defaulted (merged over the
+    // manifest defaults) so callers get {enabled, order, size, prefs:{...}} even
+    // before/without an on-disk value. Reactive: it reads store.widgets, so a
+    // binding using widget(id) re-evaluates whenever store.widgets reassigns.
+    function widget(id) {
+        var base = WidgetConfig.defaultSubtree(WidgetManifests.manifests)[id];
+        if (!base)
+            base = {
+                "enabled": true,
+                "order": 0,
+                "size": "medium",
+                "prefs": {}
+            };
+        var w = (store.widgets && store.widgets[id]) ? store.widgets[id] : null;
+        if (!w)
+            return base;
+        var out = {
+            "enabled": (typeof w.enabled === "boolean") ? w.enabled : base.enabled,
+            "order": (typeof w.order === "number") ? w.order : base.order,
+            "size": (typeof w.size === "string") ? w.size : base.size,
+            "prefs": {}
+        };
+        for (var bk in base.prefs)
+            out.prefs[bk] = base.prefs[bk];
+        if (w.prefs && typeof w.prefs === "object") {
+            for (var pk in w.prefs)
+                out.prefs[pk] = w.prefs[pk];
+        }
+        return out;
     }
 
-    function setWidgetSpotifySize(size) {
-        store._setKey("widgetSpotifySize", size);
+    // Default subtree for the setters' "materialise a missing entry" fallback.
+    function _widgetDefaults() {
+        return WidgetConfig.defaultSubtree(WidgetManifests.manifests);
     }
 
-    function setWidgetSpotifyHideFromRecent(enabled) {
-        store._setKey("widgetSpotifyHideFromRecent", enabled);
+    // The widget-config setters delegate the immutable update to widgetConfig.js
+    // (one tested place — see its "Immutable per-widget config mutators" block),
+    // then REASSIGN store.widgets to the returned NEW object. Reassignment is what
+    // fires widgetsChanged so every binding reading widget(id) re-evaluates; an
+    // in-place mutation would notify nothing. tst_widgetreact.qml guards this.
+
+    // Set a top-level per-widget key (enabled / order / size), then persist.
+    function setWidget(id, key, value) {
+        store.widgets = WidgetConfig.setWidget(store.widgets, id, key, value, store._widgetDefaults());
+        store.save();
     }
 
-    function setWidgetPlexEnabled(enabled) {
-        store._setKey("widgetPlexEnabled", enabled);
+    // Set a per-widget pref (under widgets.<id>.prefs), then persist.
+    function setWidgetPref(id, prefKey, value) {
+        store.widgets = WidgetConfig.setPref(store.widgets, id, prefKey, value, store._widgetDefaults());
+        store.save();
     }
 
-    function setWidgetPlexSize(size) {
-        store._setKey("widgetPlexSize", size);
-    }
-
-    function setWidgetPlexHideFromRecent(enabled) {
-        store._setKey("widgetPlexHideFromRecent", enabled);
-    }
-
-    function setWidgetRecentEnabled(enabled) {
-        store._setKey("widgetRecentEnabled", enabled);
-    }
-
-    function setWidgetRecentSize(size) {
-        store._setKey("widgetRecentSize", size);
-    }
-
-    function setWidgetMoonlightEnabled(enabled) {
-        store._setKey("widgetMoonlightEnabled", enabled);
-    }
-
-    function setWidgetMoonlightSize(size) {
-        store._setKey("widgetMoonlightSize", size);
+    // Reorder: assign widgets.<id>.order = position for each id in orderedIds,
+    // then persist once. Used by the Widgets page reorder UI.
+    function setWidgetOrder(orderedIds) {
+        store.widgets = WidgetConfig.setOrder(store.widgets, orderedIds, store._widgetDefaults());
+        store.save();
     }
 
     function setTextScale(scale) {

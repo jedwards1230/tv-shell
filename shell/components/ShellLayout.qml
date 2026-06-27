@@ -2,6 +2,7 @@ import Quickshell.Io
 import QtQuick
 import "lib"
 import "../settings"
+import "../widgets"
 
 FocusScope {
     id: root
@@ -17,6 +18,7 @@ FocusScope {
     property var pads: []
     property alias homeScreen: homeScreen
     property alias libraryScreen: libraryScreen
+    property alias widgetsScreen: widgetsScreen
     property alias settingsApp: settingsApp
     property alias navDrawer: navDrawer
     property alias overlay: overlay
@@ -51,6 +53,7 @@ FocusScope {
     ScreenManager {
         id: screens
         libraryScreen: libraryScreen
+        widgetsScreen: widgetsScreen
         settingsApp: settingsApp
         homeFocusTimer: homeFocusTimer
     }
@@ -59,6 +62,15 @@ FocusScope {
     // layout (→ router → SettingsApp public API) instead of poking the panel.
     // openSettings(page) returns the deep-link bool for the unknown-slug log.
     function openSettings(page) {
+        // Widgets is now a top-level surface, not a settings page. Intercept its
+        // slug + the demoted moonlight/streaming deep-links (which land on the
+        // Widgets ▸ Moonlight config) BEFORE delegating to Settings.
+        if (page === "widgets")
+            return screens.push("widgets");
+        if (page === "moonlight" || page === "streaming")
+            return screens.push("widgets", {
+                target: "moonlight"
+            });
         return screens.push("settings", page ? {
             page: page
         } : {});
@@ -78,7 +90,7 @@ FocusScope {
     // recentsRow.forceActiveFocus() is called inside focusDefaultPosition().
     function focusDefaultPosition() {
         Qt.callLater(function () {
-            if (!homeScreen.visible || settingsApp.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened || sessionQam.opened)
+            if (!homeScreen.visible || settingsApp.visible || widgetsScreen.visible || navDrawer.opened || notificationCenter.opened || powerOverlay.opened || networkOverlay.opened || volumeOverlay.opened || sessionQam.opened)
                 return;
             homeScreen.forceActiveFocus();
             homeScreen.focusDefaultPosition();
@@ -205,10 +217,10 @@ FocusScope {
     HomeScreen {
         id: homeScreen
         anchors.fill: parent
-        visible: root.shellState === "idle" && !libraryScreen.visible
+        visible: root.shellState === "idle" && !libraryScreen.visible && !widgetsScreen.visible
         targets: root.targets
         shellState: root.shellState
-        focus: root.shellState === "idle" && !libraryScreen.visible && !settingsApp.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
+        focus: root.shellState === "idle" && !libraryScreen.visible && !widgetsScreen.visible && !settingsApp.visible && !navDrawer.opened && !notificationCenter.opened && !powerOverlay.opened && !networkOverlay.opened && !volumeOverlay.opened && !sessionQam.opened
 
         runningWindows: root.runningWindows
         pads: root.pads
@@ -220,6 +232,7 @@ FocusScope {
         onAppCloseRequested: address => root.appCloseRequested(address)
         onLibraryRequested: screens.push("library")
         onSettingsRequested: screens.push("settings")
+        onWidgetsRequested: screens.push("widgets")
         onNetworkRequested: anchorRect => networkOverlay.openAt(anchorRect)
         onVolumeRequested: anchorRect => volumeOverlay.openAt(anchorRect)
         onNotificationCenterRequested: {
@@ -272,6 +285,22 @@ FocusScope {
         onClosed: screens.popToHome()
     }
 
+    // === Widgets app (top-level surface, #249 Phase 3) ===
+    // The Widgets "app" (own shell.widgets module: WidgetsApp + WidgetList +
+    // WidgetConfig) — peer of Home/Library/Settings, mirroring SettingsApp. Owns
+    // its visibility via the public API (open/openPage/close), so ScreenManager
+    // drives it without poking internals. Sits over Home like Library; B/Escape
+    // at the list level closes it. The embedded MoonlightSettings (Widgets ▸
+    // Moonlight config) is self-contained.
+    WidgetsApp {
+        id: widgetsScreen
+        anchors.fill: parent
+        z: 30
+        focus: widgetsScreen.visible
+        onUserActivity: root.userActivity()
+        onClosed: screens.popToHome()
+    }
+
     // Safety net: if the shell leaves idle for any reason while a secondary
     // screen is open (e.g. an externally-started stream), drop it so it never
     // floats over a running app. refocus=false — the state machine owns focus
@@ -307,7 +336,7 @@ FocusScope {
         id: homeFocusTimer
         interval: 50
         onTriggered: {
-            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsApp.visible || libraryScreen.visible)
+            if (notificationCenter.opened || errorLogViewer.opened || powerOverlay.opened || volumeOverlay.opened || networkOverlay.opened || sessionQam.opened || settingsApp.visible || libraryScreen.visible || widgetsScreen.visible)
                 return;
             homeScreen.forceActiveFocus();
         }
@@ -330,6 +359,10 @@ FocusScope {
         onSettingsRequested: {
             navDrawer.opened = false;
             screens.push("settings");
+        }
+        onWidgetsSelected: {
+            navDrawer.opened = false;
+            screens.push("widgets");
         }
         onNotificationCenterRequested: {
             navDrawer.opened = false;
@@ -461,6 +494,11 @@ FocusScope {
                 root.overlayDrawerClosed();
                 root.returnToShellRequested();
                 screens.push("settings");
+            }
+            onWidgetsSelected: {
+                root.overlayDrawerClosed();
+                root.returnToShellRequested();
+                screens.push("widgets");
             }
             onNotificationCenterRequested: {
                 root.returnToShellRequested();

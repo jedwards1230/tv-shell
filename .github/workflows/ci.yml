@@ -41,6 +41,7 @@ jobs:
       host: ${{ steps.filter.outputs.host }}
       qml: ${{ steps.filter.outputs.qml }}
       qmlformat: ${{ steps.filter.outputs.qmlformat }}
+      widgets: ${{ steps.filter.outputs.widgets }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dorny/paths-filter@v3
@@ -74,6 +75,12 @@ jobs:
               - '**/*.qml'
               - '.github/workflows/lint.yml'
               - '.github/workflows/ci.yml'
+            widgets:
+              - 'widgets-index.json'
+              - 'shell/widgets/lib/WidgetManifests.qml'
+              - 'scripts/check-widgets-index.py'
+              - '.github/workflows/widgets.yml'
+              - '.github/workflows/ci.yml'
 
   rust:
     needs: changes
@@ -100,10 +107,15 @@ jobs:
     secrets: inherit
     uses: ./.github/workflows/lint.yml
 
+  widgets:
+    needs: changes
+    if: needs.changes.outputs.widgets == 'true'
+    uses: ./.github/workflows/widgets.yml
+
   # The ONLY required check. Always runs; fails if any area job failed/was
   # cancelled. Skipped area jobs (their area didn't change) count as success.
   ci-gate:
-    needs: [changes, rust, host, qml, qmlformat]
+    needs: [changes, rust, host, qml, qmlformat, widgets]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -116,6 +128,7 @@ jobs:
           echo "  host=${{ needs.host.result }}"
           echo "  qml=${{ needs.qml.result }}"
           echo "  qmlformat=${{ needs.qmlformat.result }}"
+          echo "  widgets=${{ needs.widgets.result }}"
           exit 1
       - name: All required jobs passed or were skipped
         run: echo "CI gate green."

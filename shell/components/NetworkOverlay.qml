@@ -11,7 +11,10 @@ import "lib"
 // Stats sourced from the daemon's net-status + net-throughput IPC (read-only);
 // surfaces the IPv4 address, live ↓/↑ speeds (sampled via net-throughput), and
 // a two-step disconnect-with-warning toggle via nmcli so an accidental A on a
-// couch never drops the network (and Moonlight). B/Escape closes.
+// couch never drops the network (and Moonlight). The disconnect toggle is only
+// offered on Wi-Fi — on a wired/ethernet link the popover is status-only (no
+// disable affordance), since turning networking off from the couch can strand a
+// wired box with no easy recovery. B/Escape closes.
 FocusScope {
     id: root
 
@@ -27,6 +30,11 @@ FocusScope {
     property string device: ""         // e.g. "enp3s0" — derived from activeConnections
     property bool ifaceUp: true        // reflect current link state
     property bool statusLoaded: false
+
+    // Wired/ethernet links hide the disconnect affordance entirely — turning
+    // networking off from the couch on a wired box can strand it. Derived from
+    // the connType the daemon's net-status already reports (NM type string).
+    readonly property bool isWired: root.connType === "802-3-ethernet"
 
     // --- Live speed state ---
     property real _prevRxBytes: -1
@@ -204,7 +212,9 @@ FocusScope {
             if (root._confirmStep === 1 && root._focusRow === 0)
                 root._focusRow = 1;
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root._focusRow === 0) {
+            if (root.isWired)
+            // Wired link: no disable affordance — A is a no-op.
+            {} else if (root._focusRow === 0) {
                 // Toggle row — A activates
                 if (root.ifaceUp) {
                     // First press enters confirm step
@@ -251,25 +261,33 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        // --- Connection info ---
+        // --- Status card: connection facts + live throughput in one card ---
+        // One cohesive card (name/type, IP + interface, live ↓/↑ speeds)
+        // instead of two stacked cards — so the wired status-only view reads as
+        // a single intentional block, not two fragments with a gap between them.
         Rectangle {
             Layout.fillWidth: true
-            height: connInfoCol.implicitHeight + Units.spacingLG * 2
+            // Size via Layout.preferredHeight (not plain `height`) so the parent
+            // ColumnLayout positions the next row (HintBar) below the card — a
+            // plain `height` is not reflected in the layout, which lets the hint
+            // overlap the card.
+            Layout.preferredHeight: statusCol.implicitHeight + Units.spacingLG * 2
             radius: Units.radiusMD
             color: Theme.cardBackground
             border.width: Units.borderThin
             border.color: Theme.surfaceBorder
 
             ColumnLayout {
-                id: connInfoCol
+                id: statusCol
                 anchors {
                     left: parent.left
                     right: parent.right
                     top: parent.top
                     margins: Units.spacingLG
                 }
-                spacing: Units.spacingXS
+                spacing: Units.spacingSM
 
+                // Connection name + medium (e.g. "Wired connection 1 · Ethernet").
                 Text {
                     visible: root.statusLoaded && root.connName !== ""
                     text: root.connName + " · " + root._typeLabel(root.connType)
@@ -280,7 +298,8 @@ FocusScope {
                     Layout.fillWidth: true
                 }
 
-                // IPv4 address — explicitly labelled so it's easy to read.
+                // IPv4 address + interface on one line (label · value · iface),
+                // so the static facts stay compact above the live speeds.
                 RowLayout {
                     visible: root.statusLoaded && root.ipAddress !== ""
                     Layout.fillWidth: true
@@ -293,20 +312,15 @@ FocusScope {
                     }
                     Text {
                         Layout.fillWidth: true
+                        // The daemon's ipv4 already carries the interface
+                        // (e.g. "enp3s0: 192.168.8.50"), so there's no separate
+                        // interface label — it would duplicate the iface.
                         text: root.ipAddress
                         font.pixelSize: Theme.fontHint
                         font.family: "monospace"
                         color: Theme.textSecondary
                         elide: Text.ElideRight
                     }
-                }
-
-                Text {
-                    visible: root.statusLoaded && root.device !== ""
-                    text: root.device
-                    font.pixelSize: Theme.fontHint
-                    font.family: "monospace"
-                    color: Theme.textMuted
                 }
 
                 Text {
@@ -322,64 +336,52 @@ FocusScope {
                     font.pixelSize: Theme.fontHint
                     color: Theme.textMuted
                 }
-            }
-        }
 
-        // --- Live speed row ---
-        Rectangle {
-            Layout.fillWidth: true
-            height: speedRow.implicitHeight + Units.spacingLG * 2
-            radius: Units.radiusMD
-            color: Theme.cardBackground
-            border.width: Units.borderThin
-            border.color: Theme.surfaceBorder
-            visible: root.device !== ""
-
-            RowLayout {
-                id: speedRow
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    margins: Units.spacingLG
-                }
-                spacing: Units.spacingXL
-
-                Text {
+                // Live ↓/↑ throughput — separated from the static facts above by
+                // a little extra space rather than a divider (house style: no
+                // in-card rules). Only shown once we know the interface.
+                RowLayout {
+                    id: speedRow
+                    visible: root.device !== ""
                     Layout.fillWidth: true
-                    text: "↓ " + root.downSpeed
-                    font.pixelSize: Theme.fontHint
-                    font.bold: true
-                    color: Theme.online
-                    horizontalAlignment: Text.AlignLeft
-                }
+                    spacing: Units.spacingXL
 
-                Text {
-                    Layout.fillWidth: true
-                    text: "↑ " + root.upSpeed
-                    font.pixelSize: Theme.fontHint
-                    font.bold: true
-                    color: Theme.ember
-                    horizontalAlignment: Text.AlignRight
+                    Text {
+                        Layout.fillWidth: true
+                        text: "↓ " + root.downSpeed
+                        font.pixelSize: Theme.fontHint
+                        font.bold: true
+                        color: Theme.online
+                        horizontalAlignment: Text.AlignLeft
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "↑ " + root.upSpeed
+                        font.pixelSize: Theme.fontHint
+                        font.bold: true
+                        color: Theme.ember
+                        horizontalAlignment: Text.AlignRight
+                    }
                 }
             }
         }
 
-        // --- Divider ---
+        // --- Divider (only above the actionable toggle — hidden on wired) ---
         Rectangle {
             Layout.fillWidth: true
             height: 2
             color: Theme.surfaceBorder
-            visible: root.device !== ""
+            visible: root.device !== "" && !root.isWired
         }
 
-        // --- Interface toggle ---
+        // --- Interface toggle (Wi-Fi only — wired is status-only) ---
         Rectangle {
             id: toggleRow
             Layout.fillWidth: true
             height: Units.gridUnit * 1.6
             radius: Units.radiusMD
-            visible: root.device !== ""
+            visible: root.device !== "" && !root.isWired
 
             // Focused when _focusRow === 0
             readonly property bool rowFocused: root.activeFocus && root._focusRow === 0
@@ -533,7 +535,12 @@ FocusScope {
         // --- Hint bar ---
         HintBar {
             muted: true
-            text: root._confirmStep === 1 ? "▲▼ Navigate    A: Confirm    B: Cancel" : "A: Toggle    B: Close"
+            text: {
+                if (root._confirmStep === 1)
+                    return "▲▼ Navigate    A: Confirm    B: Cancel";
+                // Wired link has no toggle — close-only.
+                return root.isWired ? "B: Close" : "A: Toggle    B: Close";
+            }
         }
     }
 }

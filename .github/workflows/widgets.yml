@@ -1,0 +1,20 @@
+# Reusable workflow: verify widgets-index.json matches WidgetManifests.qml.
+#
+# Called from ci.yml when widgets-index.json, WidgetManifests.qml, the check
+# script, or this workflow file change. WidgetManifests.qml is the authoring
+# SSOT; widgets-index.json is kept in-sync and must be updated in the same
+# commit as any QML manifest change.
+
+name: Widget Index Check
+
+on:
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check widgets-index.json matches WidgetManifests.qml
+        run: python3 scripts/check-widgets-index.py

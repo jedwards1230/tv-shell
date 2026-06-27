@@ -1,10 +1,13 @@
 import QtQuick
 import Quickshell.Services.Mpris
 import "../"
+import "../../widgets/lib"
 
-// Shared base for the two now-playing home widgets — MediaWidget (full card +
-// progress) and NowPlayingStrip (compact strip). Both are the same thing
-// behaviourally: pick the active MPRIS player, expose capability guards, run a
+// Shared base for the now-playing home widgets — the unified NowPlayingWidget
+// (size-switching home tile) and the standalone MediaWidget (SessionQAM). The
+// visuals are pure leaves (NowPlayingCard / NowPlayingStripView) handed this base
+// via `contentCard`. Behaviourally one thing: pick the active MPRIS player,
+// expose capability guards, run a
 // Prev / Play-Pause / Next transport with an "Open app" pill, and slot into the
 // home-screen vertical focus chain via the duck-typed home-tile contract
 // (regionFocused / focusFirstChild + previousRow/nextRow). Only the visual
@@ -14,23 +17,16 @@ import "../"
 // to `contentCard` so the base can size itself; it draws transport icons by
 // calling `root._paintSkip(...)` and reads the shared `_btn` / capability
 // guards. This dedups ~300 lines that were previously verbatim in both widgets.
-FocusScope {
+//
+// Extends Widget (the home-screen widget base), which supplies the focus
+// contract members previousRow/nextRow/widgetEnabled/regionFocused/escaped;
+// this file overrides canFocus and focusFirstChild with MPRIS-aware logic.
+Widget {
     id: root
-
-    // Vertical focus chain neighbours (set by the host, same contract as
-    // NavigableRow). Either may be null.
-    property var previousRow: null
-    property var nextRow: null
-
-    // Home-screen widget toggle (Settings ▸ Widgets). When false the widget is
-    // hidden and collapses to zero height; the host's merged-model filter then
-    // lets the player fall back to the running row.
-    property bool widgetEnabled: true
 
     // The subclass's visual card. Drives the widget's height; null collapses it.
     property Item contentCard: null
 
-    signal escaped
     // Context action (gamepad X face → KEY_X) — the host opens a quit popover.
     signal contextRequested
     // Open the player's desktop app full-screen. The host resolves the
@@ -59,10 +55,8 @@ FocusScope {
 
     // === Home-tile focus contract (mirrors NavigableRow) ===
     // The widget is a single focusable strip, so its "first child" is itself.
-    // regionFocused lets HomeScreen's re-anchor net recognise this region;
-    // canFocus (true only while shown) lets the vertical-chain walk skip it when
-    // the player/widget is hidden.
-    readonly property bool regionFocused: activeFocus
+    // Override Widget's defaults: canFocus is true only while shown, so the
+    // vertical-chain walk skips this region when the player/widget is hidden.
     readonly property bool canFocus: _shown
 
     function focusFirstChild() {
@@ -93,7 +87,7 @@ FocusScope {
 
     readonly property bool _shown: hasPlayer && widgetEnabled
     implicitHeight: _shown && contentCard ? contentCard.implicitHeight : 0
-    visible: _shown
+    wantVisible: _shown
     height: implicitHeight
 
     // Draw a skip-track icon (two triangles + a bar) centred by construction.

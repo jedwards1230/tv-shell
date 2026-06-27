@@ -123,6 +123,13 @@ schemars = { version = "1", optional = true }
 # exists on Linux, so they live here alongside evdev. The portable modules
 # (protocol parsing/Display, response builders) stay testable on macOS; the
 # bluetooth/network/power modules are `#[cfg(target_os = "linux")]`.
+
+[dev-dependencies]
+# `http` is already in the tree transitively via reqwest; declared directly here
+# only so sidecar.rs unit tests can build a `reqwest::Response` from an in-memory
+# `http::Response` (no live server) to exercise the body-size cap.
+http = "1"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Native systemd-journal logging layer for tracing (observability). Pure-Rust
 # (no system C dep): it speaks the journal's native socket protocol directly, so

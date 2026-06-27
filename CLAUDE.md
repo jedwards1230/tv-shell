@@ -22,7 +22,8 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 - **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots, and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset), **`Super+Right` → `intent overlay:session`** (open Session QAM). Build with `scripts/build-daemon.sh` (canonical; uses `--features cec,mcp`) or `cargo build --release --features cec,mcp` and install to `$GAME_SHELL_DIR/bin/game-shell-input`; the session script starts it as the `game-shell-input.service` `systemd --user` unit (bare-process fallback when no user manager / under a `GAME_SHELL_INPUT_BIN` dev override) — see [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md)
 - **ShellLayout.qml** — hosts every top-level surface (Home, Library, Settings, overlays, drawers) and owns the **ScreenManager** router. shell.qml reaches the shell only through `ShellLayout`'s API (`openSettings`/`closeSettings`, `toggleMenu`, `focusHome`, …), never into a surface's internals.
 - **ScreenManager.qml** — minimal navigation model for the secondary-screen layer (Home is the base; Library/Settings open over it). `push("settings", {page})` / `push("library")` / `popToHome()` centralize the imperative show/hide + focus handoff. It does NOT own modal/overlay back-handling or the Settings-internal B-stack — it reacts to each surface's `closed` signal and never intercepts Escape. Visibility/focus **bindings** stay declarative on the surfaces.
-- **settings/SettingsApp.qml** — the Settings "app": its own `shell.settings` module (the 11 pages + sidebar). Public API `open()` / `openPage(id)` / `close()` + `closed` signal; deep-link slugs and the moonlight/streaming reroute live in `openSectionById` behind `openPage`.
+- **settings/SettingsApp.qml** — the Settings "app": its own `shell.settings` module (the 10 sidebar pages + sidebar). Public API `open()` / `openPage(id)` / `close()` + `closed` signal. The `widgets`/`moonlight`/`streaming` deep-links are intercepted earlier in `ShellLayout.openSettings` (they route to the Widgets app), so they never reach SettingsApp.
+- **widgets/WidgetsApp.qml** — the Widgets "app", mirroring SettingsApp: its own `shell.widgets` module with the same public-API shape (`open()` / `openPage(id)` deep-links into a widget's config, e.g. `"moonlight"` / `close()` + `closed` signal) that `ShellLayout`/`ScreenManager` drive — callers never reach into its internals. It owns the back-stack between two distinct leaf views: **`WidgetList.qml`** (L0 — the widget list, order model + reorder/toggle/configure) and **`WidgetConfig.qml`** (L1 — the manifest-driven per-widget config, with the Moonlight server surface inlined). It is schema-driven from `WidgetManifests` (no per-widget page code) and replaced the old monolithic `components/WidgetsScreen.qml`.
 - **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
 - **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
@@ -38,9 +39,9 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     HomeScreen.qml           # Hero clock, app rows, status icons
     AppCard.qml              # Icon-centric app tile (Freedesktop icons)
     StreamCard.qml           # Moonlight streaming target card
-    QuickActions.qml         # Top-right quick actions (volume, network, theme, power)
+    QuickActions.qml         # Top-right quick actions (notifications, settings, widgets, theme, network, volume, power)
     ShellLayout.qml          # Hosts every surface; owns the ScreenManager router
-    ScreenManager.qml        # Minimal Home/Library/Settings navigation model
+    ScreenManager.qml        # Minimal Home/Library/Settings/Widgets navigation model
     LibraryScreen.qml        # Secondary browse surface (Moonlight + Applications)
     MoonlightSettings.qml    # Server management — stays here (streaming provider's settingsComponent)
     SettingsButton.qml       # Reusable button atom (also used by lib/)
@@ -48,7 +49,7 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     SettingsEmptyState.qml   # Reusable empty-state card
     MarqueeText.qml          # Scrolling text for long names
     Drawer.qml               # Reusable slide-in drawer (any edge)
-    NavigationDrawer.qml     # Left nav drawer (Home, Settings)
+    NavigationDrawer.qml     # Left nav drawer (Home + QuickActions row; Widgets via the QuickAction)
     StreamOverlay.qml        # Reconnecting/error overlay
     lib/                     # Shared reusable component library (own qmldir module)
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)
@@ -60,11 +61,31 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     SettingsApp.qml          #   Public entry: sidebar + Loader content pane +
                              #   public API (open/openPage/close + `closed`)
     {Audio,Bluetooth,Network,Display,Controllers,KeyBindings,
-     AVControl,Widgets,Accessibility,Power,System}Settings.qml  # the 11 pages
+     AVControl,Accessibility,Power,System}Settings.qml  # the 10 sidebar pages
+                             # (Widgets is no longer a settings page — it's the
+                             #  top-level WidgetsScreen surface in components/)
     icons/                   #   Sidebar section SVGs (resolved relative to SettingsApp)
     qmldir                   #   `module shell.settings`
     # Pages reach shared singletons/atoms via `import "../components"` and the
     # lib via `import "../components/lib"` (same relative-dir mechanism lib/ uses).
+  widgets/                   # Widgets app module (own qmldir — `module shell.widgets`)
+    WidgetsApp.qml           #   Public entry: back-stack (list↔config) + public API
+                             #   (open/openPage/close + `closed`) — mirrors SettingsApp
+    WidgetList.qml           #   L0 — widget list: order model, reorder/toggle/configure
+    WidgetConfig.qml         #   L1 — manifest-driven per-widget config (+ inlined Moonlight)
+    qmldir                   #   `module shell.widgets`
+    lib/                     # Widget framework (own qmldir — `module shell.widgets.lib`)
+      Widget.qml             #   Home-widget base (focus/visibility contract)
+      WidgetHost.qml         #   Instantiates the registry + builds the generic focus chain
+      WidgetRegistry.qml     #   Singleton — ordered home-widget set (id+Component, by persisted order)
+      WidgetManifests.qml    #   Singleton — per-widget manifest data (id/name/version/requires/config schema)
+      widgetConfig.js        #   Pure migrator: legacy flat widget* keys → widgets.<id>.* subtree
+      FilterChips.qml        #   Shared chip-strip filter (used by Plex + Moonlight Steam view)
+      qmldir                 #   `module shell.widgets.lib`
+    # Reaches shared singletons/atoms via `import "../components"` and the lib
+    # via `import "../components/lib"` (same relative-dir mechanism settings/ uses).
+widgets-index.json            # Machine-readable widget catalog (id/name/version/minFrameworkVersion/requires).
+                             # Generated/kept in-sync with WidgetManifests.qml — see SSOT note below.
 config/
   hyprland.conf               # Generic monitor default + `source` hook for a per-machine override
   hyprland.conf.example       # Machine-specific display example (LG C2/Denon HDR) → ~/.config/game-shell/hyprland-local.conf
@@ -83,6 +104,7 @@ scripts/
   install-deps.sh             # Distro-aware system dependency installer
   game-shell-session.sh       # Session wrapper launched by SDDM
   super-intent.sh             # Hyprland Super binds -> intents (Super=menu/drawer, +Escape=home, +Backspace=reset, +Right=overlay:session)
+  check-widgets-index.py      # Consistency check: asserts widgets-index.json mirrors WidgetManifests.qml (run by CI)
 ```
 
 ### Shared Component Library (`lib/`)
@@ -99,6 +121,24 @@ Import convention (verified on-device):
   `SettingsStore`) and sibling atoms (`SettingsButton`) via an **unnamed relative
   import** at the top of the file: `import "../"` — those names then resolve bare,
   exactly as in the flat `components/` module.
+- **A flat `components/` file** (e.g. `HomeScreen.qml` and the home widgets like
+  `MoonlightWidget`/`PlexWidget`/`RecentWidget`/`NowPlayingCard`) accesses **sibling
+  `components` types** (`AppCard`, `NavigableRow`, `FocusFrame`, `MarqueeText`,
+  `SteamLibraryView`, …) **implicitly** — Quickshell resolves
+  same-directory types, so **no import is needed** for them. Such a file adds **only**
+  `import "lib"`, and that solely for the `components.lib` types it uses (e.g.
+  `PointerTrackingArea`, `MprisPlayerBase`). **Never add `import "../"` to a flat
+  `components/` file** — from `components/` that points at `shell/`, not at
+  `components/`, so it does not provide sibling types and is used by no file here
+  (verify: `grep -l 'import "\.\./"' shell/components/*.qml` returns nothing).
+- **A `lib/` file reaching a sibling `lib/` type** — a `components.lib` type or
+  **singleton** in the same directory (e.g. `WidgetHost.qml` using the
+  `WidgetRegistry` singleton, or any lib file using `MprisPlayerBase`) — resolves it
+  **implicitly via same-directory resolution; no `import "."` is needed** (and none
+  is used — `WidgetHost` references `WidgetRegistry` with no `import "."` and renders
+  on-device). Singletons included: a same-directory `pragma Singleton` resolves the
+  same way. `import "../"` from a `lib/` file is **only** for reaching PARENT
+  (`components`) singletons, never for same-`lib` siblings.
 - **A page consumes the library** with `import "lib"` — `lib/` types
   (`SettingsDropdown`, `SettingsButtonGroup`, `HintBar`, …) then resolve bare.
 - Every new `lib/` type must be added to `shell/components/lib/qmldir`.
@@ -115,10 +155,53 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 `FocusFrame`, `NavigableRow`, `Drawer`, `SettingsButton`/`List`/`EmptyState`,
 `DimmedBackdrop`) are migrated into `lib/` opportunistically, not all at once.
 
+**`Widget.qml`** is the base type for home-screen widgets (Now Playing, Moonlight,
+Plex, Recent). It bakes in the duck-typed focus contract HomeScreen + NavigableRow
+query (`previousRow`/`nextRow`/`firstRow`/`lastRow`, `canFocus`/`regionFocused`,
+`focusFirstChild()`, `widgetEnabled`, `size`, `escaped`) with single-stop defaults,
+so a widget extending it satisfies the contract for free and overrides only what it
+needs. `MprisPlayerBase` extends it (overriding `canFocus`/`focusFirstChild`).
+
+**Per-widget config is namespaced (#249 Phase 3).** Each widget owns a
+`widgets.<id>.{enabled,order,size,prefs}` subtree in `settings.json`, the QML SSOT
+for its config. **`SettingsStore.widget(id)`** reads the (fully-defaulted) subtree;
+`setWidget(id,key,value)` / `setWidgetPref(id,prefKey,value)` / `setWidgetOrder(ids)`
+write it. There are NO flat `widget*` keys or `Theme.widget*` passthroughs anymore —
+read config via `SettingsStore.widget(id)`. **`WidgetManifests.qml`** (singleton,
+pure data) is the manifest SSOT: per-widget `id`/`name`/`version`/`requires`
+(capability strings)/`config` schema (typed `bool|enum|int|string` controls, plus
+the framework-owned `size` enum). **`widgetConfig.js`** (`.pragma library`, pure) is
+the one-shot migrator that folds the legacy flat keys into the subtree on first load
+(`widgetSpotify*` → `nowplaying`), preserving existing values; old flat keys linger
+on disk one release (harmless — daemon shallow-merge preserves them).
+
+**`WidgetRegistry.qml`** (singleton) is the hand-written home-widget set — one entry
+per widget pairing its `id` + `Component` with its `enabled`/`size`/`order` bindings
+(read from `SettingsStore.widget(id)`). Its `widgets` list is sorted by persisted
+`order` (so the home column reflects the Widgets-page reorder); `order` is declared
+`int` so a no-op recompute is suppressed and an unrelated enable/size toggle does NOT
+rebuild the widget set. It is the single place to add a home widget (no codegen — the
+repo forbids QML build tooling). The schema-driven **Widgets app** (`shell/widgets/`,
+`module shell.widgets`: `WidgetsApp` + `WidgetList` + `WidgetConfig`) renders the
+per-widget enable/size/prefs controls + a controller-navigable reorder list from the
+manifests; it replaced the old monolithic `components/WidgetsScreen.qml` (which had
+itself replaced `settings/WidgetsSettings.qml`).
+**`WidgetHost.qml`** instantiates the registry set (Repeater + Loader)
+into a `ColumnLayout` and builds the generic vertical focus chain that replaces
+HomeScreen's former hand-wired `previousRow`/`nextRow` web: each widget's UP/DOWN
+neighbour resolves to the nearest preceding/following focusable widget's
+`lastRow`/`firstRow` (or the widget itself if single-stop), falling back to the
+host's `topAnchor`/`bottomAnchor` (HomeScreen wires those to the QuickActions row
+and the All Apps entry). HomeScreen attaches each widget's behaviour via
+`widgetHost.widgetById(id)`. The two now-playing renderers are now ONE
+`NowPlayingWidget` whose `size` selects a `NowPlayingCard` (medium) or
+`NowPlayingStripView` (small) visual leaf; `MediaWidget` is a thin host of the same
+`NowPlayingCard` for standalone use (e.g. SessionQAM).
+
 ## Key Data Flows
 
 - **Streaming targets**: Loaded from `~/.config/game-shell/targets.json` at startup (single-line JSON — see gotchas). The path is resolved client-side by the `Paths` QML singleton (`$GAME_SHELL_TARGETS` env → else `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json`); a missing file is a clean no-op (empty target list, no crash). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.
-- **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `streamingViewMode`, `controllerDebug` (QML-owned) and `keyBindings` (daemon-owned). The **daemon is the sole writer** — `SettingsStore` reads via `get-config` and hands QML-owned keys to `set-config` (read-modify-write), so QML never formats config JSON itself. All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore.
+- **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `streamingViewMode`, `controllerDebug`, the per-widget `widgets.<id>.*` subtree (QML-owned) and `keyBindings` (daemon-owned). The **daemon is the sole writer** — `SettingsStore` reads via `get-config` and hands QML-owned keys to `set-config` (read-modify-write), so QML never formats config JSON itself. All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore. Per-widget config is namespaced under `widgets.<id>` and accessed via `SettingsStore.widget(id)` / `setWidget*` (see the Shared Component Library section); on first load a one-shot migrator folds the legacy flat `widget*` keys into that subtree, preserving values.
 - **Config locations & paths**: The shell is prefix-agnostic. Per-user config lives under `~/.config/game-shell/` (`settings.json`, `targets.json`, optional **`config.toml`** — typed per-machine daemon options, read directly by the daemon via `daemon_config.rs`; optional `hyprland-local.conf`); system defaults conventionally under `/etc/game-shell/`. The install prefix is resolved at runtime — never hardcode `/opt/game-shell`. Env vars (runtime/session only — **not** per-machine config, which is `config.toml`): `GAME_SHELL_DIR` (install root; exported by the session script, also derived from `current_exe`), `GAME_SHELL_INPUT_BIN` (override the daemon binary path for the re-exec/dev-override hook; falls back to `$GAME_SHELL_DIR/bin/game-shell-input`), `GAME_SHELL_TARGETS` (override the streaming-targets file path), `GAME_SHELL_SOCK` (daemon IPC socket). `/opt/game-shell` survives only as a documented last-ditch fallback in `game-shell-session.sh` and the daemon's `install_root()`.
 - **App discovery & recents**: `AppDiscoveryManager` (apps via `list-apps`) and `RecentsTracker` (`get-recents` / `record-launch`) read JSON straight from the daemon, which owns the `.desktop` scanning (`freedesktop-desktop-entry` crate) and recents file. QML no longer parses `.desktop` files. The QML side talks to the daemon over a native `Quickshell.Io` socket via `SocketClient.qml` — the old per-call `python3 -c` Unix-socket shims were retired.
 - **Input daemon IPC**: See [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) for the full protocol specification. QML sends commands via Unix socket; the daemon streams events to subscribers.
@@ -157,6 +240,20 @@ with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtim
 CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
 `cecFocusOnWake` (default `true`), both within the `[cec].lifecycle` master gate
 (in `config.toml`).
+
+### Widget sidecars (remote HTTP backends)
+
+A home-screen widget that needs heavy backend logic ships a **sidecar process**.
+`game-shell-host` (the Steam library/launch backend) is the first and only one
+today. It runs on a **different machine** (the gaming PC) and the daemon reaches
+it **over HTTP on the LAN** with a bearer token (`[steam]` in `config.toml`) — the
+daemon is an HTTP *client*, not a process supervisor: it never spawns,
+health-restarts, or otherwise manages the sidecar's lifecycle ("health" =
+reachability via `GET /status`). The reusable client plumbing lives in
+`daemon/src/sidecar.rs`; the daemon↔sidecar JSON contract is single-sourced in the
+`game-shell-protocol` crate (`LibraryResponse`/`StatusResponse`/`LaunchRequest`),
+(de)serialized by both sides so the wire shape can't drift. See
+[docs/HOST_SETUP.md](docs/HOST_SETUP.md).
 
 ## Development
 
@@ -237,7 +334,7 @@ screenshot/deploy automation — no host-management tooling required.
 - **SplitParser reads line-by-line**: Any JSON loaded via `cat` + `SplitParser` must be single-line. Never pretty-print `targets.json` or `settings.json`.
 - **Theme.qml is an Item, not QtObject**: Quickshell 0.3.0 can't host Process/Timer children inside QtObject. The singleton uses Item as its root type.
 - **`image://icon/` for Freedesktop icons**: Use `Image { source: "image://icon/" + iconName }` to load icons from the system theme. Falls back to nothing if the icon doesn't exist — provide a letter-initial fallback.
-- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`. There are **three** registries — flat components go in `components/qmldir` (`module components`); shared library components go in `components/lib/qmldir` (`module components.lib`); settings pages go in `settings/qmldir` (`module shell.settings`). Cross-module reach uses relative-dir imports of the target directory's qmldir: a `lib/` file uses `import "../"` to see parent singletons; a page uses `import "lib"` for library types; a **settings page** uses `import "../components"` (singletons/atoms) + `import "../components/lib"` (lib types). All four are the same mechanism — a relative directory import pulls that dir's qmldir types into bare scope (see [Shared Component Library](#shared-component-library-lib)).
+- **qmldir must list new components**: Quickshell won't auto-discover them. Add a line like `MyComponent 1.0 MyComponent.qml`. There are **five** registries — flat components go in `components/qmldir` (`module components`); shared library components go in `components/lib/qmldir` (`module components.lib`); settings pages go in `settings/qmldir` (`module shell.settings`); the Widgets app's parts go in `widgets/qmldir` (`module shell.widgets`); the widget framework (Widget/WidgetHost/WidgetRegistry/WidgetManifests/FilterChips) goes in `widgets/lib/qmldir` (`module shell.widgets.lib`). Cross-module reach uses relative-dir imports of the target directory's qmldir: a `lib/` file uses `import "../"` to see parent singletons; a page uses `import "lib"` for library types; a **settings or widgets page** uses `import "../components"` (singletons/atoms) + `import "../components/lib"` (lib types). All are the same mechanism — a relative directory import pulls that dir's qmldir types into bare scope (see [Shared Component Library](#shared-component-library-lib)).
 - **WAYLAND_DISPLAY may vary**: Usually `wayland-1` but try `wayland-0` if grim/hyprctl fails.
 - **Hyprland instance signature**: Multiple instances may exist in `/run/user/1000/hypr/`; use `tail -1` for the latest.
 - **Theme property renames cascade**: `Theme.text` → `Theme.textPrimary` will also hit `Theme.textDim` producing `Theme.textPrimaryDim`. Replace longest matches first.
@@ -248,8 +345,11 @@ screenshot/deploy automation — no host-management tooling required.
 - **QML formatting** (`lint.yml`, reusable): `qmlformat` (Qt 6.8). On PRs, unformatted files are auto-fixed and pushed (needs `contents: write` + `secrets: inherit`, passed by `ci.yml`). On main, unformatted files fail the check.
 - **Rust CI** (`rust.yml` / `host.yml`, reusable): `rust.yml` builds/lints/tests the daemon (`game-shell-input`) on Linux — a default leg plus a `--features cec` leg (static-libcec, on `rust:1-trixie`). `host.yml` builds/lints/tests the cross-platform host + protocol crates on Linux/macOS/Windows. Both stay `-p`-scoped so the daemon's Linux-only graph never leaks into the host's cross-platform build; `ci.yml`'s change detection (not per-workflow `paths:`) decides whether each runs, so a QML-only PR triggers neither.
 - **Headless QML tests** (`qml-test.yml`, reusable): `qmltestrunner` under `QT_QPA_PLATFORM=offscreen` runs the layout/navigation suite in `tests/qml/` (see `tests/qml/README.md`).
-- **Releases — per-binary tags**: artifacts are released by pushing a per-binary tag, not on merge-to-main:
+- **Releases — three independent tag streams**: releases are triggered by pushing a version tag, not on merge-to-main. There are three independent streams:
   - `host-v<semver>` → `release-host.yml` builds `game-shell-host` for linux-musl / macOS (arm64+x86_64) / windows and publishes one Release with all binaries + `checksums.txt`. Consumed by the homelab `desktop-common` Ansible role (`install_method: fetch`).
   - `input-v<semver>` → `release-input.yml` builds `game-shell-input` (`--features cec,mcp`, linux-gnu) and publishes its binary + `checksums.txt`.
+  - `widget-<id>-v<semver>` → `release-widget.yml` publishes a notes-only GitHub Release for the named widget. No binary is built — QML is interpreted at runtime. The workflow validates that `<id>` exists in `widgets-index.json` and that `<semver>` matches its recorded version before publishing. Example: `widget-moonlight-v1.1.0`.
 
-  This is a deliberate deviation from the org's PR-label-driven `ai-release.yml` convention: the two binaries are versioned independently within one monorepo, so the tag prefix (not a merged-PR `semver:*` label) selects what to build. Release notes come from `generate_release_notes`.
+  This is a deliberate deviation from the org's PR-label-driven `ai-release.yml` convention: the artifacts are versioned independently within one monorepo, so the tag prefix (not a merged-PR `semver:*` label) selects what to release. Release notes come from `generate_release_notes`.
+
+- **Widget index consistency** (`widgets.yml`, reusable): `scripts/check-widgets-index.py` asserts that `widgets-index.json` is in-sync with `shell/widgets/lib/WidgetManifests.qml`. **`WidgetManifests.qml` is the authoring SSOT** — update it first, then update `widgets-index.json` to match. The check runs in CI whenever either file (or the script itself) changes; a drift fails the check and blocks merge. A PR that doesn't touch either file skips the check (no wedging). To push a widget release tag: bump `version` in both files, merge to main, then push `widget-<id>-v<X.Y.Z>`.
