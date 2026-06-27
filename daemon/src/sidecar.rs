@@ -40,9 +40,12 @@ pub enum SidecarError {
     Http(reqwest::Error),
     /// The body did not decode as the expected type.
     Json(serde_json::Error),
-    /// The body advertised more than the caller's size cap — refused before
-    /// reading it into memory (a DoS guard against a rogue/compromised host; the
-    /// request timeout alone doesn't cap body size).
+    /// The body exceeded the caller's size cap. Either `Content-Length` advertised
+    /// more than the cap (refused before reading a byte), or — when the header was
+    /// absent or lying — the streamed body crossed the cap and was abandoned
+    /// without buffering it whole. A DoS guard against a rogue/compromised host;
+    /// the request timeout alone doesn't bound body size. The `u64` is the size
+    /// seen at the point of refusal.
     TooLarge(u64),
 }
 
@@ -97,8 +100,9 @@ impl Sidecar {
 
     /// `GET {base}{path}` with the bearer + `Accept: application/json`, returning
     /// the reachability classification and — only when reachable (`Ok`) — the
-    /// response body as text. A body advertising more than `max_bytes` is dropped
-    /// (`None`) while the `Ok` status is kept. Use when the caller needs BOTH the
+    /// response body as text. A body exceeding `max_bytes` (advertised via
+    /// `Content-Length` or detected while streaming) is dropped (`None`) while the
+    /// `Ok` status is kept. Use when the caller needs BOTH the
     /// reachability signal and the body from a single request (e.g. `/status`,
     /// whose body also carries the foreground-game id).
     pub async fn get_classified(
@@ -131,15 +135,26 @@ impl Sidecar {
             tracing::warn!("sidecar GET {url} body too large (> {max_bytes} bytes); ignoring");
             return (status, None);
         }
-        match resp.text().await {
-            Ok(body) => (status, Some(body)),
+        // `Content-Length` is optional (and forgeable) in HTTP, so the early-reject
+        // above is only a fast path — stream the body with a hard cap so a
+        // header-less or lying response can't read unbounded data into memory.
+        match read_body_capped(resp, max_bytes).await {
+            Ok(Ok(bytes)) => match String::from_utf8(bytes) {
+                Ok(body) => (status, Some(body)),
+                Err(_) => (status, None),
+            },
+            Ok(Err(_)) => {
+                tracing::warn!("sidecar GET {url} body too large (> {max_bytes} bytes); ignoring");
+                (status, None)
+            }
             Err(_) => (status, None),
         }
     }
 
     /// `GET {base}{path}` with the bearer + `Accept: application/json`, then decode
     /// the body into `T`. A non-2xx is an error (`error_for_status`), a body over
-    /// `max_bytes` is refused before reading, and a decode failure surfaces as
+    /// `max_bytes` is refused (up-front via `Content-Length`, else by capping the
+    /// stream) as [`SidecarError::TooLarge`], and a decode failure surfaces as
     /// [`SidecarError::Json`] (which closes daemon↔sidecar schema drift — a host
     /// that changed the shape fails loudly here instead of silently dropping
     /// fields, the way the previous untyped `Value` parse did).
@@ -164,8 +179,17 @@ impl Sidecar {
                 return Err(SidecarError::TooLarge(len));
             }
         }
-        let body = resp.text().await.map_err(SidecarError::Http)?;
-        serde_json::from_str(&body).map_err(SidecarError::Json)
+        // `Content-Length` is optional (and forgeable) in HTTP, so the early-reject
+        // above is only a fast path — stream the body with a hard cap so a
+        // header-less or lying response can't read unbounded data into memory.
+        let bytes = match read_body_capped(resp, max_bytes)
+            .await
+            .map_err(SidecarError::Http)?
+        {
+            Ok(bytes) => bytes,
+            Err(seen) => return Err(SidecarError::TooLarge(seen)),
+        };
+        serde_json::from_slice(&bytes).map_err(SidecarError::Json)
     }
 
     /// `POST {base}{path}` with the bearer and an optional JSON body. Any non-2xx
@@ -183,6 +207,32 @@ impl Sidecar {
         req.send().await?.error_for_status()?;
         Ok(())
     }
+}
+
+/// Stream a response body into memory under a hard `max_bytes` cap.
+///
+/// `Content-Length` is optional — and forgeable — in HTTP, so the only sound
+/// bound is to count bytes as chunks arrive and stop the instant the running
+/// total crosses the cap, never buffering more than a single chunk past it. This
+/// is what makes the size cap a real DoS guard rather than a post-hoc check on an
+/// already fully-buffered body.
+///
+/// Returns `Ok(Ok(body))` when the body fits, `Ok(Err(seen))` when it exceeds the
+/// cap (`seen` = bytes read at the point of refusal, a lower bound on the true
+/// size), and `Err(_)` for a transport failure while reading.
+async fn read_body_capped(
+    mut resp: reqwest::Response,
+    max_bytes: u64,
+) -> Result<Result<Vec<u8>, u64>, reqwest::Error> {
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        let total = buf.len() as u64 + chunk.len() as u64;
+        if total > max_bytes {
+            return Ok(Err(total));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(Ok(buf))
 }
 
 #[cfg(test)]
@@ -212,5 +262,45 @@ mod tests {
     #[test]
     fn from_parts_none_when_token_empty() {
         assert!(Sidecar::from_parts("http://h", "").is_none());
+    }
+
+    // Build a `reqwest::Response` from an in-memory body with NO `Content-Length`
+    // header — the exact shape (legal HTTP, header absent) the streaming cap must
+    // defend against. No live server needed.
+    fn response_with_body(body: Vec<u8>) -> reqwest::Response {
+        reqwest::Response::from(http::Response::new(body))
+    }
+
+    #[tokio::test]
+    async fn read_body_capped_returns_body_within_cap() {
+        let body = b"hello world".to_vec();
+        let out = read_body_capped(response_with_body(body.clone()), 1024)
+            .await
+            .expect("transport should not fail on an in-memory body");
+        assert_eq!(out, Ok(body));
+    }
+
+    #[tokio::test]
+    async fn read_body_capped_accepts_body_exactly_at_cap() {
+        let body = vec![b'y'; 16];
+        let out = read_body_capped(response_with_body(body.clone()), 16)
+            .await
+            .expect("transport");
+        assert_eq!(out, Ok(body));
+    }
+
+    #[tokio::test]
+    async fn read_body_capped_rejects_oversized_without_content_length() {
+        // 100-byte body, 10-byte cap, and NO Content-Length: the body must still be
+        // rejected (the DoS guard) rather than read unbounded into memory. `seen`
+        // is the byte count observed when the cap was crossed.
+        let body = vec![b'x'; 100];
+        let out = read_body_capped(response_with_body(body), 10)
+            .await
+            .expect("transport");
+        match out {
+            Err(seen) => assert!(seen > 10, "seen={seen} should exceed the 10-byte cap"),
+            Ok(_) => panic!("oversized body should be rejected, not returned"),
+        }
     }
 }
