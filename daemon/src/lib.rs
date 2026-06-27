@@ -30,9 +30,14 @@ pub mod notifications;
 pub mod plex;
 pub mod protocol;
 pub mod recents;
+// Reusable client plumbing for a remote widget sidecar (base URL + bearer,
+// reachability probe, typed/size-capped bearer HTTP helpers). The daemon is an
+// HTTP client to a sidecar on another machine — NOT a process supervisor.
+// Cross-platform; `steam` is the first consumer.
+pub mod sidecar;
 // Steam library proxy (steam-library + steam-launch) for the home-screen Steam
 // widget. Cross-platform: stateless reqwest + JSON to the game-shell-host
-// sidecar, like `plex`.
+// sidecar (over HTTP, via `sidecar`), like `plex`.
 pub mod steam;
 // Generic remote-service health: shared probe + status vocabulary + background
 // poller that broadcasts `health:<json>` events. Cross-platform (reqwest + tokio
