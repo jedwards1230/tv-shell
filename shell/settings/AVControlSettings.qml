@@ -374,6 +374,7 @@ SettingsPageBase {
         interval: 5000
         onTriggered: {
             scanClient.request("cec-scan");
+            healthClient.request("cec-health");
         }
     }
 
@@ -735,7 +736,7 @@ SettingsPageBase {
                         // (CEC rescans reassign root.devices) — acceptable, the
                         // KeyNavigation binding re-evaluates.
                         KeyNavigation.up: index > 0 ? deviceRepeater.itemAt(index - 1) : wakeScope
-                        KeyNavigation.down: index < deviceRepeater.count - 1 ? deviceRepeater.itemAt(index + 1) : null
+                        KeyNavigation.down: index < deviceRepeater.count - 1 ? deviceRepeater.itemAt(index + 1) : focusStartupScope
 
                         // Controller path for "Set as default": Return/Enter on the
                         // focused row toggles that device as the preferred default
