@@ -261,25 +261,29 @@ FocusScope {
             color: Theme.textPrimary
         }
 
-        // --- Connection info ---
+        // --- Status card: connection facts + live throughput in one card ---
+        // One cohesive card (name/type, IP + interface, live ↓/↑ speeds)
+        // instead of two stacked cards — so the wired status-only view reads as
+        // a single intentional block, not two fragments with a gap between them.
         Rectangle {
             Layout.fillWidth: true
-            height: connInfoCol.implicitHeight + Units.spacingLG * 2
+            height: statusCol.implicitHeight + Units.spacingLG * 2
             radius: Units.radiusMD
             color: Theme.cardBackground
             border.width: Units.borderThin
             border.color: Theme.surfaceBorder
 
             ColumnLayout {
-                id: connInfoCol
+                id: statusCol
                 anchors {
                     left: parent.left
                     right: parent.right
                     top: parent.top
                     margins: Units.spacingLG
                 }
-                spacing: Units.spacingXS
+                spacing: Units.spacingSM
 
+                // Connection name + medium (e.g. "Wired connection 1 · Ethernet").
                 Text {
                     visible: root.statusLoaded && root.connName !== ""
                     text: root.connName + " · " + root._typeLabel(root.connType)
@@ -290,7 +294,8 @@ FocusScope {
                     Layout.fillWidth: true
                 }
 
-                // IPv4 address — explicitly labelled so it's easy to read.
+                // IPv4 address + interface on one line (label · value · iface),
+                // so the static facts stay compact above the live speeds.
                 RowLayout {
                     visible: root.statusLoaded && root.ipAddress !== ""
                     Layout.fillWidth: true
@@ -309,14 +314,13 @@ FocusScope {
                         color: Theme.textSecondary
                         elide: Text.ElideRight
                     }
-                }
-
-                Text {
-                    visible: root.statusLoaded && root.device !== ""
-                    text: root.device
-                    font.pixelSize: Theme.fontHint
-                    font.family: "monospace"
-                    color: Theme.textMuted
+                    Text {
+                        visible: root.device !== ""
+                        text: root.device
+                        font.pixelSize: Theme.fontHint
+                        font.family: "monospace"
+                        color: Theme.textMuted
+                    }
                 }
 
                 Text {
@@ -332,45 +336,34 @@ FocusScope {
                     font.pixelSize: Theme.fontHint
                     color: Theme.textMuted
                 }
-            }
-        }
 
-        // --- Live speed row ---
-        Rectangle {
-            Layout.fillWidth: true
-            height: speedRow.implicitHeight + Units.spacingLG * 2
-            radius: Units.radiusMD
-            color: Theme.cardBackground
-            border.width: Units.borderThin
-            border.color: Theme.surfaceBorder
-            visible: root.device !== ""
-
-            RowLayout {
-                id: speedRow
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    margins: Units.spacingLG
-                }
-                spacing: Units.spacingXL
-
-                Text {
+                // Live ↓/↑ throughput — separated from the static facts above by
+                // a little extra space rather than a divider (house style: no
+                // in-card rules). Only shown once we know the interface.
+                RowLayout {
+                    id: speedRow
+                    visible: root.device !== ""
                     Layout.fillWidth: true
-                    text: "↓ " + root.downSpeed
-                    font.pixelSize: Theme.fontHint
-                    font.bold: true
-                    color: Theme.online
-                    horizontalAlignment: Text.AlignLeft
-                }
+                    Layout.topMargin: Units.spacingSM
+                    spacing: Units.spacingXL
 
-                Text {
-                    Layout.fillWidth: true
-                    text: "↑ " + root.upSpeed
-                    font.pixelSize: Theme.fontHint
-                    font.bold: true
-                    color: Theme.ember
-                    horizontalAlignment: Text.AlignRight
+                    Text {
+                        Layout.fillWidth: true
+                        text: "↓ " + root.downSpeed
+                        font.pixelSize: Theme.fontHint
+                        font.bold: true
+                        color: Theme.online
+                        horizontalAlignment: Text.AlignLeft
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "↑ " + root.upSpeed
+                        font.pixelSize: Theme.fontHint
+                        font.bold: true
+                        color: Theme.ember
+                        horizontalAlignment: Text.AlignRight
+                    }
                 }
             }
         }
