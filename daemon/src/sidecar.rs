@@ -27,10 +27,21 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// A configured remote sidecar endpoint: its base URL and bearer token.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Sidecar {
     base: String,
     token: String,
+}
+
+// Custom Debug that redacts the bearer token — never print the secret, even if
+// something downstream debug-formats a `Sidecar`.
+impl std::fmt::Debug for Sidecar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sidecar")
+            .field("base", &self.base)
+            .field("token", &"***")
+            .finish()
+    }
 }
 
 /// Error from a sidecar request.
