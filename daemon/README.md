@@ -55,6 +55,9 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `moonlight.rs` | Moonlight local-config "forget" — creds-free client-side unpair (`moonlight-forget` IPC) |
 | `notifications.rs` | Notification history persistence (`record-notification` / `get-notifications` / `set-notifications` IPC) |
 | `plex.rs` | Plex hubs fetch for the home-screen Plex widget — `plex-hubs` IPC (cross-platform, stateless) |
+| `service_health.rs` | Shared remote-service reachability vocabulary (`ServiceStatus`) + HTTP probe + background `health:*` poller (cross-platform) |
+| `sidecar.rs` | Reusable remote-widget-**sidecar** HTTP client: base URL + bearer, reachability probe, typed + size-capped request helpers. The daemon is an HTTP *client* to a sidecar on another machine — **not** a process supervisor (no spawn/health-restart). Cross-platform; `steam` is the first consumer |
+| `steam.rs` | Steam library/launch proxy to the `game-shell-host` sidecar **over HTTP** (`steam-library`/`steam-launch`/`steam-bigpicture`/`steam-quit` IPC). Deserializes host responses through the shared `game-shell-protocol` types. Cross-platform, stateless |
 | `system.rs` | System/storage status reads for the System settings page — `sys-status` / `storage-status` IPC |
 | `session_env.rs` | Session-environment self-discovery (resolves `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, install root) |
 | `daemon_config.rs` | Typed `~/.config/game-shell/config.toml` parse + startup `validate()` — the single per-machine config source |
@@ -64,8 +67,26 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `ipc.rs` | Unix-socket server, `broadcast` event fan-out, D-Bus command routing |
 | `main.rs` | Runtime wiring + signals + D-Bus actor spawn |
 
-`apps.rs`, `recents.rs`, and `health.rs`'s response parser are pure Rust —
-fully unit-tested on macOS.
+`apps.rs`, `recents.rs`, `health.rs`'s response parser, `steam.rs`'s
+`normalize_library`, and `sidecar.rs`'s `from_parts` are pure Rust — fully
+unit-tested on macOS.
+
+### Widget sidecars (remote HTTP backends)
+
+A home-screen widget that needs heavy backend logic ships a **sidecar process**.
+`game-shell-host` (the Steam library/launch backend) is the first and only one
+today. The sidecar runs on a **different machine** (the gaming PC) and the daemon
+reaches it **over HTTP on the LAN** with a bearer token — see
+[`docs/HOST_SETUP.md`](../docs/HOST_SETUP.md). The daemon does **not** spawn,
+health-restart, or otherwise supervise the sidecar's process lifecycle; "health"
+is reachability (`GET /status`), not process management.
+
+`sidecar.rs` owns the reusable client plumbing (base URL + bearer, reachability
+probe, typed/size-capped request helpers) so a future widget backend reuses it
+instead of re-deriving it. The daemon↔sidecar JSON contract is single-sourced in
+the `game-shell-protocol` crate (`LibraryResponse` / `StatusResponse` /
+`LaunchRequest`): the host serializes those types, the daemon deserializes them,
+so the wire shape can't silently drift.
 
 ## Gamepad fleet (input-unification Phase 4, #98/#101)
 

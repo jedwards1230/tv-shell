@@ -210,6 +210,20 @@ CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
 `cecFocusOnWake` (default `true`), both within the `[cec].lifecycle` master gate
 (in `config.toml`).
 
+### Widget sidecars (remote HTTP backends)
+
+A home-screen widget that needs heavy backend logic ships a **sidecar process**.
+`game-shell-host` (the Steam library/launch backend) is the first and only one
+today. It runs on a **different machine** (the gaming PC) and the daemon reaches
+it **over HTTP on the LAN** with a bearer token (`[steam]` in `config.toml`) — the
+daemon is an HTTP *client*, not a process supervisor: it never spawns,
+health-restarts, or otherwise manages the sidecar's lifecycle ("health" =
+reachability via `GET /status`). The reusable client plumbing lives in
+`daemon/src/sidecar.rs`; the daemon↔sidecar JSON contract is single-sourced in the
+`game-shell-protocol` crate (`LibraryResponse`/`StatusResponse`/`LaunchRequest`),
+(de)serialized by both sides so the wire shape can't drift. See
+[docs/HOST_SETUP.md](docs/HOST_SETUP.md).
+
 ## Development
 
 No build step — QML is interpreted by Quickshell at runtime. Deploy by syncing files to the target machine's install directory and restarting Quickshell.
