@@ -243,6 +243,7 @@ at relevant lifecycle points):
 | `themeMode` | string | `"dark"` | No |
 | `streamingViewMode` | string | `"servers"` | No |
 | `controllerDebug` | bool | `false` | No |
+| `widgets` | object | `{}` | No |
 | `rumbleEnabled` | bool | `true` | On every rumble event |
 | `reduceMotion` | bool | `false` | No |
 | `textScale` | number | `1.0` | No |
@@ -257,6 +258,25 @@ at relevant lifecycle points):
 | `defaultSink` | string | `""` | No |
 | `cecFocusOnStartup` | bool | `false` | At CEC startup (within `[cec] lifecycle`) |
 | `cecFocusOnWake` | bool | `true` | At CEC resume from sleep (within `[cec] lifecycle`) |
+
+The `widgets` key is the **namespaced per-widget config** the home-widget
+framework owns (still opaque to the daemon). Shape:
+
+```json
+{"widgets":{"moonlight":{"enabled":true,"order":0,"size":"large","prefs":{}},
+            "nowplaying":{"enabled":true,"order":1,"size":"medium","prefs":{"hideFromRecent":true}},
+            "plex":{"enabled":true,"order":2,"size":"medium","prefs":{"hideFromRecent":true}},
+            "recent":{"enabled":true,"order":3,"size":"medium","prefs":{}}}}
+```
+
+`enabled` and `order` are framework keys for every widget; `size` and the
+`prefs.*` entries are declared by each widget's manifest
+(`shell/components/lib/WidgetManifests.qml`). On load, `SettingsStore`
+one-shot-migrates the legacy flat `widget<Name>Enabled/Size/HideFromRecent`
+keys into this subtree (`widgetSpotify*` → `nowplaying`), preserving existing
+values; the daemon's shallow merge leaves the old flat keys on disk untouched
+for one release. `set-config` always sends the complete `widgets` object, so the
+merge replaces that subtree wholesale.
 
 ### `record-launch <json-object>`
 

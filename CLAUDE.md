@@ -22,7 +22,7 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 - **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots, and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset), **`Super+Right` → `intent overlay:session`** (open Session QAM). Build with `scripts/build-daemon.sh` (canonical; uses `--features cec,mcp`) or `cargo build --release --features cec,mcp` and install to `$GAME_SHELL_DIR/bin/game-shell-input`; the session script starts it as the `game-shell-input.service` `systemd --user` unit (bare-process fallback when no user manager / under a `GAME_SHELL_INPUT_BIN` dev override) — see [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md)
 - **ShellLayout.qml** — hosts every top-level surface (Home, Library, Settings, overlays, drawers) and owns the **ScreenManager** router. shell.qml reaches the shell only through `ShellLayout`'s API (`openSettings`/`closeSettings`, `toggleMenu`, `focusHome`, …), never into a surface's internals.
 - **ScreenManager.qml** — minimal navigation model for the secondary-screen layer (Home is the base; Library/Settings open over it). `push("settings", {page})` / `push("library")` / `popToHome()` centralize the imperative show/hide + focus handoff. It does NOT own modal/overlay back-handling or the Settings-internal B-stack — it reacts to each surface's `closed` signal and never intercepts Escape. Visibility/focus **bindings** stay declarative on the surfaces.
-- **settings/SettingsApp.qml** — the Settings "app": its own `shell.settings` module (the 11 pages + sidebar). Public API `open()` / `openPage(id)` / `close()` + `closed` signal; deep-link slugs and the moonlight/streaming reroute live in `openSectionById` behind `openPage`.
+- **settings/SettingsApp.qml** — the Settings "app": its own `shell.settings` module (the 10 sidebar pages + sidebar). Public API `open()` / `openPage(id)` / `close()` + `closed` signal. The `widgets`/`moonlight`/`streaming` deep-links are intercepted earlier in `ShellLayout.openSettings` (they route to the top-level Widgets surface), so they never reach SettingsApp.
 - **Theme.qml** — singleton (must be `Item`, not `QtObject` — Quickshell can't host Process/Timer children in QtObject) with all colors, fonts, and layout constants. Dark/light/auto mode state is read from `SettingsStore`
 - **SettingsStore.qml** — singleton (also `Item`, for the same reason) that owns all QML-side settings I/O for `~/.config/game-shell/settings.json` and the binding IPC (get/set/capture). Single source of truth for the settings schema
 - **components/qmldir** — component registry. New components must be added here or Quickshell won't find them
@@ -42,6 +42,7 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     ShellLayout.qml          # Hosts every surface; owns the ScreenManager router
     ScreenManager.qml        # Minimal Home/Library/Settings navigation model
     LibraryScreen.qml        # Secondary browse surface (Moonlight + Applications)
+    WidgetsScreen.qml        # Top-level Widgets surface — schema-driven arrange/configure page (peer of Home/Library/Settings)
     MoonlightSettings.qml    # Server management — stays here (streaming provider's settingsComponent)
     SettingsButton.qml       # Reusable button atom (also used by lib/)
     SettingsList.qml         # Reusable list-sizing atom
@@ -54,13 +55,20 @@ shell/                       # QML shell — Quickshell config root (-c game-she
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)
       SettingsButtonGroup.qml#   Horizontal chip selector (D-pad)
       HintBar.qml            #   Bottom-of-page hint text
+      Widget.qml             #   Home-widget base (focus/visibility contract)
+      WidgetRegistry.qml     #   Singleton — ordered home-widget set (id+Component, sorted by persisted order)
+      WidgetHost.qml         #   Instantiates the registry + builds the generic focus chain
+      WidgetManifests.qml    #   Singleton — per-widget manifest data (id/name/version/requires/config schema)
+      widgetConfig.js        #   Pure migrator: legacy flat widget* keys → widgets.<id>.* subtree
       qmldir                 #   lib registry — `module components.lib`
     qmldir                   # Component registry — `module components`
   settings/                  # Settings module (own qmldir — `module shell.settings`)
     SettingsApp.qml          #   Public entry: sidebar + Loader content pane +
                              #   public API (open/openPage/close + `closed`)
     {Audio,Bluetooth,Network,Display,Controllers,KeyBindings,
-     AVControl,Widgets,Accessibility,Power,System}Settings.qml  # the 11 pages
+     AVControl,Accessibility,Power,System}Settings.qml  # the 10 sidebar pages
+                             # (Widgets is no longer a settings page — it's the
+                             #  top-level WidgetsScreen surface in components/)
     icons/                   #   Sidebar section SVGs (resolved relative to SettingsApp)
     qmldir                   #   `module shell.settings`
     # Pages reach shared singletons/atoms via `import "../components"` and the
@@ -122,11 +130,29 @@ query (`previousRow`/`nextRow`/`firstRow`/`lastRow`, `canFocus`/`regionFocused`,
 so a widget extending it satisfies the contract for free and overrides only what it
 needs. `MprisPlayerBase` extends it (overriding `canFocus`/`focusFirstChild`).
 
-**`WidgetRegistry.qml`** (singleton) is the hand-written, ordered home-widget set
-(`moonlight → nowplaying → plex → recent`) — one entry per widget pairing its `id`
-+ `Component` with its `enabled`/`size` bindings (flat `Theme.widget*`). It is the
-single place to add/reorder a home widget (no codegen — the repo forbids QML build
-tooling). **`WidgetHost.qml`** instantiates the registry set (Repeater + Loader)
+**Per-widget config is namespaced (#249 Phase 3).** Each widget owns a
+`widgets.<id>.{enabled,order,size,prefs}` subtree in `settings.json`, the QML SSOT
+for its config. **`SettingsStore.widget(id)`** reads the (fully-defaulted) subtree;
+`setWidget(id,key,value)` / `setWidgetPref(id,prefKey,value)` / `setWidgetOrder(ids)`
+write it. There are NO flat `widget*` keys or `Theme.widget*` passthroughs anymore —
+read config via `SettingsStore.widget(id)`. **`WidgetManifests.qml`** (singleton,
+pure data) is the manifest SSOT: per-widget `id`/`name`/`version`/`requires`
+(capability strings)/`config` schema (typed `bool|enum|int|string` controls, plus
+the framework-owned `size` enum). **`widgetConfig.js`** (`.pragma library`, pure) is
+the one-shot migrator that folds the legacy flat keys into the subtree on first load
+(`widgetSpotify*` → `nowplaying`), preserving existing values; old flat keys linger
+on disk one release (harmless — daemon shallow-merge preserves them).
+
+**`WidgetRegistry.qml`** (singleton) is the hand-written home-widget set — one entry
+per widget pairing its `id` + `Component` with its `enabled`/`size`/`order` bindings
+(read from `SettingsStore.widget(id)`). Its `widgets` list is sorted by persisted
+`order` (so the home column reflects the Widgets-page reorder); `order` is declared
+`int` so a no-op recompute is suppressed and an unrelated enable/size toggle does NOT
+rebuild the widget set. It is the single place to add a home widget (no codegen — the
+repo forbids QML build tooling). The schema-driven **`WidgetsScreen.qml`** (top-level
+surface) renders the per-widget enable/size/prefs controls + a controller-navigable
+reorder list from the manifests; it replaced the old `settings/WidgetsSettings.qml`.
+**`WidgetHost.qml`** instantiates the registry set (Repeater + Loader)
 into a `ColumnLayout` and builds the generic vertical focus chain that replaces
 HomeScreen's former hand-wired `previousRow`/`nextRow` web: each widget's UP/DOWN
 neighbour resolves to the nearest preceding/following focusable widget's
@@ -141,7 +167,7 @@ and the All Apps entry). HomeScreen attaches each widget's behaviour via
 ## Key Data Flows
 
 - **Streaming targets**: Loaded from `~/.config/game-shell/targets.json` at startup (single-line JSON — see gotchas). The path is resolved client-side by the `Paths` QML singleton (`$GAME_SHELL_TARGETS` env → else `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell/targets.json`); a missing file is a clean no-op (empty target list, no crash). Managed in-UI via MoonlightSettings. Optional `sunshineUser`/`sunshinePass`/`sunshinePort` fields enable pre-flight session detection via the Sunshine API — when present, the shell checks for active sessions before streaming and offers Resume/Quit/Cancel if a different app is running. Credentials should be injected by the deployment system, not committed.
-- **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `streamingViewMode`, `controllerDebug` (QML-owned) and `keyBindings` (daemon-owned). The **daemon is the sole writer** — `SettingsStore` reads via `get-config` and hands QML-owned keys to `set-config` (read-modify-write), so QML never formats config JSON itself. All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore.
+- **Settings persistence**: `~/.config/game-shell/settings.json` stores `themeMode`, `streamingViewMode`, `controllerDebug`, the per-widget `widgets.<id>.*` subtree (QML-owned) and `keyBindings` (daemon-owned). The **daemon is the sole writer** — `SettingsStore` reads via `get-config` and hands QML-owned keys to `set-config` (read-modify-write), so QML never formats config JSON itself. All QML-side I/O is centralized in the `SettingsStore` singleton — add new settings there (a property + load/save handling), not in Theme.qml. Theme delegates to SettingsStore. Per-widget config is namespaced under `widgets.<id>` and accessed via `SettingsStore.widget(id)` / `setWidget*` (see the Shared Component Library section); on first load a one-shot migrator folds the legacy flat `widget*` keys into that subtree, preserving values.
 - **Config locations & paths**: The shell is prefix-agnostic. Per-user config lives under `~/.config/game-shell/` (`settings.json`, `targets.json`, optional **`config.toml`** — typed per-machine daemon options, read directly by the daemon via `daemon_config.rs`; optional `hyprland-local.conf`); system defaults conventionally under `/etc/game-shell/`. The install prefix is resolved at runtime — never hardcode `/opt/game-shell`. Env vars (runtime/session only — **not** per-machine config, which is `config.toml`): `GAME_SHELL_DIR` (install root; exported by the session script, also derived from `current_exe`), `GAME_SHELL_INPUT_BIN` (override the daemon binary path for the re-exec/dev-override hook; falls back to `$GAME_SHELL_DIR/bin/game-shell-input`), `GAME_SHELL_TARGETS` (override the streaming-targets file path), `GAME_SHELL_SOCK` (daemon IPC socket). `/opt/game-shell` survives only as a documented last-ditch fallback in `game-shell-session.sh` and the daemon's `install_root()`.
 - **App discovery & recents**: `AppDiscoveryManager` (apps via `list-apps`) and `RecentsTracker` (`get-recents` / `record-launch`) read JSON straight from the daemon, which owns the `.desktop` scanning (`freedesktop-desktop-entry` crate) and recents file. QML no longer parses `.desktop` files. The QML side talks to the daemon over a native `Quickshell.Io` socket via `SocketClient.qml` — the old per-call `python3 -c` Unix-socket shims were retired.
 - **Input daemon IPC**: See [docs/IPC_PROTOCOL.md](docs/IPC_PROTOCOL.md) for the full protocol specification. QML sends commands via Unix socket; the daemon streams events to subscribers.

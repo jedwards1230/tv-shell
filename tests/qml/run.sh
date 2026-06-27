@@ -38,6 +38,9 @@ cp "$shellc/lib/CountBadge.qml" "$build/components/lib/"
 # against the stub WidgetRegistry + Stub*Widget shims under stubs/lib.
 cp "$shellc/lib/Widget.qml" "$build/components/lib/"
 cp "$shellc/lib/WidgetHost.qml" "$build/components/lib/"
+# WidgetManifests is a pure-data singleton (no Quickshell) — the real one runs
+# headless so tst_widgetmigrate exercises the production manifest defaults.
+cp "$shellc/lib/WidgetManifests.qml" "$build/components/lib/"
 cp "$here/stubs/lib/"*.qml "$build/components/lib/"
 
 # 3. Run every tst_*.qml in tests/qml headless.

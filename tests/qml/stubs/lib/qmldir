@@ -2,6 +2,7 @@ module components.lib
 CountBadge 1.0 CountBadge.qml
 Widget 1.0 Widget.qml
 WidgetHost 1.0 WidgetHost.qml
+singleton WidgetManifests 1.0 WidgetManifests.qml
 singleton WidgetRegistry 1.0 WidgetRegistry.qml
 StubWidget 1.0 StubWidget.qml
 StubMultiRowWidget 1.0 StubMultiRowWidget.qml

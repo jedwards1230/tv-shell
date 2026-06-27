@@ -66,4 +66,13 @@ dependencies. **If a test fails with a type/import-not-found error, a real
 dependency is probably missing from that list** (or its qmldir entry / stub
 property is absent).
 
-Currently covered: `QuickActions` (+ real `QuickActionButton`, `CountBadge`).
+Currently covered: `QuickActions` (+ real `QuickActionButton`, `CountBadge`),
+`WidgetHost` (against the stub `WidgetRegistry` + stub widgets), and the widget
+config migrator `widgetConfig.js` (`tst_widgetmigrate.qml`).
+
+The migrator test imports the **real** `widgetConfig.js` by source path
+(`../../shell/components/lib/widgetConfig.js`, a pure `.pragma library` module) and
+the **real** `WidgetManifests` singleton (copied into the assembled `components.lib`
+module by `run.sh`, since it is pure-data with no Quickshell imports). That keeps
+the migration invariants (fresh-install defaults, legacy flat-key preservation,
+idempotency) pinned to production code with zero drift.
