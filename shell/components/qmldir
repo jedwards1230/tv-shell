@@ -29,8 +29,6 @@ NowPlayingCard 1.0 NowPlayingCard.qml
 DimOverlay 1.0 DimOverlay.qml
 Drawer 1.0 Drawer.qml
 NavigableRow 1.0 NavigableRow.qml
-PlexCard 1.0 PlexCard.qml
-PlexWidget 1.0 PlexWidget.qml
 WakeCard 1.0 WakeCard.qml
 SessionIndicator 1.0 SessionIndicator.qml
 LibraryScreen 1.0 LibraryScreen.qml
