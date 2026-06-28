@@ -20,7 +20,8 @@ The shell is **prefix-agnostic** and resolves its install root at runtime, so an
 ## 1. Dependencies
 
 ```bash
-sudo ./scripts/install-deps.sh
+sudo ./scripts/install-deps.sh              # runtime deps only
+sudo ./scripts/install-deps.sh --with-apps  # + the optional launchable apps
 ```
 
 Installs what your package manager can provide (Hyprland, Qt6/Wayland, Rust,
@@ -28,6 +29,16 @@ Installs what your package manager can provide (Hyprland, Qt6/Wayland, Rust,
 typically **Quickshell** (AUR / source) and **Moonlight Qt** (the streaming
 client). The `cec` daemon feature static-links its own libcec, so no system
 `libcec`/`libcec-dev` is needed.
+
+**Two tiers.** The bare run installs only the **runtime deps** — what the shell
+can't run without. `--with-apps` additionally installs the **optional launchable
+apps** the home-screen app-launcher surfaces — `chromium`, **Moonlight**, **Plex
+HTPC**, **Spotify**, and **VacuumTube** (YouTube's 10-foot "leanback" TV UI).
+These are home-screen entries, not dependencies; the shell runs fine without
+them. The GUI apps come from Flathub (so `flatpak` + the Flathub remote are set
+up if missing). VacuumTube also gets a Wayland override
+(`ELECTRON_OZONE_PLATFORM_HINT=auto`) so it renders native-Wayland and can do
+HDR — enable HDR inside VacuumTube (`wayland_hdr`) on an HDR-capable display.
 
 ## 2. Build + install
 
