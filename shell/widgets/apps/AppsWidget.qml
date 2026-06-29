@@ -4,12 +4,15 @@ import "../lib"
 import "../../components"
 
 // Home-screen Apps widget (#249) — the evolution of the old Recent widget. A
-// SegmentedHeader flips between two segments fed into ONE wrapping grid:
+// SegmentedHeader flips between two segments fed into ONE horizontal rail:
 //   "recent" → the merged running+recents model (HomeScreen-owned, passed in via
 //              `model`), exactly what the Recent widget rendered.
 //   "all"    → every installed app, read straight off the AppDiscoveryManager
 //              singleton (the same source the Library surface uses).
-// A trailing "Open Library" action chip jumps to the full Library surface.
+// Both segments render in the SAME single-scroll horizontal rail (the "All Apps"
+// pill stays bound to the rail, it does not expand inline) — the full vertical
+// browse GRID lives in the fullscreen Library surface, one step away behind the
+// "Open Library" action chip (and the standalone All Apps entry below the widget).
 //
 // The widget id stays "recent" (config namespace + registry key) so this is NOT a
 // settings migration — only the DISPLAY name became "Apps". Both segments emit the
@@ -88,8 +91,8 @@ Widget {
     // Trailing "Open Library" ACTION chip sentinel (ignored by the segment handler).
     readonly property string _openValue: "__open_library__"
 
-    // Surfaced for HomeScreen's hint bar (current cell selection).
-    readonly property int currentIndex: appsGrid.currentIndex
+    // Surfaced for HomeScreen's hint bar (current rail selection).
+    readonly property int currentIndex: appsRow.currentIndex
 
     // Apps essentially always exist, so this widget basically always shows — that's
     // intended (it is the home screen's app launcher).
@@ -100,17 +103,17 @@ Widget {
 
     // === Home-tile focus contract ===
     firstRow: segmentHeader
-    lastRow: appsGrid
+    lastRow: appsRow
     canFocus: visible && (root._hasRecent || root._hasAll)
 
     function focusFirstChild() {
         if (!root.canFocus)
             return false;
-        // Prefer the grid when the active segment has content; otherwise focus the
+        // Prefer the rail when the active segment has content; otherwise focus the
         // header (e.g. the active segment is empty but the other still has apps, so
         // the user can flip segments). Mirrors PlexWidget's firstRow-or-fallback.
-        if (appsGrid.canFocus)
-            return appsGrid.focusFirstChild();
+        if (appsRow.canFocus)
+            return appsRow.focusFirstChild();
         if (segmentHeader.visible)
             return segmentHeader.focusFirstChild();
         return false;
@@ -151,29 +154,32 @@ Widget {
                 }
             ]
             previousRow: root.previousRow
-            nextRow: appsGrid
+            nextRow: appsRow
             onSegmentChanged: value => root._segment = value
             onActionTriggered: value => root.openLibraryRequested()
             onEscaped: root.escaped()
             onEnsureVisibleRequested: item => root.ensureVisibleRequested(item)
         }
 
-        // === The wrapping app grid (shows the active segment) ===
-        NavigableGrid {
-            id: appsGrid
+        // === The one horizontal rail (shows the active segment) ===
+        // Both the Recent and All Apps segments render here, in this single
+        // horizontal single-scroll rail — exactly like the old Recent widget's row.
+        // The vertical browse grid of every app lives in the Library surface, not
+        // here; this stays a glance rail.
+        NavigableRow {
+            id: appsRow
             visible: root._activeModel.length > 0
             Layout.fillWidth: true
-            // Extra breathing room between the chip strip and the grid (on top of
+            // Extra breathing room between the chip strip and the rail (on top of
             // the ColumnLayout spacing) so the pills don't crowd the row below.
             Layout.topMargin: Units.spacingMD
-            // small = icon-only square tiles (cardHeight square); medium = full
-            // icon + label cards (cardWidth). A reformat of the cell, not a scale.
-            cellWidth: root.recentSmall ? Theme.cardHeight : Theme.cardWidth
-            cellHeight: Theme.cardHeight
-            spacing: Theme.cardSpacing
+            Layout.preferredHeight: Theme.rowHeight
+            keyNavigationWraps: true
             previousRow: segmentHeader
             nextRow: root.nextRow
             model: root._activeModel
+            onActiveFocusChanged: if (activeFocus)
+                root.ensureVisibleRequested(appsRow)
 
             delegate: AppCard {
                 required property int index
@@ -183,11 +189,11 @@ Widget {
                 height: Theme.cardHeight
                 app: modelData
                 running: modelData.running === true
-                focus: index === appsGrid.currentIndex
+                focus: index === appsRow.currentIndex
                 onActivated: {
-                    // Sync the grid cursor to a clicked card (mouse mode) so a later
+                    // Sync the cursor to a clicked card (mouse mode) so a later
                     // controller move resumes from here, then bubble the launch up.
-                    appsGrid.currentIndex = index;
+                    appsRow.currentIndex = index;
                     root.entryActivated(modelData);
                 }
             }
@@ -197,7 +203,6 @@ Widget {
                     root.entryContextRequested(root._activeModel[currentIndex], currentItem);
             }
             onEscaped: root.escaped()
-            onEnsureVisibleRequested: item => root.ensureVisibleRequested(item)
         }
     }
 }

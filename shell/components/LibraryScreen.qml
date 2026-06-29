@@ -33,9 +33,9 @@ FocusScope {
     }
 
     // Ordered focusable regions, top→bottom: the Moonlight servers row, then the
-    // local Applications row.
+    // local Applications grid (a vertical wrapping grid of every installed app).
     function _contentRegions() {
-        return [moonlightRow, appsRow];
+        return [moonlightRow, appsGrid];
     }
 
     function _focusFirstVisibleRow() {
@@ -170,7 +170,7 @@ FocusScope {
                 Layout.preferredHeight: visible ? Theme.rowHeight : 0
                 keyNavigationWraps: true
                 previousRow: null
-                nextRow: appsRow
+                nextRow: appsGrid
                 onActiveFocusChanged: if (activeFocus)
                     scrollView.ensureVisible(this)
                 model: root.targets
@@ -219,7 +219,12 @@ FocusScope {
                 }
             }
 
-            // === Applications Row ===
+            // === Applications Grid ===
+            // The full local app catalog as a vertical wrapping grid (NOT a
+            // horizontal rail) — this is the "open browse" experience. It grows to
+            // its own implicitHeight (multiple rows) and the outer Flickable scrolls
+            // the focused cell into view via onEnsureVisibleRequested. The home
+            // Apps widget keeps a single horizontal rail; the grid lives only here.
             Text {
                 text: "Applications"
                 font.pixelSize: Theme.fontTitle
@@ -227,15 +232,17 @@ FocusScope {
                 color: Theme.textPrimary
             }
 
-            NavigableRow {
-                id: appsRow
+            NavigableGrid {
+                id: appsGrid
                 Layout.fillWidth: true
-                Layout.preferredHeight: Theme.rowHeight
-                keyNavigationWraps: true
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
+                cellWidth: Theme.cardWidth
+                cellHeight: Theme.cardHeight
+                spacing: Theme.cardSpacing
+                // No Layout.preferredHeight — a grid sizes to its own implicitHeight
+                // (it wraps to multiple rows); the Flickable provides the scroll.
                 previousRow: root._streamingActive ? moonlightRow : null
                 model: AppDiscoveryManager.applications
+                onEnsureVisibleRequested: item => scrollView.ensureVisible(item)
 
                 delegate: AppCard {
                     required property int index
@@ -243,7 +250,7 @@ FocusScope {
                     height: Theme.cardHeight
                     width: Theme.cardWidth
                     app: modelData
-                    focus: index === appsRow.currentIndex
+                    focus: index === appsGrid.currentIndex
                     onActivated: root.launchApp(modelData)
                 }
 

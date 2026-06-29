@@ -236,13 +236,14 @@ rather than hardcoding each widget by name:
 | `focusFirstChild()` | focus its first *selectable* child; returns `false` when it has none (disabled, hidden, empty, or a filtered-empty row) |
 
 `HomeScreen._contentRegions()` returns these in top→bottom order —
-`[nowPlayingStrip, nowPlayingCard, plexWidget, appsGrid, allAppsEntry]` — and
+`[nowPlayingStrip, nowPlayingCard, plexWidget, appsRow, allAppsEntry]` — and
 the three focus helpers iterate it. Now-Playing has two size renderers
 (`small` = `NowPlayingStrip`, `medium` = `MediaWidget`); only the size-matching
 one is visible, the other reports `focusFirstChild()===false`. The always-present
 **All Apps entry** is the guaranteed non-stranding B-landing fallback when every
 widget above it is empty. The full browse catalog (Moonlight servers / per-host
-app-view / the complete Applications list) lives in `LibraryScreen`, which keeps
+app-view / the complete Applications **grid** — a vertical wrapping `NavigableGrid`,
+not a rail) lives in `LibraryScreen`, which keeps
 its own identical region chain and `focusDefaultPosition()`, reached via the All
 Apps entry and dismissed with B. The three home focus helpers:
 

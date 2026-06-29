@@ -42,7 +42,7 @@ shell/                       # QML shell — Quickshell config root (-c game-she
     QuickActions.qml         # Top-right quick actions (notifications, settings, widgets, theme, network, volume, power)
     ShellLayout.qml          # Hosts every surface; owns the ScreenManager router
     ScreenManager.qml        # Minimal Home/Library/Settings/Widgets navigation model
-    LibraryScreen.qml        # Secondary browse surface (Moonlight + Applications)
+    LibraryScreen.qml        # Secondary browse surface (Moonlight rail + Applications NavigableGrid)
     MoonlightSettings.qml    # Server management — stays here (streaming provider's settingsComponent)
     SettingsButton.qml       # Reusable button atom (also used by lib/)
     SettingsList.qml         # Reusable list-sizing atom
@@ -99,7 +99,9 @@ shell/                       # QML shell — Quickshell config root (-c game-she
       qmldir                 #   `module shell.widgets.plex`
     apps/                    # Apps widget (`module shell.widgets.apps`)
       AppsWidget.qml         #   Home widget: SegmentedHeader (Recent / All Apps)
-                             #   + a NavigableGrid of AppCards. id stays "recent".
+                             #   over ONE horizontal NavigableRow rail. id stays
+                             #   "recent". (The vertical NavigableGrid of every app
+                             #   lives in components/LibraryScreen.qml, not here.)
       qmldir                 #   `module shell.widgets.apps`
     # WidgetsApp/List/Config + lib/ reach shared singletons/atoms via
     # `import "../components"` and the lib via `import "../components/lib"`.

@@ -31,7 +31,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 ## A. Home screen — states & rows
 | # | View | How to reach | Notes |
 |---|------|--------------|-------|
-| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions, then the enabled standardized widgets: Now Playing, Plex (On Deck + Recently Added), Apps (segmented `Recent` / `All Apps` grid + "Open Library" chip), All Apps entry |
+| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions, then the enabled standardized widgets: Now Playing, Plex (On Deck + Recently Added), Apps (segmented `Recent` / `All Apps` horizontal rail + "Open Library" chip), All Apps entry |
 | A2 | Now Playing — medium | MPRIS active, size = medium (default) | `MediaWidget` card: cover art + progress bar + transport row |
 | A3 | Now Playing — small | MPRIS active, size = small (Widgets page ▸ Now Playing) | `NowPlayingStrip` slim strip; both sizes collapse when nothing plays |
 | A4 | Plex Recently Added — dynamic chips | Plex healthy, ≥2 media categories present | `FilterChips` show All + only categories present (no Music pill on a music-less library); re-filter live on item `kind` |
@@ -48,7 +48,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 |---|------|--------------|-------|
 | A12 | Library — full | home "All Apps" entry → A | "Library" header + Moonlight section + Applications grid; B returns to Home with focus restored |
 | A12a | Moonlight — servers | Library | server cards (`StreamCard`); servers-only (the apps-view toggle was removed) |
-| A12c | Applications row | local launchers present | full `AppDiscoveryManager.applications` list |
+| A12c | Applications grid | local launchers present | full `AppDiscoveryManager.applications` as a vertical wrapping `NavigableGrid` (scrolls within the Library Flickable) |
 
 ## B. Context menus / popovers
 | # | View | How to reach |
