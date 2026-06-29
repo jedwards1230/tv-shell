@@ -419,7 +419,7 @@ fn note_health(
 /// Caveat: a poll to addr 0 ACKs whenever the TV is plugged in (CEC devices ACK
 /// polls even in standby), so on this AV setup it's a faithful bus-alive check.
 /// If the TV were fully unplugged a healthy adapter would still report failing —
-/// acceptable here (game-client-1 always has a TV on the bus), and the scan path
+/// acceptable here (the deployment host always has a TV on the bus), and the scan path
 /// only falls back to the poll when the bus shows zero devices.
 fn poll_probe(conn: &cec_rs::CecConnection) -> Result<(), cec_rs::CecConnectionResultError> {
     let initiator = conn
