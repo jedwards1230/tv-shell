@@ -17,6 +17,12 @@ Item {
 
     property int fontHint: 18
 
+    // Card geometry — NavigableGrid reads these as the default cell footprint
+    // (overridable per-instance). Fixed values keep grid-layout math deterministic.
+    property int cardWidth: 200
+    property int cardHeight: 120
+    property int cardSpacing: 16
+
     property color textPrimary: "#ffffff"
     property color textMuted: "#9aa0a6"
     property color warning: "#e0a030"

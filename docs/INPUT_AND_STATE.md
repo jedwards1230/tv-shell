@@ -159,9 +159,10 @@ PanelWindow (Exclusive keyboard focus)
     │                      focus BINDINGS stay declarative on the surfaces below.)
     ├── HomeScreen        (visible & focus only in idle, no overlay/Library open)
     │   └── home widgets  (Now-Playing [strip|card], Plex [On Deck + Recently
-    │       Added + chips], Recent apps, All Apps entry — one ordered focus list)
+    │       Added + chips], Apps [Recent | All Apps segments] — one ordered focus
+    │       list; no standalone All Apps tile)
     ├── LibraryScreen     (secondary browse surface, z:30 — Moonlight rows +
-    │                      Applications; opened from the home "All Apps" entry)
+    │                      Applications; opened from the Apps widget's Open Library chip)
     ├── SettingsApp     (Rectangle — NOT a FocusScope; sidebar + Loader page;
     │                      own module shell.settings, public open/openPage/close)
     ├── NavigationDrawer  (idle nav drawer, z:50)
@@ -235,15 +236,17 @@ rather than hardcoding each widget by name:
 | `focusFirstChild()` | focus its first *selectable* child; returns `false` when it has none (disabled, hidden, empty, or a filtered-empty row) |
 
 `HomeScreen._contentRegions()` returns these in top→bottom order —
-`[nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry]` — and
+`[nowPlayingStrip, nowPlayingCard, plexWidget, appsRow]` — and
 the three focus helpers iterate it. Now-Playing has two size renderers
 (`small` = `NowPlayingStrip`, `medium` = `MediaWidget`); only the size-matching
 one is visible, the other reports `focusFirstChild()===false`. The always-present
-**All Apps entry** is the guaranteed non-stranding B-landing fallback when every
-widget above it is empty. The full browse catalog (Moonlight servers / per-host
-app-view / the complete Applications list) lives in `LibraryScreen`, which keeps
-its own identical region chain and `focusDefaultPosition()`, reached via the All
-Apps entry and dismissed with B. The three home focus helpers:
+**QuickActions row** (`statusIcons`, the WidgetHost `topAnchor`) is the guaranteed
+non-stranding fallback when every widget is empty — there is no terminal All Apps
+tile and the WidgetHost `bottomAnchor` is null. The full browse catalog (Moonlight
+servers / per-host app-view / the complete Applications **grid** — a vertical
+wrapping `NavigableGrid`, not a rail) lives in `LibraryScreen`, which keeps
+its own identical region chain and `focusDefaultPosition()`, reached via the Apps
+widget's "Open Library" chip and dismissed with B. The three home focus helpers:
 
 - **`focusDefaultPosition()`** (the B / "back to home" handler) — snap
   `scrollView.contentY = 0`, then focus the first region whose

@@ -34,6 +34,9 @@ cp "$here/stubs/lib/qmldir" "$build/components/lib/qmldir"
 #    Qt resolving relative imports through the symlink back into shell/).
 cp "$shellc/QuickActions.qml" "$build/components/"
 cp "$shellc/QuickActionButton.qml" "$build/components/"
+# NavigableGrid is pure QtQuick (references Theme/InputMode only) — runs headless
+# against the stub singletons; tst_navigablegrid exercises its key-nav + handoff.
+cp "$shellc/NavigableGrid.qml" "$build/components/"
 cp "$shellc/lib/CountBadge.qml" "$build/components/lib/"
 # Widget base + WidgetHost are pure QtQuick (no Quickshell), so they run headless
 # against the stub WidgetRegistry + Stub*Widget shims under stubs/lib. They now

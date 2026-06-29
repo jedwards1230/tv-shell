@@ -58,19 +58,10 @@ Widget {
     readonly property string _segmentName: _segment === "ondeck" ? "Up Next" : "Recently Added"
     readonly property var _activeItems: _segment === "ondeck" ? onDeckItems : recentItems
 
-    // Chip strip = the present segments + a trailing "Open Plex" ACTION chip that
-    // launches the app directly (no row view of its own; distinct ember focus
-    // fill via FilterChips). Sentinel value is ignored by the segment handler.
+    // Trailing "Open Plex" ACTION chip sentinel — the SegmentedHeader renders it as
+    // an ember action chip; the action handler launches the app directly. Ignored
+    // by the segment handler (mirrors Steam's "Open Steam" / Apps' "Open Library").
     readonly property string _openValue: "__open_plex__"
-    readonly property var _chipOptions: {
-        let o = root._segmentOptions.slice();
-        o.push({
-            "label": "Open Plex",
-            "value": root._openValue,
-            "action": true
-        });
-        return o;
-    }
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
@@ -143,36 +134,24 @@ Widget {
         }
 
         // === Header: segment chips + trailing "Open Plex" action chip ===
-        RowLayout {
+        SegmentedHeader {
+            id: segmentChips
             Layout.fillWidth: true
             visible: root._hasOnDeck || root._hasRecent
-            spacing: Units.spacingXL
-
-            FilterChips {
-                id: segmentChips
-                Layout.alignment: Qt.AlignVCenter
-                options: root._chipOptions
-                currentIndex: {
-                    for (var i = 0; i < root._segmentOptions.length; i++) {
-                        if (root._segmentOptions[i].value === root._segment)
-                            return i;
-                    }
-                    return 0;
+            segments: root._segmentOptions
+            currentValue: root._segment
+            actions: [
+                {
+                    "label": "Open Plex",
+                    "value": root._openValue
                 }
-                previousRow: root.previousRow
-                nextRow: posterRow
-                onFilterChanged: value => root._segment = value
-                onActionTriggered: value => root.openPlexRequested()
-                onEscaped: root.escaped()
-                // Defer so the Flickable geometry is settled (the widget may have been
-                // hidden — Plex down — and just re-revealed) before we scroll to it.
-                onActiveFocusChanged: if (activeFocus)
-                    Qt.callLater(() => root.ensureVisibleRequested(segmentChips))
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
+            ]
+            previousRow: root.previousRow
+            nextRow: posterRow
+            onSegmentChanged: value => root._segment = value
+            onActionTriggered: value => root.openPlexRequested()
+            onEscaped: root.escaped()
+            onEnsureVisibleRequested: item => root.ensureVisibleRequested(item)
         }
 
         // === The one poster row (shows the active segment) ===

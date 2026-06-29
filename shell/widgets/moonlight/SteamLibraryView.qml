@@ -103,20 +103,10 @@ ColumnLayout {
     }
     readonly property var _activeItems: _segment === "recent" ? recentItems : allItems
 
-    // Chip strip = the present segments + a trailing "Open Steam" ACTION chip that
-    // opens the host's Big Picture HOME over the stream (no game). Distinct ember
-    // focus fill via FilterChips; the sentinel value is ignored by the segment
-    // handler (mirrors PlexWidget's "Open Plex" pill).
+    // Trailing "Open Steam" ACTION chip sentinel — the SegmentedHeader renders it
+    // as an ember action chip that opens the host's Big Picture HOME over the stream
+    // (no game). Ignored by the segment handler (mirrors PlexWidget's "Open Plex").
     readonly property string _openValue: "__open_bigpicture__"
-    readonly property var _chipOptions: {
-        let o = root._segmentOptions.slice();
-        o.push({
-            "label": "Open Steam",
-            "value": root._openValue,
-            "action": true
-        });
-        return o;
-    }
 
     readonly property bool rowFocused: posterRow.activeFocus || segmentChips.activeFocus
 
@@ -335,45 +325,35 @@ ColumnLayout {
     }
 
     // === Header: segment chips + right-justified session indicator ===
-    RowLayout {
+    SegmentedHeader {
+        id: segmentChips
         Layout.fillWidth: true
         visible: !root._showWake && (root._hasRecent || root._hasAll)
-        spacing: Units.spacingXL
-
-        FilterChips {
-            id: segmentChips
-            Layout.alignment: Qt.AlignVCenter
-            options: root._chipOptions
-            currentIndex: {
-                for (var i = 0; i < root._segmentOptions.length; i++) {
-                    if (root._segmentOptions[i].value === root._segment)
-                        return i;
-                }
-                return 0;
+        segments: root._segmentOptions
+        currentValue: root._segment
+        actions: [
+            {
+                "label": "Open Steam",
+                "value": root._openValue
             }
-            previousRow: root.previousRow
-            nextRow: posterRow
-            onFilterChanged: value => root._segment = value
-            onActionTriggered: value => root.openBigPictureRequested()
-            onEscaped: root.escaped()
-            // Defer so the Flickable geometry is settled (the view may have been
-            // hidden — Steam down — and just re-revealed) before we scroll to it.
-            onActiveFocusChanged: if (activeFocus)
-                Qt.callLater(() => root.ensureVisibleRequested(segmentChips))
-        }
-
-        Item {
-            Layout.fillWidth: true
-        }
+        ]
+        previousRow: root.previousRow
+        nextRow: posterRow
+        onSegmentChanged: value => root._segment = value
+        onActionTriggered: value => root.openBigPictureRequested()
+        onEscaped: root.escaped()
+        onEnsureVisibleRequested: item => root.ensureVisibleRequested(item)
 
         // Session indicator — status only (NOT focusable, NOT a pill, NOT
         // actionable). Tells the user at a glance whether a Moonlight stream is
         // live on the host, driven by the `streaming` flag from the same
         // `steam-library` reply that feeds the poster row (no separate
-        // `sunshine-status` probe).
-        SessionIndicator {
-            Layout.alignment: Qt.AlignVCenter
-            inSession: root.streaming
+        // `sunshine-status` probe). A Component so its `inSession` binding resolves
+        // in THIS view's scope; the header's Loader places it right-justified.
+        trailing: Component {
+            SessionIndicator {
+                inSession: root.streaming
+            }
         }
     }
 
