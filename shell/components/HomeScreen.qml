@@ -1015,5 +1015,11 @@ FocusScope {
         function onEnsureVisibleRequested(item) {
             scrollView.ensureVisible(item);
         }
+        // Apps widget's "Open Library" action chip — jump to the full Library
+        // surface (the in-widget chip is an additional path alongside the standalone
+        // All Apps tile below; the redundancy is intentional focus-safety).
+        function onOpenLibraryRequested() {
+            root.libraryRequested();
+        }
     }
 }

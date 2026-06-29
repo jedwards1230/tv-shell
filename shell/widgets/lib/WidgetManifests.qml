@@ -92,8 +92,8 @@ QtObject {
         },
         {
             "id": "recent",
-            "name": "Recent",
-            "version": "1.0.0",
+            "name": "Apps",
+            "version": "1.1.0",
             "requires": [],
             "defaultOrder": 3,
             "config": [

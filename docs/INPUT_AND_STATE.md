@@ -159,7 +159,8 @@ PanelWindow (Exclusive keyboard focus)
     │                      focus BINDINGS stay declarative on the surfaces below.)
     ├── HomeScreen        (visible & focus only in idle, no overlay/Library open)
     │   └── home widgets  (Now-Playing [strip|card], Plex [On Deck + Recently
-    │       Added + chips], Recent apps, All Apps entry — one ordered focus list)
+    │       Added + chips], Apps [Recent | All Apps segments], All Apps entry —
+    │       one ordered focus list)
     ├── LibraryScreen     (secondary browse surface, z:30 — Moonlight rows +
     │                      Applications; opened from the home "All Apps" entry)
     ├── SettingsApp     (Rectangle — NOT a FocusScope; sidebar + Loader page;
@@ -235,7 +236,7 @@ rather than hardcoding each widget by name:
 | `focusFirstChild()` | focus its first *selectable* child; returns `false` when it has none (disabled, hidden, empty, or a filtered-empty row) |
 
 `HomeScreen._contentRegions()` returns these in top→bottom order —
-`[nowPlayingStrip, nowPlayingCard, plexWidget, recentRow, allAppsEntry]` — and
+`[nowPlayingStrip, nowPlayingCard, plexWidget, appsGrid, allAppsEntry]` — and
 the three focus helpers iterate it. Now-Playing has two size renderers
 (`small` = `NowPlayingStrip`, `medium` = `MediaWidget`); only the size-matching
 one is visible, the other reports `focusFirstChild()===false`. The always-present

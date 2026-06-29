@@ -8,3 +8,4 @@ singleton NotificationManager 1.0 NotificationManager.qml
 singleton NetworkManager 1.0 NetworkManager.qml
 QuickActions 1.0 QuickActions.qml
 QuickActionButton 1.0 QuickActionButton.qml
+NavigableGrid 1.0 NavigableGrid.qml

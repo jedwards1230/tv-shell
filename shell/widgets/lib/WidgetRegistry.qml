@@ -4,7 +4,7 @@ import "../../components"
 import "../moonlight"
 import "../nowplaying"
 import "../plex"
-import "../recent"
+import "../apps"
 
 // Hand-written home-widget registry (#249 Phase 2/3). The single, ordered source
 // of truth for which standardized widgets the home screen renders. NOT codegen —
@@ -96,9 +96,11 @@ Item {
 
     QtObject {
         id: recentEntry
+        // id stays "recent" (config namespace + registry key) — only the display
+        // name changed to "Apps", so this is not a settings migration.
         readonly property string widgetId: "recent"
         readonly property Component component: Component {
-            RecentWidget {}
+            AppsWidget {}
         }
         readonly property bool enabled: SettingsStore.widget("recent").enabled
         readonly property string size: SettingsStore.widget("recent").size
