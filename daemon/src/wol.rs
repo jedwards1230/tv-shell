@@ -75,7 +75,7 @@ pub fn magic_packet(mac: Mac) -> Vec<u8> {
 /// INCOMPLETE entries) are skipped. Pure; unit-tested.
 ///
 /// A neighbor line looks like:
-/// `192.168.8.10 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE`
+/// `192.0.2.10 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE`
 /// (or `... STALE`, `... DELAY`, etc.). The first token is the peer IP.
 pub fn parse_ip_neigh(output: &str) -> HashMap<String, Mac> {
     let mut map = HashMap::new();
