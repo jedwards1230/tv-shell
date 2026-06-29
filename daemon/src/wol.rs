@@ -75,7 +75,7 @@ pub fn magic_packet(mac: Mac) -> Vec<u8> {
 /// INCOMPLETE entries) are skipped. Pure; unit-tested.
 ///
 /// A neighbor line looks like:
-/// `192.168.8.10 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE`
+/// `192.0.2.10 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE`
 /// (or `... STALE`, `... DELAY`, etc.). The first token is the peer IP.
 pub fn parse_ip_neigh(output: &str) -> HashMap<String, Mac> {
     let mut map = HashMap::new();
@@ -311,26 +311,26 @@ mod tests {
     #[test]
     fn parses_ip_neigh_matching_host_to_mac() {
         let output = "\
-192.168.8.10 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
-192.168.8.20 dev eth0 lladdr 11:22:33:44:55:66 STALE
-192.168.8.30 dev eth0  FAILED
-192.168.8.40 dev eth0 lladdr 77:88:99:aa:bb:cc DELAY
+192.0.2.10 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
+192.0.2.20 dev eth0 lladdr 11:22:33:44:55:66 STALE
+192.0.2.30 dev eth0  FAILED
+192.0.2.40 dev eth0 lladdr 77:88:99:aa:bb:cc DELAY
 ";
         let table = parse_ip_neigh(output);
         assert_eq!(
-            table.get("192.168.8.10").copied(),
+            table.get("192.0.2.10").copied(),
             Some(Mac([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]))
         );
         // STALE entries still carry a usable lladdr.
         assert_eq!(
-            table.get("192.168.8.20").copied(),
+            table.get("192.0.2.20").copied(),
             Some(Mac([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]))
         );
         // FAILED entry (no lladdr) is skipped.
-        assert!(!table.contains_key("192.168.8.30"));
+        assert!(!table.contains_key("192.0.2.30"));
         // DELAY entry resolves.
         assert_eq!(
-            table.get("192.168.8.40").copied(),
+            table.get("192.0.2.40").copied(),
             Some(Mac([0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc]))
         );
     }
