@@ -290,6 +290,18 @@ impl ServerHandler for GameShellMcp {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                // Advertise `resources.listChanged` so the serialized capability is
+                // a NON-EMPTY object (`{"listChanged":true}`) rather than bare `{}`.
+                // A federating MCP gateway (ContextForge) gates resource discovery on
+                // a truthy `resources` value (`if capabilities.get("resources"):` —
+                // Python treats `{}` as falsy), so a bare `{}` makes it silently drop
+                // `screenshot://current` while still federating the tools. The resource
+                // list is effectively static (just `screenshot://current`), so the
+                // daemon never actually emits a list_changed notification — declaring
+                // the capability is the honest, side-effect-free way to unblock
+                // federation. (`enable_resources_subscribe` is deliberately avoided:
+                // the daemon does not implement `resources/subscribe`.)
+                .enable_resources_list_changed()
                 .build(),
         )
         .with_server_info(Implementation::new(
@@ -909,6 +921,39 @@ mod tests {
     #[test]
     fn tool_router_builds_without_panic() {
         let _ = GameShellMcp::tool_router();
+    }
+
+    // ── advertised server capabilities ────────────────────────────────────────
+
+    // The `resources` capability must serialize to a NON-EMPTY object so a
+    // federating gateway (ContextForge) that gates on `if capabilities["resources"]:`
+    // (Python — `{}` is falsy) actually fetches our resources instead of silently
+    // dropping `screenshot://current`. `enable_resources_list_changed()` sets
+    // `listChanged: true`, giving `{"listChanged":true}` rather than bare `{}`.
+    #[test]
+    fn resources_capability_serialises_non_empty() {
+        let caps = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources()
+            .enable_resources_list_changed()
+            .build();
+
+        let resources = caps.resources.expect("resources capability is advertised");
+        assert_eq!(
+            resources.list_changed,
+            Some(true),
+            "resources.listChanged must be Some(true) so it serialises non-empty"
+        );
+
+        // The JSON object for `resources` must not be bare `{}` (the ContextForge
+        // truthiness gate); `listChanged: true` is what makes it truthy.
+        let json = serde_json::to_value(&resources).expect("resources serialises");
+        let obj = json.as_object().expect("resources is a JSON object");
+        assert!(
+            !obj.is_empty(),
+            "resources capability must serialise to a non-empty object, got {json}"
+        );
+        assert_eq!(obj.get("listChanged"), Some(&serde_json::Value::Bool(true)));
     }
 
     // ── screenshot resource descriptor ────────────────────────────────────────
