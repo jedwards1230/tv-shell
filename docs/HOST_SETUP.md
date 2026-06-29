@@ -127,9 +127,9 @@ token = "<same token as GAME_SHELL_HOST_TOKEN>"
 # … or, preferred, a 0600 file: token_file = "~/.config/game-shell/steam-token"
 ```
 
-Restart the daemon to pick it up. In the homelab this is wired by the
-`game_client_common` role (`game_shell_steam_url` / `game_shell_steam_token` in
-`host_vars/gaming-client.yaml`).
+Restart the daemon to pick it up. Under config management this is typically
+wired by your deployment role — set the Steam URL and token via your own host
+variables and render `config.toml` from them.
 
 Keep the token private: it's the same secret on both machines in plaintext. Prefer
 `token_file` and `chmod 0600` it (the host's own env file too), keep it out of

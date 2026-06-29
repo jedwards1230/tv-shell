@@ -3,9 +3,10 @@
 #
 # Single source of truth for the daemon's on-device / deploy build flags (Cargo
 # features, profile). Consumers that build the daemon on a device — the dev HTTP
-# bridge's `POST /dev/build` (daemon/src/http.rs) and the homelab-ansible
-# `game_client_common` role — invoke THIS script instead of hardcoding cargo
-# flags, so the feature set is decided here in the repo, not in each consumer.
+# bridge's `POST /dev/build` (daemon/src/http.rs) and any external
+# config-management role (e.g. an Ansible deploy role) — invoke THIS script
+# instead of hardcoding cargo flags, so the feature set is decided here in the
+# repo, not in each consumer.
 #
 # The `cec` feature is intentionally NOT a default Cargo feature: a bare
 # `cargo build` / `cargo test` (CI default leg, contributor and macOS dev boxes)
