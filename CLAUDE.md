@@ -224,8 +224,11 @@ into a `ColumnLayout` and builds the generic vertical focus chain that replaces
 HomeScreen's former hand-wired `previousRow`/`nextRow` web: each widget's UP/DOWN
 neighbour resolves to the nearest preceding/following focusable widget's
 `lastRow`/`firstRow` (or the widget itself if single-stop), falling back to the
-host's `topAnchor`/`bottomAnchor` (HomeScreen wires those to the QuickActions row
-and the All Apps entry). HomeScreen attaches each widget's behaviour via
+host's `topAnchor`/`bottomAnchor` (HomeScreen wires `topAnchor` to the QuickActions
+row — also the never-strand focus fallback — and leaves `bottomAnchor` null: the
+standalone All Apps tile was removed, so Down off the last widget is a no-op and the
+home→Library jump is the Apps widget's "Open Library" chip). HomeScreen attaches
+each widget's behaviour via
 `widgetHost.widgetById(id)`. The two now-playing renderers are now ONE
 `NowPlayingWidget` whose `size` selects a `NowPlayingCard` (medium) or
 `NowPlayingStripView` (small) visual leaf; `MediaWidget` is a thin host of the same

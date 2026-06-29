@@ -70,9 +70,10 @@ FocusScope {
             return;
         if (statusIcons.activeFocus || popoverMenu.activeFocus)
             return;
-        // Focus is still on the home content if any hosted widget region or the
-        // All Apps entry holds it; otherwise re-seat on the first focusable row.
-        if (widgetHost.regionFocused || allAppsEntry.regionFocused)
+        // Focus is still on the home content if any hosted widget region holds it
+        // (the QuickActions row is already covered by the statusIcons guard above);
+        // otherwise re-seat on the first focusable row.
+        if (widgetHost.regionFocused)
             return;
         Qt.callLater(function () {
             if (root.activeFocus)
@@ -326,17 +327,19 @@ FocusScope {
     }
 
     function _focusFirstVisibleRow() {
-        // Try the hosted widgets in order; the All Apps entry is the never-strand
-        // fallback (always focusable) so focus is never left in limbo.
+        // Try the hosted widgets in order; the QuickActions row (always present) is
+        // the never-strand fallback so focus is never left in limbo. (Only hit in
+        // the pathological all-widgets-disabled case — the Apps widget is enabled by
+        // default and effectively always has content.)
         if (!widgetHost.focusFirstVisible())
-            allAppsEntry.focusFirstChild();
+            statusIcons.forceActiveFocus();
     }
 
     function focusDefaultPosition() {
         Qt.callLater(function () {
             scrollView.contentY = 0;
             if (!widgetHost.focusFirstVisible())
-                allAppsEntry.focusFirstChild();
+                statusIcons.forceActiveFocus();
         });
     }
 
@@ -594,89 +597,19 @@ FocusScope {
             }
 
             // === Standardized home widgets (Moonlight, Now Playing, Plex,
-            // Recent) — instantiated + focus-chained generically by WidgetHost
-            // from the WidgetRegistry. The QuickActions row above and the All Apps
-            // entry below remain HomeScreen-owned and are wired in as the host's
-            // top/bottom focus anchors; each widget's behaviour is attached below
-            // via widgetById (see the "Widget wiring" block). ===
+            // Apps) — instantiated + focus-chained generically by WidgetHost from
+            // the WidgetRegistry. The QuickActions row above is the host's TOP
+            // focus anchor (and the never-strand fallback); there is no bottom
+            // anchor — the standalone All Apps tile was removed, the Apps widget's
+            // "Open Library" chip is now the sole home→Library entry. Each widget's
+            // behaviour is attached below via widgetById (see "Widget wiring"). ===
             WidgetHost {
                 id: widgetHost
                 Layout.fillWidth: true
                 topAnchor: statusIcons
-                bottomAnchor: allAppsEntry
-            }
-
-            // === All Apps entry (→ Library) ===
-            NavigableRow {
-                id: allAppsEntry
-                Layout.fillWidth: true
-                Layout.preferredHeight: Theme.cardHeight
-                model: 1
-                // previousRow is bound by WidgetHost (bottomAnchor) to the last
-                // focusable widget's exit row, so Up/B from here lands correctly
-                // whichever widgets are enabled.
-                onActivated: root.libraryRequested()
-                onActiveFocusChanged: if (activeFocus)
-                    scrollView.ensureVisible(this)
-                onEscaped: {
-                    root.userActivity();
-                    root.focusDefaultPosition();
-                }
-
-                delegate: Item {
-                    required property int index
-                    width: Math.round(Theme.cardWidth * 1.8)
-                    height: Theme.cardHeight
-                    readonly property bool isFocused: (index === allAppsEntry.currentIndex && allAppsEntry.activeFocus && !InputMode.mouseMode) || (allAppsMouse.containsMouse && InputMode.mouseMode)
-                    z: isFocused ? 10 : 0
-
-                    FocusFrame {
-                        anchors.fill: parent
-                        focused: parent.isFocused
-
-                        RowLayout {
-                            anchors.centerIn: parent
-                            spacing: Units.spacingLG
-
-                            Text {
-                                text: "▦"
-                                font.pixelSize: Units.iconSizeLG
-                                color: Theme.textPrimary
-                            }
-                            ColumnLayout {
-                                spacing: 2
-                                Text {
-                                    text: "All Apps"
-                                    font.pixelSize: Theme.fontTitle
-                                    font.bold: true
-                                    color: Theme.textPrimary
-                                }
-                                Text {
-                                    text: (AppDiscoveryManager.applications ? AppDiscoveryManager.applications.length : 0) + " apps · Moonlight"
-                                    font.pixelSize: Theme.fontCaption
-                                    color: Theme.textMuted
-                                }
-                            }
-                        }
-
-                        MouseArea {
-                            id: allAppsMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onPositionChanged: mouse => {
-                                let p = mapToItem(null, mouse.x, mouse.y);
-                                InputMode.pointerMoved(p.x, p.y);
-                            }
-                            onClicked: {
-                                InputMode.enterMouseMode();
-                                allAppsEntry.currentIndex = 0;
-                                allAppsEntry.forceActiveFocus();
-                                root.libraryRequested();
-                            }
-                        }
-                    }
-                }
+                // No bottom anchor: Down from the last widget's last row is a no-op
+                // (WidgetHost guards onBottomAnchorChanged and _nextTargetFor → null).
+                bottomAnchor: null
             }
 
             // === Hint Bar ===
@@ -689,8 +622,6 @@ FocusScope {
                         let running = (idx >= 0 && idx < model.length && model[idx].running === true);
                         return (running ? "A: Resume" : "A: Launch") + "  |  X: Actions  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                     }
-                    if (allAppsEntry.activeFocus)
-                        return "A: Browse all  |  B: Home  |  ↑↓: Switch Row";
                     return "A: Select  |  B: Home  |  ←→: Scroll  |  ↑↓: Switch Row";
                 }
                 Layout.bottomMargin: 16

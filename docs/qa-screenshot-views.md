@@ -31,13 +31,12 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 ## A. Home screen — states & rows
 | # | View | How to reach | Notes |
 |---|------|--------------|-------|
-| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions, then the enabled standardized widgets: Now Playing, Plex (On Deck + Recently Added), Apps (segmented `Recent` / `All Apps` horizontal rail + "Open Library" chip), All Apps entry |
+| A1 | Home, full (idle) | default after restart | hero clock/date + QuickActions, then the enabled standardized widgets: Now Playing, Plex (On Deck + Recently Added), Apps (segmented `Recent` / `All Apps` horizontal rail + "Open Library" chip). No standalone All Apps tile — the Library is reached via the Apps widget's "Open Library" chip |
 | A2 | Now Playing — medium | MPRIS active, size = medium (default) | `MediaWidget` card: cover art + progress bar + transport row |
 | A3 | Now Playing — small | MPRIS active, size = small (Widgets page ▸ Now Playing) | `NowPlayingStrip` slim strip; both sizes collapse when nothing plays |
 | A4 | Plex Recently Added — dynamic chips | Plex healthy, ≥2 media categories present | `FilterChips` show All + only categories present (no Music pill on a music-less library); re-filter live on item `kind` |
 | A4b | Widgets app — list (L0) + config (L1) | QuickActions ▸ Widgets (idx 2) or `intent settings:widgets` (socket, rerouted) — no longer a nav-drawer row | The **Widgets app** (`WidgetsApp`, `shell.widgets` module — peer of Home/Library/Settings, no longer a Settings sidebar page). Schema-driven from the per-widget manifests. **L0 (`WidgetList`)**: rows (Moonlight/Now Playing/Plex/Apps) sorted by saved order, each one focus stop — **A** opens that widget's config (drill into L1), **X** toggles enable/disable in place, **←/→** reorder the widget (persists `widgets.<id>.order`, plasma-bigscreen style). **L1 (`WidgetConfig`)**: the Enabled toggle + manifest controls (Size + prefs like Hide-from-Recent, and — Moonlight only — the full server-management surface inlined below Size). **B** steps back (config → list → Home). Hint bar reads `A: Configure   X: Enable/Disable   ←→: Reorder   B: Back`. |
-| A5 | All Apps entry | always present | single tile; A → opens the Library surface (A12) |
-| A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on the All Apps entry (never strands) |
+| A6 | Empty states | no running/recents, Plex empty/off | Continue + New rails collapse; B still lands on a focusable row (or the QuickActions row when every widget is empty) — never strands |
 | A9 | Long-name marquee | card with long title | `MarqueeText` scroll |
 | A10 | Controller battery glyph | wireless pad connected reporting charge | 🔋+% beside QuickActions; ⚡ when charging; crimson ≤15%; hidden when only wired pads or none (#100) |
 | A11 | Plex widget — On Deck + Recently Added | `[plex]` configured in config.toml and the Widgets page ▸ Plex enabled | two poster rows (`PlexWidget`), size-scaled (small/medium); On Deck shows a resume bar; Recently Added carries the dynamic chips (A4) |
@@ -46,7 +45,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 ## A12. Library — secondary browse surface
 | # | View | How to reach | Notes |
 |---|------|--------------|-------|
-| A12 | Library — full | home "All Apps" entry → A | "Library" header + Moonlight section + Applications grid; B returns to Home with focus restored |
+| A12 | Library — full | Apps widget ▸ "Open Library" chip → A | "Library" header + Moonlight section + Applications grid; B returns to Home with focus restored |
 | A12a | Moonlight — servers | Library | server cards (`StreamCard`); servers-only (the apps-view toggle was removed) |
 | A12c | Applications grid | local launchers present | full `AppDiscoveryManager.applications` as a vertical wrapping `NavigableGrid` (scrolls within the Library Flickable) |
 
