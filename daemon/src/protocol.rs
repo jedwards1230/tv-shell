@@ -1137,7 +1137,7 @@ pub fn cec_power_json(addr: &str, power_word: &str) -> String {
 /// The transmit-health of the CEC adapter: whether the last transmit op
 /// succeeded, returned `TransmitFailed`, or has not been attempted yet.
 ///
-/// game-client-1's Pulse-Eight USB CEC adapter periodically enters a "transmit
+/// The target device's Pulse-Eight USB CEC adapter periodically enters a "transmit
 /// wedge": libcec opens fine and can RECEIVE, but every TRANSMIT (power-on,
 /// active-source, the poll probe) returns `TransmitFailed`. This enum is the
 /// observable health surface the AV Control page reads via `cec-health`. Pure

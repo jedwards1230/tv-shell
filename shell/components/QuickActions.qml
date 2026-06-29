@@ -232,7 +232,7 @@ FocusScope {
             }
 
             // Widgets (index 2)
-            // No freedesktop "widgets" action icon exists, and game-client-1 has
+            // No freedesktop "widgets" action icon exists, and the target host has
             // no system icon theme anyway — so this is glyph-only (iconPath: ""),
             // exactly like the Theme toggle. Use ⊞ (U+229E SQUARED PLUS) — a
             // square split into four tiles, the "grid-view / app-tiles" reading
