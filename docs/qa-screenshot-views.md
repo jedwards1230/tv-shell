@@ -16,7 +16,7 @@ are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 `0=Notifications, 1=Settings, 2=Widgets, 3=Theme toggle, 4=Network, 5=Volume, 6=Power`.
 The Widgets glyph (⊞, index 2) opens the Widgets app — the **only** entry point for
 it in the chrome now (the redundant nav-drawer Widgets row was removed). It's
-glyph-only (no system icon theme on game-client-1). Left/Right move; Return activates; Down drops focus into the content regions below.
+glyph-only (no system icon theme on htpc-1). Left/Right move; Return activates; Down drops focus into the content regions below.
 **Focus does not always start on this row** — with Continue/New content present it
 starts on a card, so press **Up** first to reach the QuickActions row before
 Left/Right.

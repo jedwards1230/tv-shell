@@ -19,4 +19,4 @@ scrape_configs:
           - "<host>:8089"
         labels:
           # Optional: tag the series with the box this shell runs on.
-          instance: game-client-1
+          instance: htpc-1

@@ -191,7 +191,7 @@ impl Default for ObservabilityConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct DevConfig {
     /// Explicitly permit the otherwise-refused LAN + dev-tools + no-auth combo.
-    /// This is how game-client-1 keeps its intentional insecure dev loop.
+    /// This is how htpc-1 keeps its intentional insecure dev loop.
     pub allow_insecure_lan: bool,
 }
 
@@ -365,7 +365,7 @@ impl DaemonConfig {
     /// gated by `[mcp].dev`. Returning `Err` here aborts startup.
     ///
     /// `[dev].allow_insecure_lan = true` is an explicit operator opt-in that
-    /// downgrades the refusal to a loud warning — this is how game-client-1 keeps
+    /// downgrades the refusal to a loud warning — this is how htpc-1 keeps
     /// its intentional LAN + dev + no-auth dev loop.
     pub fn validate(&self) -> anyhow::Result<()> {
         // Resolve the token eagerly so a path-traversal / world-readable token

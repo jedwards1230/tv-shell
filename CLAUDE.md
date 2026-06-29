@@ -353,7 +353,7 @@ Enable on the deploy host in `~/.config/game-shell/config.toml`: set `[mcp].bind
 (+ `[http].token_file` pointing at a 0600 token file), and `[mcp].dev = true` for
 the deploy/build/restart tools. Point an MCP client at `http://<host>/mcp`. Note
 the daemon REFUSES to start with a non-loopback bind + dev tools + auth-off
-unless `[dev].allow_insecure_lan = true` (the intentional opt-in game-client-1
+unless `[dev].allow_insecure_lan = true` (the intentional opt-in htpc-1
 uses). This is the in-repo, distribution-agnostic version of the external
 screenshot/deploy automation — no host-management tooling required.
 
