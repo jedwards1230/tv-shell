@@ -390,12 +390,14 @@ fn parse_openwindow(data: &str) -> String {
 /// Extract the window address from an `openwindow` event's raw data
 /// (`ADDRESS,WORKSPACENAME,CLASS,TITLE`). `None` for an empty/missing address
 /// so callers skip the fullscreen dispatch rather than target an empty
-/// selector.
+/// selector. Also requires the `0x` prefix Hyprland always uses for window
+/// addresses — cheap defense-in-depth against a malformed/truncated event
+/// line reaching `dispatch focuswindow address:<...>` with garbage.
 fn openwindow_address(data: &str) -> Option<&str> {
     data.split(',')
         .next()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && s.starts_with("0x"))
 }
 
 /// Kiosk enforcement: force a newly-mapped window to take over the screen,
@@ -414,11 +416,18 @@ fn openwindow_address(data: &str) -> Option<&str> {
 /// (not the bare toggle form) is idempotent, so this is safe to fire on
 /// every open even if a window somehow already fullscreened itself. Runs on
 /// its own spawned task so a slow/failed dispatch can't stall the event
-/// reader loop. Best-effort: a failed dispatch (Hyprland socket hiccup)
-/// just leaves the window as Hyprland's own layout put it — never panics.
+/// reader loop. Best-effort: a failed dispatch (Hyprland socket hiccup, or a
+/// window that closed again before the dispatch reached it) just leaves the
+/// window as Hyprland's own layout put it — never panics, but IS logged so a
+/// pattern of failures (e.g. the request socket going away) is visible
+/// rather than silently swallowed.
 async fn force_fullscreen(address: &str) {
-    let _ = request(&format!("dispatch focuswindow address:{address}")).await;
-    let _ = request("dispatch fullscreen 0 set").await;
+    if let Err(e) = request(&format!("dispatch focuswindow address:{address}")).await {
+        tracing::warn!("hyprland: force_fullscreen: failed to focus {address}: {e}");
+    }
+    if let Err(e) = request("dispatch fullscreen 0 set").await {
+        tracing::warn!("hyprland: force_fullscreen: failed to fullscreen {address}: {e}");
+    }
 }
 
 #[cfg(test)]

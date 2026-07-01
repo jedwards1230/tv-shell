@@ -122,10 +122,11 @@ ShellRoot {
             // mapped and appLaunchFailed never fired either (app hung / exited
             // 0 without ever opening a window), don't strand the shell
             // permanently hidden — restore whatever was showing before this
-            // launch attempt. Guarded on still being "launching" so a
-            // meanwhile-successful launch (already "appRunning") is untouched.
-            if (root.state === "launching")
-                root.state = root._preLaunchState;
+            // launch attempt. Unconditional (see the onLaunchStarted note):
+            // `state` is "appRunning" by now regardless, since this timer
+            // firing at all means onWindowConfirmed (which stops it) never
+            // ran, i.e. this launch never actually produced a window.
+            root.state = root._preLaunchState;
         }
     }
 
@@ -293,9 +294,13 @@ ShellRoot {
             launchOverlayTimeout.stop();
             // Restore whatever was showing before this launch attempt (idle, or
             // appRunning if a second app was launched over a first) rather than
-            // always bouncing to home — see the state-machine note below.
-            if (root.state === "launching")
-                root.state = root._preLaunchState;
+            // always bouncing to home. Unconditional, NOT guarded on
+            // `state === "launching"`: launchDesktopApp() fires appLaunched()
+            // synchronously right after launchStarted() (see the note below),
+            // so by the time a launcher process can actually exit non-zero,
+            // `state` has already moved on to "appRunning" — a guard here
+            // would never fire and this restore would be dead code.
+            root.state = root._preLaunchState;
             if (inputManager)
                 inputManager.rumblePulse(250);
         }
@@ -315,11 +320,26 @@ ShellRoot {
         // defeating the windowrule for every local app launch, regardless of
         // class. Flipping state here, before the process is even spawned,
         // releases that focus in time.
+        //
+        // Note: AppLifecycleManager.launchDesktopApp() fires appLaunched()
+        // synchronously, right after launchStarted() in the same call — so
+        // `state` collapses "launching" -> "appRunning" within the same tick
+        // for a fresh launch, well before the window actually maps. That's
+        // harmless for the fix above (both "launching" and "appRunning" are
+        // excluded from the shell surface's `visible` binding, so focus is
+        // released either way); it just means `state` is never observably
+        // "launching" for very long, which is why the failure/timeout
+        // restores above and below don't gate on it.
         onLaunchStarted: app => {
             root._launchAppName = (app && app.name) ? app.name : "";
             root._launchAppIcon = (app && app.icon) ? app.icon : "";
             root._launchOverlayActive = true;
-            root._preLaunchState = root.state;
+            // Don't overwrite `_preLaunchState` if we're already mid-launch
+            // (state still "launching") — otherwise an overlapping second
+            // launch would capture "launching" itself as the restore target,
+            // which is never a valid state to fall back to.
+            if (root.state !== "launching")
+                root._preLaunchState = root.state;
             root.state = "launching";
             launchOverlayTimeout.restart();
         }
