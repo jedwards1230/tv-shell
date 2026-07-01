@@ -958,9 +958,13 @@ The **Hyprland** commands replace the `hyprctl clients -j` read in
 `components/HyprctlClients.qml` and feed `components/AppLifecycleManager.qml`'s
 window-event watching. They are **Linux-only** (the Hyprland IPC socket): on a
 non-Linux build (or any host where the Hyprland actor failed to start), they
-reply `error:unsupported on this platform\n`. One-shot compositor *actions*
-(`hyprctl dispatch exec/closewindow/focuswindow/fullscreen`) stay shell-outs in
-the QML.
+reply `error:unsupported on this platform\n`. User-triggered, one-shot
+compositor *actions* (`hyprctl dispatch exec/closewindow`) stay shell-outs in
+the QML. The one exception: on every `openwindow` event the actor itself
+dispatches `focuswindow address:<addr>` + `fullscreen 0 set` to force the new
+window to take over the screen, class-agnostic — see `force_fullscreen` in
+`hyprland.rs`. That's a blanket kiosk policy, not a per-app QML decision, so it
+lives in the actor that already owns the event.
 
 The **Sunshine** command (`sunshine-status`) is **stateless and cross-platform**
 — served directly by the daemon's IPC layer (no actor round-trip, like

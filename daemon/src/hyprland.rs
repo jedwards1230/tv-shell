@@ -3,10 +3,15 @@
 //! queries over an `mpsc` of [`HyprReq`] and pushes `hypr:*` [`Event`]s onto the
 //! shared broadcast bus.
 //!
-//! READ ONLY: active-window class/title/address and the full client list, plus
-//! active-window / fullscreen change events. One-shot compositor *actions*
-//! (`hyprctl dispatch exec/closewindow/focuswindow/fullscreen`) deliberately
-//! stay shell-outs in the QML.
+//! Mostly READ ONLY: active-window class/title/address and the full client
+//! list, plus active-window / fullscreen change events. User-triggered,
+//! one-shot compositor *actions* (`hyprctl dispatch exec/closewindow`)
+//! deliberately stay shell-outs in the QML. The one exception is
+//! [`force_fullscreen`]: kiosk fullscreen enforcement on every new window,
+//! regardless of class. That has to live here rather than in QML because it
+//! must react to `openwindow` — an event this actor already owns — and it's
+//! not a per-app decision QML makes, it's a blanket compositor policy that
+//! also needs to fire even if Quickshell is slow to start or has crashed.
 //!
 //! This REPLACES the `hyprctl clients -j` shell-out in
 //! `components/HyprctlClients.qml` and feeds `AppLifecycleManager.qml`'s
@@ -344,6 +349,10 @@ async fn watch_events(events_tx: broadcast::Sender<Event>) -> Result<()> {
             // remainder and may contain commas. Build compact JSON so commas in
             // titles can't break QML parsing.
             "openwindow" => {
+                if let Some(address) = openwindow_address(data) {
+                    let address = address.to_string();
+                    tokio::spawn(async move { force_fullscreen(&address).await });
+                }
                 let json = parse_openwindow(data);
                 let _ = events_tx.send(Event::HyprOpenWindow(json));
             }
@@ -376,6 +385,49 @@ fn parse_openwindow(data: &str) -> String {
         "workspace": workspace,
     })
     .to_string()
+}
+
+/// Extract the window address from an `openwindow` event's raw data
+/// (`ADDRESS,WORKSPACENAME,CLASS,TITLE`). `None` for an empty/missing address
+/// so callers skip the fullscreen dispatch rather than target an empty
+/// selector. Also requires the `0x` prefix Hyprland always uses for window
+/// addresses — cheap defense-in-depth against a malformed/truncated event
+/// line reaching `dispatch focuswindow address:<...>` with garbage.
+fn openwindow_address(data: &str) -> Option<&str> {
+    data.split(',')
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.starts_with("0x"))
+}
+
+/// Kiosk enforcement: force a newly-mapped window to take over the screen,
+/// independent of its class. This exists because the static
+/// `windowrule = fullscreen` effect (`config/hyprland.conf`) only applies if
+/// the new window also wins initial keyboard focus on the same map —
+/// Hyprland gates the static effect on `!m_noInitialFocus` in its own
+/// `onMap()` — and on this kiosk a second app can map while something else
+/// (Quickshell's layer surface, or the previous app) still holds focus, so
+/// the windowrule silently no-ops and the new window lands tiled with
+/// whatever else is on the workspace.
+///
+/// Doing it imperatively here, after the window has already mapped,
+/// sidesteps that race entirely: `focuswindow` resolves the window by
+/// address regardless of who currently has focus, and `fullscreen 0 set`
+/// (not the bare toggle form) is idempotent, so this is safe to fire on
+/// every open even if a window somehow already fullscreened itself. Runs on
+/// its own spawned task so a slow/failed dispatch can't stall the event
+/// reader loop. Best-effort: a failed dispatch (Hyprland socket hiccup, or a
+/// window that closed again before the dispatch reached it) just leaves the
+/// window as Hyprland's own layout put it — never panics, but IS logged so a
+/// pattern of failures (e.g. the request socket going away) is visible
+/// rather than silently swallowed.
+async fn force_fullscreen(address: &str) {
+    if let Err(e) = request(&format!("dispatch focuswindow address:{address}")).await {
+        tracing::warn!("hyprland: force_fullscreen: failed to focus {address}: {e}");
+    }
+    if let Err(e) = request("dispatch fullscreen 0 set").await {
+        tracing::warn!("hyprland: force_fullscreen: failed to fullscreen {address}: {e}");
+    }
 }
 
 #[cfg(test)]
@@ -541,5 +593,29 @@ mod tests {
         // No newlines, no `": "` pretty-print spacing.
         assert!(!out.contains('\n'));
         assert!(!out.contains(": "));
+    }
+
+    #[test]
+    fn openwindow_address_extracts_first_field() {
+        assert_eq!(
+            openwindow_address("0x12345678,1,steam,Steam Big Picture"),
+            Some("0x12345678")
+        );
+        // Works for any class — the kiosk fullscreen enforcement it feeds is
+        // class-agnostic by design.
+        assert_eq!(
+            openwindow_address("0xabc,games,some.random.App,Title"),
+            Some("0xabc")
+        );
+    }
+
+    #[test]
+    fn openwindow_address_none_for_missing_or_empty() {
+        assert_eq!(openwindow_address(""), None);
+        assert_eq!(openwindow_address(",1,steam,Title"), None);
+        assert_eq!(openwindow_address("  ,1,steam,Title"), None);
+        // Missing `0x` prefix must also be rejected (defense-in-depth).
+        assert_eq!(openwindow_address("12345678,1,steam,Title"), None);
+        assert_eq!(openwindow_address("abc,1,steam,Title"), None);
     }
 }

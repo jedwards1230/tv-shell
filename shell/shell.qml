@@ -20,6 +20,12 @@ ShellRoot {
     property string _launchAppName: ""
     property string _launchAppIcon: ""
 
+    // `state` immediately before a local-app launch began, so a failed/timed-out
+    // launch restores the correct screen (`idle` if nothing was running, or
+    // `appRunning` if a second app was launched over a first one already in the
+    // foreground) instead of always bouncing to the home screen.
+    property string _preLaunchState: "idle"
+
     // Emitted on any user activity (controller, keyboard, mouse) so child
     // components can reset their own inactivity timers without referencing IDs
     // across Variants scope boundaries.
@@ -110,7 +116,18 @@ ShellRoot {
         id: launchOverlayTimeout
         interval: 30000
         repeat: false
-        onTriggered: root._launchOverlayActive = false
+        onTriggered: {
+            root._launchOverlayActive = false;
+            // Backstop for the "launching" state flip above: if a window never
+            // mapped and appLaunchFailed never fired either (app hung / exited
+            // 0 without ever opening a window), don't strand the shell
+            // permanently hidden — restore whatever was showing before this
+            // launch attempt. Unconditional (see the onLaunchStarted note):
+            // `state` is "appRunning" by now regardless, since this timer
+            // firing at all means onWindowConfirmed (which stops it) never
+            // ran, i.e. this launch never actually produced a window.
+            root.state = root._preLaunchState;
+        }
     }
 
     Component.onCompleted: {
@@ -275,15 +292,55 @@ ShellRoot {
         onAppLaunchFailed: {
             root._launchOverlayActive = false;
             launchOverlayTimeout.stop();
+            // Restore whatever was showing before this launch attempt (idle, or
+            // appRunning if a second app was launched over a first) rather than
+            // always bouncing to home. Unconditional, NOT guarded on
+            // `state === "launching"`: launchDesktopApp() fires appLaunched()
+            // synchronously right after launchStarted() (see the note below),
+            // so by the time a launcher process can actually exit non-zero,
+            // `state` has already moved on to "appRunning" — a guard here
+            // would never fire and this restore would be dead code.
+            root.state = root._preLaunchState;
             if (inputManager)
                 inputManager.rumblePulse(250);
         }
         // #193: show the "Launching…" overlay the instant a launch begins, hide
         // it once the window is confirmed mapped (or the safety timeout fires).
+        //
+        // Also flip `state` to "launching" here, immediately — mirroring
+        // `onStreamRequested` below. The exclusive-keyboard-focus shell surface
+        // (the PanelWindow further down) is only unmapped when `state` excludes
+        // "idle", and Hyprland only applies the `windowrule = fullscreen` effect
+        // to a new window if that window also wins initial keyboard focus on the
+        // same map. Without this, `state` stayed "idle" for the ENTIRE local-app
+        // launch (it only became "appRunning" once the window was confirmed,
+        // well after the window had already mapped), so the shell kept exclusive
+        // keyboard focus through the exact moment Hyprland decided whether to
+        // fullscreen the new window — starving it of focus and silently
+        // defeating the windowrule for every local app launch, regardless of
+        // class. Flipping state here, before the process is even spawned,
+        // releases that focus in time.
+        //
+        // Note: AppLifecycleManager.launchDesktopApp() fires appLaunched()
+        // synchronously, right after launchStarted() in the same call — so
+        // `state` collapses "launching" -> "appRunning" within the same tick
+        // for a fresh launch, well before the window actually maps. That's
+        // harmless for the fix above (both "launching" and "appRunning" are
+        // excluded from the shell surface's `visible` binding, so focus is
+        // released either way); it just means `state` is never observably
+        // "launching" for very long, which is why the failure/timeout
+        // restores above and below don't gate on it.
         onLaunchStarted: app => {
             root._launchAppName = (app && app.name) ? app.name : "";
             root._launchAppIcon = (app && app.icon) ? app.icon : "";
             root._launchOverlayActive = true;
+            // Don't overwrite `_preLaunchState` if we're already mid-launch
+            // (state still "launching") — otherwise an overlapping second
+            // launch would capture "launching" itself as the restore target,
+            // which is never a valid state to fall back to.
+            if (root.state !== "launching")
+                root._preLaunchState = root.state;
+            root.state = "launching";
             launchOverlayTimeout.restart();
         }
         onWindowConfirmed: {

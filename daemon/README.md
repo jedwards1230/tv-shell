@@ -158,7 +158,13 @@ Two more subsystems replace the remaining QML *reads*:
   and streams `hypr:activewindow:<class>` / `hypr:fullscreen:<0|1>` events read
   from the `.socket2.sock` event stream. This replaces the `hyprctl clients -j`
   shell-out in `components/HyprctlClients.qml` and the `hyprctl monitors -j`
-  READ in `DisplaySettings.qml`. One-shot `hyprctl dispatch` *actions* stay in QML.
+  READ in `DisplaySettings.qml`. User-triggered `hyprctl dispatch` *actions*
+  stay in QML — except kiosk fullscreen enforcement (`force_fullscreen`): on
+  every `openwindow` event the actor dispatches `focuswindow` + `fullscreen
+  0 set` on that window's address, class-agnostic, because the static
+  `windowrule = fullscreen` in `hyprland.conf` only applies if the new window
+  also wins initial keyboard focus on the same map, which doesn't reliably
+  happen on this kiosk when a second app opens.
 - **Sunshine** (`health.rs`): the `sunshine-status <host> <port>` pre-flight check
   the shell runs before a Moonlight stream. It's **stateless and cross-platform**
   (a plain `ipc.rs` handler, not a Linux-only actor) over `reqwest` with
