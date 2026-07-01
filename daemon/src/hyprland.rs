@@ -42,7 +42,7 @@
 //! its own task, pushing onto the broadcast bus.
 
 use crate::protocol::Event;
-use crate::state::Reply;
+use crate::state::{Control, Reply};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -117,16 +117,23 @@ async fn request(cmd: &str) -> Result<String> {
 /// missing/closed socket degrades queries to an empty document and the event
 /// watcher retries with capped backoff so `hypr:*` events self-heal if Hyprland
 /// starts after the daemon or restarts later.
+///
+/// `control_tx` is a clone of the input runtime's control channel (same
+/// pattern as the CEC actor, `main.rs::spawn_dbus_actors`): every
+/// `activewindow` event is also forwarded there as
+/// [`Control::HyprActiveWindowChanged`] so the input runtime can make the
+/// Game/Shell presenter follow compositor focus.
 pub async fn run(
     mut rx: mpsc::Receiver<HyprReq>,
     events_tx: broadcast::Sender<Event>,
+    control_tx: mpsc::Sender<Control>,
 ) -> Result<()> {
     {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
             loop {
-                match watch_events(events_tx.clone()).await {
+                match watch_events(events_tx.clone(), control_tx.clone()).await {
                     Ok(()) => backoff = Duration::from_secs(1), // ended cleanly; re-attach
                     Err(e) => tracing::warn!("hyprland: event listener stopped: {e}; retrying"),
                 }
@@ -333,7 +340,10 @@ fn monitor_entry(v: &serde_json::Value) -> serde_json::Value {
 /// the broadcast bus. Reads newline-delimited `EVENT>>DATA` lines. Returns when
 /// the socket closes (the caller retries with backoff); errors propagate so the
 /// caller logs and retries.
-async fn watch_events(events_tx: broadcast::Sender<Event>) -> Result<()> {
+async fn watch_events(
+    events_tx: broadcast::Sender<Event>,
+    control_tx: mpsc::Sender<Control>,
+) -> Result<()> {
     let sock = socket_dir()?.join(".socket2.sock");
     let stream = UnixStream::connect(&sock).await?;
     let mut lines = BufReader::new(stream).lines();
@@ -345,9 +355,24 @@ async fn watch_events(events_tx: broadcast::Sender<Event>) -> Result<()> {
             // `activewindow>>class,title` — class is everything before the first
             // comma (a title may contain commas). Empty when focus is lost
             // (`activewindow>>,`), matching the empty-class wire contract.
+            //
+            // Also forwarded to the input runtime as `Control::HyprActiveWindowChanged`
+            // so the gamepad presenter follows focus (see the `run` doc comment).
+            // Best-effort and non-blocking (`try_send`, not `.send().await`): this
+            // loop also drives kiosk fullscreen enforcement, so an `.await` on a
+            // full control channel would stall that too. A full channel (input
+            // runtime backed up) or closed one (shutting down) just drops this
+            // focus update rather than blocking the event reader.
             "activewindow" => {
-                let class = data.split_once(',').map(|(c, _)| c).unwrap_or(data);
-                let _ = events_tx.send(Event::HyprActiveWindow(class.to_string()));
+                let class = data
+                    .split_once(',')
+                    .map(|(c, _)| c)
+                    .unwrap_or(data)
+                    .to_string();
+                let _ = events_tx.send(Event::HyprActiveWindow(class.clone()));
+                if let Err(e) = control_tx.try_send(Control::HyprActiveWindowChanged(class)) {
+                    tracing::debug!("hyprland: dropped focus-change control message: {e}");
+                }
             }
             // `fullscreen>>0|1`.
             "fullscreen" => {

@@ -873,6 +873,8 @@ mod tests {
                 }
                 // No reply, no device in the fake fleet — mirror the runtime no-op.
                 Control::SetSessionActive(_) => {}
+                // No reply — mirror the runtime's fire-and-forget follow-focus signal.
+                Control::HyprActiveWindowChanged(_) => {}
                 Control::Shutdown => break,
             }
         }

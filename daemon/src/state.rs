@@ -110,6 +110,18 @@ pub enum Control {
     /// which only routes events while we own the grab.
     SetSessionActive(bool),
 
+    /// Hyprland's focused-window class changed (sent by the Hyprland actor's
+    /// `activewindow` event watcher). Empty string means no toplevel is
+    /// focused — i.e. only the shell's own layer-shell surface remains, which
+    /// never appears in Hyprland's `activewindow` at all. The input runtime
+    /// uses this to make the Game/Shell presenter follow compositor focus
+    /// (`input::focus_presenter_target`), so an app launched out-of-band (not
+    /// through the shell's own launch/stream flow — e.g. a Steam Remote Play
+    /// window) still gets a real gamepad instead of being stuck presented as a
+    /// keyboard. Never overrides the Handoff presenter (#221) — Handoff only
+    /// ends when the shell explicitly re-`grab`s.
+    HyprActiveWindowChanged(String),
+
     Shutdown,
 }
 

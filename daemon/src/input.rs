@@ -2345,16 +2345,35 @@ async fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bo
             }
         }
 
+        Control::HyprActiveWindowChanged(class) => {
+            if let Some(target) = focus_presenter_target(sh.presenter, &class) {
+                info!(
+                    class = %class,
+                    from = ?sh.presenter,
+                    to = ?target,
+                    "presenter follow-focus"
+                );
+                match target {
+                    Presenter::Shell => grab_all(sh, fleet),
+                    Presenter::Game => release_all(sh, fleet),
+                    Presenter::Handoff => {
+                        unreachable!("focus_presenter_target never targets Handoff")
+                    }
+                }
+            }
+        }
+
         Control::Shutdown => return false,
     }
     true
 }
 
-/// Switch the fleet to the **shell presenter** (the `grab` IPC). Per-fleet mode
-/// toggle (Phase 5): set the mode, ensure every pad is physically grabbed, and
-/// tear down any per-player virtual gamepads. The physical grab is *kept* — the
-/// shell presenter routes pad input to nav keys + `intent:*` on the shared
-/// virtual keyboard/mouse.
+/// Switch the fleet to the **shell presenter** (the `grab` IPC, and — since
+/// follow-focus — a compositor focus change back to the shell home; see
+/// [`focus_presenter_target`]). Per-fleet mode toggle (Phase 5): set the mode,
+/// ensure every pad is physically grabbed, and tear down any per-player
+/// virtual gamepads. The physical grab is *kept* — the shell presenter routes
+/// pad input to nav keys + `intent:*` on the shared virtual keyboard/mouse.
 fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Shell (grab)");
     sh.metrics.inc_transitions();
@@ -2365,10 +2384,12 @@ fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
     }
 }
 
-/// Switch the fleet to the **game presenter** (the `release` IPC). Per-fleet
-/// mode toggle (Phase 5): set the mode, **keep** the physical grab (so nothing
-/// leaks to the compositor), and create one clean virtual gamepad per pad. The
-/// game reads the virtual pads; Home is intercepted into `intent:home-*`.
+/// Switch the fleet to the **game presenter** (the `release` IPC, and — since
+/// follow-focus — a compositor focus change to a real app toplevel; see
+/// [`focus_presenter_target`]). Per-fleet mode toggle (Phase 5): set the mode,
+/// **keep** the physical grab (so nothing leaks to the compositor), and create
+/// one clean virtual gamepad per pad. The game reads the virtual pads; Home is
+/// intercepted into `intent:home-*`.
 fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Game (release)");
     sh.metrics.inc_transitions();
@@ -2385,7 +2406,8 @@ fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
 /// **release** the physical `EVIOCGRAB` so SDL/Moonlight reads the real evdev
 /// node (true handoff, no virtual pad). The daemon keeps reading events so the
 /// session stays active and the safety combos still arm. Both `enter_shell`
-/// (drop vpad) and `ungrab` are idempotent.
+/// (drop vpad) and `ungrab` are idempotent. Never invoked by follow-focus — see
+/// [`focus_presenter_target`].
 fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Handoff (handoff)");
     sh.metrics.inc_transitions();
@@ -2393,6 +2415,87 @@ fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
     for pad in fleet.pads.values_mut() {
         pad.enter_shell(sh); // drop any virtual pad
         pad.ungrab(sh); // release the physical grab so SDL reads the real node
+    }
+}
+
+/// Decide whether a Hyprland focused-window class report should change the
+/// fleet's presenter, following PR #294's "react continuously to whatever
+/// Hyprland now considers active" pattern — applied to the input presenter
+/// rather than kiosk fullscreen enforcement.
+///
+/// `focused_class` is empty when no toplevel is focused — i.e. only the
+/// shell's own layer-shell surface remains, which never appears in
+/// Hyprland's `activewindow` at all (see `hyprland.rs`'s `needs_fullscreen`
+/// doc comment for the same fact used there). A non-empty class means some
+/// real app toplevel is focused, out-of-band or not — class-agnostic by
+/// design, so e.g. a Steam Remote Play `streaming_client` window gets a real
+/// gamepad without hardcoding its class.
+///
+/// Returns `None` when no change is warranted: the target already matches
+/// `current`, or `current` is [`Presenter::Handoff`]. Handoff is a deliberate
+/// exception (#221, the Moonlight stream presenter) — follow-focus must never
+/// downgrade it to Game just because the streamed window holds compositor
+/// focus (which it does, for the whole stream). The shell ends Handoff
+/// explicitly via the `grab` IPC when the stream exits, and follow-focus
+/// resumes arbitrating from there. Follow-focus therefore only ever toggles
+/// between [`Presenter::Shell`] and [`Presenter::Game`].
+fn focus_presenter_target(current: Presenter, focused_class: &str) -> Option<Presenter> {
+    if current == Presenter::Handoff {
+        return None;
+    }
+    let target = if focused_class.is_empty() {
+        Presenter::Shell
+    } else {
+        Presenter::Game
+    };
+    if target == current {
+        None
+    } else {
+        Some(target)
+    }
+}
+
+#[cfg(test)]
+mod presenter_tests {
+    use super::*;
+
+    #[test]
+    fn shell_to_game_when_app_focused() {
+        assert_eq!(
+            focus_presenter_target(Presenter::Shell, "steam_app_12345"),
+            Some(Presenter::Game)
+        );
+    }
+
+    #[test]
+    fn game_to_shell_when_focus_empty() {
+        assert_eq!(
+            focus_presenter_target(Presenter::Game, ""),
+            Some(Presenter::Shell)
+        );
+    }
+
+    #[test]
+    fn no_change_when_target_matches_current() {
+        // Already Shell, still no toplevel focused -> no-op (no thrash).
+        assert_eq!(focus_presenter_target(Presenter::Shell, ""), None);
+        // Already Game, focus moved to a DIFFERENT app toplevel -> still Game,
+        // no-op (switching between two app windows must not flap the
+        // presenter).
+        assert_eq!(focus_presenter_target(Presenter::Game, "another_app"), None);
+    }
+
+    #[test]
+    fn handoff_is_never_touched_by_follow_focus() {
+        // The Moonlight stream window holding focus (the common case for the
+        // whole stream) must not downgrade Handoff to Game (#221).
+        assert_eq!(
+            focus_presenter_target(Presenter::Handoff, "steam_app_moonlight"),
+            None
+        );
+        // Nor when focus returns to the shell home while still in Handoff —
+        // only an explicit `grab` IPC (handled elsewhere) ends Handoff.
+        assert_eq!(focus_presenter_target(Presenter::Handoff, ""), None);
     }
 }
 
