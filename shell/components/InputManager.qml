@@ -2,7 +2,8 @@ import Quickshell.Io
 import QtQuick
 
 // IPC protocol: see docs/IPC_PROTOCOL.md
-// Commands used: grab, release, handoff, subscribe, get-pads, rumble
+// Commands used: grab, release, handoff, overlay-focus, subscribe, get-pads,
+//   rumble
 // Events handled: combo:force-quit, combo:end-session, combo:suspend-stream,
 //   input-mode:*, controller-wake, controller-disconnected, intent:* (the
 //   control-surface stream — the SOLE shell-intent vocabulary; the legacy
@@ -194,6 +195,14 @@ Item {
     function handoff() {
         inputHandoff.request("handoff");
     }
+    // Route pad input to the SHELL (buttons→keyboard: A→Enter, dpad→arrows)
+    // while a modal shell overlay is open OVER a running app, instead of to the
+    // app. `off` restores the base per-app routing/grab exactly. Driven off the
+    // "shell surface mapped over the app" condition in shell.qml so it can't
+    // desync from what's on screen. See docs/IPC_PROTOCOL.md `overlay-focus`.
+    function setOverlayFocus(on) {
+        inputOverlayFocus.request(on ? "overlay-focus on" : "overlay-focus off");
+    }
     function startListening() {
         comboListener.start();
         // Seed the fleet snapshot once the subscriber is up; pad:* deltas keep
@@ -214,6 +223,10 @@ Item {
 
     SocketClient {
         id: inputHandoff
+    }
+
+    SocketClient {
+        id: inputOverlayFocus
     }
 
     // Seeds the `pads` model with the current fleet (id,index,name,grabbed) on
