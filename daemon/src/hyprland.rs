@@ -358,9 +358,11 @@ async fn watch_events(
             //
             // Also forwarded to the input runtime as `Control::HyprActiveWindowChanged`
             // so the gamepad presenter follows focus (see the `run` doc comment).
-            // Best-effort: a full/closed control channel just means the input
-            // runtime is shutting down, not something to retry the event
-            // listener over.
+            // Best-effort and non-blocking (`try_send`, not `.send().await`): this
+            // loop also drives kiosk fullscreen enforcement, so an `.await` on a
+            // full control channel would stall that too. A full channel (input
+            // runtime backed up) or closed one (shutting down) just drops this
+            // focus update rather than blocking the event reader.
             "activewindow" => {
                 let class = data
                     .split_once(',')
@@ -368,9 +370,9 @@ async fn watch_events(
                     .unwrap_or(data)
                     .to_string();
                 let _ = events_tx.send(Event::HyprActiveWindow(class.clone()));
-                let _ = control_tx
-                    .send(Control::HyprActiveWindowChanged(class))
-                    .await;
+                if let Err(e) = control_tx.try_send(Control::HyprActiveWindowChanged(class)) {
+                    tracing::debug!("hyprland: dropped focus-change control message: {e}");
+                }
             }
             // `fullscreen>>0|1`.
             "fullscreen" => {
