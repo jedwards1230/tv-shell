@@ -614,5 +614,8 @@ mod tests {
         assert_eq!(openwindow_address(""), None);
         assert_eq!(openwindow_address(",1,steam,Title"), None);
         assert_eq!(openwindow_address("  ,1,steam,Title"), None);
+        // Missing `0x` prefix must also be rejected (defense-in-depth).
+        assert_eq!(openwindow_address("12345678,1,steam,Title"), None);
+        assert_eq!(openwindow_address("abc,1,steam,Title"), None);
     }
 }
