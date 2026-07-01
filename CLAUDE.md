@@ -271,11 +271,16 @@ journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM`, overridable 
 The table above reflects the deliberate split: the daemon owns all *reads* of
 system state (D-Bus, Hyprland IPC, Sunshine), while shell-outs remain only for
 write/action commands (`nmcli` join, `wpctl`, `hyprctl dispatch`, `systemctl`).
-One exception: the Hyprland actor itself dispatches `focuswindow` +
-`fullscreen 0 set` on every `openwindow` event to keep new app windows kiosk
-fullscreen regardless of class — a blanket compositor policy, not a per-app
-QML decision, so it lives with the event it reacts to (`force_fullscreen` in
-`hyprland.rs`).
+One exception: the Hyprland actor itself enforces kiosk fullscreen —
+class-agnostic, and continuous rather than a one-shot check. On `openwindow`
+it dispatches `focuswindow` + `fullscreen 0 set` on the new window
+(`force_fullscreen` in `hyprland.rs`); on `closewindow`, `movewindowv2`, and
+`activewindowv2` it re-checks whichever window Hyprland now considers active
+and fullscreens it if the tiler left it windowed (`enforce_active_fullscreen`)
+— the case that matters most is a window closing and the tiler re-splitting
+the survivor(s) instead of leaving one fullscreen. This is a blanket
+compositor policy, not a per-app QML decision, so it lives with the events it
+reacts to.
 **HDMI-CEC** lives in the daemon (`cec-*` IPC, deployed and verified on gaming-client
 with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtime).
 CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
