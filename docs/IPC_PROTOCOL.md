@@ -2080,6 +2080,29 @@ remote Steam (Big Picture) sees the Guide button — but a local Home-tap can no
 longer raise the shell overlay over the stream. The gamepad force-quit combo
 (Back+Home+LB+RB) and the keyboard remain the escape hatches.
 
+### Follow-focus: presenter tracks the Hyprland-focused window
+
+`grab`/`release`/`handoff` are the *explicit* presenter switches the shell
+requests. On top of those, the Hyprland actor's `activewindow` event watcher
+also drives the presenter *continuously*, mirroring the kiosk fullscreen
+enforcement pattern (`hyprland.rs`'s `enforce_active_fullscreen`): whenever a
+real app toplevel is focused (a non-empty class — the shell's own layer-shell
+surface never appears in `activewindow` at all) the daemon switches Shell ->
+Game if it isn't already there; when focus returns to the shell home (empty
+class) it switches back to Shell. This is class-agnostic — it does not special-
+case any app — so a controller keeps working as a real gamepad in an app
+launched **out-of-band** of the shell's own launch/stream flow (e.g. a Steam
+Remote Play `streaming_client` window opened from Steam Big Picture), which
+previously left the pad stuck presented as a keyboard with the shell's nav
+shortcuts (including `BTN_SELECT` -> the right drawer) still firing into the
+game.
+
+Follow-focus never touches the **Handoff** presenter: once the shell hands a
+Moonlight stream off explicitly (`handoff`), the presenter stays Handoff
+regardless of which window holds focus, and only reverts to Shell when the
+shell explicitly `grab`s again on stream exit. Follow-focus only ever
+arbitrates between Shell and Game.
+
 ## Settings Persistence
 
 Key bindings are persisted to `~/.config/game-shell/settings.json` under the `keyBindings` key. The daemon reads on startup and writes on each `set-binding` command (read-modify-write, compact JSON).

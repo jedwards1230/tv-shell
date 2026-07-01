@@ -336,8 +336,12 @@ fn spawn_dbus_actors(
     }
     {
         let events_tx = events_tx.clone();
+        // Clone of the input control channel so the Hyprland actor can forward
+        // `activewindow` focus changes as `Control::HyprActiveWindowChanged`
+        // (follow-focus presenter, see hyprland.rs::run doc comment).
+        let hypr_control_tx = control_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = hyprland::run(hypr_rx, events_tx).await {
+            if let Err(e) = hyprland::run(hypr_rx, events_tx, hypr_control_tx).await {
                 tracing::warn!("hyprland actor exited: {e}");
             }
         });
@@ -354,11 +358,6 @@ fn spawn_dbus_actors(
             }
         });
     }
-    // On the default (no `cec` feature) build, `control_tx` is only used by the
-    // CEC actor spawn above, so discard it explicitly to avoid an unused-arg
-    // warning under clippy `-D warnings`.
-    #[cfg(not(feature = "cec"))]
-    let _ = control_tx;
 
     ipc::DbusSenders {
         bt: Some(bt_tx),
