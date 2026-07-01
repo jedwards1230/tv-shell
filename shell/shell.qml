@@ -24,8 +24,8 @@ ShellRoot {
     // QAM close) flips `state` off `appRunning` or clears the overlay bools, so
     // it can never get stuck on. `_layout` is null until the first screen's
     // ShellLayout completes; state is `idle` before then, so the guard holds.
-    readonly property bool _overlayOverApp: root.state === "appRunning" && root._layout !== null && (root.overlayDrawerOpen || root._layout.sessionQam.active || root._layout.overlayNavDrawer.active)
-    on_overlayOverAppChanged: inputManager.setOverlayFocus(root._overlayOverApp)
+    readonly property bool overlayOverApp: root.state === "appRunning" && root._layout !== null && (root.overlayDrawerOpen || root._layout.sessionQam.active || root._layout.overlayNavDrawer.active)
+    onOverlayOverAppChanged: inputManager.setOverlayFocus(root.overlayOverApp)
 
     // #193 launch-overlay state — drives the dedicated Overlay-layer "Launching…"
     // window below. Shown from launchStarted until windowConfirmed (or a safety
