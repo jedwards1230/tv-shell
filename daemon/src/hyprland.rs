@@ -503,8 +503,14 @@ async fn enforce_active_fullscreen() {
     if trimmed.is_empty() {
         return;
     }
-    let Ok(v) = serde_json::from_str::<Value>(trimmed) else {
-        return;
+    let v = match serde_json::from_str::<Value>(trimmed) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!(
+                "hyprland: enforce_active_fullscreen: activewindow reply not valid JSON: {e}"
+            );
+            return;
+        }
     };
     if !needs_fullscreen(&v) {
         return;
