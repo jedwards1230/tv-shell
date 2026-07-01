@@ -6,12 +6,20 @@
 //! Mostly READ ONLY: active-window class/title/address and the full client
 //! list, plus active-window / fullscreen change events. User-triggered,
 //! one-shot compositor *actions* (`hyprctl dispatch exec/closewindow`)
-//! deliberately stay shell-outs in the QML. The one exception is
-//! [`force_fullscreen`]: kiosk fullscreen enforcement on every new window,
-//! regardless of class. That has to live here rather than in QML because it
-//! must react to `openwindow` — an event this actor already owns — and it's
-//! not a per-app decision QML makes, it's a blanket compositor policy that
-//! also needs to fire even if Quickshell is slow to start or has crashed.
+//! deliberately stay shell-outs in the QML. The one exception is kiosk
+//! fullscreen enforcement, class-agnostic and CONTINUOUS: on `openwindow`
+//! [`force_fullscreen`] fullscreens the address the event names (a window
+//! may not have won focus yet at map time — see its doc comment); on
+//! `closewindow`, `movewindowv2`, and `activewindowv2`
+//! [`enforce_active_fullscreen`] re-checks whatever Hyprland now considers
+//! the active window and fullscreens it if the tiler left it windowed. That
+//! second half is what keeps the kiosk invariant "exactly one app fills the
+//! screen" holding *after* a window disappears or the active window changes
+//! for any other reason — not just at launch. This has to live here rather
+//! than in QML because it must react to Hyprland's own event stream — an
+//! event this actor already owns — and it's not a per-app decision QML
+//! makes, it's a blanket compositor policy that also needs to fire even if
+//! Quickshell is slow to start or has crashed.
 //!
 //! This REPLACES the `hyprctl clients -j` shell-out in
 //! `components/HyprctlClients.qml` and feeds `AppLifecycleManager.qml`'s
@@ -356,9 +364,29 @@ async fn watch_events(events_tx: broadcast::Sender<Event>) -> Result<()> {
                 let json = parse_openwindow(data);
                 let _ = events_tx.send(Event::HyprOpenWindow(json));
             }
-            // `closewindow>>ADDRESS` — just the window address.
+            // `closewindow>>ADDRESS` — just the window address. Whatever
+            // window Hyprland promotes to active next (if any) needs
+            // re-fullscreening: the tiler reclaims the layout on close and
+            // splits the survivor(s) instead of leaving one fullscreen. This
+            // is the case that used to slip through — fullscreen was only
+            // ever enforced on open.
             "closewindow" => {
+                tokio::spawn(enforce_active_fullscreen());
                 let _ = events_tx.send(Event::HyprCloseWindow(data.trim().to_string()));
+            }
+            // `movewindowv2>>ADDRESS,WORKSPACEID,WORKSPACENAME` — a window
+            // changed workspace, which can leave it (or whatever it displaced)
+            // tiled on either side. No data fields are needed: re-check
+            // whichever window is active now.
+            "movewindowv2" => {
+                tokio::spawn(enforce_active_fullscreen());
+            }
+            // `activewindowv2>>ADDRESS` — focus changed for any reason not
+            // already covered above (e.g. a keybind focus-cycle). Re-assert
+            // fullscreen on the newly-active window so the invariant holds
+            // regardless of *why* focus moved.
+            "activewindowv2" => {
+                tokio::spawn(enforce_active_fullscreen());
             }
             _ => {}
         }
@@ -421,12 +449,68 @@ fn openwindow_address(data: &str) -> Option<&str> {
 /// window as Hyprland's own layout put it — never panics, but IS logged so a
 /// pattern of failures (e.g. the request socket going away) is visible
 /// rather than silently swallowed.
+///
+/// This is the open-time half of kiosk fullscreen enforcement; the
+/// continuous half — re-asserting fullscreen after a window closes, moves,
+/// or focus otherwise changes — is [`enforce_active_fullscreen`].
 async fn force_fullscreen(address: &str) {
     if let Err(e) = request(&format!("dispatch focuswindow address:{address}")).await {
         tracing::warn!("hyprland: force_fullscreen: failed to focus {address}: {e}");
     }
     if let Err(e) = request("dispatch fullscreen 0 set").await {
         tracing::warn!("hyprland: force_fullscreen: failed to fullscreen {address}: {e}");
+    }
+}
+
+/// Whether the active-window JSON from `j/activewindow` names a window this
+/// kiosk should force-fullscreen: something is actually focused (`class`
+/// non-empty — an empty document, or an object with no `class`, means
+/// nothing is focused: e.g. the last window just closed and only
+/// Quickshell's layer-shell surface remains, which never appears in
+/// `j/activewindow` at all, so it's naturally exempt from this whole
+/// mechanism) and it isn't already fullscreen. The latter check is what
+/// keeps [`enforce_active_fullscreen`] a true no-op on the common case and
+/// stops it feeding back into its own `fullscreen`/`activewindowv2` events.
+fn needs_fullscreen(v: &Value) -> bool {
+    let focused = v
+        .get("class")
+        .and_then(Value::as_str)
+        .is_some_and(|c| !c.is_empty());
+    focused && !is_fullscreen(v)
+}
+
+/// Continuous kiosk enforcement: ask Hyprland who's active *right now* and
+/// fullscreen it if the tiler left it windowed. Fired after `closewindow`,
+/// `movewindowv2`, and `activewindowv2` — any event where the previously
+/// enforced fullscreen window may have been reclaimed by the tiler (most
+/// visibly: a window closes and Hyprland re-tiles the survivor(s) into a
+/// split instead of leaving one fullscreen).
+///
+/// Unlike [`force_fullscreen`], this has no window address of its own to
+/// act on and deliberately skips the explicit `focuswindow` dispatch — there
+/// is no wrong-window-has-focus race here (the window is already active by
+/// definition), only a wrong-layout one, so a bare `fullscreen 0 set`
+/// suffices. See [`needs_fullscreen`] for the skip conditions.
+async fn enforce_active_fullscreen() {
+    let body = match request("j/activewindow").await {
+        Ok(body) => body,
+        Err(e) => {
+            tracing::debug!("hyprland: enforce_active_fullscreen: activewindow query failed: {e}");
+            return;
+        }
+    };
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(trimmed) else {
+        return;
+    };
+    if !needs_fullscreen(&v) {
+        return;
+    }
+    if let Err(e) = request("dispatch fullscreen 0 set").await {
+        tracing::warn!("hyprland: enforce_active_fullscreen: failed to fullscreen: {e}");
     }
 }
 
@@ -617,5 +701,37 @@ mod tests {
         // Missing `0x` prefix must also be rejected (defense-in-depth).
         assert_eq!(openwindow_address("12345678,1,steam,Title"), None);
         assert_eq!(openwindow_address("abc,1,steam,Title"), None);
+    }
+
+    #[test]
+    fn needs_fullscreen_true_when_focused_and_windowed() {
+        let v: Value =
+            serde_json::from_str(r#"{"class":"steam","address":"0x1","fullscreen":0}"#).unwrap();
+        assert!(needs_fullscreen(&v));
+    }
+
+    #[test]
+    fn needs_fullscreen_false_when_already_fullscreen() {
+        // Both the bool and integer-mode fullscreen encodings must suppress
+        // enforcement — this is the loop-prevention no-op.
+        let v: Value =
+            serde_json::from_str(r#"{"class":"steam","address":"0x1","fullscreen":true}"#).unwrap();
+        assert!(!needs_fullscreen(&v));
+        let v: Value =
+            serde_json::from_str(r#"{"class":"steam","address":"0x1","fullscreen":2}"#).unwrap();
+        assert!(!needs_fullscreen(&v));
+    }
+
+    #[test]
+    fn needs_fullscreen_false_when_nothing_focused() {
+        // Empty object (no active window at all) and an object with an empty
+        // `class` (Hyprland's "nothing focused" shape) both must no-op —
+        // e.g. right after the last window closes and only Quickshell's
+        // layer-shell surface remains.
+        let empty: Value = serde_json::from_str("{}").unwrap();
+        assert!(!needs_fullscreen(&empty));
+        let no_class: Value =
+            serde_json::from_str(r#"{"class":"","address":"","fullscreen":0}"#).unwrap();
+        assert!(!needs_fullscreen(&no_class));
     }
 }
