@@ -472,6 +472,9 @@ async fn dispatch(
             })
             .await
         }
+        Command::OverlayFocus(on) => {
+            request(control_tx, move |reply| Control::OverlayFocus { on, reply }).await
+        }
         // --- #159: controllerdb-refresh — needs control_tx to hot-swap the runtime's DB ---
         Command::ControllerDbRefresh => {
             let db_state = db_state.clone();
@@ -528,6 +531,7 @@ async fn dispatch(
         }
         // Handled without a round-trip to the runtime:
         Command::IntentUsage => return protocol::resp_intent_usage(),
+        Command::OverlayFocusUsage => return protocol::resp_overlay_focus_usage(),
         Command::RumbleUsage => return protocol::resp_rumble_usage(),
         Command::KeyUsage => return protocol::resp_key_usage(),
         Command::SetBindingUsage => return protocol::resp_set_binding_usage(),
@@ -860,6 +864,10 @@ mod tests {
                     // In-memory only; fake just replies ok.
                     let _ = reply.send(protocol::resp_ok());
                 }
+                Control::OverlayFocus { reply, .. } => {
+                    // In-memory toggle in the real runtime; the fake just replies ok.
+                    let _ = reply.send(protocol::resp_ok());
+                }
                 Control::PadBatteryQuery { id, reply } => {
                     // Fake: no pads in the test fleet -> pad not found.
                     let _ = reply.send(protocol::resp_pad_not_found(&id));
@@ -1112,6 +1120,19 @@ mod tests {
             "error:unknown key 'sideways'"
         );
         assert_eq!(send_line(&mut s, "key").await, "error:usage: key <name>");
+
+        // Overlay-focus control surface: `on`/`off` round-trip the runtime (the
+        // fake replies ok); a missing/invalid arg is a stateless usage error.
+        assert_eq!(send_line(&mut s, "overlay-focus on").await, "ok");
+        assert_eq!(send_line(&mut s, "overlay-focus off").await, "ok");
+        assert_eq!(
+            send_line(&mut s, "overlay-focus").await,
+            "error:usage: overlay-focus on|off"
+        );
+        assert_eq!(
+            send_line(&mut s, "overlay-focus maybe").await,
+            "error:usage: overlay-focus on|off"
+        );
 
         // get-pads round-trips the runtime and returns the fleet JSON array.
         assert_eq!(

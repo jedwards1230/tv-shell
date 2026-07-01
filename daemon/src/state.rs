@@ -75,6 +75,17 @@ pub enum Control {
         id: Option<String>,
         reply: Reply,
     },
+    /// `overlay-focus on|off` — a modal shell overlay opened (`on`) or closed
+    /// (`off`) over a running app. While `on`, the input runtime routes pad
+    /// events to the SHELL key-map regardless of the base presenter
+    /// (`Game`/`Handoff`) and force-grabs every pad so the app stops seeing raw
+    /// events (critical for `Handoff`, normally ungrabbed); `off` restores the
+    /// remembered base presenter's routing + grab exactly. In-memory only; the
+    /// reply is `ok`.
+    OverlayFocus {
+        on: bool,
+        reply: Reply,
+    },
     /// `set-config` succeeded — refresh any cached settings (currently the
     /// `rumbleEnabled` flag, #108). Sent fire-and-forget by the IPC dispatch after
     /// a successful `set-config`; the input runtime re-reads the affected keys

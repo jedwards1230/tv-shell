@@ -160,10 +160,21 @@ struct Shared {
     /// one pad, so behavior is identical to the pre-fleet single fire.
     home_hold_active: bool,
 
-    /// The active presenter (Phase 5). Starts in [`Presenter::Shell`] (the shell
-    /// boots focused). `release`/`grab` flip it; per-pad event routing
-    /// (`handle_event`) branches on it.
+    /// The active (base) presenter (Phase 5). Starts in [`Presenter::Shell`]
+    /// (the shell boots focused). `release`/`grab`/`handoff` flip it; per-pad
+    /// event routing (`handle_event`) branches on it — unless `overlay_focus`
+    /// is set, in which case the SHELL handler runs regardless (see below).
     presenter: Presenter,
+
+    /// Whether a modal shell overlay is open over a running app (`overlay-focus
+    /// on|off`, #262). While `true`, [`Self::presenter`] is left untouched (it
+    /// remembers the base presenter) but pad events route to the SHELL key-map
+    /// via [`route_presenter`] and every pad is force-grabbed via
+    /// [`should_grab`], so the app stops seeing raw events — critical for
+    /// [`Presenter::Handoff`], where the pad is normally ungrabbed. Turning it
+    /// off restores the base presenter's routing + grab exactly. Defaults
+    /// `false`; in-memory only.
+    overlay_focus: bool,
 
     /// Whether our logind session is the foreground (active) one. Maintained by
     /// `Control::SetSessionActive` (the `session` actor). While `false` the
@@ -581,9 +592,13 @@ impl PadDevice {
             value = ev.value(),
             "pad event"
         );
-        // Route by the active presenter, not the physical grab: the pad stays
-        // grabbed in both modes (Phase 5), so `grabbed` no longer discriminates.
-        match sh.presenter {
+        // Route by the *effective* presenter, not the physical grab: the pad
+        // stays grabbed in both Shell/Game modes (Phase 5), so `grabbed` no
+        // longer discriminates. `route_presenter` folds in overlay-focus (#262)
+        // — a modal shell overlay open over a running app forces the Shell
+        // handler over any base presenter so the pad drives the overlay, not the
+        // app; the base presenter stays remembered in `sh.presenter`.
+        match route_presenter(sh.overlay_focus, sh.presenter) {
             Presenter::Shell => self.handle_shell(sh, ev),
             Presenter::Game => self.handle_game(sh, ev),
             Presenter::Handoff => self.handle_handoff(sh, ev),
@@ -1958,6 +1973,7 @@ pub async fn run(
         capture_gen: 0,
         home_hold_active: false,
         presenter: Presenter::Shell,
+        overlay_focus: false,
         session_active: true,
         // rumble_enabled is derived from the single offloaded startup settings
         // read (M3), superseding origin/main's inline config::rumble_enabled call.
@@ -2279,6 +2295,13 @@ async fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bo
             sh.active_game = id;
             let _ = reply.send(resp_ok());
         }
+        Control::OverlayFocus { on, reply } => {
+            // #262: a modal shell overlay opened/closed over a running app.
+            // Flip routing to the shell key-map + force-grab (on) / restore the
+            // base presenter's grab (off) without touching `sh.presenter`.
+            set_overlay_focus(sh, fleet, on);
+            let _ = reply.send(resp_ok());
+        }
         Control::PadBatteryQuery { id, reply } => {
             // #160: reply with battery state for the pad identified by wire id.
             // A wired pad (no battery sysfs entry) replies `present:false`;
@@ -2418,6 +2441,64 @@ fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
     }
 }
 
+/// Which presenter's handler processes pad events, given the overlay-focus flag
+/// and the base presenter (#262). Overlay-focus forces [`Presenter::Shell`] over
+/// any base so the pad drives an open modal shell overlay via the shell key-map
+/// rather than the app; otherwise the base presenter routes as usual. Pure, so
+/// the routing decision is unit-tested without a controller.
+fn route_presenter(overlay_focus: bool, presenter: Presenter) -> Presenter {
+    if overlay_focus {
+        Presenter::Shell
+    } else {
+        presenter
+    }
+}
+
+/// Whether every pad should hold the physical `EVIOCGRAB`, given the
+/// overlay-focus flag and the base presenter (#262). Grabbed in every state
+/// except a [`Presenter::Handoff`] base with no overlay open — the one case
+/// where SDL/Moonlight must read the raw evdev node directly. Overlay-focus
+/// therefore forces the grab even over Handoff. Pure — the grab transitions in
+/// [`set_overlay_focus`] are unit-tested without a controller.
+fn should_grab(overlay_focus: bool, presenter: Presenter) -> bool {
+    overlay_focus || presenter != Presenter::Handoff
+}
+
+/// Toggle overlay-focus (#262): a modal shell overlay opened (`on`) or closed
+/// (`off`) over a running app. Idempotent (a no-op when already in the requested
+/// state). The base presenter in `sh.presenter` is deliberately left untouched —
+/// it *remembers* the routing to restore — while the grab is reconciled to match
+/// [`should_grab`] for the new (overlay, base) pair:
+///
+/// * ON → [`should_grab`] is always `true`, so every pad is grabbed. For a
+///   `Handoff` base this re-takes the `EVIOCGRAB` the app was reading raw; for
+///   `Shell`/`Game` it is an idempotent no-op. `Game`'s virtual pads are left in
+///   place (routing goes to the shell key-map, so they simply receive nothing
+///   until overlay-focus off, then resume forwarding).
+/// * OFF → [`should_grab`] is `false` only for a `Handoff` base, which re-ungrabs
+///   so SDL/Moonlight reads the raw node again; every other base keeps the grab.
+fn set_overlay_focus(sh: &mut Shared, fleet: &mut Fleet, on: bool) {
+    if sh.overlay_focus == on {
+        return;
+    }
+    sh.overlay_focus = on;
+    let grab = should_grab(sh.overlay_focus, sh.presenter);
+    info!(
+        overlay_focus = on,
+        base = ?sh.presenter,
+        grab,
+        pads = fleet.pads.len(),
+        "overlay-focus toggled"
+    );
+    for pad in fleet.pads.values_mut() {
+        if grab {
+            pad.grab(sh); // idempotent + session-aware
+        } else {
+            pad.ungrab(sh); // idempotent
+        }
+    }
+}
+
 /// Decide whether a Hyprland focused-window class report should change the
 /// fleet's presenter, following PR #294's "react continuously to whatever
 /// Hyprland now considers active" pattern — applied to the input presenter
@@ -2496,6 +2577,36 @@ mod presenter_tests {
         // Nor when focus returns to the shell home while still in Handoff —
         // only an explicit `grab` IPC (handled elsewhere) ends Handoff.
         assert_eq!(focus_presenter_target(Presenter::Handoff, ""), None);
+    }
+
+    #[test]
+    fn overlay_focus_routes_to_shell_over_any_base() {
+        // ON: the shell handler runs regardless of the base presenter, so the
+        // pad drives the modal overlay, not the app (#262).
+        assert_eq!(route_presenter(true, Presenter::Game), Presenter::Shell);
+        assert_eq!(route_presenter(true, Presenter::Handoff), Presenter::Shell);
+        assert_eq!(route_presenter(true, Presenter::Shell), Presenter::Shell);
+        // OFF: the base presenter routes as usual (no behavior change).
+        assert_eq!(route_presenter(false, Presenter::Game), Presenter::Game);
+        assert_eq!(
+            route_presenter(false, Presenter::Handoff),
+            Presenter::Handoff
+        );
+        assert_eq!(route_presenter(false, Presenter::Shell), Presenter::Shell);
+    }
+
+    #[test]
+    fn overlay_focus_forces_grab_over_handoff() {
+        // ON: grabbed regardless of base — critical for Handoff, normally
+        // ungrabbed, so the app stops seeing raw events (#262).
+        assert!(should_grab(true, Presenter::Handoff));
+        assert!(should_grab(true, Presenter::Game));
+        assert!(should_grab(true, Presenter::Shell));
+        // OFF: the base grab state is restored — only a Handoff base is ungrabbed
+        // (re-ungrab so SDL/Moonlight reads the raw node again).
+        assert!(!should_grab(false, Presenter::Handoff));
+        assert!(should_grab(false, Presenter::Game));
+        assert!(should_grab(false, Presenter::Shell));
     }
 }
 
@@ -2622,6 +2733,15 @@ fn try_join(sh: &mut Shared, fleet: &mut Fleet) {
                 pad.enter_game(sh);
             }
             Presenter::Handoff => { /* leave ungrabbed — SDL reads it directly */ }
+        }
+        // Overlay-focus layered on top of the base setup (#262): a modal shell
+        // overlay is open over the app, so force the grab even for a Handoff
+        // base — the joining pad drives the overlay via the shell key-map
+        // (`handle_event` routes it there while `overlay_focus` is on). Idempotent
+        // for the Shell/Game arms above; `Game` keeps its virtual pad so the
+        // clean overlay-off restore forwards correctly.
+        if sh.overlay_focus {
+            pad.grab(sh);
         }
         // Fleet outputs (ride-along, Phase 5.5): light the player LED to match
         // the slot (#101 LED) and read the initial battery (#100). Both no-op on
