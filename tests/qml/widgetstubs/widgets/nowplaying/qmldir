@@ -1,0 +1,3 @@
+module widgets.nowplaying
+NowPlayingWidget 1.0 NowPlayingWidget.qml
+NowPlayingStripView 1.0 NowPlayingStripView.qml
