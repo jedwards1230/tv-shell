@@ -1,10 +1,17 @@
-# QML formatting (qmlformat). On PRs it auto-formats and pushes a fix commit; on
-# main it fails if anything is unformatted.
+# QML quality gates — two independent jobs, both on Qt 6.8:
+#   qml-format  — qmlformat. On PRs it auto-formats and pushes a fix commit; on
+#                 main it fails if anything is unformatted.
+#   qml-lint    — qmllint. Catches QML that PARSES but fails to LOAD (duplicate
+#                 signal/property, bad signal-handler name, alias/inheritance
+#                 cycle) — the class qmlformat is blind to. Severities are driven
+#                 by the repo-root .qmllint.ini (see that file for the rationale:
+#                 resolution-dependent categories are demoted to info/disable
+#                 because stock qmllint can't resolve the Quickshell modules).
 #
 # Invoked by the CI orchestrator (.github/workflows/ci.yml), which decides via
-# path-based change detection whether any .qml changed. ci.yml passes the write
-# permission + secrets needed for the auto-format push. ci.yml is the single
-# required-check surface.
+# path-based change detection whether any .qml (or .qmllint.ini) changed. ci.yml
+# passes the write permission + secrets the auto-format push needs; qml-lint
+# narrows itself back to read-only. ci.yml is the single required-check surface.
 
 name: Lint
 
@@ -59,3 +66,43 @@ jobs:
         run: |
           echo "::error::QML files are not formatted. Run qmlformat -i on all .qml files."
           exit 1
+
+  qml-lint:
+    # Read-only: the auto-format push is the other job's concern.
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          cache: true
+
+      - name: Lint QML (load-time defects)
+        run: |
+          # qmllint auto-discovers the repo-root .qmllint.ini (searches upward
+          # from each file). It errors — and fails this job — only on the
+          # resolution-independent structural categories set to `error` there
+          # (and on any hard parse error). Lint every shell QML file in one
+          # invocation so the exit code aggregates across the tree.
+          mapfile -d '' files < <(find shell -name '*.qml' -print0)
+          echo "Linting ${#files[@]} QML files with qmllint $(qmllint --version | head -1)"
+          qmllint "${files[@]}"
+
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "## qmllint"
+            echo ""
+            echo "Gate for QML that parses but won't load (duplicate signal/property,"
+            echo "bad signal-handler name, alias/inheritance cycle) — the class qmlformat"
+            echo "is blind to. Severities come from the repo-root .qmllint.ini."
+            echo ""
+            echo "Result: **${JOB_STATUS}**."
+          } >> "$GITHUB_STEP_SUMMARY"
