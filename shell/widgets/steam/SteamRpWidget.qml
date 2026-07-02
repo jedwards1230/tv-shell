@@ -174,8 +174,14 @@ Widget {
             }
         }
 
-        Keys.onReturnPressed: root.launchRequested()
-        Keys.onEnterPressed: root.launchRequested()
+        Keys.onReturnPressed: {
+            InputMode.exitMouseMode();
+            root.launchRequested();
+        }
+        Keys.onEnterPressed: {
+            InputMode.exitMouseMode();
+            root.launchRequested();
+        }
         Keys.onUpPressed: event => {
             InputMode.exitMouseMode();
             root._navigateUp();
@@ -187,6 +193,7 @@ Widget {
             event.accepted = true;
         }
         Keys.onEscapePressed: event => {
+            InputMode.exitMouseMode();
             root.escaped();
             event.accepted = true;
         }

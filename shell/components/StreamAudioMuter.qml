@@ -79,14 +79,14 @@ Item {
             muteProc.token = muter._desiredToken;
             muteProc.action = "1";
             muteProc.targetToken = muter._desiredToken;
-            NotificationManager.info("stream", "Stream muted");
         } else {
             // Unmute whatever we currently hold muted.
             muteProc.token = muter._appliedToken;
             muteProc.action = "0";
             muteProc.targetToken = "";
-            NotificationManager.info("stream", "Stream unmuted");
         }
+        // Notifications are emitted from muteProc.onExited, and only when the
+        // run actually touched matching nodes — a no-match no-op stays silent.
         muteProc.running = true;
     }
 
@@ -108,7 +108,9 @@ Item {
     // jq is preferred (robust prop matching) but NOT guaranteed on the device —
     // fall back to scoping wpctl status' Streams block and grepping the token
     // (mirrors AudioSettings' jq-optional pattern). No matching node → clean
-    // no-op, never an error.
+    // no-op, never an error — signalled as exit 3 so onExited can distinguish
+    // "actually toggled nodes" (0, worth a toast) from "nothing matched" (3,
+    // stay silent — no misleading "Stream muted" when no stream audio exists).
     Process {
         id: muteProc
 
@@ -121,9 +123,14 @@ Item {
                 "GS_STREAM_TOKEN": token,
                 "GS_MUTE": action
             })
-        command: ["bash", "-c", "tok=\"$GS_STREAM_TOKEN\"; act=\"$GS_MUTE\"; " + "[ -z \"$tok\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  ids=$(pw-dump 2>/dev/null | jq -r --arg t \"$tok\" '" + ".[] | select(.info.props != null) " + "| select((.info.props[\"media.class\"] // \"\") | test(\"Stream/Output/Audio\")) " + "| select( ((.info.props[\"application.name\"] // \"\") | ascii_downcase | contains($t)) " + "  or ((.info.props[\"application.process.binary\"] // \"\") | ascii_downcase | contains($t)) " + "  or ((.info.props[\"node.name\"] // \"\") | ascii_downcase | contains($t)) " + "  or ((.info.props[\"media.name\"] // \"\") | ascii_downcase | contains($t)) ) " + "| .id'); " + "else " + "  ids=$(wpctl status 2>/dev/null | awk '/Streams:/{s=1;next} /Sinks:|Sources:|Filters:|Devices:|Clients:|^Video/{s=0} s' | grep -iF \"$tok\" | grep -oE '[0-9]+\\.' | tr -d '.'); " + "fi; " + "for id in $ids; do wpctl set-mute \"$id\" \"$act\" 2>/dev/null || true; done; " + "exit 0"]
+        command: ["bash", "-c", "tok=\"$GS_STREAM_TOKEN\"; act=\"$GS_MUTE\"; " + "[ -z \"$tok\" ] && exit 3; " + "if command -v jq >/dev/null 2>&1; then " + "  ids=$(pw-dump 2>/dev/null | jq -r --arg t \"$tok\" '" + ".[] | select(.info.props != null) " + "| select((.info.props[\"media.class\"] // \"\") | test(\"Stream/Output/Audio\")) " + "| select( ((.info.props[\"application.name\"] // \"\") | ascii_downcase | contains($t)) " + "  or ((.info.props[\"application.process.binary\"] // \"\") | ascii_downcase | contains($t)) " + "  or ((.info.props[\"node.name\"] // \"\") | ascii_downcase | contains($t)) " + "  or ((.info.props[\"media.name\"] // \"\") | ascii_downcase | contains($t)) ) " + "| .id'); " + "else " + "  ids=$(wpctl status 2>/dev/null | awk '/Streams:/{s=1;next} /Sinks:|Sources:|Filters:|Devices:|Clients:|^Video/{s=0} s' | grep -iF \"$tok\" | grep -oE '[0-9]+\\.' | tr -d '.'); " + "fi; " + "[ -z \"$ids\" ] && exit 3; " + "for id in $ids; do wpctl set-mute \"$id\" \"$act\" 2>/dev/null || true; done; " + "exit 0"]
 
-        onExited: {
+        onExited: (exitCode, exitStatus) => {
+            // Toast only when the run actually toggled matching nodes (exit 0).
+            // Exit 3 = clean no-op (no matching PipeWire nodes) — stay silent so
+            // rapid background/refocus flips with no live stream audio don't spam.
+            if (exitCode === 0)
+                NotificationManager.info("stream", muteProc.action === "1" ? "Stream muted" : "Stream unmuted");
             muter._appliedToken = muteProc.targetToken;
             // Reconcile any transition that arrived while this run was in flight.
             muter._pump();
