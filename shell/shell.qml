@@ -502,15 +502,18 @@ ShellRoot {
             //
             // Over a running app the surface only maps when a modal overlay
             // (overlay nav drawer / Session QAM) is open — see the `visible:`
-            // binding above. Gate keyboardFocus on that SAME condition so the
-            // surface re-asserts Exclusive at the moment it maps over the app
-            // (a None→Exclusive transition forces a fresh keyboard grab, rather
-            // than relying on a stale static request); otherwise the
-            // daemon-emitted keyboard events (A→Enter) could still land on the
-            // app's surface. In `appRunning` with no overlay the surface is
-            // unmapped, so its focus value (None) is moot. Idle and every other
-            // mapped state keep the prior Exclusive value unchanged.
-            WlrLayershell.keyboardFocus: (root.state === "appRunning" && !root.overlayDrawerOpen && !layout.sessionQam.active && !layout.overlayNavDrawer.active) ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
+            // binding above. Derive keyboardFocus from the SAME `overlayOverApp`
+            // boolean that drives the daemon focus flag (root, ~L27) so the two
+            // can never desync: in `appRunning`, `!overlayOverApp` is exactly
+            // "no overlay open", so the surface re-asserts Exclusive at the
+            // moment it maps over the app (a None→Exclusive transition forces a
+            // fresh keyboard grab, rather than relying on a stale static
+            // request); otherwise the daemon-emitted keyboard events (A→Enter)
+            // could still land on the app's surface. In `appRunning` with no
+            // overlay the surface is unmapped, so its focus value (None) is
+            // moot. Idle and every other mapped state keep the prior Exclusive
+            // value unchanged.
+            WlrLayershell.keyboardFocus: (root.state === "appRunning" && !root.overlayOverApp) ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
 
             Binding {
                 target: Components.NotificationManager

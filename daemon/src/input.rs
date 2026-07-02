@@ -2435,9 +2435,18 @@ fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Handoff (handoff)");
     sh.metrics.inc_transitions();
     sh.presenter = Presenter::Handoff;
+    // Reconcile the grab against `should_grab` rather than unconditionally
+    // ungrabbing: with an overlay focused, the invariant is that the physical
+    // pad stays grabbed even over Handoff (#262), so the app can't read the raw
+    // evdev node while a shell overlay is open. Mirrors `set_overlay_focus`.
+    let grab = should_grab(sh.overlay_focus, sh.presenter);
     for pad in fleet.pads.values_mut() {
         pad.enter_shell(sh); // drop any virtual pad
-        pad.ungrab(sh); // release the physical grab so SDL reads the real node
+        if grab {
+            pad.grab(sh); // keep the physical grab (overlay focused over Handoff)
+        } else {
+            pad.ungrab(sh); // release the grab so SDL reads the real node
+        }
     }
 }
 
@@ -2607,6 +2616,22 @@ mod presenter_tests {
         assert!(!should_grab(false, Presenter::Handoff));
         assert!(should_grab(false, Presenter::Game));
         assert!(should_grab(false, Presenter::Shell));
+    }
+
+    #[test]
+    fn handoff_keeps_grab_when_overlay_focused() {
+        // Regression (PR #296): switching to Handoff while an overlay is focused
+        // must NOT drop the grab — the app would otherwise read the raw pad node
+        // while a shell overlay is open (#262). `handoff_all` sets the presenter
+        // to Handoff and leaves `overlay_focus` untouched, then reconciles each
+        // pad against `should_grab(sh.overlay_focus, sh.presenter)`. With an
+        // overlay focused, that pair must resolve to a grab.
+        let overlay_focus = true;
+        let presenter_after_handoff = Presenter::Handoff;
+        assert!(should_grab(overlay_focus, presenter_after_handoff));
+
+        // Without an overlay, Handoff correctly ungrabs (the raw-node case).
+        assert!(!should_grab(false, presenter_after_handoff));
     }
 }
 
