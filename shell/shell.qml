@@ -116,6 +116,16 @@ ShellRoot {
         shellState: root.state
     }
 
+    // Mute a backgrounded native stream app (Steam Remote Play) so its audio
+    // doesn't play behind the shell; unmute on refocus / exit. Narrowly scoped
+    // to the allowlisted stream classes inside the component. Bound to the same
+    // two signals it reasons over: the shell state and the running app's class.
+    Components.StreamAudioMuter {
+        id: streamAudioMuter
+        shellState: root.state
+        runningAppClass: appLifecycle.runningAppClass
+    }
+
     function _resetIdleTimer() {
         autoSuspend.resetTimer();
     }
