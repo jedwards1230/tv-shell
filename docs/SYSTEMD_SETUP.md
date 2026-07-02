@@ -75,7 +75,10 @@ wiring.
 
 - `Type=simple`, `ExecStartPre=-/usr/bin/pkill -x quickshell` (belt-and-braces:
   reap any stray Quickshell before starting; the `-` makes a no-match non-fatal),
-  `ExecStart=/bin/sh -c 'quickshell -c game-shell 2>&1 | tee /tmp/qs-log.txt'`.
+  `ExecStart=/bin/bash -o pipefail -c 'quickshell -c game-shell 2>&1 | tee /tmp/qs-log.txt'`
+  (`bash -o pipefail`, not `sh`, so a Quickshell crash propagates through the
+  `| tee` pipeline instead of being masked as `tee`'s exit 0 — otherwise
+  `Restart=on-failure` would never fire).
   `quickshell` resolves from the user manager's `PATH`, so — unlike the daemon
   unit — there is **no `ExecStart` rewrite** at install; the unit is copied
   verbatim.
@@ -158,10 +161,12 @@ Quickshell's output is still mirrored to `/tmp/qs-log.txt` (the dev bridge's
 hand (e.g. a custom prefix wired up without the installer):
 
 ```bash
-# Install both units. The daemon unit's ExecStart is rewritten to your prefix;
-# the Quickshell unit is copied verbatim (quickshell resolves from PATH).
+# Install both units. The daemon unit's ExecStart is rewritten to your prefix
+# (awk, not sed, so a prefix with `#`/`&` can't corrupt the unit); the Quickshell
+# unit is copied verbatim (quickshell resolves from PATH).
 mkdir -p ~/.config/systemd/user
-sed "s#^ExecStart=.*#ExecStart=$PREFIX/bin/game-shell-input#" \
+awk -v prefix="$PREFIX" \
+    '/^ExecStart=/ { print "ExecStart=" prefix "/bin/game-shell-input"; next } { print }' \
     "$PREFIX/config/game-shell-input.service" \
     > ~/.config/systemd/user/game-shell-input.service
 cp "$PREFIX/config/game-shell-quickshell.service" \

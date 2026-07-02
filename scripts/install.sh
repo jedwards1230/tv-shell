@@ -150,8 +150,12 @@ if [ -f "$UNIT_SRC" ]; then
     log "installing systemd --user unit -> $UNIT_FILE"
     install -d -m755 "$UNIT_DIR"
     # Rewrite the committed default ExecStart (/opt/game-shell/...) to the
-    # resolved prefix's binary. Keep the rest of the unit verbatim.
-    sed "s#^ExecStart=.*#ExecStart=$PREFIX/bin/game-shell-input#" "$UNIT_SRC" > "$UNIT_FILE" \
+    # resolved prefix's binary. Keep the rest of the unit verbatim. Use awk with
+    # the prefix passed as a variable (not sed) so a prefix containing `#` (sed
+    # delimiter) or `&` (sed replacement backreference) can't corrupt the unit.
+    awk -v prefix="$PREFIX" \
+        '/^ExecStart=/ { print "ExecStart=" prefix "/bin/game-shell-input"; next } { print }' \
+        "$UNIT_SRC" > "$UNIT_FILE" \
         || die "failed to write $UNIT_FILE"
     # Quickshell UI unit — copied verbatim (no ExecStart rewrite needed).
     if [ -f "$QS_UNIT_SRC" ]; then
