@@ -28,6 +28,13 @@
       "version": "1.1.0",
       "minFrameworkVersion": "1.0.0",
       "requires": []
+    },
+    {
+      "id": "steamrp",
+      "name": "Steam Remote Play",
+      "version": "1.0.0",
+      "minFrameworkVersion": "1.0.0",
+      "requires": []
     }
   ]
 }

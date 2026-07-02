@@ -15,8 +15,9 @@ function _deepCopy(o) {
 }
 
 // Build the fully-defaulted namespaced subtree from manifest defaults:
-//   enabled → true, order → manifest.defaultOrder, size → the "size" config
-//   default, prefs → every non-size config key mapped to its default.
+//   enabled → manifest.defaultEnabled (absent ⇒ true), order → manifest.defaultOrder,
+//   size → the "size" config default, prefs → every non-size config key mapped to
+//   its default.
 function defaultSubtree(manifests) {
     var out = {};
     for (var i = 0; i < manifests.length; i++) {
@@ -32,7 +33,9 @@ function defaultSubtree(manifests) {
                 prefs[c.key] = c.default;
         }
         out[m.id] = {
-            "enabled": true,
+            // Default-enabled unless the manifest explicitly opts out
+            // (defaultEnabled: false) — keeps every existing widget enabled.
+            "enabled": m.defaultEnabled !== false,
             "order": m.defaultOrder,
             "size": size,
             "prefs": prefs
