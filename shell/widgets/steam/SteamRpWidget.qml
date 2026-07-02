@@ -86,7 +86,11 @@ Widget {
     FocusFrame {
         id: card
         focus: true
-        width: root.width
+        // Bounded, left-aligned launcher card — NOT full-bleed. A full-width card
+        // can't take FocusFrame's 1.06 focus-pop without scaling offscreen, and it
+        // read as too wide next to the other widgets' card rows. Cap the width and
+        // clamp to the widget slot on narrow displays.
+        width: Math.min(root.width, Units.gridUnit * 24)
         implicitHeight: root._compact ? Math.round(Units.gridUnit * 3.4) : Math.round(Units.gridUnit * 4.6)
         height: implicitHeight
         focused: (card.activeFocus && !InputMode.mouseMode) || (cardMouse.containsMouse && InputMode.mouseMode)
