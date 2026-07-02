@@ -80,6 +80,9 @@ pub struct Metrics {
     /// replaced, so the increment is durable in this process's metrics until the
     /// re-exec lands (the new process starts its own counters at zero).
     pub restart_daemon_actions: AtomicU64,
+    /// Times `/dev/restart-shell` detected >1 quickshell process after a restart
+    /// settle — the #254 stacked-instance bug; should stay 0.
+    pub quickshell_multi_instance: AtomicU64,
 }
 
 impl Metrics {
@@ -160,6 +163,12 @@ impl Metrics {
     #[inline]
     pub fn inc_restart_daemon(&self) {
         self.restart_daemon_actions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn inc_quickshell_multi_instance(&self) {
+        self.quickshell_multi_instance
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -334,6 +343,12 @@ pub fn render(
         "game_shell_restart_daemon_total",
         "/dev/restart-daemon (re-exec) requests via the HTTP bridge.",
         counters.restart_daemon_actions.load(Ordering::Relaxed),
+    );
+    counter(
+        &mut out,
+        "game_shell_quickshell_multi_instance_total",
+        "Times /dev/restart-shell detected >1 quickshell process after a restart settle (#254; should stay 0).",
+        counters.quickshell_multi_instance.load(Ordering::Relaxed),
     );
 
     // ── Convenience resource gauges (better sourced from node_exporter) ───────
@@ -587,6 +602,7 @@ mod tests {
         m.inc_build();
         m.inc_restart_shell();
         m.inc_restart_daemon();
+        m.inc_quickshell_multi_instance();
         let text = render(&m, None, None);
 
         assert!(text.contains("# TYPE game_shell_deploy_total counter"));
@@ -595,6 +611,7 @@ mod tests {
         assert!(text.contains("\ngame_shell_build_total 1\n"));
         assert!(text.contains("\ngame_shell_restart_shell_total 1\n"));
         assert!(text.contains("\ngame_shell_restart_daemon_total 1\n"));
+        assert!(text.contains("\ngame_shell_quickshell_multi_instance_total 1\n"));
     }
 
     #[test]

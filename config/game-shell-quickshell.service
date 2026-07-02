@@ -1,0 +1,53 @@
+[Unit]
+# systemd --user unit for the Quickshell UI process (quickshell -c game-shell).
+#
+# Companion to game-shell-input.service. Where the input daemon is started by the
+# session wrapper, THIS unit is started by Hyprland's `exec-once` (config/
+# hyprland.conf) once the compositor — and the Wayland/Hyprland session env —
+# exists. Running Quickshell under systemd (instead of a bare `exec-once` child)
+# is what actually kills the "3-4 stacked Quickshell instances" bug class (#254):
+# systemd guarantees a SINGLE active instance and restarts it on crash, so a
+# racing/relaunched start can't stack a second copy on the same output.
+#
+# There is no [Install] WantedBy= here — like the daemon unit, it is NOT enabled
+# into a user target. Hyprland's exec-once is the single owner that starts it, and
+# the session wrapper (scripts/game-shell-session.sh) stops it on session exit.
+#
+# scripts/install.sh installs a copy to ~/.config/systemd/user/ verbatim (no
+# ExecStart rewrite needed — `quickshell` is resolved from PATH, not the install
+# prefix).
+Description=game-shell Quickshell UI
+# Rate-limit restarts (these are [Unit]-level directives in modern systemd), same
+# budget as game-shell-input.service: at most 3 starts per 60s, after which
+# systemd stops retrying. Without this, Restart=on-failure + RestartSec=2 would
+# thrash every 2s on a hard failure (e.g. no compositor). The exec-once /
+# session's direct-spawn fallback still covers a failed start.
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Belt-and-braces single-instance guard: reap any stray quickshell before we
+# start ours. The leading `-` makes a no-match (pkill exit 1) non-fatal. systemd's
+# own single-instance guarantee is the primary mechanism; this just cleans up a
+# process that a non-systemd path (a bare `exec-once` fallback, a manual launch)
+# may have left running.
+ExecStartPre=-/usr/bin/pkill -x quickshell
+# Run Quickshell and mirror its merged stdout/stderr to BOTH sinks the rest of
+# the system already reads:
+#   - journald, tagged `game-shell-quickshell` (SyslogIdentifier below), so
+#     `journalctl --user -t game-shell-quickshell -f` keeps working; and
+#   - /tmp/qs-log.txt, which the daemon's dev bridge reads (bridge_core.rs
+#     get_logs / dev_restart_shell) and /dev/logs tails.
+# `tee` truncates the file on each (re)start — matching the old exec-once line and
+# the dev bridge's truncate-on-restart semantics — while its stdout flows to the
+# journal. `quickshell` resolves from the user manager's PATH (/usr/bin), so no
+# absolute path or install-prefix rewrite is needed.
+ExecStart=/bin/sh -c 'quickshell -c game-shell 2>&1 | tee /tmp/qs-log.txt'
+Restart=on-failure
+RestartSec=2
+SyslogIdentifier=game-shell-quickshell
+
+# No [Install] section by design (see the [Unit] note): Hyprland's exec-once
+# starts this unit each session; enabling it into default.target would start a
+# second copy at user-manager boot, before a compositor exists.

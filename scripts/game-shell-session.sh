@@ -59,12 +59,31 @@ if [ -z "$INPUT_UNIT" ]; then
     INPUT_PID=$!
 fi
 
+# Quickshell runs as its own `systemd --user` unit (game-shell-quickshell.service),
+# started by Hyprland's exec-once once the compositor is up (see config/
+# hyprland.conf). Its lifecycle is independent of the input daemon's dev-override
+# path, so gate purely on user-systemd availability. Clear any stale failed state
+# from a previous (crashed/un-cleaned) session so this session's exec-once `start`
+# isn't refused by a lingering StartLimit failure.
+HAVE_USER_SYSTEMD=""
+if command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user show-environment >/dev/null 2>&1; then
+    HAVE_USER_SYSTEMD="1"
+    systemctl --user reset-failed game-shell-quickshell.service >/dev/null 2>&1 || true
+fi
+
 cleanup() {
     if [ -n "$INPUT_UNIT" ]; then
         systemctl --user stop "$INPUT_UNIT" >/dev/null 2>&1
     elif [ -n "$INPUT_PID" ]; then
         kill "$INPUT_PID" 2>/dev/null
         wait "$INPUT_PID" 2>/dev/null
+    fi
+    # Quickshell is started by the compositor's exec-once, not here, but it runs
+    # under the user manager and would outlive Hyprland — stop it on session exit
+    # so it can't survive into (and race) the next session.
+    if [ -n "$HAVE_USER_SYSTEMD" ]; then
+        systemctl --user stop game-shell-quickshell.service >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT

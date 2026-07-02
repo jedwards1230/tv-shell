@@ -134,11 +134,16 @@ Exec=$SESSION_EXEC
 DesktopNames=Hyprland
 EOF
 
-# 3b. Install the systemd --user unit for the daemon, rewriting ExecStart to the
-#     resolved prefix (mirrors the session .desktop Exec rewrite above). The
-#     session script `systemctl --user start`s this unit; the unit is NOT enabled
-#     (no [Install]), so installing it is just file placement + a daemon-reload.
+# 3b. Install the systemd --user units, rewriting ExecStart to the resolved prefix
+#     where needed (mirrors the session .desktop Exec rewrite above). Two units:
+#       - game-shell-input.service   (daemon) — ExecStart rewritten to the prefix.
+#       - game-shell-quickshell.service (UI)  — installed verbatim; `quickshell`
+#         resolves from PATH, so no prefix rewrite. It enforces a single Quickshell
+#         instance (#254) and is started by Hyprland's exec-once.
+#     Neither unit is enabled (no [Install]) — the session/compositor start them —
+#     so installing is just file placement + a daemon-reload.
 UNIT_SRC="$REPO_ROOT/config/game-shell-input.service"
+QS_UNIT_SRC="$REPO_ROOT/config/game-shell-quickshell.service"
 if [ -f "$UNIT_SRC" ]; then
     UNIT_DIR="$TARGET_HOME/.config/systemd/user"
     UNIT_FILE="$UNIT_DIR/game-shell-input.service"
@@ -148,6 +153,14 @@ if [ -f "$UNIT_SRC" ]; then
     # resolved prefix's binary. Keep the rest of the unit verbatim.
     sed "s#^ExecStart=.*#ExecStart=$PREFIX/bin/game-shell-input#" "$UNIT_SRC" > "$UNIT_FILE" \
         || die "failed to write $UNIT_FILE"
+    # Quickshell UI unit — copied verbatim (no ExecStart rewrite needed).
+    if [ -f "$QS_UNIT_SRC" ]; then
+        log "installing systemd --user unit -> $UNIT_DIR/game-shell-quickshell.service"
+        install -m644 "$QS_UNIT_SRC" "$UNIT_DIR/game-shell-quickshell.service" \
+            || die "failed to write $UNIT_DIR/game-shell-quickshell.service"
+    else
+        log "WARNING: $QS_UNIT_SRC missing — Quickshell will run via the exec-once fallback (bare process)"
+    fi
     chown -R "$TARGET_USER" "$TARGET_HOME/.config/systemd" \
         || die "failed to chown $TARGET_HOME/.config/systemd to $TARGET_USER"
     # daemon-reload so a re-run picks up unit edits. Best-effort: the target

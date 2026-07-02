@@ -543,7 +543,7 @@ async fn handle_connection(
         }
         HttpAction::DevRestartShell => {
             metrics.inc_restart_shell();
-            let resp = handle_dev_restart_shell().await;
+            let resp = handle_dev_restart_shell(metrics).await;
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::DevRestartDaemon => {
@@ -623,8 +623,8 @@ async fn handle_dev_build() -> String {
 }
 
 /// `POST /dev/restart-shell` — kill quickshell and relaunch detached.
-async fn handle_dev_restart_shell() -> String {
-    match bridge_core::dev_restart_shell().await {
+async fn handle_dev_restart_shell(metrics: &std::sync::Arc<crate::metrics::Metrics>) -> String {
+    match bridge_core::dev_restart_shell(metrics).await {
         Ok(body) => http_response(200, &body),
         Err(msg) => http_response(500, &msg),
     }

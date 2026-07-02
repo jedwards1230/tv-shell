@@ -245,6 +245,7 @@ fn main() -> anyhow::Result<()> {
                         events_tx.clone(),
                         shutdown.clone(),
                         reexec_flag.clone(),
+                        Arc::clone(&metrics),
                     ));
                 }
                 Ok(None) => {}
