@@ -46,6 +46,38 @@ Widget {
         return true;
     }
 
+    // === Vertical focus handoff (mirrors NavigableRow._navigateUp/_navigateDown) ===
+    // WidgetHost wires previousRow/nextRow to the nearest focusable neighbour (or a
+    // terminal anchor). The single card below has no ListView to consume Up/Down, so
+    // it forwards vertical nav here — walking the chain and forceActiveFocus-ing the
+    // first focusable neighbour, skipping any that report unfocusable and no-oping at
+    // the ends. Copied faithfully from NavigableRow so the handoff is identical.
+    function _focusable(item) {
+        return item.canFocus !== undefined ? item.canFocus : item.visible;
+    }
+
+    function _navigateUp() {
+        var target = root.previousRow;
+        while (target) {
+            if (root._focusable(target)) {
+                target.forceActiveFocus();
+                return;
+            }
+            target = (target.previousRow !== undefined) ? target.previousRow : null;
+        }
+    }
+
+    function _navigateDown() {
+        var target = root.nextRow;
+        while (target) {
+            if (root._focusable(target)) {
+                target.forceActiveFocus();
+                return;
+            }
+            target = (target.nextRow !== undefined) ? target.nextRow : null;
+        }
+    }
+
     FocusFrame {
         id: card
         focus: true
@@ -141,5 +173,16 @@ Widget {
         Keys.onReturnPressed: root.launchRequested()
         Keys.onEnterPressed: root.launchRequested()
         Keys.onEscapePressed: root.escaped()
+        // Forward vertical nav to the widget's focus-chain neighbours so the card
+        // isn't a dead-end (Down → nextRow, Up → previousRow), walking to the first
+        // focusable neighbour exactly like every NavigableRow-based widget.
+        Keys.onUpPressed: {
+            InputMode.exitMouseMode();
+            root._navigateUp();
+        }
+        Keys.onDownPressed: {
+            InputMode.exitMouseMode();
+            root._navigateDown();
+        }
     }
 }
