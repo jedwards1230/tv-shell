@@ -5,6 +5,7 @@ import "../moonlight"
 import "../nowplaying"
 import "../plex"
 import "../apps"
+import "../steam"
 
 // Hand-written home-widget registry (#249 Phase 2/3). The single, ordered source
 // of truth for which standardized widgets the home screen renders. NOT codegen —
@@ -30,7 +31,7 @@ Item {
     id: registry
 
     // Fixed entry set (registration order); `widgets` exposes them sorted by order.
-    readonly property var _entries: [moonlightEntry, nowPlayingEntry, plexEntry, recentEntry]
+    readonly property var _entries: [moonlightEntry, nowPlayingEntry, plexEntry, recentEntry, steamRpEntry]
 
     // Ordered widget set — a STABLE sort of _entries by each entry's `order`
     // (registration order breaks ties). Re-evaluates only when an `order` changes.
@@ -105,5 +106,16 @@ Item {
         readonly property bool enabled: SettingsStore.widget("recent").enabled
         readonly property string size: SettingsStore.widget("recent").size
         readonly property int order: SettingsStore.widget("recent").order
+    }
+
+    QtObject {
+        id: steamRpEntry
+        readonly property string widgetId: "steamrp"
+        readonly property Component component: Component {
+            SteamRpWidget {}
+        }
+        readonly property bool enabled: SettingsStore.widget("steamrp").enabled
+        readonly property string size: SettingsStore.widget("steamrp").size
+        readonly property int order: SettingsStore.widget("steamrp").order
     }
 }

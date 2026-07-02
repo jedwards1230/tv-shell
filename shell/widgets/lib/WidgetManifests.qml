@@ -3,7 +3,7 @@ import QtQuick
 
 // Per-widget manifest metadata — the pure-data SSOT for the widget framework
 // (#249 Phase 3). Keyed by id, in framework order (moonlight → nowplaying →
-// plex → recent). This singleton intentionally has NO Quickshell imports and NO
+// plex → recent → steamrp). This singleton intentionally has NO Quickshell imports and NO
 // widget imports: it is plain data so it can be read from another `components`
 // singleton (SettingsStore) and from the pure-JS migrator (widgetConfig.js)
 // without a dependency cycle.
@@ -16,6 +16,10 @@ import QtQuick
 //                 capability greys the widget + explains why, never crashes
 //   defaultOrder— seeds widgets.<id>.order on first run only; the reorder UI then
 //                 owns it
+//   defaultEnabled — OPTIONAL. Seeds widgets.<id>.enabled on first run only.
+//                 Absent ⇒ true (every existing widget ships enabled). Set false
+//                 to ship a widget disabled-by-default (the user opts in from the
+//                 Widgets app); once toggled, the persisted value owns it.
 //   config      — ORDERED typed schema the Widgets page renders against. Entries
 //                 are {key, type, default, label, values?} with
 //                 type ∈ "enum" | "bool" | "int" | "string". The key "size" is the
@@ -96,6 +100,23 @@ QtObject {
             "version": "1.1.0",
             "requires": [],
             "defaultOrder": 3,
+            "config": [
+                {
+                    "key": "size",
+                    "type": "enum",
+                    "values": ["small", "medium"],
+                    "default": "medium",
+                    "label": "Size"
+                }
+            ]
+        },
+        {
+            "id": "steamrp",
+            "name": "Steam Remote Play",
+            "version": "1.0.0",
+            "requires": [],
+            "defaultOrder": 4,
+            "defaultEnabled": false,
             "config": [
                 {
                     "key": "size",

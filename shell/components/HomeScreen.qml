@@ -34,6 +34,7 @@ FocusScope {
     readonly property Item nowPlayingWidget: widgetHost.widgetById("nowplaying")
     readonly property Item plexWidget: widgetHost.widgetById("plex")
     readonly property Item recentWidget: widgetHost.widgetById("recent")
+    readonly property Item steamRpWidget: widgetHost.widgetById("steamrp")
 
     // Recent (apps) size: small = icon-only square tiles (label dropped),
     // medium = full icon + label cards. A reformat, not a scale.
@@ -201,6 +202,26 @@ FocusScope {
             }
         }
         console.log("HomeScreen: no Plex app found to launch");
+    }
+
+    // === Steam Remote Play launch (local app) ===
+    // The Steam Remote Play home widget (default-disabled) is a LAUNCHER, not a
+    // stream: it opens Steam Big Picture as a LOCAL app on this machine via the
+    // normal app-launch path (appLaunchRequested → AppLifecycleManager), so the
+    // shell lands in `appRunning` with window class `steam`. That class is what the
+    // class-agnostic kiosk-fullscreen enforcement and the StreamAudioMuter
+    // (streamClasses: ["steam"]) key on, so both cover it automatically — no new
+    // shell state, provider, or StreamManager stream. AppLifecycleManager first
+    // focuses an already-running steam window (resume) and only otherwise execs.
+    function launchSteamRp() {
+        root.userActivity();
+        root.launchApp({
+            "name": "Steam",
+            "exec": "steam steam://open/bigpicture",
+            "wmClass": "steam",
+            "icon": "steam",
+            "comment": "Steam Remote Play"
+        });
     }
 
     // === Steam launch choreography ===
@@ -951,6 +972,19 @@ FocusScope {
         // All Apps tile below; the redundancy is intentional focus-safety).
         function onOpenLibraryRequested() {
             root.libraryRequested();
+        }
+    }
+
+    // --- Steam Remote Play ---
+    Connections {
+        target: root.steamRpWidget
+        ignoreUnknownSignals: true
+        function onEscaped() {
+            root.userActivity();
+            root.focusDefaultPosition();
+        }
+        function onLaunchRequested() {
+            root.launchSteamRp();
         }
     }
 }
