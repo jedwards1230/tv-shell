@@ -29,6 +29,11 @@ Widget {
     // Big Picture launch (see its "Steam Remote Play" wiring block).
     signal launchRequested
 
+    // Ask the home Flickable to scroll this widget into view when it gains focus
+    // (e.g. arriving from the widget above while below the fold). Mirrors
+    // AppsWidget/NavigableRow so focus-follow scrolling works for this card too.
+    signal ensureVisibleRequested(var item)
+
     // small = compact single-line row; medium = row with a subtitle line.
     readonly property bool _compact: root.size === "small"
 
@@ -85,6 +90,11 @@ Widget {
         implicitHeight: root._compact ? Math.round(Units.gridUnit * 3.4) : Math.round(Units.gridUnit * 4.6)
         height: implicitHeight
         focused: (card.activeFocus && !InputMode.mouseMode) || (cardMouse.containsMouse && InputMode.mouseMode)
+
+        // Scroll into view on focus so the home Flickable follows focus onto this
+        // widget when it is below the fold (same as the other widgets).
+        onActiveFocusChanged: if (card.activeFocus)
+            root.ensureVisibleRequested(card)
 
         Accessible.role: Accessible.Button
         Accessible.name: "Steam Remote Play"

@@ -986,5 +986,8 @@ FocusScope {
         function onLaunchRequested() {
             root.launchSteamRp();
         }
+        function onEnsureVisibleRequested(item) {
+            scrollView.ensureVisible(item);
+        }
     }
 }
