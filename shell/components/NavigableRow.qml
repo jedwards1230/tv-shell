@@ -164,13 +164,16 @@ FocusScope {
                 }
             }
         }
-        Keys.onUpPressed: {
+        // Accept the event only when the chain walk actually moved focus; a failed
+        // hand-off (no focusable neighbour) leaves accepted=false so the key can
+        // bubble — matches WakeCard / MprisPlayerBase.
+        Keys.onUpPressed: event => {
             InputMode.exitMouseMode();
-            FocusChain.navigateUp(root);
+            event.accepted = FocusChain.navigateUp(root);
         }
-        Keys.onDownPressed: {
+        Keys.onDownPressed: event => {
             InputMode.exitMouseMode();
-            FocusChain.navigateDown(root);
+            event.accepted = FocusChain.navigateDown(root);
         }
     }
 }

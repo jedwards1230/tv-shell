@@ -103,12 +103,15 @@ FocusScope {
             InputMode.exitMouseMode();
             {
                 var up = root.currentIndex - root.columns;
-                if (up >= 0)
+                if (up >= 0) {
                     root.currentIndex = up;
-                else
-                    FocusChain.navigateUp(root);  // top row → hand off UP the chain
+                    event.accepted = true;
+                } else {
+                    // top row → hand off UP the chain; accept only if it moved focus
+                    // (a failed hand-off bubbles, matching NavigableRow / WakeCard).
+                    event.accepted = FocusChain.navigateUp(root);
+                }
             }
-            event.accepted = true;
             break;
         case Qt.Key_Down:
             InputMode.exitMouseMode();
@@ -116,18 +119,22 @@ FocusScope {
                 var down = root.currentIndex + root.columns;
                 if (down < n) {
                     root.currentIndex = down;
+                    event.accepted = true;
                 } else {
                     // Past the last full step. If we're NOT already on the bottom
                     // row, clamp to the final cell (a short last row); only when
                     // already on the bottom row do we hand off DOWN the chain.
                     var onBottomRow = root.currentIndex >= (root.rows - 1) * root.columns;
-                    if (!onBottomRow && root.currentIndex !== n - 1)
+                    if (!onBottomRow && root.currentIndex !== n - 1) {
                         root.currentIndex = n - 1;
-                    else
-                        FocusChain.navigateDown(root);
+                        event.accepted = true;
+                    } else {
+                        // hand off DOWN the chain; accept only if it moved focus
+                        // (a failed hand-off bubbles, matching NavigableRow / WakeCard).
+                        event.accepted = FocusChain.navigateDown(root);
+                    }
                 }
             }
-            event.accepted = true;
             break;
         case Qt.Key_Return:
         case Qt.Key_Enter:
