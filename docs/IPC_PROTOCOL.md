@@ -40,6 +40,16 @@ This is the presenter the shell enters when a stream launches; `grab` is the inv
 
 **Response:** `ok\n`
 
+### `overlay-focus on|off`
+
+Route pad input to the **shell** while a modal shell overlay (the overlay nav drawer or the Session QAM) is open **over a running app**. Without this, the base presenter keeps driving the app — Game forwards to the virtual pad, Handoff leaves the node ungrabbed for SDL/Steam — so pressing **A** on the drawer leaks into the app instead of activating the drawer item.
+
+While `on`, `route_presenter()` folds the flag in so pad events dispatch to the **shell** handler (buttons→keyboard: A→Enter, dpad→arrows) regardless of the base presenter, and `should_grab()` forces a grab even over Handoff (so Steam/SDL stop reading the raw node). Toggling `off` restores the base presenter's routing and grab **exactly**. The gamepad safety combos (force-quit / suspend / end-session) are unaffected in either state.
+
+The shell drives this off the "shell surface mapped over the app" condition in `shell/shell.qml` (the same boolean that maps the `PanelWindow` in `appRunning`), so it turns `on` when the overlay opens and `off` on every close path (B, item select, app exit, force-quit, `intent:home`, QAM close) — it can't get stuck on. Pairs with the surface's `WlrLayershell.keyboardFocus` flipping to `Exclusive` so the daemon-emitted keys actually land on the drawer, not the app.
+
+**Response:** `ok\n` (`error:usage: overlay-focus on|off` on a missing/invalid argument).
+
 ### `status`
 
 Query current connection and grab state.

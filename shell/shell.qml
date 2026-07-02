@@ -13,6 +13,20 @@ ShellRoot {
     property var _applications: []
     property var _layout: null
 
+    // True exactly when a modal shell overlay (the overlay nav drawer or the
+    // Session QAM) is mapped OVER a running app — i.e. the same condition that
+    // makes the shell PanelWindow visible in `appRunning` (see its `visible:`
+    // binding). While true, the daemon must route pad input to the SHELL
+    // (buttons→keyboard) instead of to the app, or A on the drawer leaks into
+    // the app (e.g. Steam reopens a stream). Deriving both the daemon flag and
+    // the surface's keyboardFocus off this ONE boolean keeps them from
+    // desyncing: any close path (B, item select, app exit, forceQuit, home,
+    // QAM close) flips `state` off `appRunning` or clears the overlay bools, so
+    // it can never get stuck on. `_layout` is null until the first screen's
+    // ShellLayout completes; state is `idle` before then, so the guard holds.
+    readonly property bool overlayOverApp: root.state === "appRunning" && root._layout !== null && (root.overlayDrawerOpen || root._layout.sessionQam.active || root._layout.overlayNavDrawer.active)
+    onOverlayOverAppChanged: inputManager.setOverlayFocus(root.overlayOverApp)
+
     // #193 launch-overlay state — drives the dedicated Overlay-layer "Launching…"
     // window below. Shown from launchStarted until windowConfirmed (or a safety
     // timeout), so the previous app never bleeds through the launch gap.
@@ -485,7 +499,21 @@ ShellRoot {
             // Enter, Esc, etc.) reach focused QML widgets. Without this,
             // the compositor gives keyboard input to whatever non-layer
             // window happens to have focus.
-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+            //
+            // Over a running app the surface only maps when a modal overlay
+            // (overlay nav drawer / Session QAM) is open — see the `visible:`
+            // binding above. Derive keyboardFocus from the SAME `overlayOverApp`
+            // boolean that drives the daemon focus flag (root, ~L27) so the two
+            // can never desync: in `appRunning`, `!overlayOverApp` is exactly
+            // "no overlay open", so the surface re-asserts Exclusive at the
+            // moment it maps over the app (a None→Exclusive transition forces a
+            // fresh keyboard grab, rather than relying on a stale static
+            // request); otherwise the daemon-emitted keyboard events (A→Enter)
+            // could still land on the app's surface. In `appRunning` with no
+            // overlay the surface is unmapped, so its focus value (None) is
+            // moot. Idle and every other mapped state keep the prior Exclusive
+            // value unchanged.
+            WlrLayershell.keyboardFocus: (root.state === "appRunning" && !root.overlayOverApp) ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
 
             Binding {
                 target: Components.NotificationManager

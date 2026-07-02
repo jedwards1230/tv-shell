@@ -297,6 +297,19 @@ pub enum Command {
     /// `set-active-game` with no body — clears the active game, reverting to
     /// player/global binding layers only.
     SetActiveGameClear,
+
+    /// `overlay-focus on|off` — a modal shell overlay opened (`on`) or closed
+    /// (`off`) over a running app (the nav overlay drawer, QAM/power overlays).
+    /// While ON the daemon routes pad input to the SHELL key-map regardless of
+    /// the base presenter (`Game`/`Handoff`) and force-GRABS every pad so the
+    /// app stops seeing raw events — critical for `Handoff`, where the pad is
+    /// normally ungrabbed. OFF restores the base presenter's routing + grab
+    /// exactly (re-ungrab for `Handoff`). The base presenter is remembered by
+    /// the input runtime, so the toggle carries no other argument. In-memory
+    /// only; replies `ok`.
+    OverlayFocus(bool),
+    /// `overlay-focus` with a missing/invalid argument (not `on`/`off`).
+    OverlayFocusUsage,
     /// `controllerdb-status` — return the current controller DB status as a
     /// compact JSON object: `{source, entryCount, lastDownloaded, upstreamUrl,
     /// error?}`. Stateless (no input-runtime round-trip); served directly by
@@ -725,6 +738,17 @@ impl Command {
                         Command::SetActiveGame(body.to_string())
                     };
                 }
+                // `overlay-focus on|off`: a modal shell overlay opened/closed
+                // over a running app. The body must be exactly `on` or `off`;
+                // a missing/other body is a usage error. `command_body`
+                // enforces the word boundary so `overlay-focusX` stays Unknown.
+                if let Some(body) = command_body(cmd, "overlay-focus") {
+                    return match body {
+                        "on" => Command::OverlayFocus(true),
+                        "off" => Command::OverlayFocus(false),
+                        _ => Command::OverlayFocusUsage,
+                    };
+                }
                 // Python keys `set-binding` off the `"set-binding "` prefix
                 // (with trailing space), so a bare `set-binding` is `unknown`.
                 if let Some(rest) = cmd.strip_prefix("set-binding ") {
@@ -997,6 +1021,11 @@ pub fn resp_set_notifications_usage() -> String {
 
 pub fn resp_intent_usage() -> String {
     "error:usage: intent <name>".to_string()
+}
+
+/// Usage line for an `overlay-focus` issued without a valid `on`/`off` arg.
+pub fn resp_overlay_focus_usage() -> String {
+    "error:usage: overlay-focus on|off".to_string()
 }
 
 /// Usage line for a `rumble` issued without a valid `<id> <ms>` body.
@@ -2727,6 +2756,40 @@ mod tests {
         );
         // Word boundary: `set-active-gameX` is NOT set-active-game.
         assert_eq!(Command::parse("set-active-gameX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_overlay_focus_command() {
+        assert_eq!(
+            Command::parse("overlay-focus on"),
+            Command::OverlayFocus(true)
+        );
+        assert_eq!(
+            Command::parse("overlay-focus off"),
+            Command::OverlayFocus(false)
+        );
+        // Surrounding + inner whitespace is trimmed/collapsed by `command_body`.
+        assert_eq!(
+            Command::parse("  overlay-focus   on  "),
+            Command::OverlayFocus(true)
+        );
+        // Missing arg -> usage.
+        assert_eq!(Command::parse("overlay-focus"), Command::OverlayFocusUsage);
+        assert_eq!(
+            Command::parse("overlay-focus   "),
+            Command::OverlayFocusUsage
+        );
+        // Invalid / extra args -> usage (only bare `on`/`off` accepted).
+        assert_eq!(
+            Command::parse("overlay-focus maybe"),
+            Command::OverlayFocusUsage
+        );
+        assert_eq!(
+            Command::parse("overlay-focus on now"),
+            Command::OverlayFocusUsage
+        );
+        // Word boundary: `overlay-focusX` is NOT overlay-focus.
+        assert_eq!(Command::parse("overlay-focusX"), Command::Unknown);
     }
 
     #[test]
