@@ -45,11 +45,13 @@ use evdev::{
     FFEffectData, FFEffectKind, FFReplay, FFTrigger, InputEvent, KeyCode, RelativeAxisCode,
     UinputAbsSetup,
 };
+use futures::future::FutureExt;
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, RawFd};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
@@ -1119,6 +1121,18 @@ impl PadDevice {
                 // fresh (re)build starts from a clean mask before recapturing.
                 self.masked_keys.clear();
                 self.masked_keys.extend(self.held_keys.iter().copied());
+                // Invariant: the flip-mask is only ever populated FROM held_keys,
+                // so every masked code must be currently held. Holds by
+                // construction here (clear + extend(held_keys)); the debug_assert
+                // guards a future edit that seeds masked_keys from another source.
+                // debug-only, matching the grab-invariant discipline: panics in
+                // dev/test, compiled out in release (no error!/metric for this one).
+                debug_assert!(
+                    self.masked_keys.iter().all(|c| self.held_keys.contains(c)),
+                    "flip-mask must be a subset of held_keys (masked={:?}, held={:?})",
+                    self.masked_keys,
+                    self.held_keys,
+                );
                 info!(
                     "Created virtual pad game-shell-virtual-pad-{} for slot {} ({})",
                     self.player_slot, self.player_slot, self.wire_id
@@ -1935,7 +1949,119 @@ fn list_input_devices_with(grabbed_paths: HashSet<PathBuf>) -> String {
     crate::protocol::resp_input_devices(&rows)
 }
 
+/// Supervise the input runtime: run the event loop, and on a panic respawn a
+/// fresh runtime a bounded number of times before staying **dead but detectable**.
+///
+/// A panic in [`run`]'s select loop used to silently kill the input OS thread and
+/// drop the moved `control_rx`, after which every input-runtime IPC command
+/// degraded with no recovery short of a whole-daemon restart — the "stuck
+/// controller, only a daemon restart fixes it" class. The supervisor breaks that:
+///
+/// * `control_rx` (the single-owner control channel) plus the shared handles
+///   (`events`, `config_changed`, `metrics`, `active_window_rx`) are RETAINED here
+///   and re-passed on each attempt, so a panic never drops the control channel.
+/// * Each attempt builds a fresh [`Fleet`] INSIDE [`run`]. A panic that unwinds out
+///   of the loop drops that `Fleet` (and every [`PadDevice`]); dropping a pad closes
+///   its evdev fd, and the kernel `EVIOCGRAB` is tied to the fd — so an fd close is
+///   an implicit ungrab. That is what releases the grabs on panic; the respawned
+///   attempt re-discovers and re-grabs cleanly. (There is no `panic="abort"` in
+///   Cargo.toml, so unwinding — hence [`std::panic::catch_unwind`] — works.)
+///
+/// Bounded retries with a short growing backoff; after they are exhausted the
+/// supervisor sets the up-gauge to 0 and returns rather than looping forever or
+/// aborting the process — the daemon stays alive so `/metrics` and the IPC wire
+/// (`error:input-runtime-down`) keep reporting the death. A clean (non-panic)
+/// return from [`run`] is a normal shutdown (`Control::Shutdown` or a closed
+/// control channel) and exits the supervisor WITHOUT counting a restart.
+pub async fn run_supervised(
+    mut control_rx: mpsc::Receiver<Control>,
+    events: broadcast::Sender<Event>,
+    config_changed: std::sync::Arc<tokio::sync::Notify>,
+    metrics: std::sync::Arc<crate::metrics::Metrics>,
+    active_window_rx: watch::Receiver<String>,
+) {
+    // Bounded respawns: enough to ride out a transient fault, few enough that a
+    // hard-looping panic gives up quickly and stays visibly down.
+    const MAX_RESTARTS: u32 = 3;
+    let mut restarts: u32 = 0;
+    loop {
+        metrics.set_runtime_up(true);
+        // `AssertUnwindSafe`: `run` borrows `&mut control_rx` and clones the shared
+        // handles, none of which observe a broken invariant across the unwind — the
+        // Fleet is created fresh inside `run` and dropped by the unwind, and the
+        // control channel is just a queue. A clean return = normal shutdown.
+        let outcome = AssertUnwindSafe(run(
+            &mut control_rx,
+            events.clone(),
+            std::sync::Arc::clone(&config_changed),
+            std::sync::Arc::clone(&metrics),
+            active_window_rx.clone(),
+        ))
+        .catch_unwind()
+        .await;
+
+        match outcome {
+            Ok(()) => {
+                // Normal shutdown (Control::Shutdown / control channel closed).
+                metrics.set_runtime_up(false);
+                return;
+            }
+            Err(payload) => {
+                // The loop body panicked and unwound: the Fleet was dropped, so
+                // every pad's fd is closed and its EVIOCGRAB released. The up-gauge
+                // drops to 0 on EVERY caught panic (correct in both cases below).
+                let msg = panic_payload_str(payload.as_ref());
+                metrics.set_runtime_up(false);
+                restarts += 1;
+                if restarts > MAX_RESTARTS {
+                    error!(
+                        panic = %msg,
+                        restarts,
+                        "input runtime panicked and exhausted restarts; staying down (up-gauge 0, IPC replies error:input-runtime-down)"
+                    );
+                    // Terminal panic: no respawn happens here, so do NOT count it
+                    // as a restart — the counter means actual respawns, not panics.
+                    // Stay dead but detectable — do NOT abort the process.
+                    return;
+                }
+                // A respawn WILL occur (attempts remain): count it now, so
+                // `game_shell_input_runtime_restarts_total` advances exactly once
+                // per actual re-invocation of `run` (never on the terminal panic).
+                metrics.inc_runtime_restarts();
+                // Growing backoff: 200ms, 400ms, 800ms.
+                let backoff = Duration::from_millis(200u64 << (restarts - 1));
+                error!(
+                    panic = %msg,
+                    restart = restarts,
+                    backoff_ms = backoff.as_millis() as u64,
+                    "input runtime panicked; respawning after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    }
+}
+
+/// Extract a human-readable message from a caught panic payload (the `Err` of
+/// [`std::panic::catch_unwind`]). Panics usually carry a `&str` or `String`; a
+/// non-string payload degrades to a placeholder rather than being lost.
+fn panic_payload_str(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    }
+}
+
 /// Entry point: build the daemon and run the event loop until `Shutdown`.
+///
+/// Called via [`run_supervised`], which owns `control_rx` and re-invokes this on a
+/// panic; hence the `&mut` borrow of the receiver (it must survive a respawn) and
+/// the by-value shared handles (cloned fresh per attempt by the supervisor). A
+/// clean return (`Control::Shutdown` or a closed `control_rx`) means normal
+/// shutdown; a panic unwinds out to the supervisor.
 ///
 /// Receives external `config:changed` signals from the file-watch actor via a
 /// dedicated [`tokio::sync::Notify`] (not the global broadcast bus) so that
@@ -1944,11 +2070,16 @@ fn list_input_devices_with(grabbed_paths: HashSet<PathBuf>) -> String {
 /// Both paths (IPC `set-config` → `Control::ConfigChanged` and file-watch →
 /// `config_changed` notification) converge on the same `apply_config_changed`
 /// helper, so cache state is always consistent (#163).
+///
+/// Compositor focus changes arrive over `active_window_rx` (a coalescing
+/// [`tokio::sync::watch`]) rather than the control channel — focus is state, so
+/// latest-wins is correct and a busy loop can never drop or back up a change.
 pub async fn run(
-    mut control_rx: mpsc::Receiver<Control>,
+    control_rx: &mut mpsc::Receiver<Control>,
     events: broadcast::Sender<Event>,
     config_changed: std::sync::Arc<tokio::sync::Notify>,
     metrics: std::sync::Arc<crate::metrics::Metrics>,
+    mut active_window_rx: watch::Receiver<String>,
 ) {
     let (internal_tx, mut internal_rx) = mpsc::channel::<Internal>(256);
 
@@ -2015,6 +2146,12 @@ pub async fn run(
         metrics,
     };
     let mut fleet = Fleet::new();
+
+    // Guards the `active_window_rx.changed()` arm: once every watch sender is
+    // dropped (shutdown) `changed()` resolves `Err` immediately on every poll, so
+    // we disable the arm to avoid a busy-spin. In normal operation `Shutdown`
+    // arrives over `control_rx` first and breaks the loop.
+    let mut focus_watch_live = true;
 
     loop {
         tokio::select! {
@@ -2092,6 +2229,21 @@ pub async fn run(
             _ = config_changed.notified() => {
                 tracing::debug!("input: config_changed notified, refreshing caches");
                 apply_config_changed(&mut sh).await;
+            }
+            // Coalesced compositor focus (latest-wins) from the Hyprland actor.
+            // `borrow_and_update` marks the value seen so `changed()` re-fires only
+            // on a genuinely newer focus. The startup "" never fires (watch signals
+            // only post-construction values), and even a spurious "" is a clean
+            // no-op (`focus_presenter_target(Shell, "")` → None). See #221/#294.
+            res = active_window_rx.changed(), if focus_watch_live => {
+                if res.is_ok() {
+                    let class = active_window_rx.borrow_and_update().to_string();
+                    apply_focus_change(&mut sh, &mut fleet, &class);
+                } else {
+                    // All watch senders dropped (shutdown in progress); stop
+                    // polling this arm so it can't busy-spin.
+                    focus_watch_live = false;
+                }
             }
         }
     }
@@ -2402,24 +2554,6 @@ async fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bo
             }
         }
 
-        Control::HyprActiveWindowChanged(class) => {
-            if let Some(target) = focus_presenter_target(sh.presenter, &class) {
-                info!(
-                    class = %class,
-                    from = ?sh.presenter,
-                    to = ?target,
-                    "presenter follow-focus"
-                );
-                match target {
-                    Presenter::Shell => grab_all(sh, fleet),
-                    Presenter::Game => release_all(sh, fleet),
-                    Presenter::Handoff => {
-                        unreachable!("focus_presenter_target never targets Handoff")
-                    }
-                }
-            }
-        }
-
         Control::Shutdown => return false,
     }
     true
@@ -2439,6 +2573,7 @@ fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
         pad.grab(sh); // no-op if already grabbed; re-grabs if somehow released
         pad.enter_shell(sh);
     }
+    check_grab_invariant(sh, fleet);
 }
 
 /// Switch the fleet to the **game presenter** (the `release` IPC, and — since
@@ -2456,6 +2591,7 @@ fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
         pad.grab(sh);
         pad.enter_game(sh);
     }
+    check_grab_invariant(sh, fleet);
 }
 
 /// Switch the fleet to the **handoff presenter** (the `handoff` IPC, #221). Hand
@@ -2482,6 +2618,7 @@ fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
             pad.ungrab(sh); // release the grab so SDL reads the real node
         }
     }
+    check_grab_invariant(sh, fleet);
 }
 
 /// Which presenter's handler processes pad events, given the overlay-focus flag
@@ -2574,6 +2711,84 @@ fn set_overlay_focus(sh: &mut Shared, fleet: &mut Fleet, on: bool) {
             pad.grab(sh); // idempotent + session-aware
         } else {
             pad.ungrab(sh); // idempotent
+        }
+    }
+    check_grab_invariant(sh, fleet);
+}
+
+/// Apply a coalesced compositor focus change to the presenter (follow-focus).
+///
+/// Extracted from the former `Control::HyprActiveWindowChanged` control arm so it
+/// can be driven directly by the `active_window` watch channel's select arm.
+/// `class` is empty when only the shell's own layer-shell surface remains (no
+/// toplevel focused). Delegates the decision to [`focus_presenter_target`] and
+/// routes through the same presenter transitions as an explicit `grab`/`release`
+/// (each of which asserts [`check_grab_invariant`] on its way out), so the
+/// invariant is checked after any transition this triggers.
+fn apply_focus_change(sh: &mut Shared, fleet: &mut Fleet, class: &str) {
+    if let Some(target) = focus_presenter_target(sh.presenter, class) {
+        info!(
+            class = %class,
+            from = ?sh.presenter,
+            to = ?target,
+            "presenter follow-focus"
+        );
+        match target {
+            Presenter::Shell => grab_all(sh, fleet),
+            Presenter::Game => release_all(sh, fleet),
+            Presenter::Handoff => {
+                unreachable!("focus_presenter_target never targets Handoff")
+            }
+        }
+    }
+}
+
+/// Pure per-pad grab invariant predicate: while the session is active a pad's
+/// physical grab must match the presenter policy `expected`
+/// (`should_grab(overlay_focus, presenter)`); while inactive any grab state is
+/// acceptable (pads are intentionally all ungrabbed — see [`PadDevice::grab`]'s
+/// session early-return and the `SetSessionActive` handling). Factored out so the
+/// invariant logic is unit-tested without a `Fleet`/`Shared` (which own uinput
+/// devices).
+fn grab_ok(session_active: bool, pad_grabbed: bool, expected: bool) -> bool {
+    !session_active || pad_grabbed == expected
+}
+
+/// Assert the fleet's physical grab state matches the intended presenter policy
+/// after a transition, catching silent grab-state drift (a stuck or leaked
+/// controller grab).
+///
+/// While `session_active`, every pad's `grabbed` flag must equal
+/// `should_grab(overlay_focus, presenter)`. `grab_all`/`release_all` call
+/// `pad.grab()` unconditionally, which is consistent with `should_grab` because
+/// `should_grab(_, Shell)` and `should_grab(_, Game)` are both always `true` (only
+/// a `Handoff` base with no overlay ungrabs, and `handoff_all` already routes each
+/// pad through `should_grab`) — so the unconditional grab is correct by the truth
+/// table, and this asserts exactly that. On a violation it `error!`s (pad id,
+/// expected vs actual, presenter, overlay-focus), bumps a metrics counter, and
+/// `debug_assert!`s so it panics in dev/test but never in release.
+fn check_grab_invariant(sh: &Shared, fleet: &Fleet) {
+    let expected = should_grab(sh.overlay_focus, sh.presenter);
+    for pad in fleet.pads.values() {
+        if !grab_ok(sh.session_active, pad.grabbed, expected) {
+            error!(
+                pad = %pad.wire_id,
+                expected,
+                actual = pad.grabbed,
+                presenter = ?sh.presenter,
+                overlay_focus = sh.overlay_focus,
+                "grab invariant violated"
+            );
+            sh.metrics.inc_grab_invariant_violations();
+            debug_assert!(
+                grab_ok(sh.session_active, pad.grabbed, expected),
+                "grab invariant violated for pad {}: expected grabbed={}, actual grabbed={} (presenter={:?}, overlay_focus={})",
+                pad.wire_id,
+                expected,
+                pad.grabbed,
+                sh.presenter,
+                sh.overlay_focus,
+            );
         }
     }
 }
@@ -2771,6 +2986,74 @@ mod presenter_tests {
         assert!(mask_forward_decision(&mut masked, cfg::BTN_SOUTH, 1));
         assert!(mask_forward_decision(&mut masked, cfg::BTN_SOUTH, 0));
         assert!(masked.is_empty());
+    }
+
+    #[test]
+    fn flip_mask_is_subset_of_held_keys() {
+        // `enter_game` snapshots the flip-mask as `clear() + extend(held_keys)`,
+        // so the mask is always a subset of the currently-held buttons (the 3a
+        // invariant asserted by the debug_assert in `enter_game`). This mirrors
+        // that operation without a `PadDevice` (which owns uinput devices).
+        let mut held: HashSet<u16> = HashSet::new();
+        held.insert(cfg::BTN_SOUTH);
+        held.insert(cfg::BTN_EAST);
+
+        let mut masked: HashSet<u16> = HashSet::new();
+        masked.clear();
+        masked.extend(held.iter().copied());
+        assert!(
+            masked.iter().all(|c| held.contains(c)),
+            "flip-mask must be a subset of held_keys"
+        );
+
+        // An empty held set snapshots an empty mask — still a (trivial) subset.
+        let empty: HashSet<u16> = HashSet::new();
+        let mut masked2: HashSet<u16> = HashSet::new();
+        masked2.extend(empty.iter().copied());
+        assert!(masked2.iter().all(|c| empty.contains(c)));
+        assert!(masked2.is_empty());
+    }
+
+    #[test]
+    fn grab_invariant_predicate() {
+        // Session active: the pad's grab must match the presenter policy.
+        assert!(grab_ok(true, true, true)); // grabbed, expected grabbed -> ok
+        assert!(grab_ok(true, false, false)); // ungrabbed, expected ungrabbed -> ok
+        assert!(!grab_ok(true, false, true)); // ungrabbed but should be grabbed -> drift
+        assert!(!grab_ok(true, true, false)); // grabbed but should be ungrabbed -> drift
+
+        // Session inactive: pads are intentionally all ungrabbed, so ANY grab
+        // state passes regardless of the presenter policy (the check is scoped to
+        // session_active).
+        assert!(grab_ok(false, false, true));
+        assert!(grab_ok(false, true, false));
+        assert!(grab_ok(false, false, false));
+        assert!(grab_ok(false, true, true));
+    }
+
+    #[test]
+    fn grab_invariant_matches_should_grab_after_transitions() {
+        // The policy `check_grab_invariant` asserts: after grab_all/release_all the
+        // pads are grabbed (Shell/Game always grab), and should_grab agrees.
+        assert!(grab_ok(true, true, should_grab(false, Presenter::Shell)));
+        assert!(grab_ok(true, true, should_grab(false, Presenter::Game)));
+        // Handoff with no overlay ungrabs, and an ungrabbed pad then satisfies it.
+        assert!(grab_ok(true, false, should_grab(false, Presenter::Handoff)));
+        // Handoff WITH an overlay keeps the grab (should_grab true).
+        assert!(grab_ok(true, true, should_grab(true, Presenter::Handoff)));
+    }
+
+    #[test]
+    fn panic_payload_extracts_str_and_string() {
+        // &str payload (the common `panic!("msg")` case).
+        let p: Box<dyn std::any::Any + Send> = Box::new("boom");
+        assert_eq!(panic_payload_str(p.as_ref()), "boom");
+        // String payload (e.g. `panic!("{}", e)`).
+        let p: Box<dyn std::any::Any + Send> = Box::new(String::from("boom2"));
+        assert_eq!(panic_payload_str(p.as_ref()), "boom2");
+        // Non-string payload degrades to a placeholder rather than being lost.
+        let p: Box<dyn std::any::Any + Send> = Box::new(42u32);
+        assert_eq!(panic_payload_str(p.as_ref()), "<non-string panic payload>");
     }
 }
 

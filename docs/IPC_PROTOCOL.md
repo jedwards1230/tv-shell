@@ -1698,6 +1698,27 @@ Any command not listed above receives:
 
 **Response:** `unknown\n`
 
+### Input runtime down
+
+Commands served by the **input runtime** (`grab`, `release`, `handoff`, `status`,
+`get-bindings`, `set-binding`, `capture-next`, `capture-cancel`, `get-pads`,
+`list-input-devices`, `intent`, `rumble`, `key`, `set-active-game`,
+`overlay-focus`, `pad-battery`, `pad-rumble-status`, `controllerdb-refresh`)
+round-trip a dedicated control channel and await the runtime's reply. The input
+runtime is **supervised**: on a panic it is respawned in-process a few times, and
+if it exhausts its retry budget it stays down while the rest of the daemon keeps
+running (so `/metrics` and the Phase 3/4 D-Bus surfaces still answer).
+
+While the input runtime is down (control channel send fails or the reply is
+dropped), those commands receive:
+
+**Response:** `error:input-runtime-down\n`
+
+This is a distinct, actionable reply — a dead backend is **not** reported as
+`unknown` (which is reserved for genuinely unrecognized commands / client typos).
+Watch `game_shell_input_runtime_up` (0 = down) and
+`game_shell_input_runtime_restarts_total` in the metrics for the same signal.
+
 ## Daemon-to-Subscriber Events
 
 Subscribers (registered via `subscribe`) receive these events as newline-terminated strings.
@@ -2112,6 +2133,11 @@ Moonlight stream off explicitly (`handoff`), the presenter stays Handoff
 regardless of which window holds focus, and only reverts to Shell when the
 shell explicitly `grab`s again on stream exit. Follow-focus only ever
 arbitrates between Shell and Game.
+
+Internally, `activewindow` changes reach the input runtime over a **coalescing
+`tokio::sync::watch` channel** (latest-wins), not the control channel — focus is
+*state*, so only the newest class matters and a momentarily-busy input loop can
+never drop or back up a focus change (it retains just the latest).
 
 ## Settings Persistence
 

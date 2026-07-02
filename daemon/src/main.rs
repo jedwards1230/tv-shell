@@ -30,6 +30,9 @@ use game_shell_input::ipc::{ControllerDbState, SharedControllerDbState};
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
+    // NB: `tokio::sync::watch` is referenced fully-qualified below, not imported —
+    // a bare `watch` here would shadow this crate's own `watch` (file-watch)
+    // module imported at the top of the file (`watch::run`).
     use tokio::sync::{broadcast, mpsc, Notify};
 
     // Load the typed config (~/.config/game-shell/config.toml) FIRST — before
@@ -53,6 +56,14 @@ fn main() -> anyhow::Result<()> {
     let (events_tx, _events_rx) = broadcast::channel::<protocol::Event>(256);
     let (control_tx, control_rx) = mpsc::channel::<state::Control>(64);
 
+    // Coalescing (latest-wins) focused-window class channel: the Hyprland actor
+    // publishes each `activewindow` change here and the input runtime follows
+    // compositor focus off it. A `watch` (not the control mpsc) because focus is
+    // STATE — only the newest value matters, so it can never back up or drop on a
+    // busy input loop. The initial "" (no toplevel focused) never fires
+    // `.changed()` (watch only signals values sent AFTER construction).
+    let (active_window_tx, active_window_rx) = tokio::sync::watch::channel::<String>(String::new());
+
     // Observability counters, shared between the input runtime (which records
     // intents/transitions/pad-join-leave/input-events) and the metrics exporter
     // (textfile writer + `/metrics` HTTP route). Count this start as a restart:
@@ -68,7 +79,10 @@ fn main() -> anyhow::Result<()> {
     let config_changed = Arc::new(Notify::new());
 
     // Input subsystem on a dedicated OS thread with its own current-thread
-    // runtime (isolated timing).
+    // runtime (isolated timing). `run_supervised` owns `control_rx` across
+    // restarts and respawns the input event loop on a panic (a fresh `Fleet` per
+    // attempt → dropped fds → released grabs), so a single panic no longer leaves
+    // the controller stuck with only a whole-daemon restart to recover it.
     let input_events = events_tx.clone();
     let input_config_changed = Arc::clone(&config_changed);
     let input_metrics = Arc::clone(&metrics);
@@ -79,11 +93,12 @@ fn main() -> anyhow::Result<()> {
                 .enable_all()
                 .build()
                 .expect("build input runtime");
-            rt.block_on(input::run(
+            rt.block_on(input::run_supervised(
                 control_rx,
                 input_events,
                 input_config_changed,
                 input_metrics,
+                active_window_rx,
             ));
         })?;
 
@@ -112,7 +127,7 @@ fn main() -> anyhow::Result<()> {
         // connection and pushes events onto the shared broadcast bus. They log
         // and never panic the daemon if BlueZ/NetworkManager/logind/UPower are
         // absent, so spawning them unconditionally is safe.
-        let dbus = spawn_dbus_actors(&events_tx, &control_tx);
+        let dbus = spawn_dbus_actors(&events_tx, &control_tx, &active_window_tx);
 
         // Spawn the file-watch actor. It inotify-watches settings.json for
         // external edits and signals the input runtime via config_changed.
@@ -284,10 +299,18 @@ fn main() -> anyhow::Result<()> {
 /// `control_tx` is a clone of the input runtime's control channel. It is handed
 /// to the CEC actor (under `--features cec`) so CEC remote keypresses can be
 /// injected as `Control::Key` nav events — gated by `GAME_SHELL_CEC_LIFECYCLE`.
+///
+/// `active_window_tx` is the sender half of the coalescing focused-window watch
+/// channel, handed to the Hyprland actor so `activewindow` changes drive the
+/// input runtime's follow-focus presenter (latest-wins, never dropped).
 #[cfg(target_os = "linux")]
 fn spawn_dbus_actors(
     events_tx: &tokio::sync::broadcast::Sender<protocol::Event>,
+    // Only consumed by the CEC actor (gated `--features cec`); unused in the
+    // default C-free build now that the Hyprland actor rides the watch channel.
+    #[cfg_attr(not(feature = "cec"), allow(unused_variables))]
     control_tx: &tokio::sync::mpsc::Sender<state::Control>,
+    active_window_tx: &tokio::sync::watch::Sender<String>,
 ) -> ipc::DbusSenders {
     use tokio::sync::mpsc;
 
@@ -336,12 +359,12 @@ fn spawn_dbus_actors(
     }
     {
         let events_tx = events_tx.clone();
-        // Clone of the input control channel so the Hyprland actor can forward
-        // `activewindow` focus changes as `Control::HyprActiveWindowChanged`
-        // (follow-focus presenter, see hyprland.rs::run doc comment).
-        let hypr_control_tx = control_tx.clone();
+        // Sender of the coalescing focused-window watch channel so the Hyprland
+        // actor can publish `activewindow` focus changes (latest-wins) for the
+        // input runtime's follow-focus presenter (see hyprland.rs::run doc comment).
+        let hypr_active_window_tx = active_window_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = hyprland::run(hypr_rx, events_tx, hypr_control_tx).await {
+            if let Err(e) = hyprland::run(hypr_rx, events_tx, hypr_active_window_tx).await {
                 tracing::warn!("hyprland actor exited: {e}");
             }
         });
