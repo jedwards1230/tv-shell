@@ -314,6 +314,17 @@ struct PadDevice {
     grabbed: bool,
 
     held_keys: HashSet<u16>,
+    /// Digital buttons that were physically held at the moment this pad entered
+    /// the Game presenter (the shell→app flip). Populated from `held_keys` in
+    /// [`PadDevice::enter_game`] on the transition that builds the virtual pad;
+    /// cleared on [`PadDevice::enter_shell`] and whenever the virtual pad is
+    /// (re)built. In the Game-presenter forwarding path a masked code is
+    /// **swallowed** (never forwarded to the virtual pad) until it is released
+    /// and pressed fresh — so the single physical press that launched an app
+    /// from the shell does not also leak into the newly-focused app (the
+    /// Steam-BPM A-leak, #295 follow-up). Kept SEPARATE from `held_keys`, which
+    /// the safety combos read directly and must remain untouched.
+    masked_keys: HashSet<u16>,
     left_trigger_held: bool,
     right_trigger_held: bool,
 
@@ -399,6 +410,7 @@ impl PadDevice {
             player_slot: slot,
             grabbed: false,
             held_keys: HashSet::new(),
+            masked_keys: HashSet::new(),
             left_trigger_held: false,
             right_trigger_held: false,
             stick_x_key: None,
@@ -730,6 +742,16 @@ impl PadDevice {
                     }
                 }
                 return; // never forward Home to the game
+            }
+
+            // Swallow buttons that were held at the shell→app flip until they've
+            // been released and pressed fresh (#295 follow-up): the single
+            // physical press that launched the app was already consumed by the
+            // shell, so forwarding the still-held down/up would double-activate
+            // in the app. `mask_forward_decision` clears the code from the mask
+            // on its release. ABS (below) is never masked.
+            if !mask_forward_decision(&mut self.masked_keys, code, value) {
+                return;
             }
 
             // Forward the raw button to the clean virtual pad (the game's input).
@@ -1089,6 +1111,14 @@ impl PadDevice {
         match build_virtual_pad(self.event_stream.device(), self.player_slot) {
             Ok(mut vpad) => {
                 register_vpad_devnodes(&mut sh.reg, &mut vpad);
+                // Capture the digital buttons held at this flip so they're
+                // swallowed until released and pressed fresh (#295 follow-up).
+                // Done ONLY on the transition that actually creates the vpad —
+                // the early-return above guards the idempotent case, so a
+                // redundant `enter_game` can't re-snapshot or clobber this. A
+                // fresh (re)build starts from a clean mask before recapturing.
+                self.masked_keys.clear();
+                self.masked_keys.extend(self.held_keys.iter().copied());
                 info!(
                     "Created virtual pad game-shell-virtual-pad-{} for slot {} ({})",
                     self.player_slot, self.player_slot, self.wire_id
@@ -1106,6 +1136,10 @@ impl PadDevice {
     /// fd. The physical pad stays grabbed; events route back through the shell
     /// presenter ([`PadDevice::handle_shell`]). Idempotent.
     fn enter_shell(&mut self, sh: &mut Shared) {
+        // Clear the flip-mask unconditionally so no masked state can leak across
+        // a Game→Shell transition (#295 follow-up); the next `enter_game`
+        // recaptures from `held_keys` at that flip.
+        self.masked_keys.clear();
         if let Some(mut vpad) = self.virtual_pad.take() {
             unregister_vpad_devnodes(&mut sh.reg, &mut vpad);
             info!(
@@ -2473,6 +2507,42 @@ fn should_grab(overlay_focus: bool, presenter: Presenter) -> bool {
     overlay_focus || presenter != Presenter::Handoff
 }
 
+/// Decide whether a KEY event should be forwarded to the Game presenter's
+/// virtual pad, given the pad's `masked` set (buttons held at the shell→app
+/// flip; see [`PadDevice::masked_keys`]) and the event's `code`/`value`.
+///
+/// A **masked** button must not reach the app until it has been released and
+/// pressed again — the app never saw the corresponding down (the physical press
+/// was consumed by the shell to launch the app), so a lone up (or the stale
+/// held-down / autorepeat) would be a phantom activation (the Steam-BPM A-leak,
+/// #295 follow-up). Values follow evdev KEY semantics: `1` press, `0` release,
+/// `2` autorepeat.
+///
+/// * `code` not in `masked` → forward normally (`true`). A fresh press after the
+///   user let go is unaffected.
+/// * `code` in `masked`, `value == 0` (release) → remove it from `masked` and
+///   **swallow** (`false`): the mask is now cleared, so the *next* press of this
+///   code forwards, but this lone up itself is dropped.
+/// * `code` in `masked`, `value == 1 | 2` (press/repeat) → **swallow**
+///   (`false`): it was held across the flip.
+///
+/// Mutates `masked` (clears the code on its release). Pure otherwise, so the
+/// swallow decision is unit-tested without a controller. ABS axes/sticks/d-pad
+/// are never masked — only digital buttons leak this way — so this is called
+/// only from the KEY arm of [`PadDevice::handle_game`].
+fn mask_forward_decision(masked: &mut HashSet<u16>, code: u16, value: i32) -> bool {
+    if !masked.contains(&code) {
+        return true; // not masked -> forward as usual
+    }
+    if value == 0 {
+        // Release of a masked button: the mask lifts here, but the lone up is
+        // swallowed (the app never saw the down).
+        masked.remove(&code);
+    }
+    // Press/repeat/release of a still-masked button: never forward.
+    false
+}
+
 /// Toggle overlay-focus (#262): a modal shell overlay opened (`on`) or closed
 /// (`off`) over a running app. Idempotent (a no-op when already in the requested
 /// state). The base presenter in `sh.presenter` is deliberately left untouched —
@@ -2632,6 +2702,75 @@ mod presenter_tests {
 
         // Without an overlay, Handoff correctly ungrabs (the raw-node case).
         assert!(!should_grab(false, presenter_after_handoff));
+    }
+
+    // --- flip-mask (#295 follow-up: swallow buttons held at shell→app flip) ---
+
+    /// A button held at the flip (present in the mask) has its press/repeat
+    /// swallowed, then its release clears the mask and is itself swallowed, and
+    /// a subsequent fresh press forwards normally.
+    #[test]
+    fn masked_button_swallowed_until_released_then_fresh_press_forwards() {
+        const BTN_A: u16 = cfg::BTN_SOUTH;
+        // Simulate `enter_game` capturing BTN_A as held at the flip.
+        let mut masked: HashSet<u16> = HashSet::new();
+        masked.insert(BTN_A);
+
+        // A stale autorepeat of the still-held A is swallowed (never forwarded).
+        assert!(!mask_forward_decision(&mut masked, BTN_A, 2));
+        assert!(masked.contains(&BTN_A), "repeat must not clear the mask");
+
+        // The release (value 0) clears the mask AND is swallowed (the app never
+        // saw the corresponding down, so a lone up would be a phantom event).
+        assert!(!mask_forward_decision(&mut masked, BTN_A, 0));
+        assert!(
+            !masked.contains(&BTN_A),
+            "release must clear the code from the mask"
+        );
+
+        // A fresh press after the user let go is no longer masked -> forwards.
+        assert!(mask_forward_decision(&mut masked, BTN_A, 1));
+        // ...as does its release.
+        assert!(mask_forward_decision(&mut masked, BTN_A, 0));
+    }
+
+    /// A masked button's *press* (value 1) — the case where the physical button
+    /// was released and re-pressed while the mask still stands (e.g. the user
+    /// mashed it before letting go cleanly) — is also swallowed; only a value-0
+    /// release lifts the mask.
+    #[test]
+    fn masked_button_press_is_swallowed() {
+        const BTN_A: u16 = cfg::BTN_SOUTH;
+        let mut masked: HashSet<u16> = HashSet::new();
+        masked.insert(BTN_A);
+        assert!(!mask_forward_decision(&mut masked, BTN_A, 1));
+        assert!(masked.contains(&BTN_A), "press must not clear the mask");
+    }
+
+    /// A button that was NOT held at the flip (absent from the mask) forwards
+    /// unconditionally — normal post-flip gameplay is unaffected, whatever the
+    /// value.
+    #[test]
+    fn unmasked_button_always_forwards() {
+        const BTN_B: u16 = cfg::BTN_EAST;
+        let mut masked: HashSet<u16> = HashSet::new();
+        // Mask holds a DIFFERENT code; B was not held at the flip.
+        masked.insert(cfg::BTN_SOUTH);
+        assert!(mask_forward_decision(&mut masked, BTN_B, 1));
+        assert!(mask_forward_decision(&mut masked, BTN_B, 2));
+        assert!(mask_forward_decision(&mut masked, BTN_B, 0));
+        // The unrelated masked code is untouched by decisions about B.
+        assert!(masked.contains(&cfg::BTN_SOUTH));
+    }
+
+    /// An empty mask (nothing held at the flip — the common launch-with-nothing
+    /// -held case) forwards everything.
+    #[test]
+    fn empty_mask_forwards_everything() {
+        let mut masked: HashSet<u16> = HashSet::new();
+        assert!(mask_forward_decision(&mut masked, cfg::BTN_SOUTH, 1));
+        assert!(mask_forward_decision(&mut masked, cfg::BTN_SOUTH, 0));
+        assert!(masked.is_empty());
     }
 }
 
