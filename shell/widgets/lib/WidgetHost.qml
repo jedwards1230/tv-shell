@@ -163,15 +163,20 @@ ColumnLayout {
 
             onLoaded: {
                 var idx = wLoader.index;
+                // Forward the two generic Widget-base signals up to the host-level
+                // signals HomeScreen connects once (signal→signal re-emit). Every
+                // widget has both (inherited from Widget), so this is uniform. Wire
+                // these FIRST, before the property bindings below: setting size /
+                // widgetEnabled / previousRow / nextRow can trigger a focus side-
+                // effect, and the base's onActiveFocusChanged auto-emits
+                // ensureVisibleRequested — connecting after would drop that first
+                // emit and leave the widget un-scrolled-to.
+                item.escaped.connect(host.widgetEscaped);
+                item.ensureVisibleRequested.connect(host.widgetEnsureVisibleRequested);
                 item.widgetEnabled = Qt.binding(() => wLoader.modelData.enabled);
                 item.size = Qt.binding(() => wLoader.modelData.size);
                 item.previousRow = Qt.binding(() => host._prevTargetFor(idx));
                 item.nextRow = Qt.binding(() => host._nextTargetFor(idx));
-                // Forward the two generic Widget-base signals up to the host-level
-                // signals HomeScreen connects once (signal→signal re-emit). Every
-                // widget has both (inherited from Widget), so this is uniform.
-                item.escaped.connect(host.widgetEscaped);
-                item.ensureVisibleRequested.connect(host.widgetEnsureVisibleRequested);
                 host._refresh();
             }
         }

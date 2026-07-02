@@ -69,9 +69,12 @@ FocusScope {
     // Single-stop widgets (firstRow unset) have no internal row to emit
     // ensureVisibleRequested on focus entry, so the base emits for them. Multi-row
     // widgets set firstRow to an internal region that emits on ITS own focus, so
-    // the base stays silent here to avoid a double-scroll on entry.
+    // the base stays silent here to avoid a double-scroll on entry. Guard on
+    // `visible` too: a disabled/hidden widget that receives focus via a stale
+    // binding or an imperative forceActiveFocus during construction must NOT ask
+    // the host to scroll to an invisible target.
     onActiveFocusChanged: {
-        if (activeFocus && (root.firstRow === null || root.firstRow === root))
+        if (activeFocus && visible && (root.firstRow === null || root.firstRow === root))
             root.ensureVisibleRequested(root);
     }
 
