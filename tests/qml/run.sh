@@ -38,6 +38,9 @@ cp "$shellc/QuickActionButton.qml" "$build/components/"
 # against the stub singletons; tst_navigablegrid exercises its key-nav + handoff.
 cp "$shellc/NavigableGrid.qml" "$build/components/"
 cp "$shellc/lib/CountBadge.qml" "$build/components/lib/"
+# focusChain.js — the shared vertical-traversal helper imported by Widget.qml and
+# NavigableGrid via a relative path; copy it in so those imports resolve headless.
+cp "$shellc/lib/focusChain.js" "$build/components/lib/"
 # Widget base + WidgetHost are pure QtQuick (no Quickshell), so they run headless
 # against the stub WidgetRegistry + Stub*Widget shims under stubs/lib. They now
 # live in shell/widgets/lib/ but are copied into the test's assembled

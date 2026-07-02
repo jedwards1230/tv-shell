@@ -35,7 +35,8 @@ Widget {
     // HomeScreen's _recentActivate/_recentContext already treat as a launch.
     signal entryActivated(var entry)
     signal entryContextRequested(var entry, var card)
-    signal ensureVisibleRequested(var item)
+    // ensureVisibleRequested is inherited from the Widget base (auto-wired to the
+    // host by WidgetHost); emitted below from the header / rail focus.
     // Trailing "Open Library" action chip → HomeScreen opens the Library surface.
     signal openLibraryRequested
 

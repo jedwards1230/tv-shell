@@ -1,4 +1,5 @@
 import QtQuick
+import "lib/focusChain.js" as FocusChain
 
 // Vertical wrapping grid that implements the same duck-typed home-tile focus
 // contract as NavigableRow (regionFocused / canFocus / focusFirstChild +
@@ -81,34 +82,6 @@ FocusScope {
     onActiveFocusChanged: if (activeFocus && root.currentItem)
         Qt.callLater(() => root.ensureVisibleRequested(root.currentItem))
 
-    // A neighbour is focusable when its contract `canFocus` is true; rows that
-    // predate the contract fall back to plain `visible` (same as NavigableRow).
-    function _focusable(item) {
-        return item.canFocus !== undefined ? item.canFocus : item.visible;
-    }
-
-    function _navigateUp() {
-        var target = root.previousRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.previousRow !== undefined) ? target.previousRow : null;
-        }
-    }
-
-    function _navigateDown() {
-        var target = root.nextRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.nextRow !== undefined) ? target.nextRow : null;
-        }
-    }
-
     Keys.onPressed: event => {
         var n = rep.count;
         if (n === 0)
@@ -133,7 +106,7 @@ FocusScope {
                 if (up >= 0)
                     root.currentIndex = up;
                 else
-                    root._navigateUp();  // top row → hand off UP the chain
+                    FocusChain.navigateUp(root);  // top row → hand off UP the chain
             }
             event.accepted = true;
             break;
@@ -151,7 +124,7 @@ FocusScope {
                     if (!onBottomRow && root.currentIndex !== n - 1)
                         root.currentIndex = n - 1;
                     else
-                        root._navigateDown();
+                        FocusChain.navigateDown(root);
                 }
             }
             event.accepted = true;

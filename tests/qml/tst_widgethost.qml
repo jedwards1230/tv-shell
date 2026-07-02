@@ -156,4 +156,97 @@ TestCase {
         compare(rig.host.focusFirstVisible(), false);
         compare(rig.host.regionFocused, false);
     }
+
+    // --- Inherited chain traversal (shared focusChain.js via Widget base) -----
+    // A bare column of single-stop StubWidgets wired previous/next, with the middle
+    // one NOT focusable (widgetEnabled=false). The base's inherited _navigateUp/
+    // _navigateDown must skip it and land on the far neighbour — with ZERO nav code
+    // in StubWidget itself (it only extends Widget).
+    Component {
+        id: chainComp
+        Item {
+            property alias w1: sw1
+            property alias w2: sw2
+            property alias w3: sw3
+            StubWidget {
+                id: sw1
+                nextRow: sw2
+            }
+            StubWidget {
+                id: sw2
+                widgetEnabled: false  // → !visible → !canFocus → skipped by the walk
+                previousRow: sw1
+                nextRow: sw3
+            }
+            StubWidget {
+                id: sw3
+                previousRow: sw2
+            }
+        }
+    }
+
+    function test_widget_traversal_skips_non_focusable() {
+        var chain = createTemporaryObject(chainComp, testCase);
+        verify(chain, "chain instantiated");
+
+        // Up from w3: w2 is not focusable → skip to w1.
+        chain.w3.forceActiveFocus();
+        verify(chain.w3.activeFocus, "w3 holds focus");
+        verify(chain.w3._navigateUp(), "navigateUp found a focusable neighbour");
+        verify(chain.w1.regionFocused, "Up skipped the disabled middle, landed on w1");
+
+        // Down from w1: w2 is not focusable → skip to w3.
+        verify(chain.w1._navigateDown(), "navigateDown found a focusable neighbour");
+        verify(chain.w3.regionFocused, "Down skipped the disabled middle, landed on w3");
+    }
+
+    function test_widget_traversal_noop_when_no_neighbour() {
+        var chain = createTemporaryObject(chainComp, testCase);
+        // w1 has no previousRow; Up is a no-op (returns false, focus unchanged).
+        chain.w1.forceActiveFocus();
+        compare(chain.w1._navigateUp(), false);
+        verify(chain.w1.regionFocused, "focus stays on w1 when Up finds nothing");
+    }
+
+    // --- Generic signals forwarded up through the host (wired ONCE) -----------
+    // Every widget inherits escaped + ensureVisibleRequested from the Widget base;
+    // WidgetHost re-emits them as host-level widgetEscaped / widgetEnsureVisible-
+    // Requested so HomeScreen connects them a single time.
+    function test_host_forwards_widget_signals() {
+        var rig = newRig();
+        var b = rig.host.widgetById("b");
+        verify(b, "widget b present");
+
+        var escapedCount = 0;
+        var ensureItem = null;
+        rig.host.widgetEscaped.connect(function () {
+            escapedCount++;
+        });
+        rig.host.widgetEnsureVisibleRequested.connect(function (item) {
+            ensureItem = item;
+        });
+
+        b.escaped();
+        compare(escapedCount, 1, "widget escaped re-emitted as host widgetEscaped");
+
+        b.ensureVisibleRequested(b);
+        compare(ensureItem, b, "ensureVisibleRequested forwarded with its item arg");
+    }
+
+    // --- Single-stop base auto-emits ensureVisibleRequested on focus entry -----
+    // A single-stop widget (firstRow unset) has no internal row to emit on entry,
+    // so the base emits it — reaching HomeScreen's scroll via the host forward.
+    function test_single_stop_autoemits_ensure_visible_on_focus() {
+        var rig = newRig();
+        var a = rig.host.widgetById("a"); // StubWidget = single-stop (firstRow null)
+        compare(a.firstRow, null, "single-stop widget has no firstRow");
+
+        var ensureItem = null;
+        rig.host.widgetEnsureVisibleRequested.connect(function (item) {
+            ensureItem = item;
+        });
+        a.focusFirstChild();
+        verify(a.activeFocus, "single-stop widget took focus");
+        compare(ensureItem, a, "base auto-emitted ensureVisibleRequested(self) on focus entry");
+    }
 }

@@ -30,7 +30,8 @@ Widget {
     size: "medium"
 
     signal openPlexRequested
-    signal ensureVisibleRequested(var item)
+    // ensureVisibleRequested is inherited from the Widget base (auto-wired to the
+    // host by WidgetHost); emitted below from the chips / poster-row focus.
 
     // === Data (populated from `plex-hubs`) ===
     property var onDeckItems: []

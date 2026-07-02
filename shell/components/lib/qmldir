@@ -7,7 +7,6 @@ DimmedBackdrop 1.0 DimmedBackdrop.qml
 CountBadge 1.0 CountBadge.qml
 FocusAccentBar 1.0 FocusAccentBar.qml
 FocusButton 1.0 FocusButton.qml
-FocusRegion 1.0 FocusRegion.qml
 HintBar 1.0 HintBar.qml
 LabeledTextInput 1.0 LabeledTextInput.qml
 ModalOverlay 1.0 ModalOverlay.qml
