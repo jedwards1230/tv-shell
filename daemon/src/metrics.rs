@@ -80,8 +80,9 @@ pub struct Metrics {
     /// replaced, so the increment is durable in this process's metrics until the
     /// re-exec lands (the new process starts its own counters at zero).
     pub restart_daemon_actions: AtomicU64,
-    /// Times `/dev/restart-shell` detected >1 quickshell process after a restart
-    /// settle — the #254 stacked-instance bug; should stay 0.
+    /// Times a shell restart (HTTP `/dev/restart-shell` or MCP `restart_shell`,
+    /// which share `dev_restart_shell`) detected >1 quickshell process after the
+    /// restart settle — the #254 stacked-instance bug; should stay 0.
     pub quickshell_multi_instance: AtomicU64,
 }
 
@@ -347,7 +348,7 @@ pub fn render(
     counter(
         &mut out,
         "game_shell_quickshell_multi_instance_total",
-        "Times /dev/restart-shell detected >1 quickshell process after a restart settle (#254; should stay 0).",
+        "Times a shell restart (HTTP /dev/restart-shell or MCP restart_shell) detected >1 quickshell process after a restart settle (#254; should stay 0).",
         counters.quickshell_multi_instance.load(Ordering::Relaxed),
     );
 

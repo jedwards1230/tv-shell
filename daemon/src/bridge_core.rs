@@ -454,9 +454,12 @@ fn parse_pgrep_count(out: &str) -> usize {
 ///
 /// **Prefer the systemd unit.** When `game-shell-quickshell.service` (a
 /// `systemd --user` unit) is active it is the single supervised instance, so we
-/// `systemctl --user restart` it. Otherwise (or if that fails) we fall back to
-/// the serialized `pkill -x quickshell` → detached `setsid` spawn path. Both
-/// paths then settle and read the same filtered log tail.
+/// `systemctl --user restart` it — and if that restart fails we return an error
+/// rather than falling back, because a `pkill`/spawn under a live unit would race
+/// systemd's `Restart=on-failure` respawn and stack instances. The serialized
+/// `pkill -x quickshell` → detached `setsid` spawn path runs only when the unit
+/// is **not** active (fresh/dev install, or no user manager). Both paths then
+/// settle and read the same filtered log tail.
 pub async fn dev_restart_shell(
     metrics: &std::sync::Arc<crate::metrics::Metrics>,
 ) -> Result<String, String> {
@@ -483,6 +486,12 @@ pub async fn dev_restart_shell(
 
     let mut used_unit = false;
     if is_active {
+        // The unit supervises Quickshell, so `systemctl --user restart` is the
+        // ONLY safe path here — a restart failure is a hard error, NOT a fallback
+        // to pkill/spawn. Falling back while the unit is active would re-create
+        // the #254 stacking: `pkill` kills the unit-managed quickshell, systemd's
+        // `Restart=on-failure` respawns it, AND the fallback spawns a second. The
+        // pkill/spawn path below runs only when the unit is not active.
         match tokio::process::Command::new("systemctl")
             .args(["--user", "restart", unit])
             .output()
@@ -493,18 +502,16 @@ pub async fn dev_restart_shell(
             }
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
-                tracing::warn!(
-                    "restart-shell: `systemctl --user restart {unit}` failed ({}); \
-                     falling back to pkill/spawn: {}",
+                return Err(format!(
+                    "systemctl --user restart {unit} failed ({}): {}",
                     o.status,
                     stderr.trim()
-                );
+                ));
             }
             Err(e) => {
-                tracing::warn!(
-                    "restart-shell: could not run `systemctl --user restart {unit}` ({e}); \
-                     falling back to pkill/spawn"
-                );
+                return Err(format!(
+                    "could not run systemctl --user restart {unit}: {e}"
+                ));
             }
         }
     }

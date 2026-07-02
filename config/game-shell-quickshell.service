@@ -43,7 +43,13 @@ ExecStartPre=-/usr/bin/pkill -x quickshell
 # the dev bridge's truncate-on-restart semantics — while its stdout flows to the
 # journal. `quickshell` resolves from the user manager's PATH (/usr/bin), so no
 # absolute path or install-prefix rewrite is needed.
-ExecStart=/bin/sh -c 'quickshell -c game-shell 2>&1 | tee /tmp/qs-log.txt'
+#
+# `bash -o pipefail` (not `sh`) is REQUIRED: with a bare pipeline the unit's exit
+# status is `tee`'s (always 0), so a Quickshell crash would look like a clean exit
+# and `Restart=on-failure` would never fire. `pipefail` makes the pipeline return
+# quickshell's non-zero status, so a crash actually triggers the restart. (`sh` is
+# not guaranteed to support `pipefail`, hence bash.)
+ExecStart=/bin/bash -o pipefail -c 'quickshell -c game-shell 2>&1 | tee /tmp/qs-log.txt'
 Restart=on-failure
 RestartSec=2
 SyslogIdentifier=game-shell-quickshell

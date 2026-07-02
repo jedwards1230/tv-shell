@@ -622,7 +622,11 @@ async fn handle_dev_build() -> String {
     }
 }
 
-/// `POST /dev/restart-shell` — kill quickshell and relaunch detached.
+/// `POST /dev/restart-shell` — restart quickshell (single-instance). The whole
+/// sequence is serialized process-wide (a concurrent call is rejected with
+/// "restart already in progress"), and it prefers `systemctl --user restart` of
+/// the Quickshell unit, falling back to `pkill` + detached spawn only when the
+/// unit isn't active. See `bridge_core::dev_restart_shell`.
 async fn handle_dev_restart_shell(metrics: &std::sync::Arc<crate::metrics::Metrics>) -> String {
     match bridge_core::dev_restart_shell(metrics).await {
         Ok(body) => http_response(200, &body),
