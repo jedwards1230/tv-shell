@@ -215,12 +215,17 @@ FocusScope {
     // focuses an already-running steam window (resume) and only otherwise execs.
     function launchSteamRp() {
         root.userActivity();
+        // Just raise Steam — no steam:// navigation. When it's already running
+        // (the common case) AppLifecycleManager focuses the existing window, so
+        // you resume exactly where you left off (as if un-minimizing); a cold
+        // `steam` restores its own last state. Forcing a BPM page URL made it
+        // jump to a specific screen instead of resuming.
         root.launchApp({
             "name": "Steam",
-            "exec": "steam steam://open/bigpicture",
+            "exec": "steam",
             "wmClass": "steam",
             "icon": "steam",
-            "comment": "Steam Remote Play"
+            "comment": "Steam"
         });
     }
 

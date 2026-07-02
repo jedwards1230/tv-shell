@@ -99,7 +99,7 @@ Widget {
 
         Accessible.role: Accessible.Button
         Accessible.name: "Steam Remote Play"
-        Accessible.description: "Launch Steam Big Picture"
+        Accessible.description: "Open Steam"
         Accessible.focusable: true
         Accessible.onPressAction: root.launchRequested()
 
@@ -149,7 +149,7 @@ Widget {
                 Text {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
-                    text: "Launch Steam Big Picture"
+                    text: "Open Steam"
                     font.pixelSize: Theme.fontSmall
                     color: Theme.textSecondary
                     wrapMode: Text.WordWrap
