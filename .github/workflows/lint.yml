@@ -84,13 +84,17 @@ jobs:
       - name: Lint QML (load-time defects)
         run: |
           # qmllint auto-discovers the repo-root .qmllint.ini (searches upward
-          # from each file). It errors — and fails this job — only on the
-          # resolution-independent structural categories set to `error` there
-          # (and on any hard parse error). Lint every shell QML file in one
+          # from each file). Severities there gate the run via MaxWarnings=0: a
+          # warning-level (structural) category fails the job; info is visible but
+          # non-fatal. `-D Quick` disables the QtQuick best-practice plugin — its
+          # Quick.* categories are stylistic UB hints (not the load-failure class
+          # we gate on) whose ini key names differ across Qt versions, so they
+          # can't be demoted portably; disabling the plugin is the version-robust
+          # way to keep them out of the gate. Lint every shell QML file in one
           # invocation so the exit code aggregates across the tree.
           mapfile -d '' files < <(find shell -name '*.qml' -print0)
           echo "Linting ${#files[@]} QML files with qmllint $(qmllint --version | head -1)"
-          qmllint "${files[@]}"
+          qmllint -D Quick "${files[@]}"
 
       - name: Summary
         if: always()
