@@ -1,0 +1,4 @@
+module widgets.lib
+Widget 1.0 Widget.qml
+FilterChips 1.0 FilterChips.qml
+SegmentedHeader 1.0 SegmentedHeader.qml

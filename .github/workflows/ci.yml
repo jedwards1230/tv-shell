@@ -73,6 +73,7 @@ jobs:
               - '.github/workflows/ci.yml'
             qmlformat:
               - '**/*.qml'
+              - '.qmllint.ini'
               - '.github/workflows/lint.yml'
               - '.github/workflows/ci.yml'
             widgets:

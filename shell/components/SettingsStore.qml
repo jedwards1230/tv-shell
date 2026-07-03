@@ -3,6 +3,7 @@ import Quickshell.Io
 import QtQuick
 import "../widgets/lib"
 import "../widgets/lib/widgetConfig.js" as WidgetConfig
+import "settingsPayload.js" as SettingsPayload
 
 // Centralized settings I/O for game-shell — the QML-side façade over
 // ~/.config/game-shell/settings.json.
@@ -45,8 +46,9 @@ Item {
     // widget<Name>* keys. Shape: { <id>: {enabled, order, size, prefs:{...}} }.
     // Populated by the migrator in loadProc (legacy flat keys are folded in once,
     // then live under this subtree). Read via widget(id); write via setWidget /
-    // setWidgetPref / setWidgetOrder. save() emits this whole subtree as one key,
-    // so the daemon's shallow-merge replaces it wholesale.
+    // setWidgetPref / setWidgetOrder — each persists just this whole subtree as
+    // the single `widgets` key (the daemon can't merge below a top-level key), so
+    // the shallow-merge replaces it wholesale without touching other keys.
     property var widgets: ({})
     property real textScale: 1.0                  // font-size multiplier: 1.0/1.15/1.3 (#110)
     property bool hdrEnabled: true               // mirrors config/hyprland.conf cm,hdr default
@@ -76,7 +78,8 @@ Item {
     //   validate  — optional extra predicate (v) => bool, applied on BOTH parse and
     //               setter (enum / range checks); a failing value is rejected.
     //   noSave    — true for keys this store reads but does NOT write back
-    //               (daemon-owned: keyBindings). Parsed in, excluded from save().
+    //               (daemon-owned: keyBindings). Parsed in, excluded from any
+    //               set-config payload (buildSavePayload drops noSave keys).
     // Keep the per-key validators identical to the old inline guards so behavior
     // is unchanged.
     readonly property var _schema: [
@@ -229,7 +232,7 @@ Item {
                 var r = WidgetConfig.migrate(obj, WidgetManifests.manifests);
                 store.widgets = r.widgets;
                 if (r.changed)
-                    store.save();
+                    store._saveKeys(["widgets"]);
                 store.configLoaded();
             } catch (e) {
                 console.log("SettingsStore: failed to parse settings:", e);
@@ -249,17 +252,18 @@ Item {
     function load() {
         loadProc.request("get-config");
     }
-    function save() {
-        // Schema-driven serialize: every QML-owned key except the daemon-owned
-        // ones (noSave, e.g. keyBindings). The daemon does the read-modify-write,
-        // preserving foreign keys it owns.
-        var out = {};
-        for (var i = 0; i < store._schema.length; i++) {
-            var row = store._schema[i];
-            if (!row.noSave)
-                out[row.key] = store[row.key];
-        }
-        saveProc.request("set-config", JSON.stringify(out));
+
+    // Persist ONLY the given changed keys via `set-config`. The daemon
+    // shallow-merges the payload into settings.json (read-modify-write),
+    // preserving every key we don't send — including daemon-owned keyBindings and
+    // any key an external editor touched concurrently. Sending the whole store on
+    // every change (the old save()) round-tripped a stale snapshot over unrelated
+    // keys; buildSavePayload keeps the write minimal (and drops noSave/unknown
+    // keys). A no-op payload (nothing writable) skips the socket round-trip.
+    function _saveKeys(keys) {
+        var payload = SettingsPayload.buildSavePayload(store._schema, keys, store);
+        if (Object.keys(payload).length > 0)
+            saveProc.request("set-config", JSON.stringify(payload));
     }
 
     // Generic setter backing the trivial set+save setters. Looks up the key's
@@ -273,7 +277,7 @@ Item {
                 if (row.validate && !row.validate(value))
                     return false;
                 store[key] = value;
-                store.save();
+                store._saveKeys([key]);
                 return true;
             }
         }
@@ -347,23 +351,26 @@ Item {
     // fires widgetsChanged so every binding reading widget(id) re-evaluates; an
     // in-place mutation would notify nothing. tst_widgetreact.qml guards this.
 
-    // Set a top-level per-widget key (enabled / order / size), then persist.
+    // Set a top-level per-widget key (enabled / order / size), then persist. Only
+    // the `widgets` subtree is sent — the daemon can't merge below a top-level
+    // key, so the whole (fully-defaulted) subtree goes as one key; every non-widget
+    // key is left untouched.
     function setWidget(id, key, value) {
         store.widgets = WidgetConfig.setWidget(store.widgets, id, key, value, store._widgetDefaults());
-        store.save();
+        store._saveKeys(["widgets"]);
     }
 
     // Set a per-widget pref (under widgets.<id>.prefs), then persist.
     function setWidgetPref(id, prefKey, value) {
         store.widgets = WidgetConfig.setPref(store.widgets, id, prefKey, value, store._widgetDefaults());
-        store.save();
+        store._saveKeys(["widgets"]);
     }
 
     // Reorder: assign widgets.<id>.order = position for each id in orderedIds,
     // then persist once. Used by the Widgets page reorder UI.
     function setWidgetOrder(orderedIds) {
         store.widgets = WidgetConfig.setOrder(store.widgets, orderedIds, store._widgetDefaults());
-        store.save();
+        store._saveKeys(["widgets"]);
     }
 
     function setTextScale(scale) {
@@ -439,7 +446,7 @@ Item {
         else
             delete copy[key];
         cecDeviceNames = copy;
-        save();
+        store._saveKeys(["cecDeviceNames"]);
     }
 
     // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===
