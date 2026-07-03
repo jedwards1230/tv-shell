@@ -217,6 +217,11 @@ TestCase {
         }
 
         // 6. ensureVisibleRequested fires on focus (feature-detected).
+        // QML exposes a signal as a callable function object, so `typeof` a
+        // present signal is "function" (verified in this runner) and "undefined"
+        // when the widget's base doesn't declare it — this is a real detection,
+        // NOT dead code: it's true for Apps/Moonlight and false for NowPlaying
+        // (MprisPlayerBase has no such signal on this branch).
         var hasEnsure = (typeof w.ensureVisibleRequested === "function");
         if (hasEnsure && opts.reachable) {
             var spy = createTemporaryObject(spyComp, testCase, {
