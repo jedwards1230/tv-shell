@@ -121,18 +121,12 @@ pub enum Control {
     /// which only routes events while we own the grab.
     SetSessionActive(bool),
 
-    /// Hyprland's focused-window class changed (sent by the Hyprland actor's
-    /// `activewindow` event watcher). Empty string means no toplevel is
-    /// focused — i.e. only the shell's own layer-shell surface remains, which
-    /// never appears in Hyprland's `activewindow` at all. The input runtime
-    /// uses this to make the Game/Shell presenter follow compositor focus
-    /// (`input::focus_presenter_target`), so an app launched out-of-band (not
-    /// through the shell's own launch/stream flow — e.g. a Steam Remote Play
-    /// window) still gets a real gamepad instead of being stuck presented as a
-    /// keyboard. Never overrides the Handoff presenter (#221) — Handoff only
-    /// ends when the shell explicitly re-`grab`s.
-    HyprActiveWindowChanged(String),
-
+    // Note: Hyprland focused-window changes no longer ride the `Control` channel.
+    // They are coalesced (latest-wins) over a `tokio::sync::watch` channel from
+    // the Hyprland actor straight into the input select loop (see
+    // `input::apply_focus_change` and `hyprland::watch_events`), so a burst of
+    // focus changes can never back up or drop on a full control channel — focus
+    // is state, not an event stream.
     Shutdown,
 }
 

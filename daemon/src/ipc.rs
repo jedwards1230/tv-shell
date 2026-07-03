@@ -428,7 +428,14 @@ async fn dispatch(
     if let Some(resp) = dispatch_dbus(dbus, &cmd).await {
         return resp;
     }
-    let fallback = protocol::resp_unknown();
+    // The input-runtime arms below resolve to `None` (via `request`) exactly when
+    // the control channel send fails or the oneshot reply is dropped — both mean
+    // the input runtime is gone (panic-exhausted supervisor, Concern 1). Surface
+    // that as a distinct, actionable error instead of `unknown` so a dead backend
+    // is not confused with a client typo. (The standalone `return
+    // protocol::resp_unknown()` arms below are genuine unknown-command paths and
+    // keep replying `unknown`.)
+    let fallback = protocol::resp_error("input-runtime-down");
     match cmd {
         Command::Grab => request(control_tx, Control::Grab).await,
         Command::Release => request(control_tx, Control::Release).await,
@@ -881,8 +888,6 @@ mod tests {
                 }
                 // No reply, no device in the fake fleet — mirror the runtime no-op.
                 Control::SetSessionActive(_) => {}
-                // No reply — mirror the runtime's fire-and-forget follow-focus signal.
-                Control::HyprActiveWindowChanged(_) => {}
                 Control::Shutdown => break,
             }
         }
@@ -1169,6 +1174,37 @@ mod tests {
         );
 
         server.abort();
+    }
+
+    /// Concern 1b (input-runtime down-detection): when the input runtime is gone,
+    /// an input-runtime command must resolve to the distinct
+    /// `error:input-runtime-down` line — NOT `unknown` — so a dead backend is
+    /// distinguishable from a client typo on the wire. Dropping the control
+    /// receiver makes `request`'s send fail → `None` → the dispatch fallback
+    /// fires. A genuinely unknown command still replies `unknown` (unchanged).
+    #[tokio::test]
+    async fn input_runtime_down_maps_to_error() {
+        let (control_tx, control_rx) = mpsc::channel::<Control>(1);
+        drop(control_rx); // no runtime listening — every send fails
+        let db_state = std::sync::Arc::new(tokio::sync::RwLock::new(ControllerDbState::initial()));
+
+        let down = dispatch(
+            &control_tx,
+            &DbusSenders::default(),
+            &db_state,
+            Command::Grab,
+        )
+        .await;
+        assert_eq!(down, "error:input-runtime-down");
+
+        let unknown = dispatch(
+            &control_tx,
+            &DbusSenders::default(),
+            &db_state,
+            Command::Unknown,
+        )
+        .await;
+        assert_eq!(unknown, "unknown");
     }
 
     /// Degradation: with the `cec` feature on but no CEC actor wired

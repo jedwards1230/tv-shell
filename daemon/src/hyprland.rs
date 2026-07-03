@@ -42,14 +42,14 @@
 //! its own task, pushing onto the broadcast bus.
 
 use crate::protocol::Event;
-use crate::state::{Control, Reply};
+use crate::state::Reply;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 
 /// Requests from the IPC server to the Hyprland actor. Each carries a `oneshot`
 /// reply with a fully-formatted wire string.
@@ -118,22 +118,23 @@ async fn request(cmd: &str) -> Result<String> {
 /// watcher retries with capped backoff so `hypr:*` events self-heal if Hyprland
 /// starts after the daemon or restarts later.
 ///
-/// `control_tx` is a clone of the input runtime's control channel (same
-/// pattern as the CEC actor, `main.rs::spawn_dbus_actors`): every
-/// `activewindow` event is also forwarded there as
-/// [`Control::HyprActiveWindowChanged`] so the input runtime can make the
-/// Game/Shell presenter follow compositor focus.
+/// `active_window_tx` is the sender half of a [`tokio::sync::watch`] channel
+/// carrying the latest focused-window class: every `activewindow` event is
+/// published there (latest-wins / coalescing) so the input runtime can make the
+/// Game/Shell presenter follow compositor focus. Focus is *state*, not an event
+/// stream, so a watch channel (which only ever retains the newest value) is the
+/// right primitive — a burst of focus changes can never back up or drop.
 pub async fn run(
     mut rx: mpsc::Receiver<HyprReq>,
     events_tx: broadcast::Sender<Event>,
-    control_tx: mpsc::Sender<Control>,
+    active_window_tx: watch::Sender<String>,
 ) -> Result<()> {
     {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
             loop {
-                match watch_events(events_tx.clone(), control_tx.clone()).await {
+                match watch_events(events_tx.clone(), active_window_tx.clone()).await {
                     Ok(()) => backoff = Duration::from_secs(1), // ended cleanly; re-attach
                     Err(e) => tracing::warn!("hyprland: event listener stopped: {e}; retrying"),
                 }
@@ -342,7 +343,7 @@ fn monitor_entry(v: &serde_json::Value) -> serde_json::Value {
 /// caller logs and retries.
 async fn watch_events(
     events_tx: broadcast::Sender<Event>,
-    control_tx: mpsc::Sender<Control>,
+    active_window_tx: watch::Sender<String>,
 ) -> Result<()> {
     let sock = socket_dir()?.join(".socket2.sock");
     let stream = UnixStream::connect(&sock).await?;
@@ -356,13 +357,16 @@ async fn watch_events(
             // comma (a title may contain commas). Empty when focus is lost
             // (`activewindow>>,`), matching the empty-class wire contract.
             //
-            // Also forwarded to the input runtime as `Control::HyprActiveWindowChanged`
-            // so the gamepad presenter follows focus (see the `run` doc comment).
-            // Best-effort and non-blocking (`try_send`, not `.send().await`): this
-            // loop also drives kiosk fullscreen enforcement, so an `.await` on a
-            // full control channel would stall that too. A full channel (input
-            // runtime backed up) or closed one (shutting down) just drops this
-            // focus update rather than blocking the event reader.
+            // Also published to the input runtime over the `active_window` watch
+            // channel (latest-wins) so the gamepad presenter follows focus (see
+            // the `run` doc comment). Coalescing is the whole point: focus is
+            // STATE, so if the input loop is momentarily busy, only the newest
+            // class matters — the watch channel retains it rather than dropping or
+            // backing up (the old `try_send` on a full control channel could drop
+            // a focus update and desync the presenter until the next change).
+            // `watch::send` only errs when every receiver is gone (shutting down),
+            // which is harmless to ignore. This path can no longer stall the event
+            // reader (and thus kiosk fullscreen enforcement) on a full channel.
             "activewindow" => {
                 let class = data
                     .split_once(',')
@@ -370,9 +374,7 @@ async fn watch_events(
                     .unwrap_or(data)
                     .to_string();
                 let _ = events_tx.send(Event::HyprActiveWindow(class.clone()));
-                if let Err(e) = control_tx.try_send(Control::HyprActiveWindowChanged(class)) {
-                    tracing::debug!("hyprland: dropped focus-change control message: {e}");
-                }
+                let _ = active_window_tx.send(class);
             }
             // `fullscreen>>0|1`.
             "fullscreen" => {

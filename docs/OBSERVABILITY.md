@@ -88,6 +88,9 @@ textfile writer and `/metrics`, so the two never drift.
 | `game_shell_pad_joins_total` | counter | — | Gamepads that joined the fleet (hot-join or initial enumeration). |
 | `game_shell_pad_leaves_total` | counter | — | Gamepads that left the fleet (disconnect). |
 | `game_shell_shell_restarts_total` | counter | — | Daemon starts observed this boot session (the daemon re-execs on `/dev/restart-daemon` and is otherwise supervised, so this is the input-daemon restart count). |
+| `game_shell_input_runtime_up` | gauge | — | Input-runtime liveness: `1` while the supervised input event loop is running, `0` during a respawn gap or after it has panicked past its retry budget (the daemon stays alive; IPC input commands then reply `error:input-runtime-down`). Always emitted. |
+| `game_shell_input_runtime_restarts_total` | counter | — | **In-process** input-runtime respawns after a caught panic — the supervisor rebuilds the input event loop (fresh fleet → released grabs) without re-execing the daemon. Distinct from `game_shell_shell_restarts_total` (whole-process starts); a rising value flags a recurring panic in the input path. |
+| `game_shell_grab_invariant_violations_total` | counter | — | Detected grab-state drift: a pad's physical `EVIOCGRAB` disagreed with the presenter policy (`should_grab`) after a transition. Should stay `0`; nonzero means the daemon's grab bookkeeping and the kernel diverged. |
 | `game_shell_deploy_total` | counter | `outcome` (`ok`\|`error`) | `POST /dev/deploy` attempts via the HTTP bridge, split by success/failure. |
 | `game_shell_build_total` | counter | — | `POST /dev/build` attempts via the HTTP bridge. |
 | `game_shell_restart_shell_total` | counter | — | `POST /dev/restart-shell` attempts via the HTTP bridge. |

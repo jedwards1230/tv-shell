@@ -49,6 +49,22 @@ pub struct Metrics {
     /// running total is the shell-input restart count for this boot session.
     pub shell_restarts: AtomicU64,
 
+    // --- Input-runtime supervision (in-process respawn on panic) -------------
+    /// Input-runtime liveness gauge (1 = running, 0 = dead). Set by the input
+    /// runtime supervisor: 1 while the supervised event loop runs, 0 during a
+    /// respawn gap and after retries are exhausted. A gauge stored as `AtomicU64`
+    /// (0/1) alongside the counters for uniform access.
+    pub runtime_up: AtomicU64,
+    /// In-process input-runtime respawns after a caught panic. DISTINCT from
+    /// `shell_restarts` (whole-daemon process starts): this counts the supervisor
+    /// rebuilding the input event loop without re-execing the daemon, so a
+    /// nonzero value flags a recurring panic in the input path.
+    pub runtime_restarts: AtomicU64,
+    /// Detected grab-state drift: a pad's physical `EVIOCGRAB` disagreed with the
+    /// presenter policy (`should_grab`) after a transition. Should stay 0; a
+    /// nonzero value means the daemon's grab bookkeeping and the kernel diverged.
+    pub grab_invariant_violations: AtomicU64,
+
     // --- Dev/deployment action counters (HTTP-bridge handlers) ---------------
     /// `POST /dev/deploy` attempts that succeeded (git fetch+checkout+reset OK).
     pub deploy_ok: AtomicU64,
@@ -100,6 +116,25 @@ impl Metrics {
     #[inline]
     pub fn inc_shell_restarts(&self) {
         self.shell_restarts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Set the input-runtime liveness gauge (`true` = running, `false` = dead).
+    #[inline]
+    pub fn set_runtime_up(&self, up: bool) {
+        self.runtime_up.store(up as u64, Ordering::Relaxed);
+    }
+
+    /// Count one in-process input-runtime respawn (supervisor caught a panic).
+    #[inline]
+    pub fn inc_runtime_restarts(&self) {
+        self.runtime_restarts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Count one detected grab-invariant violation (grab-state drift).
+    #[inline]
+    pub fn inc_grab_invariant_violations(&self) {
+        self.grab_invariant_violations
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a `/dev/deploy` outcome (`true` = success, `false` = failure).
@@ -241,6 +276,31 @@ pub fn render(
         "game-shell-input daemon starts observed this boot session.",
         counters.shell_restarts.load(Ordering::Relaxed),
     );
+
+    // ── Input-runtime supervision ────────────────────────────────────────────
+    counter(
+        &mut out,
+        "game_shell_input_runtime_restarts_total",
+        "In-process input-runtime respawns after a panic (distinct from daemon process starts in game_shell_shell_restarts_total).",
+        counters.runtime_restarts.load(Ordering::Relaxed),
+    );
+    counter(
+        &mut out,
+        "game_shell_grab_invariant_violations_total",
+        "Grab-state drift detected: a pad's physical EVIOCGRAB disagreed with the presenter policy after a transition (should stay 0).",
+        counters.grab_invariant_violations.load(Ordering::Relaxed),
+    );
+    // The input-runtime liveness gauge is app-level and ALWAYS emitted (unlike the
+    // convenience sys gauges gated behind `Some(sys)` below): a scrape must be able
+    // to alert on the runtime being dead even when no sys metrics are present.
+    out.push_str(
+        "# HELP game_shell_input_runtime_up Input runtime liveness (1 = supervised event loop running, 0 = dead/panic-exhausted).\n",
+    );
+    out.push_str("# TYPE game_shell_input_runtime_up gauge\n");
+    out.push_str(&format!(
+        "game_shell_input_runtime_up {}\n",
+        counters.runtime_up.load(Ordering::Relaxed),
+    ));
 
     // ── Dev/deployment action counters ───────────────────────────────────────
     // deploy carries an outcome label so failed deploys are visible; one
@@ -489,6 +549,33 @@ mod tests {
         // No gauges when sys is None; no build_info when build is None.
         assert!(!text.contains("game_shell_cpu_percent"));
         assert!(!text.contains("game_shell_build_info"));
+    }
+
+    #[test]
+    fn runtime_supervision_metrics_render() {
+        let m = Metrics::default();
+        // Fresh: the up-gauge defaults to 0 and both new counters are 0, but all
+        // three are ALWAYS present (no Some(sys)/Some(build) gating).
+        let text0 = render(&m, None, None);
+        assert!(text0.contains("# TYPE game_shell_input_runtime_up gauge"));
+        assert!(text0.contains("\ngame_shell_input_runtime_up 0\n"));
+        assert!(text0.contains("# TYPE game_shell_input_runtime_restarts_total counter"));
+        assert!(text0.contains("\ngame_shell_input_runtime_restarts_total 0\n"));
+        assert!(text0.contains("# TYPE game_shell_grab_invariant_violations_total counter"));
+        assert!(text0.contains("\ngame_shell_grab_invariant_violations_total 0\n"));
+
+        m.set_runtime_up(true);
+        m.inc_runtime_restarts();
+        m.inc_runtime_restarts();
+        m.inc_grab_invariant_violations();
+        let text = render(&m, None, None);
+        assert!(text.contains("\ngame_shell_input_runtime_up 1\n"));
+        assert!(text.contains("\ngame_shell_input_runtime_restarts_total 2\n"));
+        assert!(text.contains("\ngame_shell_grab_invariant_violations_total 1\n"));
+
+        // The gauge tracks liveness both directions.
+        m.set_runtime_up(false);
+        assert!(render(&m, None, None).contains("\ngame_shell_input_runtime_up 0\n"));
     }
 
     #[test]
