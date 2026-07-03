@@ -1,4 +1,5 @@
 import QtQuick
+import "../../components/lib/focusChain.js" as FocusChain
 
 // Base type for home-screen widgets (Now Playing, Moonlight, Plex, Recent, …).
 // It bakes in the duck-typed focus/visibility contract that HomeScreen and
@@ -13,6 +14,14 @@ import QtQuick
 //     chain targets the correct internal sub-row.
 // widgetEnabled, size, and the escaped signal are widget-level concerns the
 // host wires in (Settings ▸ Widgets toggle, sized widgets, B/Escape bubbling).
+//
+// Vertical Up/Down traversal (_navigateUp/_navigateDown) is inherited from the
+// shared focusChain.js helper, so a single-stop widget steps its previousRow/
+// nextRow chain correctly with zero widget-local nav code. ensureVisibleRequested
+// is declared here ONCE (not re-declared per widget) and auto-wired to the host by
+// WidgetHost; for single-stop widgets the base also auto-emits it on focus entry
+// (see onActiveFocusChanged) so a leaf never has to remember either the signal or
+// the emit.
 FocusScope {
     id: root
 
@@ -42,13 +51,42 @@ FocusScope {
     visible: wantVisible
 
     // regionFocused lets HomeScreen's re-anchor net recognise this region;
-    // canFocus lets the vertical-chain walk skip the widget when it can't take
-    // focus (NavigableRow._focusable falls back to `visible` when absent).
+    // canFocus lets the shared vertical-chain walk (focusChain.js) skip the widget
+    // when it can't take focus (the walk falls back to `visible` when absent).
     readonly property bool regionFocused: activeFocus
     property bool canFocus: visible
 
     // Bubbles B/Escape up to HomeScreen's focus reset.
     signal escaped
+
+    // Asks the host's scroll view to bring `item` into view. Declared on the base
+    // so every widget inherits it (a leaf that forgets it would be silently
+    // unscrollable-to); WidgetHost forwards it to HomeScreen. Multi-row widgets
+    // emit it from their internal rows on focus; single-stop widgets get the base
+    // auto-emit below.
+    signal ensureVisibleRequested(var item)
+
+    // Single-stop widgets (firstRow unset) have no internal row to emit
+    // ensureVisibleRequested on focus entry, so the base emits for them. Multi-row
+    // widgets set firstRow to an internal region that emits on ITS own focus, so
+    // the base stays silent here to avoid a double-scroll on entry. Guard on
+    // `visible` too: a disabled/hidden widget that receives focus via a stale
+    // binding or an imperative forceActiveFocus during construction must NOT ask
+    // the host to scroll to an invisible target.
+    onActiveFocusChanged: {
+        if (activeFocus && visible && (root.firstRow === null || root.firstRow === root))
+            root.ensureVisibleRequested(root);
+    }
+
+    // Vertical chain walk, inherited by every widget (shared focusChain.js). Up/
+    // Down step previousRow/nextRow to the nearest focusable neighbour, skipping
+    // hidden / !canFocus regions. Return true when one was focused.
+    function _navigateUp() {
+        return FocusChain.navigateUp(root);
+    }
+    function _navigateDown() {
+        return FocusChain.navigateDown(root);
+    }
 
     // Default single-stop focus entry; multi-row widgets override to target a
     // specific internal sub-row.

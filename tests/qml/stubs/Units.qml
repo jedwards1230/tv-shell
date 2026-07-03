@@ -13,4 +13,10 @@ Item {
 
     property int borderThin: 1
     property int borderMedium: 2
+
+    // Consumed by SteamRpWidget (FocusFrame radius + Steam glyph sizing). Fixed
+    // plausible values keep offscreen layout deterministic (real ones are
+    // gridUnit-derived: radiusMD ≈ gridUnit*0.30, iconSizeLG ≈ gridUnit*2.22).
+    property int radiusMD: 11
+    property int iconSizeLG: 80
 }

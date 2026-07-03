@@ -864,6 +864,23 @@ FocusScope {
     // widgetById aliases (null until a Loader resolves — each Binding/Connections
     // sits idle until then).
 
+    // --- Generic widget signals (wired ONCE) ---
+    // escaped + ensureVisibleRequested are inherited by every widget from the
+    // Widget base and forwarded up by WidgetHost, so HomeScreen handles them here
+    // a single time instead of repeating the same two handlers per widget. Only
+    // widget-SPECIFIC signals (streamRequested, gameSelected, entryActivated, …)
+    // stay hand-wired in the per-widget Connections below.
+    Connections {
+        target: widgetHost
+        function onWidgetEscaped() {
+            root.userActivity();
+            root.focusDefaultPosition();
+        }
+        function onWidgetEnsureVisibleRequested(item) {
+            scrollView.ensureVisible(item);
+        }
+    }
+
     // --- Moonlight ---
     Binding {
         target: root.moonlightWidget
@@ -880,18 +897,11 @@ FocusScope {
     Connections {
         target: root.moonlightWidget
         ignoreUnknownSignals: true
-        function onEscaped() {
-            root.userActivity();
-            root.focusDefaultPosition();
-        }
         function onStreamRequested(target) {
             root.streamRequested(target);
         }
         function onStreamQuitRequested(target) {
             root.streamQuitRequested(target);
-        }
-        function onEnsureVisibleRequested(item) {
-            scrollView.ensureVisible(item);
         }
         function onContextRequested() {
             root._moonlightContext();
@@ -908,22 +918,16 @@ FocusScope {
     }
 
     // --- Now Playing ---
+    // (escaped + ensureVisibleRequested handled by the generic host wiring above;
+    // the single-stop base auto-emits ensureVisibleRequested on focus entry.)
     Connections {
         target: root.nowPlayingWidget
         ignoreUnknownSignals: true
-        function onEscaped() {
-            root.userActivity();
-            root.focusDefaultPosition();
-        }
         function onOpenAppRequested(desktopEntry, identity) {
             root.openMediaApp(desktopEntry, identity);
         }
         function onContextRequested() {
             root._mediaContext(root.nowPlayingWidget);
-        }
-        function onActiveFocusChanged() {
-            if (root.nowPlayingWidget && root.nowPlayingWidget.activeFocus)
-                scrollView.ensureVisible(root.nowPlayingWidget);
         }
     }
 
@@ -931,15 +935,8 @@ FocusScope {
     Connections {
         target: root.plexWidget
         ignoreUnknownSignals: true
-        function onEscaped() {
-            root.userActivity();
-            root.focusDefaultPosition();
-        }
         function onOpenPlexRequested() {
             root.openPlexApp();
-        }
-        function onEnsureVisibleRequested(item) {
-            scrollView.ensureVisible(item);
         }
     }
 
@@ -959,18 +956,11 @@ FocusScope {
     Connections {
         target: root.recentWidget
         ignoreUnknownSignals: true
-        function onEscaped() {
-            root.userActivity();
-            root.focusDefaultPosition();
-        }
         function onEntryActivated(entry) {
             root._recentActivate(entry);
         }
         function onEntryContextRequested(entry, card) {
             root._recentContext(entry, card);
-        }
-        function onEnsureVisibleRequested(item) {
-            scrollView.ensureVisible(item);
         }
         // Apps widget's "Open Library" action chip — jump to the full Library
         // surface (the in-widget chip is an additional path alongside the standalone

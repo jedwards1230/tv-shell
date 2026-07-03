@@ -37,7 +37,8 @@ Widget {
 
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
-    signal ensureVisibleRequested(var item)
+    // ensureVisibleRequested is inherited from the Widget base (auto-wired to the
+    // host by WidgetHost); emitted below from the active sub-view's focus.
     // Raised on the context key (small/server view only); HomeScreen owns the
     // PopoverMenu and reads currentTarget / currentCard / currentHasSession.
     signal contextRequested

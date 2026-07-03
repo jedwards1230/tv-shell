@@ -38,6 +38,9 @@ cp "$shellc/QuickActionButton.qml" "$build/components/"
 # against the stub singletons; tst_navigablegrid exercises its key-nav + handoff.
 cp "$shellc/NavigableGrid.qml" "$build/components/"
 cp "$shellc/lib/CountBadge.qml" "$build/components/lib/"
+# focusChain.js — the shared vertical-traversal helper imported by Widget.qml and
+# NavigableGrid via a relative path; copy it in so those imports resolve headless.
+cp "$shellc/lib/focusChain.js" "$build/components/lib/"
 # Widget base + WidgetHost are pure QtQuick (no Quickshell), so they run headless
 # against the stub WidgetRegistry + Stub*Widget shims under stubs/lib. They now
 # live in shell/widgets/lib/ but are copied into the test's assembled
@@ -73,6 +76,7 @@ StreamCard 1.0 StreamCard.qml
 WakeCard 1.0 WakeCard.qml
 SessionIndicator 1.0 SessionIndicator.qml
 NowPlayingCard 1.0 NowPlayingCard.qml
+FocusFrame 1.0 FocusFrame.qml
 EOF
 
 # 3b. REAL components.lib types the widgets instantiate (ServiceMonitor drives the
@@ -113,6 +117,13 @@ mkdir -p "$build/widgets/nowplaying"
 cp "$shellw/nowplaying/NowPlayingWidget.qml" "$build/widgets/nowplaying/"
 cp "$wstub/widgets/nowplaying/NowPlayingStripView.qml" "$build/widgets/nowplaying/"
 cp "$wstub/widgets/nowplaying/qmldir" "$build/widgets/nowplaying/qmldir"
+
+# steam: the REAL single-stop SteamRpWidget (it instantiates the stub FocusFrame
+# above; no Quickshell.Io deps of its own). Covers the cross-PR drift that bricked
+# the shell — a leaf re-declaring a base signal is now a headless load failure.
+mkdir -p "$build/widgets/steam"
+cp "$shellw/steam/SteamRpWidget.qml" "$build/widgets/steam/"
+cp "$wstub/widgets/steam/qmldir" "$build/widgets/steam/qmldir"
 
 # 3e. Stub Quickshell modules on a second import path so real leaves that
 #     `import Quickshell.Services.Mpris` load headless (no Quickshell runtime).

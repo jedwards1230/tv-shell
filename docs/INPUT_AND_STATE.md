@@ -261,10 +261,13 @@ Adding a new home widget is therefore "implement the contract + `enabled`/`size`
 insert it into `_contentRegions()`, wire its `previousRow`/`nextRow`, and add a
 row + config sub-page to the Widgets settings list (`WidgetsSettings.qml`)" — no
 edits to the focus helpers. Each region's
-`previousRow`/`nextRow` points at its immediate neighbour; the `NavigableRow`/
-`FilterChips` up/down walkers follow that chain and skip any neighbour whose
-`visible` is false, so a disabled widget or a filtered-empty row is transparently
-stepped over. The **Plex** widget owns its own `plex-hubs` `ServiceMonitor` (On
+`previousRow`/`nextRow` points at its immediate neighbour; every up/down walker —
+`NavigableRow`, `NavigableGrid`, `WakeCard`, and the `Widget` base itself — shares
+ONE traversal helper (`shell/components/lib/focusChain.js`) that follows that chain
+and skips any neighbour whose `canFocus` is false (falling back to `visible` when a
+neighbour predates the contract), so a disabled widget or a filtered-empty row is
+transparently stepped over. (The helper replaced four verbatim copies of the walk
+plus a fifth, subtly divergent `visible`-only variant in `WakeCard`.) The **Plex** widget owns its own `plex-hubs` `ServiceMonitor` (On
 Deck + Recently Added rows, the latter with dynamic category chips); when the
 server is unreachable the rows collapse and an inline `ServiceStatusNotice`
 renders in their place.

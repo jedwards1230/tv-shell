@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "lib/focusChain.js" as FocusChain
 
 // Single "Wake <host>" card shown in place of the Steam poster row when the
 // streaming host is unavailable (the `steam-library` ServiceMonitor status is
@@ -122,32 +123,18 @@ FocusScope {
     Keys.onReturnPressed: root.activated()
     Keys.onEnterPressed: root.activated()
 
-    // Up/Down walk the previousRow/nextRow chains (skipping hidden rows), exactly
-    // like FilterChips, so vertical navigation works while the wake card stands in
-    // for the poster row. B/Escape bubbles up as `escaped`.
+    // Up/Down walk the previousRow/nextRow chains via the shared focusChain helper
+    // (skipping !canFocus neighbours — was previously an inline `.visible`-only walk
+    // that wrongly focused a visible-but-!canFocus region), so vertical navigation
+    // works while the wake card stands in for the poster row. B/Escape bubbles up as
+    // `escaped`.
     Keys.onUpPressed: event => {
         InputMode.exitMouseMode();
-        var up = root.previousRow;
-        while (up) {
-            if (up.visible) {
-                up.forceActiveFocus();
-                event.accepted = true;
-                break;
-            }
-            up = (up.previousRow !== undefined) ? up.previousRow : null;
-        }
+        event.accepted = FocusChain.navigateUp(root);
     }
     Keys.onDownPressed: event => {
         InputMode.exitMouseMode();
-        var dn = root.nextRow;
-        while (dn) {
-            if (dn.visible) {
-                dn.forceActiveFocus();
-                event.accepted = true;
-                break;
-            }
-            dn = (dn.nextRow !== undefined) ? dn.nextRow : null;
-        }
+        event.accepted = FocusChain.navigateDown(root);
     }
     Keys.onEscapePressed: event => {
         root.escaped();

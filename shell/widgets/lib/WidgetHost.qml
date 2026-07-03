@@ -17,6 +17,12 @@ import QtQuick.Layouts
 // re-resolve when a widget's `canFocus` / `firstRow` / `lastRow` changes (e.g.
 // Plex health flips, Moonlight size flips) — exactly what the old per-site
 // `canFocus ? …firstRow : …` ternaries did, but for any widget set.
+//
+// It also FORWARDS the two generic Widget-base signals (`escaped`,
+// `ensureVisibleRequested`) up as host-level signals (`widgetEscaped`,
+// `widgetEnsureVisibleRequested`), so HomeScreen connects them once instead of
+// repeating identical per-widget handlers. Widget-specific signals stay
+// hand-wired in HomeScreen against each widget instance.
 ColumnLayout {
     id: host
 
@@ -29,6 +35,14 @@ ColumnLayout {
     // bottomAnchor = the All Apps entry (DOWN from the last widget lands here).
     property Item topAnchor: null
     property Item bottomAnchor: null
+
+    // Generic widget signals forwarded up ONCE, so HomeScreen wires them a single
+    // time instead of repeating the same handler per widget. Every widget inherits
+    // `escaped` + `ensureVisibleRequested` from the Widget base; onLoaded connects
+    // each instance's copy to these (a widget-specific signal — launchRequested,
+    // gameSelected, … — stays hand-wired in HomeScreen against the widget instance).
+    signal widgetEscaped
+    signal widgetEnsureVisibleRequested(var item)
 
     // Loaded widget items in registry order (null entries until each Loader
     // resolves — Loaders are synchronous, so this fills during construction).
@@ -149,6 +163,16 @@ ColumnLayout {
 
             onLoaded: {
                 var idx = wLoader.index;
+                // Forward the two generic Widget-base signals up to the host-level
+                // signals HomeScreen connects once (signal→signal re-emit). Every
+                // widget has both (inherited from Widget), so this is uniform. Wire
+                // these FIRST, before the property bindings below: setting size /
+                // widgetEnabled / previousRow / nextRow can trigger a focus side-
+                // effect, and the base's onActiveFocusChanged auto-emits
+                // ensureVisibleRequested — connecting after would drop that first
+                // emit and leave the widget un-scrolled-to.
+                item.escaped.connect(host.widgetEscaped);
+                item.ensureVisibleRequested.connect(host.widgetEnsureVisibleRequested);
                 item.widgetEnabled = Qt.binding(() => wLoader.modelData.enabled);
                 item.size = Qt.binding(() => wLoader.modelData.size);
                 item.previousRow = Qt.binding(() => host._prevTargetFor(idx));

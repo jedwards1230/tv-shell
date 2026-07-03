@@ -1,4 +1,5 @@
 import QtQuick
+import "lib/focusChain.js" as FocusChain
 
 // Vertical wrapping grid that implements the same duck-typed home-tile focus
 // contract as NavigableRow (regionFocused / canFocus / focusFirstChild +
@@ -81,34 +82,6 @@ FocusScope {
     onActiveFocusChanged: if (activeFocus && root.currentItem)
         Qt.callLater(() => root.ensureVisibleRequested(root.currentItem))
 
-    // A neighbour is focusable when its contract `canFocus` is true; rows that
-    // predate the contract fall back to plain `visible` (same as NavigableRow).
-    function _focusable(item) {
-        return item.canFocus !== undefined ? item.canFocus : item.visible;
-    }
-
-    function _navigateUp() {
-        var target = root.previousRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.previousRow !== undefined) ? target.previousRow : null;
-        }
-    }
-
-    function _navigateDown() {
-        var target = root.nextRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.nextRow !== undefined) ? target.nextRow : null;
-        }
-    }
-
     Keys.onPressed: event => {
         var n = rep.count;
         if (n === 0)
@@ -130,12 +103,15 @@ FocusScope {
             InputMode.exitMouseMode();
             {
                 var up = root.currentIndex - root.columns;
-                if (up >= 0)
+                if (up >= 0) {
                     root.currentIndex = up;
-                else
-                    root._navigateUp();  // top row → hand off UP the chain
+                    event.accepted = true;
+                } else {
+                    // top row → hand off UP the chain; accept only if it moved focus
+                    // (a failed hand-off bubbles, matching NavigableRow / WakeCard).
+                    event.accepted = FocusChain.navigateUp(root);
+                }
             }
-            event.accepted = true;
             break;
         case Qt.Key_Down:
             InputMode.exitMouseMode();
@@ -143,18 +119,22 @@ FocusScope {
                 var down = root.currentIndex + root.columns;
                 if (down < n) {
                     root.currentIndex = down;
+                    event.accepted = true;
                 } else {
                     // Past the last full step. If we're NOT already on the bottom
                     // row, clamp to the final cell (a short last row); only when
                     // already on the bottom row do we hand off DOWN the chain.
                     var onBottomRow = root.currentIndex >= (root.rows - 1) * root.columns;
-                    if (!onBottomRow && root.currentIndex !== n - 1)
+                    if (!onBottomRow && root.currentIndex !== n - 1) {
                         root.currentIndex = n - 1;
-                    else
-                        root._navigateDown();
+                        event.accepted = true;
+                    } else {
+                        // hand off DOWN the chain; accept only if it moved focus
+                        // (a failed hand-off bubbles, matching NavigableRow / WakeCard).
+                        event.accepted = FocusChain.navigateDown(root);
+                    }
                 }
             }
-            event.accepted = true;
             break;
         case Qt.Key_Return:
         case Qt.Key_Enter:

@@ -1,6 +1,17 @@
 import QtQuick
 import QtQuick.Effects
 
+// Card focus chrome: a scale-up + brighter fill + crimson ring + glow on focus.
+//
+// HAZARD — center-origin focus scale overflows its container. The default
+// `scaleEnabled: true` grows the frame `focusScale`× about its centre, so a
+// FULL-WIDTH frame's scaled bounds spill past BOTH parent/screen edges on focus
+// (hit repeatedly, worked around ad hoc by bounding the frame's own width or by
+// `scaleEnabled: false`). To make it safe by construction, give the frame an
+// `availableWidth` (the parent clip bound): the effective focus scale is then
+// clamped so the scaled width never exceeds it. When `availableWidth` is left 0
+// (unbounded) the behavior is UNCHANGED — callers that already bound their frame
+// (WakeCard) or disable scale (NowPlayingCard) render identically.
 Item {
     id: root
 
@@ -12,6 +23,28 @@ Item {
     property bool scaleEnabled: true
     property real focusScale: 1.06
     property real restScale: 1.0
+
+    // Optional clip bound (px) the SCALED frame must fit within. 0 = unbounded
+    // (legacy behavior — no clamp). When > 0, the effective focus scale is capped
+    // at availableWidth/width so a center-origin scale can't overflow the edges.
+    property real availableWidth: 0
+
+    // The focus scale actually applied: focusScale, capped so the scaled width
+    // (width × scale) stays within availableWidth when a bound is provided. Never
+    // shrinks below restScale.
+    readonly property real effectiveFocusScale: {
+        if (root.availableWidth <= 0 || root.width <= 0)
+            return root.focusScale;
+        return Math.max(root.restScale, Math.min(root.focusScale, root.availableWidth / root.width));
+    }
+
+    // Opt-in dev warning: an unbounded scaling full-width frame is the overflow
+    // trap above. Set true on a suspect call site to get a one-line console hint.
+    property bool debugScaleBounds: false
+    Component.onCompleted: {
+        if (root.debugScaleBounds && root.scaleEnabled && root.focusScale > root.restScale && root.availableWidth <= 0)
+            console.warn("FocusFrame: scaling with no availableWidth — a full-width frame will overflow its container on focus. Set availableWidth to the parent clip bound.");
+    }
     property color backgroundColor: Theme.cardBackground
     property color focusBackgroundColor: Theme.surfaceHover
     property color glowColor: Theme.cardFocusGlow
@@ -39,8 +72,8 @@ Item {
             // ENTIRELY — the target stays at restScale, it is NOT just animated at
             // duration 0. Focus remains clearly marked by the static ring + glow +
             // brighter fill below, so do not "restore" a zero-duration scale here.
-            xScale: root.scaleEnabled && root.focused && root.animationsEnabled ? root.focusScale : root.restScale
-            yScale: root.scaleEnabled && root.focused && root.animationsEnabled ? root.focusScale : root.restScale
+            xScale: root.scaleEnabled && root.focused && root.animationsEnabled ? root.effectiveFocusScale : root.restScale
+            yScale: root.scaleEnabled && root.focused && root.animationsEnabled ? root.effectiveFocusScale : root.restScale
             Behavior on xScale {
                 NumberAnimation {
                     duration: root.animationsEnabled ? root.scaleDuration : 0

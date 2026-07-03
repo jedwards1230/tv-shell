@@ -1,4 +1,5 @@
 import QtQuick
+import "lib/focusChain.js" as FocusChain
 
 FocusScope {
     id: root
@@ -39,8 +40,9 @@ FocusScope {
     readonly property bool regionFocused: activeFocus
 
     // Part of the contract — true only when this row is both shown and non-empty.
-    // The vertical-chain walk (_navigateUp/_navigateDown) skips a neighbour whose
-    // canFocus is false so focus never lands on a visible-but-empty row.
+    // The shared vertical-chain walk (focusChain.js, driven by Up/Down below) skips
+    // a neighbour whose canFocus is false so focus never lands on a visible-but-
+    // empty row.
     readonly property bool canFocus: visible && listView.count > 0
 
     function focusFirstChild() {
@@ -162,42 +164,16 @@ FocusScope {
                 }
             }
         }
-        Keys.onUpPressed: {
+        // Accept the event only when the chain walk actually moved focus; a failed
+        // hand-off (no focusable neighbour) leaves accepted=false so the key can
+        // bubble — matches WakeCard / MprisPlayerBase.
+        Keys.onUpPressed: event => {
             InputMode.exitMouseMode();
-            root._navigateUp();
+            event.accepted = FocusChain.navigateUp(root);
         }
-        Keys.onDownPressed: {
+        Keys.onDownPressed: event => {
             InputMode.exitMouseMode();
-            root._navigateDown();
-        }
-    }
-
-    // A neighbour is focusable when its contract `canFocus` is true. Targets that
-    // predate the contract (or non-widget rows like the QuickActions strip)
-    // expose no canFocus, so fall back to plain `visible`.
-    function _focusable(item) {
-        return item.canFocus !== undefined ? item.canFocus : item.visible;
-    }
-
-    function _navigateUp() {
-        var target = previousRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.previousRow !== undefined) ? target.previousRow : null;
-        }
-    }
-
-    function _navigateDown() {
-        var target = nextRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.nextRow !== undefined) ? target.nextRow : null;
+            event.accepted = FocusChain.navigateDown(root);
         }
     }
 }

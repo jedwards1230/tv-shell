@@ -191,9 +191,13 @@ Existing reusable atoms still in the flat `components/` dir (`BaseCard`,
 **`Widget.qml`** is the base type for home-screen widgets (Now Playing, Moonlight,
 Plex, Apps). It bakes in the duck-typed focus contract HomeScreen + NavigableRow
 query (`previousRow`/`nextRow`/`firstRow`/`lastRow`, `canFocus`/`regionFocused`,
-`focusFirstChild()`, `widgetEnabled`, `size`, `escaped`) with single-stop defaults,
-so a widget extending it satisfies the contract for free and overrides only what it
-needs. `MprisPlayerBase` extends it (overriding `canFocus`/`focusFirstChild`).
+`focusFirstChild()`, `widgetEnabled`, `size`, `escaped`, `ensureVisibleRequested`)
+with single-stop defaults, so a widget extending it satisfies the contract for free
+and overrides only what it needs. Up/Down traversal is inherited from the shared
+`shell/components/lib/focusChain.js` helper (also used by `NavigableRow`/
+`NavigableGrid`/`WakeCard`); `escaped` + `ensureVisibleRequested` are forwarded by
+`WidgetHost` so `HomeScreen` wires them once. `MprisPlayerBase` extends it
+(overriding `canFocus`/`focusFirstChild`).
 
 **Per-widget config is namespaced (#249 Phase 3).** Each widget owns a
 `widgets.<id>.{enabled,order,size,prefs}` subtree in `settings.json`, the QML SSOT

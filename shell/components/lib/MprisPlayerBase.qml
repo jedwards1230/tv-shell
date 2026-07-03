@@ -163,17 +163,13 @@ Widget {
             break;
         case Qt.Key_Up:
             InputMode.exitMouseMode();
-            if (root.previousRow) {
-                root.previousRow.forceActiveFocus();
-                event.accepted = true;
-            }
+            // Inherited chain walk (skips !canFocus neighbours) — was a blind
+            // forceActiveFocus on previousRow that ignored the contract.
+            event.accepted = root._navigateUp();
             break;
         case Qt.Key_Down:
             InputMode.exitMouseMode();
-            if (root.nextRow) {
-                root.nextRow.forceActiveFocus();
-                event.accepted = true;
-            }
+            event.accepted = root._navigateDown();
             break;
         case Qt.Key_Return:
         case Qt.Key_Enter:
