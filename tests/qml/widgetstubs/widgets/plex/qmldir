@@ -1,0 +1,3 @@
+module widgets.plex
+PlexWidget 1.0 PlexWidget.qml
+PlexCard 1.0 PlexCard.qml

@@ -76,3 +76,38 @@ the **real** `WidgetManifests` singleton (copied into the assembled `components.
 module by `run.sh`, since it is pure-data with no Quickshell imports). That keeps
 the migration invariants (fresh-install defaults, legacy flat-key preservation,
 idempotency) pinned to production code with zero drift.
+
+## Widget-contract conformance (`tst_widgetcontract`)
+
+`tst_widgetcontract.qml` loads the **four REAL home widgets** — `AppsWidget`,
+`PlexWidget`, `MoonlightWidget`, `NowPlayingWidget` — and asserts each honours the
+duck-typed home-tile contract (`focusFirstChild()`/`canFocus`/`wantVisible` +
+no-focus-trap Up/Down hand-off + the optional `ensureVisibleRequested` signal).
+Assertions are **behavioral and refactor-agnostic**: they check behaviour (focus
+leaves the widget onto its wired neighbour; the signal fires *iff* the widget
+exposes it), never "function X exists on the base".
+
+To make the real widgets' own relative imports resolve, `run.sh` mirrors the
+widget subtree into `.build/widgets/{lib,apps,plex,moonlight,nowplaying}` so
+`../lib` → the real `Widget`/`SegmentedHeader`/`FilterChips`, `../../components`
+→ the SAME flat stub module the other tests use, and `../../components/lib` →
+`ServiceMonitor`/`ServiceStatusNotice`/`MprisPlayerBase` (all real). The widget
+ROOTS + their focus/segment framework + `SteamLibraryView` are copied **verbatim**
+(the contract under test has zero drift). Only two classes are stubbed
+(`tests/qml/widgetstubs/`):
+
+- **Quickshell-backed clients** — `SocketClient` / `AppDiscoveryManager` become
+  inert no-ops, and a minimal `Quickshell.Services.Mpris` `Mpris` singleton is
+  put on a second import path (`-import .build/qml`) so `MprisPlayerBase` loads.
+- **Pure-visual leaf cards** — `AppCard` / `StreamCard` / `PlexCard` / `SteamCard`
+  / `WakeCard` / `SessionIndicator` / `NowPlayingCard` / `NowPlayingStripView`
+  (the `QtQuick.Effects`/`image://icon` renderers) become minimal stubs exposing
+  only the delegate/child surface the real widgets assign. They never render in
+  the contract test, so a stub is faithful enough for load.
+
+`PlexWidget`'s visibility is gated on the live `ServiceMonitor` health bus, which
+can't be faked headlessly — its row asserts load + contract shape + the
+*structural* no-trap guarantee (a non-focusable widget is skipped by the chain)
+rather than a synthetic key hand-off. The other three inject minimal content
+(a recent-model row / a Moonlight target / a fake MPRIS player) to exercise the
+full visible→focusable→hand-off path.

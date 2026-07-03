@@ -23,11 +23,25 @@ Item {
     property int cardHeight: 120
     property int cardSpacing: 16
 
+    // Row/font metrics the widget-contract components bind (tst_widgetcontract).
+    property int rowHeight: 140
+    property int fontTitle: 28
+    property int fontBody: 20
+    property int fontSmall: 16
+    property int fontCaption: 14
+
     property color textPrimary: "#ffffff"
+    property color textSecondary: "#c0c0c0"
     property color textMuted: "#9aa0a6"
     property color warning: "#e0a030"
+    property color surface: "#141414"
     property color surfaceHover: "#202020"
+    property color surfaceBorder: "#303030"
+    property color sidebarActive: "#dd3333"
     property color focusBorder: "#dd3333"
     property color crimson: "#dd3333"
+    property color ember: "#e0662e"
+    property color gold: "#d4af37"
+    property color offline: "#888888"
     property color textOnDark: "#ffffff"
 }

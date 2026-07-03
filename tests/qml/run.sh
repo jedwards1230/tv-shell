@@ -49,6 +49,76 @@ cp "$shellw/lib/WidgetHost.qml" "$build/components/lib/"
 cp "$shellw/lib/WidgetManifests.qml" "$build/components/lib/"
 cp "$here/stubs/lib/"*.qml "$build/components/lib/"
 
-# 3. Run every tst_*.qml in tests/qml headless.
+# 3. Widget-contract harness (tst_widgetcontract): mirror the REAL home-widget
+#    subtree into .build so each widget's own relative imports resolve naturally
+#    (`../lib` → widgets/lib, `../../components` → the SAME flat stub module the
+#    existing tests use, `../../components/lib` → components.lib). The four widget
+#    ROOT files + their focus/segment framework are the REAL production files
+#    (zero drift for the contract under test); only Quickshell-backed clients and
+#    the pure-visual leaf CARDS are stubbed (widgetstubs/). See tests/qml/README.md.
+wstub="$here/widgetstubs"
+
+# 3a. Extra flat `components` leaves the widgets pull in. NavigableRow is the one
+#     REAL pure-QtQuick leaf; the rest are inert stubs (SocketClient/AppDiscovery
+#     are Quickshell.Io-backed; the cards are QtQuick.Effects visuals that never
+#     render in the contract test — see widgetstubs/components/*.qml).
+cp "$shellc/NavigableRow.qml" "$build/components/"
+cp "$wstub/components/"*.qml "$build/components/"
+cat >>"$build/components/qmldir" <<'EOF'
+NavigableRow 1.0 NavigableRow.qml
+SocketClient 1.0 SocketClient.qml
+singleton AppDiscoveryManager 1.0 AppDiscoveryManager.qml
+AppCard 1.0 AppCard.qml
+StreamCard 1.0 StreamCard.qml
+WakeCard 1.0 WakeCard.qml
+SessionIndicator 1.0 SessionIndicator.qml
+NowPlayingCard 1.0 NowPlayingCard.qml
+EOF
+
+# 3b. REAL components.lib types the widgets instantiate (ServiceMonitor drives the
+#     health bus off the stub SocketClient; MprisPlayerBase reads the stub Mpris).
+cp "$shellc/lib/ServiceMonitor.qml" "$build/components/lib/"
+cp "$shellc/lib/ServiceStatusNotice.qml" "$build/components/lib/"
+cp "$shellc/lib/MprisPlayerBase.qml" "$build/components/lib/"
+cat >>"$build/components/lib/qmldir" <<'EOF'
+ServiceMonitor 1.0 ServiceMonitor.qml
+ServiceStatusNotice 1.0 ServiceStatusNotice.qml
+MprisPlayerBase 1.0 MprisPlayerBase.qml
+EOF
+
+# 3c. Widget framework (widgets/lib) — REAL Widget base + shared segment header.
+mkdir -p "$build/widgets/lib"
+cp "$shellw/lib/Widget.qml" "$build/widgets/lib/"
+cp "$shellw/lib/FilterChips.qml" "$build/widgets/lib/"
+cp "$shellw/lib/SegmentedHeader.qml" "$build/widgets/lib/"
+cp "$wstub/widgets/lib/qmldir" "$build/widgets/lib/qmldir"
+
+# 3d. The four REAL home widgets + their same-dir leaves (real view / stub cards).
+mkdir -p "$build/widgets/apps"
+cp "$shellw/apps/AppsWidget.qml" "$build/widgets/apps/"
+cp "$wstub/widgets/apps/qmldir" "$build/widgets/apps/qmldir"
+
+mkdir -p "$build/widgets/plex"
+cp "$shellw/plex/PlexWidget.qml" "$build/widgets/plex/"
+cp "$wstub/widgets/plex/PlexCard.qml" "$build/widgets/plex/"
+cp "$wstub/widgets/plex/qmldir" "$build/widgets/plex/qmldir"
+
+mkdir -p "$build/widgets/moonlight"
+cp "$shellw/moonlight/MoonlightWidget.qml" "$build/widgets/moonlight/"
+cp "$shellw/moonlight/SteamLibraryView.qml" "$build/widgets/moonlight/"
+cp "$wstub/widgets/moonlight/SteamCard.qml" "$build/widgets/moonlight/"
+cp "$wstub/widgets/moonlight/qmldir" "$build/widgets/moonlight/qmldir"
+
+mkdir -p "$build/widgets/nowplaying"
+cp "$shellw/nowplaying/NowPlayingWidget.qml" "$build/widgets/nowplaying/"
+cp "$wstub/widgets/nowplaying/NowPlayingStripView.qml" "$build/widgets/nowplaying/"
+cp "$wstub/widgets/nowplaying/qmldir" "$build/widgets/nowplaying/qmldir"
+
+# 3e. Stub Quickshell modules on a second import path so real leaves that
+#     `import Quickshell.Services.Mpris` load headless (no Quickshell runtime).
+mkdir -p "$build/qml"
+cp -R "$wstub/qml/Quickshell" "$build/qml/Quickshell"
+
+# 4. Run every tst_*.qml in tests/qml headless.
 echo "Running QML tests with: $runner (offscreen)"
-QT_QPA_PLATFORM=offscreen "$runner" -import "$build" -input "$here"
+QT_QPA_PLATFORM=offscreen "$runner" -import "$build" -import "$build/qml" -input "$here"
