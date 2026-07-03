@@ -5,6 +5,7 @@ import widgets.apps
 import widgets.plex
 import widgets.moonlight
 import widgets.nowplaying
+import widgets.steam
 
 // Widget-contract conformance test — loads the FOUR REAL home widgets
 // (AppsWidget / PlexWidget / MoonlightWidget / NowPlayingWidget) through the
@@ -136,6 +137,10 @@ TestCase {
     Component {
         id: nowPlayingComp
         NowPlayingWidget {}
+    }
+    Component {
+        id: steamRpComp
+        SteamRpWidget {}
     }
 
     // Reset the shared Mpris stub so test order can't leak an injected player.
@@ -294,6 +299,18 @@ TestCase {
                     "values": [fakePlayerComp.createObject(testCase)]
                 };
             }
+        });
+    }
+
+    // Steam Remote Play: a single-stop launcher tile. No content/health gating —
+    // widgetEnabled alone drives wantVisible — so it is reachable headlessly. This
+    // is the widget whose cross-PR drift (a leaf re-declaring the base's
+    // ensureVisibleRequested signal) bricked the shell; covering it here makes that
+    // exact load failure CI-catchable.
+    function test_steamrp() {
+        _run(steamRpComp, {
+            "name": "SteamRpWidget",
+            "reachable": true
         });
     }
 

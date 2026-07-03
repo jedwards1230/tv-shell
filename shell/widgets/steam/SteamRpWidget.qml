@@ -18,19 +18,16 @@ import "../../components"
 // streamClasses: ["steam"]) cover it for free — no stream, shell state, or provider.
 //
 // Ships DISABLED by default (WidgetManifests defaultEnabled: false). Single-stop:
-// leaves firstRow/lastRow null, forwards Up/Down to previousRow/nextRow (like
-// WakeCard/NavigableRow), and emits ensureVisibleRequested on focus so the home
-// Flickable scrolls to it when it is below the fold.
+// leaves firstRow/lastRow null, so it inherits the Widget base's contract wholesale
+// — Up/Down forward to previousRow/nextRow via the shared focusChain helper, and
+// ensureVisibleRequested (declared once on the base, forwarded by WidgetHost) is
+// auto-emitted by the base on focus entry so the home Flickable scrolls to it when
+// it is below the fold. This widget adds only its own launchRequested signal.
 Widget {
     id: root
 
     // Emitted on A / Return / click → HomeScreen launches Steam Big Picture.
     signal launchRequested
-
-    // Ask the home Flickable to scroll this widget into view when it gains focus
-    // (e.g. arriving from the widget above while below the fold). Mirrors
-    // AppsWidget/NavigableRow so focus-follow scrolling works for this tile too.
-    signal ensureVisibleRequested(var item)
 
     // Poster-tile dimensions — same proportion as the game cards / WakeCard, so
     // the FocusFrame focus-pop grows ~one margin per side and never runs offscreen.
@@ -51,32 +48,8 @@ Widget {
         return true;
     }
 
-    // Vertical focus handoff — walk previousRow/nextRow and forceActiveFocus the
-    // first focusable neighbour, skipping unfocusable ones, no-oping at the ends.
-    // Copied from NavigableRow so the handoff is identical to every other widget.
-    function _focusable(item) {
-        return item.canFocus !== undefined ? item.canFocus : item.visible;
-    }
-    function _navigateUp() {
-        var target = root.previousRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.previousRow !== undefined) ? target.previousRow : null;
-        }
-    }
-    function _navigateDown() {
-        var target = root.nextRow;
-        while (target) {
-            if (root._focusable(target)) {
-                target.forceActiveFocus();
-                return;
-            }
-            target = (target.nextRow !== undefined) ? target.nextRow : null;
-        }
-    }
+    // Vertical focus handoff (_navigateUp/_navigateDown) is inherited from the
+    // Widget base's shared focusChain helper — no local copy.
 
     FocusFrame {
         id: tile
@@ -92,10 +65,9 @@ Widget {
         radius: Units.radiusMD
         focused: (tile.activeFocus && !InputMode.mouseMode) || (tileMouse.containsMouse && InputMode.mouseMode)
 
-        // Scroll into view on focus so the home Flickable follows focus onto this
-        // tile when it is below the fold (same as the other widgets).
-        onActiveFocusChanged: if (tile.activeFocus)
-            root.ensureVisibleRequested(tile)
+        // Scroll-into-view on focus is handled by the Widget base's single-stop
+        // auto-emit of ensureVisibleRequested (firstRow is null here), so no manual
+        // emit — that would double-fire with the base.
 
         Accessible.role: Accessible.Button
         Accessible.name: "Steam Remote Play"
@@ -182,15 +154,15 @@ Widget {
             InputMode.exitMouseMode();
             root.launchRequested();
         }
+        // Accept the event only when the inherited chain walk moved focus; a failed
+        // hand-off leaves it unaccepted so the key can bubble (matches NavigableRow).
         Keys.onUpPressed: event => {
             InputMode.exitMouseMode();
-            root._navigateUp();
-            event.accepted = true;
+            event.accepted = root._navigateUp();
         }
         Keys.onDownPressed: event => {
             InputMode.exitMouseMode();
-            root._navigateDown();
-            event.accepted = true;
+            event.accepted = root._navigateDown();
         }
         Keys.onEscapePressed: event => {
             InputMode.exitMouseMode();
