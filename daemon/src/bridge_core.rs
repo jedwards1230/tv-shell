@@ -432,16 +432,26 @@ pub async fn dev_build() -> Result<String, String> {
 /// MSRV.
 static RESTART_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Parse `pgrep -xc quickshell` stdout into a process count.
+/// Count **live** quickshell processes from `ps -eo stat=,comm=` output.
 ///
-/// Trims, reads the first line, parses it as `usize`; anything empty or
-/// non-numeric (no match, garbage) yields 0.
-fn parse_pgrep_count(out: &str) -> usize {
-    out.trim()
+/// Each line is `<stat> <comm>`. We count lines whose command is exactly
+/// `quickshell` and whose process state is not `Z` (zombie / `<defunct>`).
+///
+/// Excluding zombies matters for the #254 detection: the fallback spawn path can
+/// leave short-lived `<defunct>` children under the daemon, and a plain
+/// `pgrep -xc quickshell` counts those too — so it would report >1 even when
+/// exactly one *live* shell is running, making the multi-instance metric cry wolf
+/// on the very path it monitors.
+fn count_live_quickshell(ps_output: &str) -> usize {
+    ps_output
         .lines()
-        .next()
-        .and_then(|l| l.trim().parse::<usize>().ok())
-        .unwrap_or(0)
+        .filter(|line| {
+            let mut fields = line.split_whitespace();
+            let stat = fields.next().unwrap_or("");
+            let comm = fields.next().unwrap_or("");
+            comm == "quickshell" && !stat.starts_with('Z')
+        })
+        .count()
 }
 
 /// `POST /dev/restart-shell` — restart Quickshell and return a brief startup
@@ -486,6 +496,18 @@ pub async fn dev_restart_shell(
 
     let mut used_unit = false;
     if is_active {
+        // Clear any poisoned start-limit counter before restarting (ignore
+        // failure). A tight dev loop (unit start → dev restart → crash-respawn →
+        // dev restart within 60s) can trip StartLimitBurst; without this reset the
+        // very next `systemctl restart` is refused ("start … too often") and — per
+        // the no-fallback rule below — restart-shell would error with the shell
+        // left down until a manual reset-failed. Resetting here keeps the dev loop
+        // unwedged; a unit that isn't failed makes this a harmless no-op.
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["--user", "reset-failed", unit])
+            .output()
+            .await;
+
         // The unit supervises Quickshell, so `systemctl --user restart` is the
         // ONLY safe path here — a restart failure is a hard error, NOT a fallback
         // to pkill/spawn. Falling back while the unit is active would re-create
@@ -564,27 +586,29 @@ pub async fn dev_restart_shell(
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
     // Post-spawn instance verification (#254): after the settle, there should be
-    // exactly one quickshell. More than one means restarts stacked — count it and
-    // log loudly. A pgrep failure is non-fatal (skip the check).
-    match tokio::process::Command::new("pgrep")
-        .args(["-xc", "quickshell"])
+    // exactly one LIVE quickshell. More than one means restarts stacked — count it
+    // and log loudly. We count via `ps -eo stat=,comm=` and exclude zombies
+    // (`<defunct>`, stat `Z`): the fallback spawn path can leave defunct children
+    // under the daemon, and counting those would false-positive the metric even
+    // when a single live shell is running. A `ps` failure is non-fatal (skip).
+    match tokio::process::Command::new("ps")
+        .args(["-eo", "stat=,comm="])
         .output()
         .await
     {
         Ok(o) => {
-            let count = parse_pgrep_count(&String::from_utf8_lossy(&o.stdout));
+            let count = count_live_quickshell(&String::from_utf8_lossy(&o.stdout));
             if count > 1 {
                 tracing::error!(
-                    "restart-shell: {count} quickshell processes running after restart settle \
-                     — stacked instances (#254)"
+                    "restart-shell: {count} live quickshell processes running after restart \
+                     settle — stacked instances (#254)"
                 );
                 metrics.inc_quickshell_multi_instance();
             }
         }
         Err(e) => {
             tracing::debug!(
-                "restart-shell: could not run `pgrep -xc quickshell` ({e}); \
-                 skipping instance verification"
+                "restart-shell: could not run `ps` for instance verification ({e}); skipping"
             );
         }
     }
@@ -1109,12 +1133,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_pgrep_count_parses_process_counts() {
-        assert_eq!(parse_pgrep_count("2\n"), 2);
-        assert_eq!(parse_pgrep_count("1"), 1);
-        assert_eq!(parse_pgrep_count(""), 0);
-        assert_eq!(parse_pgrep_count("0\n"), 0);
-        assert_eq!(parse_pgrep_count("garbage"), 0);
-        assert_eq!(parse_pgrep_count(" 3 \n"), 3);
+    fn count_live_quickshell_excludes_zombies() {
+        // One live shell (`Ss`), one zombie (`Z` / <defunct>) → only the live one counts.
+        assert_eq!(count_live_quickshell("Ss quickshell\nZ quickshell\n"), 1);
+        // A single live shell.
+        assert_eq!(count_live_quickshell("Sl quickshell"), 1);
+        // Only a zombie → 0 (this is the false-positive the fix prevents).
+        assert_eq!(count_live_quickshell("Z quickshell\n"), 0);
+        // Empty input → 0.
+        assert_eq!(count_live_quickshell(""), 0);
+        // Two live shells, one zombie, and unrelated processes → 2.
+        assert_eq!(
+            count_live_quickshell("Ss bash\nSl quickshell\nR quickshell\nZ quickshell\nS+ grim\n"),
+            2
+        );
+        // Leading whitespace and a defunct-marked stat variant still parse.
+        assert_eq!(
+            count_live_quickshell("  S  quickshell\n Z+ quickshell\n"),
+            1
+        );
+        // A different command is not counted.
+        assert_eq!(count_live_quickshell("S quickshelly\nS notquickshell"), 0);
     }
 }

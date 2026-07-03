@@ -79,9 +79,11 @@ second Quickshell on the same output:
   the new one. Otherwise it falls back to the serialized `pkill -x quickshell` +
   detached `setsid quickshell` spawn (a fresh/dev install with no unit, or a
   session with no user manager).
-- **Post-restart verification.** After the settle window it counts
-  `pgrep -xc quickshell`; if it ever sees more than one it logs an `error!` and
-  bumps `game_shell_quickshell_multi_instance_total` (should always stay 0). See
+- **Post-restart verification.** After the settle window it counts **live**
+  quickshell processes (`ps -eo stat=,comm=`, excluding `Z`/`<defunct>` zombies —
+  a plain `pgrep -xc` would miscount the fallback path's transient defunct
+  children); if it ever sees more than one live shell it logs an `error!` and bumps
+  `game_shell_quickshell_multi_instance_total` (should always stay 0). See
   [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) for the unit.
 
 ## Observability (`/metrics`)

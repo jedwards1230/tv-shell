@@ -88,8 +88,13 @@ wiring.
   truncates the file on each (re)start, matching the old `exec-once` behavior and
   the dev bridge's truncate-on-restart. So both sinks the rest of the system reads
   are preserved.
-- `Restart=on-failure`, `RestartSec=2`, `StartLimitBurst=3` / `StartLimitIntervalSec=60`
-  (same restart budget as the daemon unit).
+- `Restart=on-failure`, `RestartSec=2`, `StartLimitBurst=10` /
+  `StartLimitIntervalSec=60` — a **higher** burst than the daemon's `3`, because
+  this is a kiosk UI on a fast dev loop (deploy → restart-shell → crash-respawn →
+  restart again), where a handful of restarts a minute is normal and a budget of 3
+  would wedge routine iteration. Belt-and-braces, `/dev/restart-shell`'s systemd
+  path also `reset-failed`s the unit before each restart, so a poisoned start
+  counter can't leave the shell down.
 - **No `[Install]` section** — like the daemon unit. Hyprland's `exec-once` starts
   it each session; enabling it into `default.target` would start a second copy at
   user-manager boot, before a compositor exists.

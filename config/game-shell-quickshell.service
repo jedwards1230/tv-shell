@@ -17,13 +17,16 @@
 # ExecStart rewrite needed — `quickshell` is resolved from PATH, not the install
 # prefix).
 Description=game-shell Quickshell UI
-# Rate-limit restarts (these are [Unit]-level directives in modern systemd), same
-# budget as game-shell-input.service: at most 3 starts per 60s, after which
-# systemd stops retrying. Without this, Restart=on-failure + RestartSec=2 would
-# thrash every 2s on a hard failure (e.g. no compositor). The exec-once /
-# session's direct-spawn fallback still covers a failed start.
+# Rate-limit restarts (these are [Unit]-level directives in modern systemd): at
+# most 10 starts per 60s, after which systemd stops retrying. Without a limit,
+# Restart=on-failure + RestartSec=2 would thrash every 2s on a hard failure (e.g.
+# no compositor). The burst is deliberately HIGHER than the daemon's (3): this is
+# a kiosk UI on a fast dev loop (deploy → restart-shell → crash-respawn → restart
+# again), where a handful of restarts a minute is normal — 3 would wedge routine
+# iteration. The daemon's `/dev/restart-shell` also `reset-failed`s the unit
+# before each restart, so a poisoned counter can't leave the shell down.
 StartLimitIntervalSec=60
-StartLimitBurst=3
+StartLimitBurst=10
 
 [Service]
 Type=simple
