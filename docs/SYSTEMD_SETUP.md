@@ -1,37 +1,45 @@
 # systemd --user integration
 
-game-shell runs its input/backend daemon (`game-shell-input`) as a
-**`systemd --user` service** and routes Quickshell's output into the **journal**.
-This is purely an operational wrapper around the same session boot — it does not
-change *what* runs, only *how* it's supervised and logged.
+game-shell runs **both** its input/backend daemon (`game-shell-input`) **and** the
+Quickshell UI (`quickshell -c game-shell`) as **`systemd --user` services**. This
+is an operational wrapper around the same session boot — it does not change *what*
+runs, only *how* it's supervised and logged.
 
 ## Why
 
-Running the daemon under `systemd --user` gives, natively and for free:
+Running each process under `systemd --user` gives, natively and for free:
 
-- **journald log capture with unit metadata** — daemon logs are queryable by unit
-  (`journalctl --user -u game-shell-input`) with timestamps, boot IDs, and
-  priority, instead of being absorbed by the display manager.
+- **journald log capture with unit metadata** — logs are queryable by unit
+  (`journalctl --user -u game-shell-input`, `-t game-shell-quickshell`) with
+  timestamps, boot IDs, and priority, instead of being absorbed by the display
+  manager.
 - **cgroup resource accounting** — each unit gets its own cgroup, so
   node_exporter's systemd collector reports per-unit CPU/memory with **zero
   application code**.
 - **single-instance + restart semantics** — systemd guarantees one active
-  instance and restarts the daemon `on-failure`. This also kills the recurring
-  "duplicate daemon/quickshell instance" class of bug from a re-launched session
-  (a stale instance is `stop`ped before a fresh `start`).
+  instance per unit and restarts it `on-failure`. This is what actually kills the
+  recurring **"3–4 stacked Quickshell instances"** class of bug (#254): a racing
+  or re-launched start can't stack a second copy, because the stale instance is
+  `stop`ped before a fresh `start` and the daemon's `/dev/restart-shell` prefers
+  `systemctl --user restart` over a bare kill+spawn.
 
-Quickshell itself stays a Hyprland `exec-once` child (Hyprland manages the
-compositor's window tree), but its stdout/stderr are piped through `systemd-cat`
-so they also land in the journal under a tag.
+Quickshell was previously a bare Hyprland `exec-once` child with **no** supervisor
+— no restart-on-crash and no single-instance guarantee. It is now started as
+`game-shell-quickshell.service` (still *by* the compositor's `exec-once`, so
+Hyprland owns the window tree, but the process lifecycle is systemd's). Its merged
+stdout/stderr are tee'd to both the journal (tagged `game-shell-quickshell`) and
+`/tmp/qs-log.txt` (the dev bridge's log), so existing `journalctl` and
+`/dev/logs` queries keep working unchanged.
 
 ## What ships
 
 | File | Role |
 |------|------|
-| `config/game-shell-input.service` | The user unit (template — `ExecStart` rewritten at install). |
-| `scripts/game-shell-session.sh` | `systemctl --user start`s the unit (with a bare-process fallback). |
-| `config/hyprland.conf` | `exec-once` pipes quickshell through `systemd-cat -t game-shell-quickshell`. |
-| `scripts/install.sh` | Installs the unit to `~/.config/systemd/user/` + `daemon-reload`. |
+| `config/game-shell-input.service` | Daemon user unit (template — `ExecStart` rewritten at install). |
+| `config/game-shell-quickshell.service` | Quickshell UI user unit (installed verbatim; `quickshell` resolves from PATH). |
+| `scripts/game-shell-session.sh` | `systemctl --user start`s the daemon unit (bare-process fallback); `reset-failed`s + `stop`s the Quickshell unit around the session. |
+| `config/hyprland.conf` | `exec-once` imports the Wayland session env, then `systemctl --user start`s the Quickshell unit (direct-spawn fallback). |
+| `scripts/install.sh` | Installs both units to `~/.config/systemd/user/` + `daemon-reload`. |
 
 ## The unit
 
@@ -61,6 +69,44 @@ Hyprland session env (resolved lazily from `$XDG_RUNTIME_DIR`, since the daemon
 starts before the compositor). So the unit needs no `Environment=`/`WorkingDirectory=`
 wiring.
 
+## The Quickshell unit
+
+`config/game-shell-quickshell.service`:
+
+- `Type=simple`, `ExecStartPre=-/usr/bin/pkill -x quickshell` (belt-and-braces:
+  reap any stray Quickshell before starting; the `-` makes a no-match non-fatal),
+  `ExecStart=/bin/bash -o pipefail -c 'quickshell -c game-shell 2>&1 | tee /tmp/qs-log.txt'`
+  (`bash -o pipefail`, not `sh`, so a Quickshell crash propagates through the
+  `| tee` pipeline instead of being masked as `tee`'s exit 0 — otherwise
+  `Restart=on-failure` would never fire).
+  `quickshell` resolves from the user manager's `PATH`, so — unlike the daemon
+  unit — there is **no `ExecStart` rewrite** at install; the unit is copied
+  verbatim.
+- **Dual-sink logging.** `tee` writes the merged output to `/tmp/qs-log.txt` (the
+  dev bridge's log — `bridge_core` `get_logs` / `/dev/restart-shell`), and `tee`'s
+  stdout flows to the journal under `SyslogIdentifier=game-shell-quickshell`. `tee`
+  truncates the file on each (re)start, matching the old `exec-once` behavior and
+  the dev bridge's truncate-on-restart. So both sinks the rest of the system reads
+  are preserved.
+- `Restart=on-failure`, `RestartSec=2`, `StartLimitBurst=10` /
+  `StartLimitIntervalSec=60` — a **higher** burst than the daemon's `3`, because
+  this is a kiosk UI on a fast dev loop (deploy → restart-shell → crash-respawn →
+  restart again), where a handful of restarts a minute is normal and a budget of 3
+  would wedge routine iteration. Belt-and-braces, `/dev/restart-shell`'s systemd
+  path also `reset-failed`s the unit before each restart, so a poisoned start
+  counter can't leave the shell down.
+- **No `[Install]` section** — like the daemon unit. Hyprland's `exec-once` starts
+  it each session; enabling it into `default.target` would start a second copy at
+  user-manager boot, before a compositor exists.
+- **Env is imported, not self-discovered.** Quickshell can't resolve the Wayland
+  session env in-process the way the Rust daemon does, so the compositor's
+  `exec-once` runs `systemctl --user import-environment WAYLAND_DISPLAY
+  HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR` **before** starting the unit. This
+  import must happen from inside the running Hyprland session — the session
+  wrapper runs before `exec Hyprland`, when those vars don't exist yet, so it
+  cannot do the import (it only handles the Quickshell unit's `reset-failed`/`stop`
+  lifecycle around the session).
+
 ## Session boot flow
 
 `scripts/game-shell-session.sh` (launched by the display manager):
@@ -75,9 +121,16 @@ wiring.
      path — used when `systemctl --user` is unavailable (no user manager / bus)
      **or** when a dev override `GAME_SHELL_INPUT_BIN` is set (the unit's
      `ExecStart` is the installed binary and can't honor an arbitrary override).
-3. `exec`s Hyprland, which `exec-once`s quickshell through `systemd-cat`.
-4. On session exit, the `EXIT` trap `systemctl --user stop`s the unit (or
-   `kill`s the bare PID in the fallback path).
+   - Also `reset-failed`s `game-shell-quickshell.service` (best-effort, gated on
+     user-systemd availability) so a lingering `StartLimit` failure from a prior
+     session doesn't refuse this session's `exec-once` start.
+3. `exec`s Hyprland, whose `exec-once` imports the Wayland session env and
+   `systemctl --user start`s `game-shell-quickshell.service` (direct-spawn
+   fallback if the user manager or unit is absent).
+4. On session exit, the `EXIT` trap `systemctl --user stop`s the daemon unit (or
+   `kill`s the bare PID in the fallback path), and also `stop`s the Quickshell
+   unit — which runs under the user manager and would otherwise outlive Hyprland
+   and race the next session.
 
 The fallback guarantees the session can **never be bricked** by a missing user
 manager — a box with no `systemd --user` still boots into the shell exactly as
@@ -90,14 +143,17 @@ before, just without the journald/cgroup benefits.
 systemctl --user status game-shell-input
 journalctl --user -u game-shell-input -f
 
-# Quickshell output (tagged, not a unit — it's a systemd-cat stream)
-journalctl --user -t game-shell-quickshell -f
+# Quickshell unit — status + logs (SyslogIdentifier keeps the -t query working)
+systemctl --user status game-shell-quickshell
+journalctl --user -u game-shell-quickshell -f    # by unit
+journalctl --user -t game-shell-quickshell -f    # by tag (same stream)
 
-# Confirm exactly one daemon instance (single-instance check)
-systemctl --user show -p MainPID -p ActiveState game-shell-input
+# Confirm exactly one instance of each (single-instance check)
+systemctl --user show -p MainPID -p ActiveState game-shell-input game-shell-quickshell
+pgrep -xc quickshell   # should print 1
 
 # Per-unit cgroup resource accounting (what node_exporter's systemd collector sees)
-systemctl --user status game-shell-input   # shows Memory/CPU/Tasks under the cgroup
+systemctl --user status game-shell-input game-shell-quickshell
 systemd-cgtop --user
 ```
 
@@ -110,11 +166,16 @@ Quickshell's output is still mirrored to `/tmp/qs-log.txt` (the dev bridge's
 hand (e.g. a custom prefix wired up without the installer):
 
 ```bash
-# Install the unit, rewriting ExecStart to your prefix
+# Install both units. The daemon unit's ExecStart is rewritten to your prefix
+# (awk, not sed, so a prefix with `#`/`&` can't corrupt the unit); the Quickshell
+# unit is copied verbatim (quickshell resolves from PATH).
 mkdir -p ~/.config/systemd/user
-sed "s#^ExecStart=.*#ExecStart=$PREFIX/bin/game-shell-input#" \
+awk -v prefix="$PREFIX" \
+    '/^ExecStart=/ { print "ExecStart=" prefix "/bin/game-shell-input"; next } { print }' \
     "$PREFIX/config/game-shell-input.service" \
     > ~/.config/systemd/user/game-shell-input.service
+cp "$PREFIX/config/game-shell-quickshell.service" \
+    ~/.config/systemd/user/game-shell-quickshell.service
 systemctl --user daemon-reload
 ```
 
@@ -134,6 +195,14 @@ flow the session script's explicit `start`/`stop` is the intended lifecycle.
 - **Two daemons after a crash?** Shouldn't happen — the session does
   `reset-failed` then `start`, and `stop`s on exit. If you started one by hand,
   `systemctl --user stop game-shell-input` and let the session own it.
+- **Stacked Quickshell instances (#254)?** Shouldn't happen under systemd — the
+  unit guarantees a single instance and `/dev/restart-shell` prefers
+  `systemctl --user restart` over kill+spawn. If `pgrep -xc quickshell` prints >1,
+  a non-systemd path stacked them (a manual `quickshell &`, or the exec-once /
+  daemon fallback ran because the user manager was unavailable). Recover with
+  `systemctl --user restart game-shell-quickshell` (or `pkill -x quickshell` then
+  re-run the exec-once). The daemon bumps `game_shell_quickshell_multi_instance_total`
+  whenever it observes this, so alert on that counter being non-zero.
 - **Frequent restarts / unit gives up?** `Restart=on-failure` is rate-limited to
   `StartLimitBurst=3` per `StartLimitIntervalSec=60` — if the daemon hits a
   persistent error (e.g. evdev/uinput permission denied, socket creation failure)

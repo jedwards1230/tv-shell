@@ -18,7 +18,7 @@ SDDM → game-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
                                    gamepad fleet → per-player uinput; backend IPC)
 ```
 
-- **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management
+- **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management. Quickshell runs as the `game-shell-quickshell.service` `systemd --user` unit (started by Hyprland `exec-once`, direct-spawn fallback) — a single-instance guarantee + restart-on-crash that kills the "stacked duplicate Quickshell instances" bug class (#254). See [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md)
 - **game-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots, and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset), **`Super+Right` → `intent overlay:session`** (open Session QAM). Build with `scripts/build-daemon.sh` (canonical; uses `--features cec,mcp`) or `cargo build --release --features cec,mcp` and install to `$GAME_SHELL_DIR/bin/game-shell-input`; the session script starts it as the `game-shell-input.service` `systemd --user` unit (bare-process fallback when no user manager / under a `GAME_SHELL_INPUT_BIN` dev override) — see [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md)
 - **ShellLayout.qml** — hosts every top-level surface (Home, Library, Settings, overlays, drawers) and owns the **ScreenManager** router. shell.qml reaches the shell only through `ShellLayout`'s API (`openSettings`/`closeSettings`, `toggleMenu`, `focusHome`, …), never into a surface's internals.
 - **ScreenManager.qml** — minimal navigation model for the secondary-screen layer (Home is the base; Library/Settings open over it). `push("settings", {page})` / `push("library")` / `popToHome()` centralize the imperative show/hide + focus handoff. It does NOT own modal/overlay back-handling or the Settings-internal B-stack — it reacts to each surface's `closed` signal and never intercepts Escape. Visibility/focus **bindings** stay declarative on the surfaces.
@@ -319,13 +319,18 @@ git push origin <branch>
 #    current_exe — $GAME_SHELL_DIR below is just whatever prefix you installed to)
 ssh <device> "cd \$GAME_SHELL_DIR && git pull"
 
-# 3. Restart Quickshell (find Hyprland signature first)
-SIG=$(ls /run/user/1000/hypr/ | tail -1)
-WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
-  HYPRLAND_INSTANCE_SIGNATURE=$SIG hyprctl dispatch exec 'killall quickshell'
-sleep 1
-WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
-  HYPRLAND_INSTANCE_SIGNATURE=$SIG quickshell -c game-shell &
+# 3. Restart Quickshell — single-instance safe (#254). Quickshell runs as a
+#    `systemd --user` unit, so ALWAYS restart via systemctl (never `killall
+#    quickshell` + `&`, which races and stacks 3-4 instances — the #254 foot-gun).
+systemctl --user restart game-shell-quickshell.service
+# Fallback for a non-systemd / bare-process session only — exact-match kill,
+# verify zero, THEN relaunch (do NOT background a relaunch before the kill settles):
+#   pkill -x quickshell; while pgrep -xc quickshell | grep -qv '^0$'; do sleep 0.2; done
+#   SIG=$(ls /run/user/1000/hypr/ | tail -1)
+#   WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
+#     HYPRLAND_INSTANCE_SIGNATURE=$SIG quickshell -c game-shell &
+# Automated dev loop: prefer the daemon's `/dev/restart-shell` (HTTP) or MCP
+# `restart_shell` — both serialized + single-instance (see docs/CONTROL_SURFACE.md).
 
 # 4. Screenshot for verification
 WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.png

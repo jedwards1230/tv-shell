@@ -420,53 +420,198 @@ pub async fn dev_build() -> Result<String, String> {
     }
 }
 
-/// `POST /dev/restart-shell` — kill quickshell and relaunch detached.
+/// Process-wide serialization lock for [`dev_restart_shell`].
 ///
-/// Returns a brief startup summary (no errors seen / first WARN/ERROR lines).
-pub async fn dev_restart_shell() -> Result<String, String> {
-    // Kill existing quickshell (ignore failure — it may not be running).
-    let _ = tokio::process::Command::new("pkill")
-        .args(["-x", "quickshell"])
+/// The HTTP bridge spawns a task per connection and the MCP `restart_shell`
+/// tool calls the same fn, so without serialization two overlapping restarts
+/// interleave (A kills, B's `pkill` no-ops, both spawn) and stack 2+ Quickshell
+/// instances — the #254 bug. Held across the ENTIRE kill/systemctl → spawn →
+/// settle → verify sequence.
+///
+/// `const_new` (not `std::sync::LazyLock`) keeps us within the daemon's 1.75
+/// MSRV.
+static RESTART_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Count **live** quickshell processes from `ps -eo stat=,comm=` output.
+///
+/// Each line is `<stat> <comm>`. We count lines whose command is exactly
+/// `quickshell` and whose process state is not `Z` (zombie / `<defunct>`).
+///
+/// Excluding zombies matters for the #254 detection: the fallback spawn path can
+/// leave short-lived `<defunct>` children under the daemon, and a plain
+/// `pgrep -xc quickshell` counts those too — so it would report >1 even when
+/// exactly one *live* shell is running, making the multi-instance metric cry wolf
+/// on the very path it monitors.
+fn count_live_quickshell(ps_output: &str) -> usize {
+    ps_output
+        .lines()
+        .filter(|line| {
+            let mut fields = line.split_whitespace();
+            let stat = fields.next().unwrap_or("");
+            let comm = fields.next().unwrap_or("");
+            comm == "quickshell" && !stat.starts_with('Z')
+        })
+        .count()
+}
+
+/// `POST /dev/restart-shell` — restart Quickshell and return a brief startup
+/// summary (no errors seen / first WARN/ERROR lines).
+///
+/// **Single-instance discipline (#254).** The whole sequence is serialized by
+/// [`RESTART_LOCK`], and the policy is **reject, don't queue**: a second
+/// concurrent restart is a no-op with a clear message, avoiding a redundant
+/// kill/spawn right after the first. HTTP maps the `Ok` to 200.
+///
+/// **Prefer the systemd unit.** When `game-shell-quickshell.service` (a
+/// `systemd --user` unit) is active it is the single supervised instance, so we
+/// `systemctl --user restart` it — and if that restart fails we return an error
+/// rather than falling back, because a `pkill`/spawn under a live unit would race
+/// systemd's `Restart=on-failure` respawn and stack instances. The serialized
+/// `pkill -x quickshell` → detached `setsid` spawn path runs only when the unit
+/// is **not** active (fresh/dev install, or no user manager). Both paths then
+/// settle and read the same filtered log tail.
+pub async fn dev_restart_shell(
+    metrics: &std::sync::Arc<crate::metrics::Metrics>,
+) -> Result<String, String> {
+    // Reject, don't queue: if a restart is already running, a second concurrent
+    // call is a benign no-op (avoids a redundant kill/spawn right after the
+    // first). HTTP maps this Ok to 200.
+    let _guard = match RESTART_LOCK.try_lock() {
+        Ok(g) => g,
+        Err(_) => return Ok("restart already in progress\n".to_owned()),
+    };
+
+    // Prefer the systemd --user unit when it supervises Quickshell — it is the
+    // single-instance guarantee. `systemctl is-active` prints "active" and exits
+    // 0 only when the unit is running.
+    let unit = "game-shell-quickshell.service";
+    let is_active = match tokio::process::Command::new("systemctl")
+        .args(["--user", "is-active", unit])
         .output()
-        .await;
+        .await
+    {
+        Ok(o) => o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "active",
+        Err(_) => false,
+    };
 
-    // Open the log file and spawn quickshell detached on the blocking pool: the
-    // log open + the `setsid` fork are blocking syscalls, and the detached spawn
-    // must stay on `std::process::Command` (tokio::process would try to reap the
-    // child we deliberately let outlive this handler). Done together so the new
-    // session is created in one off-runtime hop.
-    let env_pairs = crate::session_env::session_env_pairs();
-    let spawned = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(QS_LOG_PATH)
-            .map_err(|e| format!("open log failed: {e}"))?;
-        let log_stderr = log_file
-            .try_clone()
-            .map_err(|e| format!("clone log fd failed: {e}"))?;
+    let mut used_unit = false;
+    if is_active {
+        // Clear any poisoned start-limit counter before restarting (ignore
+        // failure). A tight dev loop (unit start → dev restart → crash-respawn →
+        // dev restart within 60s) can trip StartLimitBurst; without this reset the
+        // very next `systemctl restart` is refused ("start … too often") and — per
+        // the no-fallback rule below — restart-shell would error with the shell
+        // left down until a manual reset-failed. Resetting here keeps the dev loop
+        // unwedged; a unit that isn't failed makes this a harmless no-op.
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["--user", "reset-failed", unit])
+            .output()
+            .await;
 
-        // Spawn quickshell detached (new session so it outlives this handler task).
-        let mut cmd = std::process::Command::new("setsid");
-        cmd.args(["quickshell", "-c", "game-shell"]);
-        cmd.stdout(log_file);
-        cmd.stderr(log_stderr);
-        for (k, v) in env_pairs {
-            cmd.env(k, v);
+        // The unit supervises Quickshell, so `systemctl --user restart` is the
+        // ONLY safe path here — a restart failure is a hard error, NOT a fallback
+        // to pkill/spawn. Falling back while the unit is active would re-create
+        // the #254 stacking: `pkill` kills the unit-managed quickshell, systemd's
+        // `Restart=on-failure` respawns it, AND the fallback spawns a second. The
+        // pkill/spawn path below runs only when the unit is not active.
+        match tokio::process::Command::new("systemctl")
+            .args(["--user", "restart", unit])
+            .output()
+            .await
+        {
+            Ok(o) if o.status.success() => {
+                used_unit = true;
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                return Err(format!(
+                    "systemctl --user restart {unit} failed ({}): {}",
+                    o.status,
+                    stderr.trim()
+                ));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "could not run systemctl --user restart {unit}: {e}"
+                ));
+            }
         }
-        cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
-        Ok(())
-    })
-    .await;
-    match spawned {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(e),
-        Err(e) => return Err(format!("restart task failed: {e}")),
+    }
+
+    if !used_unit {
+        // Fallback: kill existing quickshell (ignore failure — it may not be
+        // running).
+        let _ = tokio::process::Command::new("pkill")
+            .args(["-x", "quickshell"])
+            .output()
+            .await;
+
+        // Open the log file and spawn quickshell detached on the blocking pool: the
+        // log open + the `setsid` fork are blocking syscalls, and the detached spawn
+        // must stay on `std::process::Command` (tokio::process would try to reap the
+        // child we deliberately let outlive this handler). Done together so the new
+        // session is created in one off-runtime hop.
+        let env_pairs = crate::session_env::session_env_pairs();
+        let spawned = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let log_file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(QS_LOG_PATH)
+                .map_err(|e| format!("open log failed: {e}"))?;
+            let log_stderr = log_file
+                .try_clone()
+                .map_err(|e| format!("clone log fd failed: {e}"))?;
+
+            // Spawn quickshell detached (new session so it outlives this handler task).
+            let mut cmd = std::process::Command::new("setsid");
+            cmd.args(["quickshell", "-c", "game-shell"]);
+            cmd.stdout(log_file);
+            cmd.stderr(log_stderr);
+            for (k, v) in env_pairs {
+                cmd.env(k, v);
+            }
+            cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+            Ok(())
+        })
+        .await;
+        match spawned {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(format!("restart task failed: {e}")),
+        }
     }
 
     // Give quickshell a moment to emit initial log lines.
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Post-spawn instance verification (#254): after the settle, there should be
+    // exactly one LIVE quickshell. More than one means restarts stacked — count it
+    // and log loudly. We count via `ps -eo stat=,comm=` and exclude zombies
+    // (`<defunct>`, stat `Z`): the fallback spawn path can leave defunct children
+    // under the daemon, and counting those would false-positive the metric even
+    // when a single live shell is running. A `ps` failure is non-fatal (skip).
+    match tokio::process::Command::new("ps")
+        .args(["-eo", "stat=,comm="])
+        .output()
+        .await
+    {
+        Ok(o) => {
+            let count = count_live_quickshell(&String::from_utf8_lossy(&o.stdout));
+            if count > 1 {
+                tracing::error!(
+                    "restart-shell: {count} live quickshell processes running after restart \
+                     settle — stacked instances (#254)"
+                );
+                metrics.inc_quickshell_multi_instance();
+            }
+        }
+        Err(e) => {
+            tracing::debug!(
+                "restart-shell: could not run `ps` for instance verification ({e}); skipping"
+            );
+        }
+    }
 
     let log_content = tokio::fs::read_to_string(QS_LOG_PATH)
         .await
@@ -985,5 +1130,29 @@ mod tests {
             schema_str.contains("\"object\""),
             "StatusInfo schema should declare type:object, got: {schema_str}"
         );
+    }
+
+    #[test]
+    fn count_live_quickshell_excludes_zombies() {
+        // One live shell (`Ss`), one zombie (`Z` / <defunct>) → only the live one counts.
+        assert_eq!(count_live_quickshell("Ss quickshell\nZ quickshell\n"), 1);
+        // A single live shell.
+        assert_eq!(count_live_quickshell("Sl quickshell"), 1);
+        // Only a zombie → 0 (this is the false-positive the fix prevents).
+        assert_eq!(count_live_quickshell("Z quickshell\n"), 0);
+        // Empty input → 0.
+        assert_eq!(count_live_quickshell(""), 0);
+        // Two live shells, one zombie, and unrelated processes → 2.
+        assert_eq!(
+            count_live_quickshell("Ss bash\nSl quickshell\nR quickshell\nZ quickshell\nS+ grim\n"),
+            2
+        );
+        // Leading whitespace and a defunct-marked stat variant still parse.
+        assert_eq!(
+            count_live_quickshell("  S  quickshell\n Z+ quickshell\n"),
+            1
+        );
+        // A different command is not counted.
+        assert_eq!(count_live_quickshell("S quickshelly\nS notquickshell"), 0);
     }
 }

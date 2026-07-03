@@ -48,7 +48,7 @@ then the only gate.
 | GET | `/dev/logs` `[?lines=N&filter=str]` | tail `/tmp/qs-log.txt` (lines default 100, max 1000) |
 | POST | `/dev/deploy` `[?ref=git-ref]` | git fetch + checkout + reset (ref default `main`) |
 | POST | `/dev/build` | run `scripts/build-daemon.sh` + install binary |
-| POST | `/dev/restart-shell` | kill + relaunch quickshell, return first WARN/ERROR |
+| POST | `/dev/restart-shell` | restart quickshell (single-instance; see note), return first WARN/ERROR |
 | POST | `/dev/restart-daemon` | re-exec the daemon (picks up a new binary) |
 | GET | `/metrics` | Prometheus/OpenMetrics exposition (**auth-exempt**; see Observability) |
 
@@ -60,6 +60,31 @@ subprocesses (auth checked first).
 > The HTTP `/dev/*` routes are **always registered** when the bridge is bound —
 > they are not behind a separate dev flag (unlike MCP). Gate them by not binding
 > the HTTP bridge in production, or bind it to loopback.
+
+### `restart-shell` single-instance semantics (#254)
+
+Both `POST /dev/restart-shell` and the MCP `restart_shell` tool are serialized by
+a process-wide lock and prefer the systemd unit, so a restart can never stack a
+second Quickshell on the same output:
+
+- **Serialized, reject-not-queue.** The handler holds a process-wide async lock
+  across the whole kill→spawn→verify sequence. A second call that arrives while a
+  restart is in flight does **not** queue (which would trigger a redundant
+  kill/spawn immediately after) — it returns `restart already in progress` (HTTP
+  `200`) and no-ops. This closes the race where two overlapping HTTP/MCP calls
+  each killed and respawned, leaving 2+ instances.
+- **Prefers the systemd unit.** When `game-shell-quickshell.service` is active
+  (`systemctl --user is-active`), the restart runs `systemctl --user restart
+  game-shell-quickshell.service` — systemd stops the old instance before starting
+  the new one. Otherwise it falls back to the serialized `pkill -x quickshell` +
+  detached `setsid quickshell` spawn (a fresh/dev install with no unit, or a
+  session with no user manager).
+- **Post-restart verification.** After the settle window it counts **live**
+  quickshell processes (`ps -eo stat=,comm=`, excluding `Z`/`<defunct>` zombies —
+  a plain `pgrep -xc` would miscount the fallback path's transient defunct
+  children); if it ever sees more than one live shell it logs an `error!` and bumps
+  `game_shell_quickshell_multi_instance_total` (should always stay 0). See
+  [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) for the unit.
 
 ## Observability (`/metrics`)
 
@@ -94,7 +119,7 @@ conditionally, `mcp.rs:413`).
 | `take_screenshot` | `flash` (bool) | read-only | `grim` → PNG content + a trailing JSON text block `{captured_at,sha,branch,version}` |
 | `get_status` | — | read-only | typed `StatusInfo` JSON (output schema) |
 | `get_logs` | `lines` (≤1000), `filter` | read-only | tail `/tmp/qs-log.txt` |
-| `restart_shell` | — | destructive | kill + relaunch quickshell |
+| `restart_shell` | — | destructive | restart quickshell (single-instance; serialized, prefers systemd unit — see note) |
 | `dev_deploy` 🔒 | `git_ref` (default `main`) | destructive | git fetch/checkout/reset |
 | `dev_build` 🔒 | — | destructive | build + install binary (~15–60 s) |
 | `dev_restart_daemon` 🔒 | — | destructive | re-exec daemon (connection drops) |

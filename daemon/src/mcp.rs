@@ -264,6 +264,7 @@ struct Handles {
     shutdown: CancellationToken,
     reexec_flag: Arc<std::sync::atomic::AtomicBool>,
     dev_enabled: bool,
+    metrics: Arc<crate::metrics::Metrics>,
 }
 
 // ─── MCP handler ─────────────────────────────────────────────────────────────
@@ -627,7 +628,7 @@ impl GameShellMcp {
         annotations(read_only_hint = false, destructive_hint = true)
     )]
     async fn restart_shell(&self) -> CallToolResult {
-        match bridge_core::dev_restart_shell().await {
+        match bridge_core::dev_restart_shell(&self.handles.metrics).await {
             Ok(body) => CallToolResult::success(vec![Content::text(body)]),
             Err(msg) => CallToolResult::error(vec![Content::text(msg)]),
         }
@@ -764,6 +765,7 @@ pub async fn serve(
     events_tx: broadcast::Sender<Event>,
     shutdown: CancellationToken,
     reexec_flag: Arc<std::sync::atomic::AtomicBool>,
+    metrics: Arc<crate::metrics::Metrics>,
 ) {
     use rmcp::transport::streamable_http_server::{
         session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -828,6 +830,7 @@ pub async fn serve(
         shutdown: shutdown.clone(),
         reexec_flag,
         dev_enabled,
+        metrics,
     };
 
     // StreamableHttpServerConfig is #[non_exhaustive] — cannot use struct
