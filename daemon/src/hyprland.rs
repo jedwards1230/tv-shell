@@ -72,14 +72,15 @@ pub enum HyprReq {
 /// path when neither is present yet (Hyprland may start after the daemon — the
 /// connect attempt then fails and is retried).
 fn socket_dir() -> Result<PathBuf> {
-    // Resolve the instance signature via session_env, which falls back to
-    // scanning $XDG_RUNTIME_DIR/hypr/ for the live socket dir when
-    // HYPRLAND_INSTANCE_SIGNATURE is absent from the daemon's environment. The
-    // session wrapper starts the daemon BEFORE Hyprland, so that var is
-    // routinely missing here; reading it directly made socket_dir() error out
-    // and every query (clients/activewindow/monitors + the event stream)
-    // silently degrade to empty — which is why the shell never saw any running
-    // windows.
+    // Resolve the instance signature via session_env, which SCANS
+    // $XDG_RUNTIME_DIR/hypr/ for the live socket dir first and only falls back to
+    // an inherited HYPRLAND_INSTANCE_SIGNATURE when no live dir exists yet. That
+    // scan-first ordering is what lets a reconnect self-heal onto a restarted
+    // Hyprland: a long-lived daemon can inherit a signature pinned to a DEAD
+    // instance (see resolve_hypr_signature's doc), and trusting it would keep
+    // every query and the event stream pointed at a dead socket ("Connection
+    // refused") forever. Resolving per call (rather than once at startup) means
+    // both this actor's queries and the event watcher re-resolve on every retry.
     let sig = crate::session_env::resolve_hypr_signature().ok_or_else(|| {
         anyhow!("could not resolve Hyprland instance signature (env unset and no live socket dir in $XDG_RUNTIME_DIR/hypr)")
     })?;
@@ -345,8 +346,15 @@ async fn watch_events(
     events_tx: broadcast::Sender<Event>,
     active_window_tx: watch::Sender<String>,
 ) -> Result<()> {
-    let sock = socket_dir()?.join(".socket2.sock");
+    let dir = socket_dir()?;
+    let sock = dir.join(".socket2.sock");
     let stream = UnixStream::connect(&sock).await?;
+    // Log the instance we actually attached to. The deaf-daemon failure mode
+    // (attached to a dead instance, "Connection refused" looping in the retry
+    // handler) is otherwise invisible — everything else looks healthy — so
+    // naming the live socket dir on each successful (re)connect makes a stale
+    // attach diagnosable from the journal at a glance.
+    tracing::info!("hyprland: event listener attached to {}", dir.display());
     let mut lines = BufReader::new(stream).lines();
     while let Some(line) = lines.next_line().await? {
         let Some((event, data)) = line.split_once(">>") else {
