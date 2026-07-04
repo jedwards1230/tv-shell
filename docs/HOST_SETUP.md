@@ -112,6 +112,46 @@ firewall to port 47995. See the role for the full variable list.
    `source address="192.0.2.50/32"`) so a guest or compromised device on the LAN
    can't reach the control surface.
 
+### Windows
+
+1. **Download** `game-shell-host-x86_64-pc-windows-msvc.exe` from the latest
+   `host-v*` [release](https://github.com/jedwards1230/game-shell/releases) and
+   verify it against `checksums.txt`.
+
+2. **Set env vars** for the same user session Steam runs in: `GAME_SHELL_HOST_TOKEN`
+   (the **same** token used on the Linux boot, see the dual-boot note below),
+   optionally `STEAM_PATH` (only if Steam isn't at the default
+   `C:\Program Files (x86)\Steam`) and `GAME_SHELL_HOST_PORT`.
+
+3. **Open the firewall** (LAN-scoped):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "game-shell-host" -Direction Inbound -Action Allow `
+     -Protocol TCP -LocalPort 47995 -RemoteAddress 192.0.2.0/24
+   ```
+
+4. **Auto-start at logon** via Task Scheduler (no extra deps). Set the token as a
+   persistent user env var first (Task Scheduler inherits the user environment),
+   then register the task:
+
+   ```powershell
+   setx GAME_SHELL_HOST_TOKEN <token>
+   schtasks /Create /TN "game-shell-host" /TR "\"C:\path\to\game-shell-host.exe\"" `
+     /SC ONLOGON /RL LIMITED /F
+   ```
+
+   Steam must be running in the same interactive session for launches to work.
+
+> **Dual-boot note.** desktop-2 (Windows) and the CachyOS boot are the **same
+> machine, same LAN IP**. Reuse the same `GAME_SHELL_HOST_TOKEN` on both OSes so
+> the TV daemon's `[steam]` config (`url` + `token`) never has to change —
+> whichever OS is currently booted answers on the same IP:port with zero
+> client-side changes.
+
+> **Big Picture nav timing on Windows**: the daemon fires the `steam://nav/...`
+> URL immediately with no "is Big Picture up yet?" wait (unlike Linux) — see
+> `host/src/launch.rs`'s `wait_for_bigpicture` doc comment for why.
+
 ---
 
 ## Pair the daemon (the TV box)

@@ -239,7 +239,11 @@ pub fn parse_appmanifest(text: &str) -> Option<LibraryEntry> {
 ///   whose argv is `reaper SteamLaunch AppId=<appid> -- <proton/...> <game.exe>`.
 ///   Linux Steam does NOT write `RunningAppID` to `registry.vdf` (that's a
 ///   Windows-only field), so the process scan is the only reliable signal.
-/// - **Windows**: read `RunningAppID` from `registry.vdf` (where it IS correct).
+/// - **Windows**: read the live registry DWORD `HKCU\Software\Valve\Steam\RunningAppID`
+///   via a `reg query` shell-out (the authoritative source); fall back to
+///   parsing the on-disk `registry.vdf` (which Steam also maintains) if the
+///   command fails or its output is unparseable, so this path only ever
+///   improves over the previous VDF-only behavior.
 /// - **macOS**: not wired yet — returns `None` (out of scope).
 ///
 /// Returns `None` whenever nothing matches — the "Playing" badge then shows no
@@ -252,7 +256,7 @@ pub fn running_appid() -> Option<u32> {
 
     #[cfg(target_os = "windows")]
     {
-        running_appid_registry()
+        running_appid_windows()
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -329,19 +333,28 @@ fn argv_matches_appid(args: &[&str], appid: u32) -> bool {
 ///   process tree shuts down cleanly. Graceful only — never SIGKILL. Returns
 ///   `Ok(true)` if a matching process was signalled, `Ok(false)` if no such game
 ///   is running (nothing to do).
-/// - **Other OSes**: not wired yet — returns `Ok(false)` (unsupported), mirroring
-///   how [`running_appid`] degrades on non-Linux.
+/// - **Windows**: resolve the appid's install directory, enumerate running
+///   processes, and `taskkill /PID <pid>` (no `/F`, graceful) every process whose
+///   executable is unambiguously inside that directory. See [`quit_windows`] for
+///   the full safety design.
+/// - **Other OSes** (macOS): not wired yet — returns `Ok(false)` (unsupported),
+///   mirroring how [`running_appid`] degrades on non-Linux/Windows.
 pub fn quit(appid: u32) -> anyhow::Result<bool> {
     #[cfg(target_os = "linux")]
     {
         quit_linux(appid)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
-        // No running-game termination wired off Linux (no `reaper` process to find
-        // / signal). Report "nothing signalled" so the caller surfaces a clean
-        // not-running/unsupported reply rather than an error.
+        quit_windows(appid)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        // No running-game termination wired off Linux/Windows. Report "nothing
+        // signalled" so the caller surfaces a clean not-running/unsupported
+        // reply rather than an error.
         let _ = appid;
         Ok(false)
     }
@@ -404,16 +417,216 @@ fn reaper_pid_for_appid_linux(appid: u32) -> Option<libc::pid_t> {
     None
 }
 
-/// Windows running-game detector: read `RunningAppID` from `registry.vdf`.
+/// Windows graceful-quit: resolve `appid`'s install directory, enumerate
+/// running processes via a PowerShell CIM query, and `taskkill /PID <pid>`
+/// (no `/F` — graceful window-close, never a hard kill) every process whose
+/// executable path is unambiguously inside that install dir.
 ///
-/// On Linux this field is never written, so this path is Windows-only (and the
-/// `GAME_SHELL_STEAM_REGISTRY` override, used by tests). The registry-DWORD case
-/// (`HKCU\Software\Valve\Steam\RunningAppID`) is left as a later refinement.
-// TODO(windows): the authoritative source is the actual Windows registry DWORD
-// `HKCU\Software\Valve\Steam\RunningAppID`; reading it needs the `winreg` crate
-// (or a `reg query` shell-out). For now we parse the on-disk `registry.vdf`,
-// which Steam also maintains. (The pure parser `parse_running_appid` is exercised
-// by tests on every OS; this Windows-only wiring is not.)
+/// **Safety design**: we never touch a process unless BOTH (1) the appid's
+/// install directory is resolved from its own `appmanifest_<appid>.acf` (never
+/// guessed), and (2) the candidate process's executable path passes
+/// [`exe_is_under_install_dir`]'s strict path-prefix-at-a-separator-boundary
+/// check against that directory — a sibling directory sharing a name prefix
+/// (`C:\Games\Foo` vs `C:\Games\FooBar`) can never match. If the install dir
+/// can't be resolved, or no running process matches, we signal nothing and
+/// return `Ok(false)` — the same clean "not running" result the Linux path
+/// gives, never a guess.
+#[cfg(target_os = "windows")]
+fn quit_windows(appid: u32) -> anyhow::Result<bool> {
+    let Some(install_dir) = installdir_for_appid(appid) else {
+        return Ok(false);
+    };
+    let install_dir = install_dir.to_string_lossy().to_string();
+
+    let mut signalled = false;
+    for (pid, exe) in running_processes_windows() {
+        if !exe_is_under_install_dir(&exe, &install_dir) {
+            continue;
+        }
+        match std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .status()
+        {
+            Ok(status) if status.success() => {
+                tracing::info!(
+                    "steam-quit: taskkill'd pid {pid} ({exe}) for appid {appid} (install dir {install_dir})"
+                );
+                signalled = true;
+            }
+            Ok(status) => {
+                tracing::debug!("steam-quit: taskkill pid {pid} exited {status}");
+            }
+            Err(e) => {
+                tracing::debug!("steam-quit: taskkill pid {pid} failed to spawn: {e}");
+            }
+        }
+    }
+    Ok(signalled)
+}
+
+/// Resolve the absolute install directory for a Steam `appid` on Windows.
+///
+/// Scans every Steam library ([`library_folders`]) for
+/// `steamapps/appmanifest_<appid>.acf`, reads its `installdir` field (pure
+/// parse via [`parse_installdir`]), and joins it onto
+/// `<library>/steamapps/common/` — the path Steam actually installs games
+/// under. Returns `None` if no library has a manifest for `appid`.
+#[cfg(target_os = "windows")]
+fn installdir_for_appid(appid: u32) -> Option<PathBuf> {
+    let steam_root = steam_roots().into_iter().find(|r| r.is_dir())?;
+    for lib in library_folders(&steam_root) {
+        let manifest = lib
+            .join("steamapps")
+            .join(format!("appmanifest_{appid}.acf"));
+        let Ok(text) = std::fs::read_to_string(&manifest) else {
+            continue;
+        };
+        if let Some(installdir) = parse_installdir(&text) {
+            return Some(lib.join("steamapps").join("common").join(installdir));
+        }
+    }
+    None
+}
+
+/// Parse the `installdir` field out of an `appmanifest_*.acf` body — the
+/// directory name (relative to `steamapps/common/`) the game is installed
+/// under. Pure function (unit-tested against the checked-in fixture). `None`
+/// when the field is absent or the VDF doesn't parse.
+#[cfg(any(target_os = "windows", test))]
+fn parse_installdir(acf: &str) -> Option<String> {
+    let vdf = keyvalues_parser::parse(acf).map(Vdf::from).ok()?;
+    let obj = vdf.value.get_obj()?;
+    obj.get("installdir")
+        .and_then(|vs| vs.first())
+        .and_then(|v| v.get_str())
+        .map(|s| s.to_string())
+}
+
+/// Enumerate running Windows processes as `(pid, executable_path)` pairs via a
+/// PowerShell CIM query (`Get-CimInstance Win32_Process`) — no new crate, no
+/// WMI bindings. Command/parse failures degrade to an empty list (the caller
+/// then signals nothing, the safe default).
+#[cfg(target_os = "windows")]
+fn running_processes_windows() -> Vec<(u32, String)> {
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath } | ForEach-Object { \"$($_.ProcessId)`t$($_.ExecutablePath)\" }",
+        ])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_process_list(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Pure parser: `PID\t<ExecutablePath>` lines (as emitted by the PowerShell
+/// CIM query in [`running_processes_windows`]) → `(pid, path)` pairs.
+/// Malformed lines (no tab, non-numeric pid, empty path) are skipped rather
+/// than failing the whole scan. Unit-tested without touching a real process
+/// list.
+#[cfg(any(target_os = "windows", test))]
+fn parse_process_list(stdout: &str) -> Vec<(u32, String)> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (pid, path) = line.trim_end().split_once('\t')?;
+            let pid = pid.trim().parse::<u32>().ok()?;
+            let path = path.trim();
+            if path.is_empty() {
+                return None;
+            }
+            Some((pid, path.to_string()))
+        })
+        .collect()
+}
+
+/// Pure predicate: is `exe_path` unambiguously located inside `install_dir`?
+///
+/// Normalizes both to lower-case with `\`-separators and no trailing
+/// separator, then requires a true path-prefix match at a `\`-boundary —
+/// `C:\Games\Foo` matches `C:\Games\Foo\bin\game.exe` but does **not** match
+/// `C:\Games\FooBar\game.exe` (a sibling dir sharing a name prefix) or
+/// `C:\Games\Foo` itself (not a file). This is the sole safety gate for
+/// [`quit_windows`] — it is deliberately conservative: any ambiguity resolves
+/// to "not under". Unit-tested thoroughly (nested exe, sibling-prefix
+/// rejection, exact-dir rejection, case-insensitivity, `/` vs `\`, trailing
+/// separators).
+#[cfg(any(target_os = "windows", test))]
+fn exe_is_under_install_dir(exe_path: &str, install_dir: &str) -> bool {
+    fn normalize(p: &str) -> String {
+        let mut s = p.to_lowercase().replace('/', "\\");
+        while s.ends_with('\\') {
+            s.pop();
+        }
+        s
+    }
+    let exe = normalize(exe_path);
+    let dir = normalize(install_dir);
+    if dir.is_empty() || exe == dir {
+        return false;
+    }
+    match exe.strip_prefix(&dir) {
+        Some(rest) => rest.starts_with('\\'),
+        None => false,
+    }
+}
+
+/// Windows running-game detector: try the authoritative live registry DWORD
+/// first (`reg query`), and only fall back to the on-disk `registry.vdf` if the
+/// command fails outright, exits non-zero, or its output doesn't parse. This
+/// way the shell-out only ever improves on the previous VDF-only behavior —
+/// it never makes a working case regress.
+#[cfg(target_os = "windows")]
+fn running_appid_windows() -> Option<u32> {
+    if let Some(id) = running_appid_reg_query() {
+        return Some(id);
+    }
+    running_appid_registry()
+}
+
+/// Shell out to `reg query "HKCU\Software\Valve\Steam" /v RunningAppID` and
+/// parse its stdout. `None` on any failure (command missing, non-zero exit,
+/// unparseable output) — the caller falls back to `registry.vdf`.
+#[cfg(target_os = "windows")]
+fn running_appid_reg_query() -> Option<u32> {
+    let output = std::process::Command::new("reg")
+        .args(["query", r"HKCU\Software\Valve\Steam", "/v", "RunningAppID"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_reg_query_dword(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Pure parser: `reg query`'s stdout for a single `REG_DWORD` value → the
+/// parsed `u32`, or `None` for a missing/malformed value or a `0x0` value
+/// (Steam writes `0x0` when nothing is running). Expected shape:
+/// ```text
+/// HKEY_CURRENT_USER\Software\Valve\Steam
+///     RunningAppID    REG_DWORD    0x2d2
+/// ```
+/// Unit-tested against fixture stdout strings (set, zero, missing key, garbled).
+#[cfg(any(target_os = "windows", test))]
+fn parse_reg_query_dword(stdout: &str) -> Option<u32> {
+    let line = stdout
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("RunningAppID"))?;
+    let hex = line.split_whitespace().next_back()?;
+    let hex = hex.trim_start_matches("0x").trim_start_matches("0X");
+    u32::from_str_radix(hex, 16).ok().filter(|&id| id != 0)
+}
+
+/// Windows running-game detector (fallback path): read `RunningAppID` from
+/// `registry.vdf` on disk. Used only when [`running_appid_reg_query`] fails —
+/// Steam also maintains this file, so it degrades gracefully rather than
+/// losing the signal entirely.
 #[cfg(target_os = "windows")]
 fn running_appid_registry() -> Option<u32> {
     let path = registry_vdf_path()?;
@@ -547,11 +760,19 @@ fn serverinfo_is_busy(body: &str) -> bool {
     body.contains("SUNSHINE_SERVER_BUSY")
 }
 
-/// Candidate art filenames inside an appid's `librarycache/<appid>/<hash>/` dir,
-/// in preference order: the 300×450 portrait capsule poster first, then the
-/// 460×215 header as a fallback.
+/// Candidate art filenames inside an appid's `librarycache/<appid>/<hash>/` dir
+/// (modern layout), in preference order: the 300×450 portrait capsule poster
+/// first, then the 460×215 header as a fallback.
 const ART_CAPSULE: &str = "library_capsule.jpg";
 const ART_HEADER: &str = "library_header.jpg";
+
+/// Legacy (pre-hash-subdir) Steam clients instead wrote flat files directly
+/// under `librarycache/`, named `<appid>_library_600x900.jpg` (portrait) and
+/// `<appid>_header.jpg`. These are the filename *suffixes* appended to the
+/// appid; `pick_art_file` treats them as its own preference tier below the
+/// modern names.
+const ART_FLAT_LIBRARY: &str = "_library_600x900.jpg";
+const ART_FLAT_HEADER: &str = "_header.jpg";
 
 /// Resolve the local portrait art file for a Steam `appid` from the on-disk
 /// library cache, or `None` when nothing is cached (or Steam isn't installed).
@@ -559,25 +780,45 @@ const ART_HEADER: &str = "library_header.jpg";
 /// Steam stores art at
 /// `<steam_root>/appcache/librarycache/<appid>/<hash>/library_capsule.jpg`,
 /// where `<hash>` is an unpredictable 40-char hex subdir (there can be several
-/// per appid). We scan the appid dir's immediate subdirectories for the capsule
-/// (preferred) or header (fallback) and return the first match. The Steam root
-/// is resolved exactly like [`enumerate`] (first existing [`steam_roots`] dir).
+/// per appid). This relative `appcache/librarycache/...` layout is identical
+/// on every OS Steam supports — `steam_root` is resolved per-OS via
+/// [`steam_roots`] (Windows: `STEAM_PATH` override or the default Program
+/// Files install), so this modern-layout path needs no Windows-specific
+/// handling; only the root itself differs.
+///
+/// We scan the appid dir's immediate subdirectories for the capsule
+/// (preferred) or header (fallback). If neither is found (e.g. an older Steam
+/// client that never migrated to the per-appid/hash cache layout), we fall
+/// back to the flat `<appid>_library_600x900.jpg` / `<appid>_header.jpg` files
+/// directly under `librarycache/` — checked only in that fallback case, so a
+/// modern install never pays the extra stat calls. The Steam root is resolved
+/// exactly like [`enumerate`] (first existing [`steam_roots`] dir).
 pub fn library_art_path(appid: u32) -> Option<PathBuf> {
     let steam_root = steam_roots().into_iter().find(|r| r.is_dir())?;
-    let appid_dir = steam_root
-        .join("appcache/librarycache")
-        .join(appid.to_string());
+    let librarycache = steam_root.join("appcache/librarycache");
+    let appid_dir = librarycache.join(appid.to_string());
 
     // Gather the art filenames present across the immediate subdirs, paired with
     // the absolute path they live at, so the pure picker decides which to use.
     let mut found: Vec<(&'static str, PathBuf)> = Vec::new();
-    for dirent in std::fs::read_dir(&appid_dir).ok()?.flatten() {
-        let sub = dirent.path();
-        if !sub.is_dir() {
-            continue;
+    if let Ok(read) = std::fs::read_dir(&appid_dir) {
+        for dirent in read.flatten() {
+            let sub = dirent.path();
+            if !sub.is_dir() {
+                continue;
+            }
+            for name in [ART_CAPSULE, ART_HEADER] {
+                let candidate = sub.join(name);
+                if candidate.is_file() {
+                    found.push((name, candidate));
+                }
+            }
         }
-        for name in [ART_CAPSULE, ART_HEADER] {
-            let candidate = sub.join(name);
+    }
+
+    if found.is_empty() {
+        for name in [ART_FLAT_LIBRARY, ART_FLAT_HEADER] {
+            let candidate = librarycache.join(format!("{appid}{name}"));
             if candidate.is_file() {
                 found.push((name, candidate));
             }
@@ -592,16 +833,15 @@ pub fn library_art_path(appid: u32) -> Option<PathBuf> {
         .map(|(_, path)| path)
 }
 
-/// Pure picker: given the art filenames present across an appid's cache subdirs,
-/// pick the preferred one — capsule over header — or `None` if neither is there.
-/// Factored out of [`library_art_path`] so it's unit-testable without touching
-/// the filesystem.
+/// Pure picker: given the art filenames present across an appid's cache dirs,
+/// pick the most-preferred one, or `None` if none of the known names are
+/// present. Preference order: modern capsule, modern header, legacy flat
+/// library, legacy flat header. Factored out of [`library_art_path`] so it's
+/// unit-testable without touching the filesystem.
 fn pick_art_file<'a>(names: &[&'a str]) -> Option<&'a str> {
-    names
-        .iter()
-        .find(|&&n| n == ART_CAPSULE)
-        .or_else(|| names.iter().find(|&&n| n == ART_HEADER))
-        .copied()
+    [ART_CAPSULE, ART_HEADER, ART_FLAT_LIBRARY, ART_FLAT_HEADER]
+        .into_iter()
+        .find(|candidate| names.contains(candidate))
 }
 
 /// Is this entry Steam runtime tooling (Proton, Linux Runtime, redistributables)
@@ -840,6 +1080,150 @@ mod tests {
     fn pick_art_none_when_absent() {
         assert_eq!(pick_art_file(&[]), None);
         assert_eq!(pick_art_file(&["icon.jpg", "logo.png"]), None);
+    }
+
+    #[test]
+    fn pick_art_prefers_flat_library_over_flat_header() {
+        // Legacy flat layout: both present → the portrait one wins, same
+        // preference shape as the modern capsule/header pair.
+        assert_eq!(
+            pick_art_file(&["_header.jpg", "_library_600x900.jpg"]),
+            Some("_library_600x900.jpg")
+        );
+    }
+
+    #[test]
+    fn pick_art_falls_back_to_flat_header() {
+        assert_eq!(pick_art_file(&["_header.jpg"]), Some("_header.jpg"));
+    }
+
+    #[test]
+    fn pick_art_modern_beats_legacy_flat_when_both_somehow_present() {
+        // Shouldn't happen in practice (library_art_path only checks flat names
+        // when the modern scan found nothing), but the pure picker's preference
+        // order should still favor the modern names if ever handed both.
+        assert_eq!(
+            pick_art_file(&["_library_600x900.jpg", "library_header.jpg"]),
+            Some("library_header.jpg")
+        );
+    }
+
+    #[test]
+    fn parses_installdir_from_fixture() {
+        assert_eq!(
+            parse_installdir(FIXTURE_ACF).as_deref(),
+            Some("Counter-Strike Global Offensive")
+        );
+    }
+
+    #[test]
+    fn parse_installdir_missing_field_is_none() {
+        let acf = r#""AppState" { "appid" "42" "name" "No Installdir" }"#;
+        assert_eq!(parse_installdir(acf), None);
+    }
+
+    #[test]
+    fn parse_installdir_unparseable_is_none() {
+        assert_eq!(parse_installdir("not vdf at all {{{"), None);
+    }
+
+    #[test]
+    fn reg_query_dword_parses_set_value() {
+        let stdout = "\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    RunningAppID    REG_DWORD    0x2d2\r\n\r\n";
+        assert_eq!(parse_reg_query_dword(stdout), Some(0x2d2));
+    }
+
+    #[test]
+    fn reg_query_dword_zero_is_none() {
+        let stdout =
+            "HKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    RunningAppID    REG_DWORD    0x0\r\n";
+        assert_eq!(parse_reg_query_dword(stdout), None);
+    }
+
+    #[test]
+    fn reg_query_dword_missing_key_is_none() {
+        // `reg query` prints this to stdout/stderr when the value doesn't exist;
+        // either way there's no `RunningAppID` line to find.
+        let stdout =
+            "ERROR: The system was unable to find the specified registry key or value.\r\n";
+        assert_eq!(parse_reg_query_dword(stdout), None);
+    }
+
+    #[test]
+    fn reg_query_dword_garbled_is_none() {
+        assert_eq!(parse_reg_query_dword("not reg output at all {{{"), None);
+        assert_eq!(
+            parse_reg_query_dword("RunningAppID    REG_DWORD    notahexvalue"),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_process_list_extracts_pid_and_path() {
+        let stdout = "1234\tC:\\Games\\Foo\\game.exe\r\n5678\tC:\\Windows\\explorer.exe\r\n";
+        assert_eq!(
+            parse_process_list(stdout),
+            vec![
+                (1234, r"C:\Games\Foo\game.exe".to_string()),
+                (5678, r"C:\Windows\explorer.exe".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_process_list_skips_malformed_lines() {
+        let stdout = "not a line\r\n\r\nnotanumber\tC:\\Foo\\bar.exe\r\n42\t\r\n99\tC:\\ok.exe\r\n";
+        assert_eq!(
+            parse_process_list(stdout),
+            vec![(99, "C:\\ok.exe".to_string())]
+        );
+    }
+
+    #[test]
+    fn exe_under_install_dir_nested_exe_matches() {
+        assert!(exe_is_under_install_dir(
+            r"C:\Games\Foo\bin\game.exe",
+            r"C:\Games\Foo"
+        ));
+    }
+
+    #[test]
+    fn exe_under_install_dir_sibling_prefix_does_not_match() {
+        // FooBar shares the "Foo" prefix but is a different directory.
+        assert!(!exe_is_under_install_dir(
+            r"C:\Games\FooBar\game.exe",
+            r"C:\Games\Foo"
+        ));
+    }
+
+    #[test]
+    fn exe_under_install_dir_exact_dir_does_not_match() {
+        // The install dir itself is not a file/exe path.
+        assert!(!exe_is_under_install_dir(r"C:\Games\Foo", r"C:\Games\Foo"));
+    }
+
+    #[test]
+    fn exe_under_install_dir_case_insensitive() {
+        assert!(exe_is_under_install_dir(
+            r"c:\games\foo\game.exe",
+            r"C:\Games\Foo"
+        ));
+    }
+
+    #[test]
+    fn exe_under_install_dir_handles_forward_slashes_and_trailing_separator() {
+        assert!(exe_is_under_install_dir(
+            "C:/Games/Foo/bin/game.exe",
+            r"C:\Games\Foo\"
+        ));
+    }
+
+    #[test]
+    fn exe_under_install_dir_unrelated_paths_do_not_match() {
+        assert!(!exe_is_under_install_dir(
+            r"C:\Windows\explorer.exe",
+            r"C:\Games\Foo"
+        ));
     }
 
     #[test]
