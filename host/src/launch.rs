@@ -76,7 +76,15 @@ fn fire_steam_url(url: &str) -> anyhow::Result<()> {
 ///   [`BIGPICTURE_WAIT`]. If it's already up (warm) we return immediately; if it
 ///   appears mid-wait (cold start by a stream) we return as soon as it does; if
 ///   the timeout elapses we return anyway and the caller fires the nav regardless.
-/// - **Other OSes**: no-op (we just fire the nav).
+/// - **Windows**: intentionally NOT wired — no-op, fire the nav immediately. The
+///   equivalent Windows signal (a `steamwebhelper.exe` process with
+///   `-bigpicture` in its command line) is only visible via a `Get-CimInstance
+///   Win32_Process` `CommandLine` query, i.e. a PowerShell round-trip on
+///   *every* launch. Steam's Big Picture also comes up quickly on Windows in
+///   practice, so the added per-launch latency wasn't judged worth it — this is
+///   a deliberate limitation, not an oversight. Revisit if cold-launch nav
+///   misses become a real problem on Windows.
+/// - **macOS**: no-op (we just fire the nav).
 fn wait_for_bigpicture() {
     #[cfg(target_os = "linux")]
     {
@@ -93,7 +101,7 @@ fn wait_for_bigpicture() {
             std::thread::sleep(BIGPICTURE_POLL);
         }
     }
-    // Other OSes: no BPM-process check — `launch` just fires the nav.
+    // Windows/macOS/other: no BPM-process check — `launch` just fires the nav.
 }
 
 /// Is Steam's Big Picture mode running? Scans `/proc/*/cmdline` for a process
