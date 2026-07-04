@@ -63,9 +63,9 @@ idempotent authority, and make the daemon's compositor attachment self-heal.
 **Declarative kiosk rules** (`config/hyprland.conf`, all verified against source):
 - `windowrule = fullscreen on, match:class .+` — force every app window
   fullscreen at map (best-effort; gated on winning initial focus).
-- `windowrule = suppressevent fullscreen maximize, match:class .+` — the kiosk
+- `windowrule = suppress_event fullscreen maximize, match:class .+` — the kiosk
   owns fullscreen; ignore a window's own fullscreen/maximize *requests* so a game
-  toggling fullscreen can't churn compositor state. `suppressevent` blocks only
+  toggling fullscreen can't churn compositor state. `suppress_event` blocks only
   the window's requests, not `hyprctl dispatch`, so the daemon/keybinds keep
   control (`src/desktop/view/Window.cpp`).
 - `misc:on_focus_under_fullscreen = 1` — focusing a window under a fullscreen one
@@ -103,7 +103,7 @@ frame ever shows two tiled app windows.
 | Idea | Verdict | Notes |
 |---|---|---|
 | Launch-time atomic `[fullscreen]` placement | **Adopted** | Highest-leverage; app is fullscreen at map. Launching is QML (`hyprctl dispatch exec`), not the daemon — `intent app:` just routes to QML. |
-| `suppressevent fullscreen maximize` | **Adopted** | Tokens verified (`Window.cpp`). `activate` deliberately **not** suppressed — `focus_on_activate`/launch-focus rely on it; focus-steal is prevented structurally by the fullscreen invariant instead. |
+| `suppress_event fullscreen maximize` | **Adopted** | Effect name is `suppress_event` (underscored) in 0.55.2's `WindowRuleEffectContainer.cpp` EFFECT_STRINGS; the legacy `windowrulev2` spelling `suppressevent` fails config parse on-device. Tokens (`fullscreen`/`maximize`) verified in `Window.cpp`. `activate` deliberately **not** suppressed — `focus_on_activate`/launch-focus rely on it; focus-steal is prevented structurally by the fullscreen invariant instead. |
 | `new_window_takes_over_fullscreen = 2` | **Rejected** | **Does not exist** in Hyprland 0.55 (`ConfigValues.cpp` has no such key) — setting it errors in `hyprctl configerrors`. Its intent is covered by the fullscreen windowrule + `on_focus_under_fullscreen`; adopted `exit_window_retains_fullscreen` (a real option) instead. |
 | Dynamic per-class `windowrulev2` from the daemon | **Rejected (obviated)** | The wildcard `match:class .+` already applies to every class; runtime per-class registration adds churn for no coverage gain. |
 | Strip default Hyprland binds | **N/A (already satisfied)** | Hyprland ships **no** default keybinds; the kiosk config already declares only the super-intent set + `SUPER,Q`. Nothing to strip. |
@@ -145,7 +145,7 @@ Deploy to htpc-1 and confirm:
   Plex HTPC, launch Steam (Plex backgrounds), resume Plex from a home card, resume
   Steam — each switch shows exactly one fullscreen app, never a side-by-side tile.
 - [ ] **App-initiated fullscreen churn is absorbed.** In a game/player, toggle its
-  own fullscreen/menu repeatedly — the kiosk stays fullscreen (suppressevent).
+  own fullscreen/menu repeatedly — the kiosk stays fullscreen (suppress_event).
 - [ ] **Close promotes the survivor.** With two apps running, quit the foreground
   one — the backgrounded app comes forward fullscreen, no split
   (`exit_window_retains_fullscreen`).

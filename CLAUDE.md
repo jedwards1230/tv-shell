@@ -283,7 +283,7 @@ it" is held **declaratively** by `config/hyprland.conf` first — a fresh launch
 maps fullscreen via the QML `[fullscreen]` exec-rule prefix + the
 `windowrule = fullscreen` backstop; a resume swaps fullscreen atomically via
 `misc:on_focus_under_fullscreen = 1`; a close promotes the survivor via
-`misc:exit_window_retains_fullscreen = true`; and `windowrule = suppressevent
+`misc:exit_window_retains_fullscreen = true`; and `windowrule = suppress_event
 fullscreen maximize` stops apps churning that state themselves. The daemon's
 Hyprland actor is the **single idempotent backstop** on top of those rules
 (`force_fullscreen` on `openwindow`, `enforce_active_fullscreen` on
