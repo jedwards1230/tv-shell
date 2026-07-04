@@ -46,12 +46,23 @@ Item {
 
     readonly property bool isFocused: (activeFocus && !InputMode.mouseMode) || (mouseArea.containsMouse && InputMode.mouseMode)
 
-    // Art fallback chain: CDN portrait → host-local capsule → CDN header → letter
+    // Art fallback chain: host-local capsule → CDN portrait → CDN header → letter
     // initial. `_artCandidates` is the ordered, non-empty URL list; on each load
     // error we advance `_artIdx` to the next, and when the last also fails the
     // Image isn't Ready so the letter placeholder shows through. Resets to the top
     // whenever any source URL changes.
-    readonly property var _artCandidates: [root.art, root.localArt, root.headerArt].filter(u => u !== "")
+    //
+    // Local art is FIRST (ahead of the CDN portrait) on purpose: for an installed
+    // game the host sidecar serves the real high-res library capsule off Steam's
+    // own librarycache, whereas Steam's CDN sometimes returns a ~1.6KB placeholder
+    // stub for `library_600x900.jpg` (e.g. Battlefield 6) that loads as a
+    // "successful" near-empty image — Image.status is Ready, not Error, so the
+    // error-driven fallback below never advances past it and the card renders
+    // blank. Trying the LAN sidecar first sidesteps the CDN-stub trap entirely;
+    // the CDN portrait/header remain fallbacks for not-installed games (empty
+    // localArt, filtered out) and for when the sidecar host is unreachable
+    // (localArt errors → advance to CDN).
+    readonly property var _artCandidates: [root.localArt, root.art, root.headerArt].filter(u => u !== "")
     property int _artIdx: 0
     readonly property string _artSource: root._artIdx < root._artCandidates.length ? root._artCandidates[root._artIdx] : ""
     onArtChanged: root._artIdx = 0
