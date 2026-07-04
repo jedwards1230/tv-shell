@@ -67,7 +67,14 @@ Item {
         root.launchStarted(app);
         snapshotClients.running = true;
         appRunner._appName = app.name || "";
-        appRunner.command = ["hyprctl", "dispatch", "exec", app.exec || app.name];
+        // Launch-time atomic placement: the `[fullscreen]` exec-rule prefix makes
+        // Hyprland map the app's first window fullscreen from the start, before
+        // any event round-trips — nothing to correct post-hoc. This is the
+        // primary kiosk fullscreen guarantee for a fresh launch; the static
+        // `windowrule = fullscreen` + the daemon's openwindow backstop remain as
+        // defense-in-depth. Exec-rule syntax verified against Hyprland
+        // src/config/supplementary/executor/Executor.cpp (`args[0] == '['`).
+        appRunner.command = ["hyprctl", "dispatch", "exec", "[fullscreen] " + (app.exec || app.name)];
         appRunner.running = true;
         detectNewWindow.restart();
 
@@ -179,10 +186,16 @@ Item {
         property string addr: ""
         command: ["hyprctl", "dispatch", "focuswindow", "address:" + addr]
         onExited: exitCode => {
+            // A failed focuswindow (the target vanished mid-resume) means the app
+            // is gone. Fullscreen is deliberately NOT re-asserted here: the
+            // compositor swaps fullscreen to the newly-focused window itself via
+            // misc:on_focus_under_fullscreen=1, and the daemon is the single
+            // idempotent backstop. The old `fullscreen 0` toggle here raced them
+            // and could flip a resumed (already-fullscreen) window back OUT of
+            // fullscreen — which, with a second app backgrounded, is exactly what
+            // produced the two-app split view (docs/KIOSK_WINDOW_MODEL.md).
             if (exitCode !== 0 && root.shellState === "appRunning")
                 root.appClosed();
-            else
-                ensureFullscreen.running = true;
         }
     }
 
@@ -261,34 +274,13 @@ Item {
         property string windowClass: ""
         command: ["hyprctl", "dispatch", "focuswindow", "class:" + windowClass]
         onExited: exitCode => {
+            // See focusWindowAddr above: no QML fullscreen re-assertion on resume.
+            // on_focus_under_fullscreen=1 swaps fullscreen to the focused window
+            // and the daemon is the single idempotent backstop; a toggle here
+            // raced them into the split-view bug (docs/KIOSK_WINDOW_MODEL.md).
             if (exitCode !== 0 && root.shellState === "appRunning")
                 root.appClosed();
-            else
-                ensureFullscreenQuery.request("hypr-active");
         }
-    }
-
-    // Window rule only applies at creation — restore fullscreen on resume.
-    // Read the active window's fullscreen state via the daemon's hypr-active IPC
-    // (no hyprctl shell-out for the read); if it's not fullscreen, toggle it on.
-    SocketClient {
-        id: ensureFullscreenQuery
-        onResponseReceived: line => {
-            try {
-                let obj = JSON.parse(line);
-                if (obj.fullscreen === false)
-                    ensureFullscreen.running = true;
-            } catch (e) {
-                console.log("AppLifecycleManager: failed to parse hypr-active:", e);
-            }
-        }
-    }
-
-    // The fullscreen toggle stays a one-shot hyprctl dispatch (a write/action,
-    // not a read — per the daemon read / shell-out write split).
-    Process {
-        id: ensureFullscreen
-        command: ["hyprctl", "dispatch", "fullscreen", "0"]
     }
 
     function _handleWindowQueryResult(clients) {

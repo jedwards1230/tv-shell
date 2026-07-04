@@ -225,14 +225,21 @@ pub fn input_bin() -> PathBuf {
 mod tests {
     use super::*;
 
-    /// Create a unique scratch directory under the system temp dir for a test.
-    /// Named by test + process id so parallel test threads never collide.
+    /// Create a unique scratch directory for a test, under the crate's build
+    /// tree rather than the system temp dir. The system temp dir is unwritable
+    /// under the sandbox the Rust pre-commit/Stop hook runs in (writes there
+    /// fail `EACCES`), whereas the target/ tree is already writable — cargo just
+    /// compiled into it. Named by tag + pid + thread id so parallel test threads
+    /// never collide.
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gsi-session-env-{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("session-env-test-scratch")
+            .join(format!(
+                "{tag}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

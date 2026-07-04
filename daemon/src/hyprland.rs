@@ -111,6 +111,42 @@ async fn request(cmd: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
+/// Log severity for a failed event-listener (re)connect attempt, chosen by the
+/// consecutive-failure streak (see [`note_reconnect`]).
+#[derive(Debug, PartialEq, Eq)]
+enum ReconnectSeverity {
+    /// Below the streak threshold — a routine per-retry warning.
+    Warn,
+    /// At/past the threshold — the daemon is persistently deaf to the
+    /// compositor; escalate loudly on every retry until a clean reconnect
+    /// resets the streak.
+    Escalate,
+}
+
+/// Advance the consecutive-failure counter for one reconnect outcome and decide
+/// the log severity. Extracted as a pure function so the escalation lifecycle is
+/// unit-testable without an async socket.
+///
+/// - `ok == true` marks a clean (re)connect end (the socket closed cleanly, e.g.
+///   Hyprland exited/replaced): the streak resets to 0 and `None` is returned
+///   (nothing to log).
+/// - `ok == false` marks a failed attempt: the streak increments and the result
+///   is `Some(Escalate)` once it reaches `threshold` (and stays escalated on
+///   every subsequent failure until a clean reconnect resets it), else
+///   `Some(Warn)`.
+fn note_reconnect(failures: &mut u32, ok: bool, threshold: u32) -> Option<ReconnectSeverity> {
+    if ok {
+        *failures = 0;
+        return None;
+    }
+    *failures = failures.saturating_add(1);
+    Some(if *failures >= threshold {
+        ReconnectSeverity::Escalate
+    } else {
+        ReconnectSeverity::Warn
+    })
+}
+
 /// Run the Hyprland actor until `rx` is closed.
 ///
 /// Owns the request socket queries, services [`HyprReq`]s, and (via a spawned
@@ -134,10 +170,51 @@ pub async fn run(
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
+            // Count consecutive failed (re)connect attempts so a *persistent*
+            // inability to reach any live Hyprland escalates from a routine
+            // per-retry warn to one loud, unmissable line. That is the deaf-daemon
+            // signature (event socket unreachable — a killed/restarted or absent
+            // compositor); it trapped two investigators today because nothing
+            // surfaced it. Note it deliberately does NOT catch the render-wedge
+            // (frozen frames while IPC still answers): that leaves the read loop
+            // blocked with neither Err nor Ok, so it is not observable from the
+            // IPC socket at all — detecting it needs a render-side heartbeat
+            // (see docs/KIOSK_WINDOW_MODEL.md, Phase 2).
+            let mut consecutive_failures: u32 = 0;
+            const ESCALATE_AFTER: u32 = 5;
             loop {
                 match watch_events(events_tx.clone(), active_window_tx.clone()).await {
-                    Ok(()) => backoff = Duration::from_secs(1), // ended cleanly; re-attach
-                    Err(e) => tracing::warn!("hyprland: event listener stopped: {e}; retrying"),
+                    Ok(()) => {
+                        // Socket closed cleanly (Hyprland exited/replaced); the next
+                        // attempt re-resolves the live instance (self-heal).
+                        backoff = Duration::from_secs(1);
+                        note_reconnect(&mut consecutive_failures, true, ESCALATE_AFTER);
+                    }
+                    Err(e) => {
+                        // note_reconnect increments the streak and, once it reaches
+                        // ESCALATE_AFTER, escalates on EVERY retry (not just the
+                        // Nth) so a persistent outage stays visible in the journal.
+                        // The live `consecutive_failures` is interpolated so the "in
+                        // a row" count is always accurate (it resets on the next
+                        // clean reconnect, so a recovered-then-failed streak
+                        // re-escalates from scratch).
+                        match note_reconnect(&mut consecutive_failures, false, ESCALATE_AFTER) {
+                            // Pass the count + error as structured fields (not string
+                            // interpolation) so the numbers render unambiguously in
+                            // journald/JSON: `consecutive_failures=N error=…`.
+                            Some(ReconnectSeverity::Escalate) => tracing::error!(
+                                consecutive_failures,
+                                error = %e,
+                                "hyprland: event listener is DEAF to the compositor — repeated failed \
+                                 (re)connects. Hyprland is likely down or was restarted under a new \
+                                 instance signature; kiosk fullscreen follow-focus and the gamepad \
+                                 presenter's follow-focus will not fire until this recovers."
+                            ),
+                            _ => {
+                                tracing::warn!(error = %e, "hyprland: event listener stopped; retrying")
+                            }
+                        }
+                    }
                 }
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(30));
@@ -558,6 +635,52 @@ async fn enforce_active_fullscreen() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconnect_counter_lifecycle() {
+        const THRESHOLD: u32 = 5;
+        let mut failures = 0u32;
+
+        // Below the threshold: each failure warns and increments the streak.
+        for expected in 1..THRESHOLD {
+            assert_eq!(
+                note_reconnect(&mut failures, false, THRESHOLD),
+                Some(ReconnectSeverity::Warn)
+            );
+            assert_eq!(failures, expected);
+        }
+
+        // Reaching the threshold escalates...
+        assert_eq!(
+            note_reconnect(&mut failures, false, THRESHOLD),
+            Some(ReconnectSeverity::Escalate)
+        );
+        assert_eq!(failures, THRESHOLD);
+
+        // ...and STAYS escalated on every subsequent failure (not just the Nth),
+        // with the streak still climbing so the logged count is truthful.
+        assert_eq!(
+            note_reconnect(&mut failures, false, THRESHOLD),
+            Some(ReconnectSeverity::Escalate)
+        );
+        assert_eq!(
+            note_reconnect(&mut failures, false, THRESHOLD),
+            Some(ReconnectSeverity::Escalate)
+        );
+        assert_eq!(failures, THRESHOLD + 2);
+
+        // A clean reconnect resets the streak and logs nothing.
+        assert_eq!(note_reconnect(&mut failures, true, THRESHOLD), None);
+        assert_eq!(failures, 0);
+
+        // After recovery a fresh failure warns again — the streak re-escalates
+        // from scratch rather than staying latched.
+        assert_eq!(
+            note_reconnect(&mut failures, false, THRESHOLD),
+            Some(ReconnectSeverity::Warn)
+        );
+        assert_eq!(failures, 1);
+    }
 
     #[test]
     fn active_reshapes_to_contract() {
