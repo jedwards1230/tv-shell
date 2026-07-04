@@ -35,6 +35,14 @@ Item {
     // mapped — gates windowConfirmed so it fires exactly once per launch and not
     // on every subsequent poll (#193).
     property bool _awaitingWindow: false
+    // wmClass of the app currently being launched, tracked while
+    // `_awaitingWindow` so a live `hypr:activewindow` event can confirm the
+    // launch the moment that class becomes active — the fallback for apps
+    // whose window was already mapped before this launch (a single-instance
+    // app re-invoked via deep-link never produces a "new" window, so the
+    // window-appear detectors below can't confirm it; an activewindow event
+    // naming the same class can).
+    property string _pendingLaunchClass: ""
 
     signal appLaunched
     signal appClosed
@@ -51,6 +59,7 @@ Item {
     function _confirmWindow() {
         if (root._awaitingWindow) {
             root._awaitingWindow = false;
+            root._pendingLaunchClass = "";
             root.windowConfirmed();
         }
     }
@@ -64,6 +73,7 @@ Item {
         // here, not in checkAndLaunchApp, so resuming an already-running app (the
         // focus-existing-window path) never flashes the overlay.
         root._awaitingWindow = true;
+        root._pendingLaunchClass = (app.wmClass || "").toLowerCase();
         root.launchStarted(app);
         snapshotClients.running = true;
         appRunner._appName = app.name || "";
@@ -155,6 +165,22 @@ Item {
         }
     }
 
+    // Resume an app that's ALREADY running at a known address while ALSO
+    // re-delivering its launch command — for single-instance apps (e.g. Steam)
+    // where invoking the app again is how a deep-link (steam://) navigates the
+    // running instance rather than spawning a new window. Mirrors
+    // focusByAddress (the "recent apps" Focus action) but additionally fires
+    // the exec first, so a deep-link to an already-running instance both
+    // navigates AND raises the window in one call — no waiting on a new-window
+    // event that a single-instance app will never produce.
+    function redeliverAndFocus(app, address) {
+        if (app && app.exec) {
+            redeliverProcess.command = ["hyprctl", "dispatch", "exec", app.exec];
+            redeliverProcess.running = true;
+        }
+        focusByAddress(address);
+    }
+
     onShellStateChanged: {
         if (shellState === "idle") {
             if (!windowPoller.running)
@@ -172,6 +198,13 @@ Item {
         id: closeWindowAddr
         property string addr: ""
         command: ["hyprctl", "dispatch", "closewindow", "address:" + addr]
+    }
+
+    // Fire-and-forget exec redelivery for redeliverAndFocus() above — a plain
+    // one-shot dispatch, no exit-code handling needed (the focusByAddress call
+    // that follows it owns the actual focus/appRunning transition).
+    Process {
+        id: redeliverProcess
     }
 
     Process {
@@ -481,6 +514,17 @@ Item {
             if (line.indexOf("hypr:activewindow:") === 0) {
                 root.activeWindowClass = line.substring("hypr:activewindow:".length);
                 root._onHyprWindowEvent();
+                // Backstop for a launch waiting on a window that will NEVER be
+                // "new" — e.g. a single-instance app (Steam) already running
+                // before this launch, re-invoked via deep-link. The window-
+                // appear detectors (detectClient/windowPoller's prelaunch-
+                // novelty check) can't see it since its class predates the
+                // launch; the class becoming ACTIVE is just as valid a
+                // confirmation.
+                if (root._awaitingWindow && root._pendingLaunchClass !== "" && root.activeWindowClass.toLowerCase() === root._pendingLaunchClass) {
+                    root.runningAppClass = root.activeWindowClass;
+                    root._confirmWindow();
+                }
             } else if (line.indexOf("hypr:fullscreen:") === 0) {
                 root.activeWindowFullscreen = line.substring("hypr:fullscreen:".length) === "1";
                 root._onHyprWindowEvent();

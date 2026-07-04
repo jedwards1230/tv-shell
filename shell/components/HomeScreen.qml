@@ -55,6 +55,10 @@ FocusScope {
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
+    // Resume an ALREADY-running app while redelivering its launch command —
+    // for single-instance apps (Steam) whose deep-link needs to reach a
+    // running instance, not spawn a new one. See launchSteamLocalGame below.
+    signal appResumeRequested(var app, string address)
     signal appFocusRequested(string address)
     signal appCloseRequested(string address)
     signal settingsRequested
@@ -216,31 +220,46 @@ FocusScope {
     // the MOONLIGHT widget, for navigating/streaming the GAMING HOST's Big
     // Picture over Moonlight).
     //
-    // KNOWN LIMITATION: `checkAndLaunchApp` focuses an already-running `steam`
-    // window instead of re-delivering the URL, so the per-game `steam://nav`
-    // navigation below lands reliably only when Steam is cold-started by it; when
-    // Steam is already open it simply raises the existing window (whatever page it
-    // was last on) rather than jumping to the newly-selected game.
+    // Steam is a SINGLE-INSTANCE app: delivering a steam:// URL to an
+    // already-running instance navigates it in place but spawns NO new window,
+    // so the generic cold-start path (checkAndLaunchApp waiting for a new/
+    // matching window before it confirms the launch) can never resolve for it —
+    // the "Launching…" overlay would hang until its safety timeout, and the
+    // window would never get focused (checkAndLaunchApp's match-found branch
+    // only focuses; it doesn't redeliver the URL). So check the live
+    // `runningWindows` model (the same data the recent-apps "Focus" context
+    // action reads) FIRST: if Steam is already running, skip launchApp entirely
+    // and fire appResumeRequested, which redelivers the URL AND focuses the
+    // window by address in one call — mirroring focusByAddress, so it never
+    // flashes the launch overlay, exactly like resuming any other
+    // already-running app. Cold start (Steam not running yet) is unaffected —
+    // it still goes through the normal launchApp/checkAndLaunchApp flow.
     function launchSteamLocalGame(appid) {
         root.userActivity();
-        root.launchApp({
-            "name": "Steam",
-            "exec": "steam steam://nav/games/details/" + appid,
-            "wmClass": "steam",
-            "icon": "steam",
-            "comment": "Steam"
-        });
+        root._launchOrResumeSteamLocal("steam steam://nav/games/details/" + appid);
     }
 
     function launchSteamLocalBigPicture() {
         root.userActivity();
-        root.launchApp({
+        root._launchOrResumeSteamLocal("steam steam://open/bigpicture");
+    }
+
+    function _launchOrResumeSteamLocal(execCmd) {
+        let app = {
             "name": "Steam",
-            "exec": "steam steam://open/bigpicture",
+            "exec": execCmd,
             "wmClass": "steam",
             "icon": "steam",
             "comment": "Steam"
-        });
+        };
+        let running = root.runningWindows || [];
+        for (let i = 0; i < running.length; i++) {
+            if ((running[i].windowClass || "").toLowerCase() === "steam") {
+                root.appResumeRequested(app, running[i].address);
+                return;
+            }
+        }
+        root.launchApp(app);
     }
 
     // === Steam launch choreography ===
