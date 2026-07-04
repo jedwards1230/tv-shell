@@ -156,14 +156,20 @@ pub async fn run(
                     }
                     Err(e) => {
                         consecutive_failures += 1;
-                        if consecutive_failures == ESCALATE_AFTER {
+                        // Below the threshold: a routine per-retry warn. At or past
+                        // it: escalate to error! on EVERY retry (not just the Nth)
+                        // so a persistent outage stays visible in the journal, and
+                        // interpolate the live `consecutive_failures` so the "in a
+                        // row" count is always accurate (resets to 0 on the next
+                        // clean reconnect, so a recovered-then-failed streak
+                        // re-escalates from scratch).
+                        if consecutive_failures >= ESCALATE_AFTER {
                             tracing::error!(
-                                consecutive_failures,
-                                "hyprland: event listener has failed to (re)connect {ESCALATE_AFTER} \
-                                 times in a row ({e}); the daemon is DEAF to the compositor — Hyprland \
-                                 is likely down or was restarted under a new instance signature. Kiosk \
-                                 fullscreen follow-focus and the gamepad presenter's follow-focus will \
-                                 not fire until this recovers."
+                                "hyprland: event listener has failed to (re)connect {consecutive_failures} \
+                                 times in a row ({e}); the daemon is DEAF to the compositor — Hyprland is \
+                                 likely down or was restarted under a new instance signature. Kiosk \
+                                 fullscreen follow-focus and the gamepad presenter's follow-focus will not \
+                                 fire until this recovers."
                             );
                         } else {
                             tracing::warn!("hyprland: event listener stopped: {e}; retrying");
