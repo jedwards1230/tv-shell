@@ -22,7 +22,7 @@
 //! All functions are intentionally side-effect-free except `install_root`
 //! (which calls `std::env::current_exe`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Wayland display resolution
@@ -66,24 +66,56 @@ pub fn resolve_wayland_display() -> Option<String> {
 
 /// Resolve the Hyprland instance signature.
 ///
-/// Returns `HYPRLAND_INSTANCE_SIGNATURE` from the environment when it is set
-/// and non-empty.  Otherwise, reads the entries of `$XDG_RUNTIME_DIR/hypr/`
-/// and picks the most-recently-modified subdirectory that contains either
-/// `.socket.sock` or `.socket2.sock` — that subdirectory name IS the instance
-/// signature.
+/// Prefers the **live** socket directory on disk over the inherited
+/// `HYPRLAND_INSTANCE_SIGNATURE` env var, and only falls back to the env var
+/// when no live directory is present yet. This ordering is deliberate and load-
+/// bearing:
+///
+/// The daemon is a long-lived `systemd --user` unit. If a Hyprland instance
+/// imported `HYPRLAND_INSTANCE_SIGNATURE` into the user manager's environment
+/// (`systemctl --user import-environment` / `dbus-update-activation-environment`),
+/// the daemon can inherit it — and a process's environment is frozen for its
+/// lifetime. When that Hyprland is later killed and restarted (e.g. render-loop
+/// hang recovery after an HDMI/CEC flap), it comes up under a NEW signature, but
+/// the daemon's inherited env var still names the DEAD instance. Trusting the env
+/// var first (the previous behavior) then pinned every socket path to the dead
+/// instance forever: queries and the event stream failed with "Connection
+/// refused", the daemon went silently deaf to the live compositor, and no amount
+/// of reconnect backoff could recover because each retry re-resolved to the same
+/// stale signature. Scanning `$XDG_RUNTIME_DIR/hypr/` first reflects the CURRENT
+/// compositor, so the reconnect loop self-heals onto the new instance.
+///
+/// The scan picks the most-recently-modified `$XDG_RUNTIME_DIR/hypr/<sig>`
+/// subdirectory that still contains a `.socket.sock`/`.socket2.sock` — that
+/// subdirectory name IS the instance signature. On a single-compositor kiosk the
+/// newest such directory is the live instance; a killed instance's directory has
+/// an older mtime, so the freshly-created live one wins. (Residual edge: a socket
+/// FILE left behind by a `SIGKILL`ed instance can linger and pass the existence
+/// check; the reconnect loop's connect attempt then fails and retries, and once
+/// the live instance's newer directory appears the scan prefers it.)
 pub fn resolve_hypr_signature() -> Option<String> {
-    if let Ok(sig) = std::env::var("HYPRLAND_INSTANCE_SIGNATURE") {
-        if !sig.is_empty() {
+    if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
+        if let Some(sig) = newest_live_signature_in(&PathBuf::from(rt).join("hypr")) {
             return Some(sig);
         }
     }
 
-    let runtime_dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
-    let hypr_dir = runtime_dir.join("hypr");
+    // No live socket dir yet (e.g. the daemon started before Hyprland): fall back
+    // to the inherited env var if it names anything.
+    std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
 
+/// Scan a `.../hypr/` directory for the most-recently-modified subdirectory that
+/// still holds a Hyprland IPC socket, returning its name (the instance
+/// signature). Pure over the passed path — takes no environment — so it is unit-
+/// testable without mutating process-global env vars. Returns `None` when the
+/// directory is absent or holds no socket-bearing subdirectory.
+fn newest_live_signature_in(hypr_dir: &Path) -> Option<String> {
     let mut best: Option<(std::time::SystemTime, String)> = None;
 
-    let entries = std::fs::read_dir(&hypr_dir).ok()?;
+    let entries = std::fs::read_dir(hypr_dir).ok()?;
     for entry in entries.flatten() {
         let ft = match entry.file_type() {
             Ok(t) => t,
@@ -192,6 +224,107 @@ pub fn input_bin() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Create a unique scratch directory under the system temp dir for a test.
+    /// Named by test + process id so parallel test threads never collide.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "gsi-session-env-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Materialize a fake `hypr/<sig>/` instance dir; when `with_socket`, drop a
+    /// `.socket2.sock` marker file so it counts as a live instance.
+    fn make_instance(hypr_dir: &Path, sig: &str, with_socket: bool) {
+        let sub = hypr_dir.join(sig);
+        std::fs::create_dir_all(&sub).unwrap();
+        if with_socket {
+            std::fs::write(sub.join(".socket2.sock"), b"").unwrap();
+        }
+    }
+
+    // ── newest_live_signature_in (pure scan) ─────────────────────────────────
+
+    #[test]
+    fn scan_returns_none_for_absent_or_empty_dir() {
+        let root = scratch("scan-empty");
+        // Absent hypr/ dir.
+        assert_eq!(newest_live_signature_in(&root.join("hypr")), None);
+        // Present but empty hypr/ dir.
+        let hypr = root.join("hypr");
+        std::fs::create_dir_all(&hypr).unwrap();
+        assert_eq!(newest_live_signature_in(&hypr), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_skips_dirs_without_a_socket() {
+        // A socketless instance dir is never a candidate, so even when it is the
+        // only entry the scan yields None — and when a live one coexists, the
+        // live one wins regardless of mtime ordering.
+        let root = scratch("scan-skip");
+        let hypr = root.join("hypr");
+        make_instance(&hypr, "dead_no_socket", false);
+        assert_eq!(newest_live_signature_in(&hypr), None);
+
+        make_instance(&hypr, "live_abc123", true);
+        assert_eq!(
+            newest_live_signature_in(&hypr).as_deref(),
+            Some("live_abc123")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── resolve_hypr_signature (scan-first, env fallback) ─────────────────────
+
+    // Exercises the load-bearing ordering in one test: a live socket dir must win
+    // over a stale inherited HYPRLAND_INSTANCE_SIGNATURE (the deaf-daemon fix),
+    // and the env var is used only when no live dir exists. Both env vars are
+    // process-global, so the cases share one test (mirrors input_bin_resolution)
+    // and the env is restored at the end.
+    #[test]
+    fn resolve_prefers_live_socket_dir_over_stale_env() {
+        let prev_xdg = std::env::var_os("XDG_RUNTIME_DIR");
+        let prev_sig = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE");
+
+        let root = scratch("resolve");
+        make_instance(&root.join("hypr"), "live_sig_9999", true);
+
+        std::env::set_var("XDG_RUNTIME_DIR", &root);
+        // Stale env: names a DEAD instance with no socket dir on disk.
+        std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", "dead_stale_env_sig");
+        assert_eq!(
+            resolve_hypr_signature().as_deref(),
+            Some("live_sig_9999"),
+            "live socket dir must override a stale inherited signature"
+        );
+
+        // No live dir anywhere → fall back to whatever the env names.
+        let empty = scratch("resolve-empty");
+        std::env::set_var("XDG_RUNTIME_DIR", &empty);
+        assert_eq!(
+            resolve_hypr_signature().as_deref(),
+            Some("dead_stale_env_sig"),
+            "with no live dir the inherited env signature is the only lead"
+        );
+
+        // Restore prior environment for other tests.
+        match prev_xdg {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+        match prev_sig {
+            Some(v) => std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", v),
+            None => std::env::remove_var("HYPRLAND_INSTANCE_SIGNATURE"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
 
     // ── install_root fallback ────────────────────────────────────────────────
 
