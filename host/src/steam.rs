@@ -431,6 +431,12 @@ fn reaper_pid_for_appid_linux(appid: u32) -> Option<libc::pid_t> {
 /// can't be resolved, or no running process matches, we signal nothing and
 /// return `Ok(false)` — the same clean "not running" result the Linux path
 /// gives, never a guess.
+///
+/// Residual PID-reuse TOCTOU: there's a small window between the process
+/// snapshot ([`running_processes_windows`]) and the `taskkill` where a matched
+/// PID could exit and Windows recycle it onto an unrelated process. This is
+/// inherent to PID-based `taskkill` without an `OpenProcess` handle held across
+/// the check, which we can't do without a new crate — accepted as out of scope.
 #[cfg(target_os = "windows")]
 fn quit_windows(appid: u32) -> anyhow::Result<bool> {
     let Some(install_dir) = installdir_for_appid(appid) else {
@@ -491,7 +497,10 @@ fn installdir_for_appid(appid: u32) -> Option<PathBuf> {
 /// Parse the `installdir` field out of an `appmanifest_*.acf` body — the
 /// directory name (relative to `steamapps/common/`) the game is installed
 /// under. Pure function (unit-tested against the checked-in fixture). `None`
-/// when the field is absent or the VDF doesn't parse.
+/// when the field is absent, the VDF doesn't parse, OR the field is
+/// empty/whitespace-only — a blank `installdir` would collapse the quit-safety
+/// boundary to `steamapps\common\` (the parent of EVERY game), so it MUST be
+/// rejected here, not treated as a valid relative path.
 #[cfg(any(target_os = "windows", test))]
 fn parse_installdir(acf: &str) -> Option<String> {
     let vdf = keyvalues_parser::parse(acf).map(Vdf::from).ok()?;
@@ -499,7 +508,9 @@ fn parse_installdir(acf: &str) -> Option<String> {
     obj.get("installdir")
         .and_then(|vs| vs.first())
         .and_then(|v| v.get_str())
-        .map(|s| s.to_string())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Enumerate running Windows processes as `(pid, executable_path)` pairs via a
@@ -553,9 +564,13 @@ fn parse_process_list(stdout: &str) -> Vec<(u32, String)> {
 /// `C:\Games\FooBar\game.exe` (a sibling dir sharing a name prefix) or
 /// `C:\Games\Foo` itself (not a file). This is the sole safety gate for
 /// [`quit_windows`] — it is deliberately conservative: any ambiguity resolves
-/// to "not under". Unit-tested thoroughly (nested exe, sibling-prefix
-/// rejection, exact-dir rejection, case-insensitivity, `/` vs `\`, trailing
-/// separators).
+/// to "not under". A remainder containing a `..` (or `.`) component is also
+/// rejected — `normalize` doesn't resolve `..`, so an exe path like
+/// `C:\Games\Foo\..\..\Windows\System32\evil.exe` prefixes `c:\games\foo` yet
+/// escapes it; requiring no traversal components closes that (defense-in-depth:
+/// WMI `ExecutablePath` is normally already canonical). Unit-tested thoroughly
+/// (nested exe, sibling-prefix rejection, exact-dir rejection,
+/// case-insensitivity, `/` vs `\`, trailing separators, `..` escape).
 #[cfg(any(target_os = "windows", test))]
 fn exe_is_under_install_dir(exe_path: &str, install_dir: &str) -> bool {
     fn normalize(p: &str) -> String {
@@ -571,7 +586,14 @@ fn exe_is_under_install_dir(exe_path: &str, install_dir: &str) -> bool {
         return false;
     }
     match exe.strip_prefix(&dir) {
-        Some(rest) => rest.starts_with('\\'),
+        // The remainder must start at a path-separator boundary AND contain no
+        // `..`/`.` traversal components (which `normalize` doesn't resolve).
+        Some(rest) => {
+            rest.starts_with('\\')
+                && !rest
+                    .split('\\')
+                    .any(|component| component == ".." || component == ".")
+        }
         None => false,
     }
 }
@@ -1128,6 +1150,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_installdir_empty_field_is_none() {
+        // A blank / whitespace-only installdir MUST NOT resolve — otherwise the
+        // quit-safety boundary collapses to `steamapps\common\` (every game's
+        // parent) and quit_windows could taskkill unrelated games.
+        assert_eq!(
+            parse_installdir(r#""AppState" { "appid" "42" "installdir" "" }"#),
+            None
+        );
+        assert_eq!(
+            parse_installdir(r#""AppState" { "appid" "42" "installdir" "   " }"#),
+            None
+        );
+    }
+
+    #[test]
     fn reg_query_dword_parses_set_value() {
         let stdout = "\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    RunningAppID    REG_DWORD    0x2d2\r\n\r\n";
         assert_eq!(parse_reg_query_dword(stdout), Some(0x2d2));
@@ -1222,6 +1259,21 @@ mod tests {
     fn exe_under_install_dir_unrelated_paths_do_not_match() {
         assert!(!exe_is_under_install_dir(
             r"C:\Windows\explorer.exe",
+            r"C:\Games\Foo"
+        ));
+    }
+
+    #[test]
+    fn exe_under_install_dir_rejects_dotdot_escape() {
+        // `normalize` doesn't resolve `..`, so this path string-prefixes
+        // `c:\games\foo` yet actually escapes to System32 — must be rejected.
+        assert!(!exe_is_under_install_dir(
+            r"C:\Games\Foo\..\..\Windows\System32\evil.exe",
+            r"C:\Games\Foo"
+        ));
+        // A single-dot component is likewise rejected as non-canonical.
+        assert!(!exe_is_under_install_dir(
+            r"C:\Games\Foo\.\game.exe",
             r"C:\Games\Foo"
         ));
     }
