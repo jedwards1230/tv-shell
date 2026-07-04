@@ -7,11 +7,11 @@ import widgets.moonlight
 import widgets.nowplaying
 import widgets.steam
 
-// Widget-contract conformance test — loads the FOUR REAL home widgets
-// (AppsWidget / PlexWidget / MoonlightWidget / NowPlayingWidget) through the
-// headless harness (run.sh mirrors the real widget subtree into .build so their
-// own relative imports resolve; Quickshell-backed clients + pure-visual leaf
-// CARDS are stubbed — see tests/qml/README.md + widgetstubs/).
+// Widget-contract conformance test — loads the FIVE REAL home widgets
+// (AppsWidget / PlexWidget / MoonlightWidget / NowPlayingWidget / SteamWidget)
+// through the headless harness (run.sh mirrors the real widget subtree into
+// .build so their own relative imports resolve; Quickshell-backed clients +
+// pure-visual leaf CARDS are stubbed — see tests/qml/README.md + widgetstubs/).
 //
 // The assertions are BEHAVIORAL and refactor-agnostic: they never check that a
 // named function/signal exists on the base, only that each widget honours the
@@ -139,8 +139,8 @@ TestCase {
         NowPlayingWidget {}
     }
     Component {
-        id: steamRpComp
-        SteamRpWidget {}
+        id: steamComp
+        SteamWidget {}
     }
 
     // Reset the shared Mpris stub so test order can't leak an injected player.
@@ -302,15 +302,18 @@ TestCase {
         });
     }
 
-    // Steam Remote Play: a single-stop launcher tile. No content/health gating —
-    // widgetEnabled alone drives wantVisible — so it is reachable headlessly. This
-    // is the widget whose cross-PR drift (a leaf re-declaring the base's
-    // ensureVisibleRequested signal) bricked the shell; covering it here makes that
-    // exact load failure CI-catchable.
-    function test_steamrp() {
-        _run(steamRpComp, {
-            "name": "SteamRpWidget",
-            "reachable": true
+    // Steam: the local-Steam poster widget. Visibility is gated on the hosted
+    // SteamLibraryView's live `steam-library` service health (same as Moonlight's
+    // library view / Plex), which needs the live daemon health bus — not fakeable
+    // headlessly. Covered for load + contract shape; the focus hand-off is proven
+    // structurally (the chain skips a non-focusable widget) rather than by a
+    // synthetic key event. This is the widget whose cross-PR drift (a leaf
+    // re-declaring the base's ensureVisibleRequested signal) bricked the shell;
+    // covering it here makes that exact load failure CI-catchable.
+    function test_steam() {
+        _run(steamComp, {
+            "name": "SteamWidget",
+            "reachable": false
         });
     }
 

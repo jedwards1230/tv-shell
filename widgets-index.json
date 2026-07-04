@@ -30,8 +30,8 @@
       "requires": []
     },
     {
-      "id": "steamrp",
-      "name": "Steam Remote Play",
+      "id": "steam",
+      "name": "Steam",
       "version": "1.0.0",
       "minFrameworkVersion": "1.0.0",
       "requires": []

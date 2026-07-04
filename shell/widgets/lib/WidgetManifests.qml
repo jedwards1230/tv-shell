@@ -3,7 +3,7 @@ import QtQuick
 
 // Per-widget manifest metadata — the pure-data SSOT for the widget framework
 // (#249 Phase 3). Keyed by id, in framework order (moonlight → nowplaying →
-// plex → recent → steamrp). This singleton intentionally has NO Quickshell imports and NO
+// plex → recent → steam). This singleton intentionally has NO Quickshell imports and NO
 // widget imports: it is plain data so it can be read from another `components`
 // singleton (SettingsStore) and from the pure-JS migrator (widgetConfig.js)
 // without a dependency cycle.
@@ -111,8 +111,8 @@ QtObject {
             ]
         },
         {
-            "id": "steamrp",
-            "name": "Steam Remote Play",
+            "id": "steam",
+            "name": "Steam",
             "version": "1.0.0",
             "requires": [],
             "defaultOrder": 4,
@@ -121,7 +121,7 @@ QtObject {
                 {
                     "key": "size",
                     "type": "enum",
-                    "values": ["small", "medium"],
+                    "values": ["medium", "large"],
                     "default": "medium",
                     "label": "Size"
                 }

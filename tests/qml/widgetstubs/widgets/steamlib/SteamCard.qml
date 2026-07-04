@@ -1,6 +1,6 @@
 import QtQuick
 
-// Test stub for widgets/moonlight/SteamCard.qml (the real one uses QtQuick.Effects
+// Test stub for widgets/steamlib/SteamCard.qml (the real one uses QtQuick.Effects
 // + Steam CDN art). Declares only SteamLibraryView's poster-row delegate surface,
 // so the delegate Component compiles. No visuals.
 Item {

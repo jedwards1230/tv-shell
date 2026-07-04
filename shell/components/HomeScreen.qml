@@ -34,7 +34,7 @@ FocusScope {
     readonly property Item nowPlayingWidget: widgetHost.widgetById("nowplaying")
     readonly property Item plexWidget: widgetHost.widgetById("plex")
     readonly property Item recentWidget: widgetHost.widgetById("recent")
-    readonly property Item steamRpWidget: widgetHost.widgetById("steamrp")
+    readonly property Item steamWidget: widgetHost.widgetById("steam")
 
     // Recent (apps) size: small = icon-only square tiles (label dropped),
     // medium = full icon + label cards. A reformat, not a scale.
@@ -204,25 +204,39 @@ FocusScope {
         console.log("HomeScreen: no Plex app found to launch");
     }
 
-    // === Steam Remote Play launch (local app) ===
-    // The Steam Remote Play home widget (default-disabled) is a LAUNCHER, not a
-    // stream: it opens Steam Big Picture as a LOCAL app on this machine via the
-    // normal app-launch path (appLaunchRequested → AppLifecycleManager), so the
-    // shell lands in `appRunning` with window class `steam`. That class is what the
-    // class-agnostic kiosk-fullscreen enforcement and the StreamAudioMuter
-    // (streamClasses: ["steam"]) key on, so both cover it automatically — no new
-    // shell state, provider, or StreamManager stream. AppLifecycleManager first
-    // focuses an already-running steam window (resume) and only otherwise execs.
-    function launchSteamRp() {
+    // === Steam widget: LOCAL launch helpers ===
+    // The Steam home widget (default-disabled) shows the host's Steam library
+    // poster grid, but activation launches Steam LOCALLY on this machine, via the
+    // normal LOCAL app-launch path (appLaunchRequested → AppLifecycleManager.
+    // checkAndLaunchApp), landing the shell in `appRunning` with window class
+    // `steam` — kiosk fullscreen (class-agnostic) and StreamAudioMuter's
+    // mute-on-background (`streamClasses: ["steam"]`) cover it automatically. This
+    // is NOT the streaming state machine, and it does NOT touch the host-side
+    // `steam-launch`/`steam-bigpicture` daemon commands below (those stay wired to
+    // the MOONLIGHT widget, for navigating/streaming the GAMING HOST's Big
+    // Picture over Moonlight).
+    //
+    // KNOWN LIMITATION: `checkAndLaunchApp` focuses an already-running `steam`
+    // window instead of re-delivering the URL, so the per-game `steam://nav`
+    // navigation below lands reliably only when Steam is cold-started by it; when
+    // Steam is already open it simply raises the existing window (whatever page it
+    // was last on) rather than jumping to the newly-selected game.
+    function launchSteamLocalGame(appid) {
         root.userActivity();
-        // Just raise Steam — no steam:// navigation. When it's already running
-        // (the common case) AppLifecycleManager focuses the existing window, so
-        // you resume exactly where you left off (as if un-minimizing); a cold
-        // `steam` restores its own last state. Forcing a BPM page URL made it
-        // jump to a specific screen instead of resuming.
         root.launchApp({
             "name": "Steam",
-            "exec": "steam",
+            "exec": "steam steam://nav/games/details/" + appid,
+            "wmClass": "steam",
+            "icon": "steam",
+            "comment": "Steam"
+        });
+    }
+
+    function launchSteamLocalBigPicture() {
+        root.userActivity();
+        root.launchApp({
+            "name": "Steam",
+            "exec": "steam steam://open/bigpicture",
             "wmClass": "steam",
             "icon": "steam",
             "comment": "Steam"
@@ -970,19 +984,24 @@ FocusScope {
         }
     }
 
-    // --- Steam Remote Play ---
+    // --- Steam ---
+    // (escaped + ensureVisibleRequested handled by the generic host wiring above.)
+    Binding {
+        target: root.steamWidget
+        property: "targets"
+        value: root.targets
+        when: root.steamWidget !== null
+    }
     Connections {
-        target: root.steamRpWidget
+        target: root.steamWidget
         ignoreUnknownSignals: true
-        function onEscaped() {
-            root.userActivity();
-            root.focusDefaultPosition();
+        function onGameSelected(appid) {
+            root.launchSteamLocalGame(appid);
         }
-        function onLaunchRequested() {
-            root.launchSteamRp();
+        function onOpenBigPictureRequested() {
+            root.launchSteamLocalBigPicture();
         }
-        function onEnsureVisibleRequested(item) {
-            scrollView.ensureVisible(item);
-        }
+        // gameContextRequested intentionally not wired — the local Steam widget
+        // offers no host Resume/Quit (that is the moonlight widget's role).
     }
 }
