@@ -199,14 +199,20 @@ pub async fn run(
                         // clean reconnect, so a recovered-then-failed streak
                         // re-escalates from scratch).
                         match note_reconnect(&mut consecutive_failures, false, ESCALATE_AFTER) {
+                            // Pass the count + error as structured fields (not string
+                            // interpolation) so the numbers render unambiguously in
+                            // journald/JSON: `consecutive_failures=N error=…`.
                             Some(ReconnectSeverity::Escalate) => tracing::error!(
-                                "hyprland: event listener has failed to (re)connect {consecutive_failures} \
-                                 times in a row ({e}); the daemon is DEAF to the compositor — Hyprland is \
-                                 likely down or was restarted under a new instance signature. Kiosk \
-                                 fullscreen follow-focus and the gamepad presenter's follow-focus will not \
-                                 fire until this recovers."
+                                consecutive_failures,
+                                error = %e,
+                                "hyprland: event listener is DEAF to the compositor — repeated failed \
+                                 (re)connects. Hyprland is likely down or was restarted under a new \
+                                 instance signature; kiosk fullscreen follow-focus and the gamepad \
+                                 presenter's follow-focus will not fire until this recovers."
                             ),
-                            _ => tracing::warn!("hyprland: event listener stopped: {e}; retrying"),
+                            _ => {
+                                tracing::warn!(error = %e, "hyprland: event listener stopped; retrying")
+                            }
                         }
                     }
                 }
