@@ -275,16 +275,26 @@ journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM`, overridable 
 The table above reflects the deliberate split: the daemon owns all *reads* of
 system state (D-Bus, Hyprland IPC, Sunshine), while shell-outs remain only for
 write/action commands (`nmcli` join, `wpctl`, `hyprctl dispatch`, `systemctl`).
-One exception: the Hyprland actor itself enforces kiosk fullscreen —
-class-agnostic, and continuous rather than a one-shot check. On `openwindow`
-it dispatches `focuswindow` + `fullscreen 0 set` on the new window
-(`force_fullscreen` in `hyprland.rs`); on `closewindow`, `movewindowv2`, and
-`activewindowv2` it re-checks whichever window Hyprland now considers active
-and fullscreens it if the tiler left it windowed (`enforce_active_fullscreen`)
-— the case that matters most is a window closing and the tiler re-splitting
-the survivor(s) instead of leaving one fullscreen. This is a blanket
-compositor policy, not a per-app QML decision, so it lives with the events it
-reacts to.
+
+**Kiosk window model** (single-app-fullscreen contract — see
+[docs/KIOSK_WINDOW_MODEL.md](docs/KIOSK_WINDOW_MODEL.md)): the invariant "exactly
+one app window fills the screen; backgrounded apps keep running but never share
+it" is held **declaratively** by `config/hyprland.conf` first — a fresh launch
+maps fullscreen via the QML `[fullscreen]` exec-rule prefix + the
+`windowrule = fullscreen` backstop; a resume swaps fullscreen atomically via
+`misc:on_focus_under_fullscreen = 1`; a close promotes the survivor via
+`misc:exit_window_retains_fullscreen = true`; and `windowrule = suppressevent
+fullscreen maximize` stops apps churning that state themselves. The daemon's
+Hyprland actor is the **single idempotent backstop** on top of those rules
+(`force_fullscreen` on `openwindow`, `enforce_active_fullscreen` on
+`closewindow`/`movewindowv2`/`activewindowv2`, both `fullscreen 0 set`). QML no
+longer re-asserts fullscreen on launch/resume — a non-idempotent `fullscreen 0`
+toggle there used to race the daemon and toggle a resumed window back OUT of
+fullscreen, which produced the two-app split view. The daemon actor also
+**self-heals its compositor attachment**: it re-resolves the live Hyprland
+instance on each reconnect (`session_env::resolve_hypr_signature` scans
+`$XDG_RUNTIME_DIR/hypr/` before trusting an inherited signature) so a killed +
+restarted Hyprland doesn't leave it silently deaf.
 **HDMI-CEC** lives in the daemon (`cec-*` IPC, deployed and verified on gaming-client
 with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtime).
 CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and

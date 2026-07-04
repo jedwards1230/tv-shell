@@ -134,10 +134,41 @@ pub async fn run(
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
+            // Count consecutive failed (re)connect attempts so a *persistent*
+            // inability to reach any live Hyprland escalates from a routine
+            // per-retry warn to one loud, unmissable line. That is the deaf-daemon
+            // signature (event socket unreachable — a killed/restarted or absent
+            // compositor); it trapped two investigators today because nothing
+            // surfaced it. Note it deliberately does NOT catch the render-wedge
+            // (frozen frames while IPC still answers): that leaves the read loop
+            // blocked with neither Err nor Ok, so it is not observable from the
+            // IPC socket at all — detecting it needs a render-side heartbeat
+            // (see docs/KIOSK_WINDOW_MODEL.md, Phase 2).
+            let mut consecutive_failures: u32 = 0;
+            const ESCALATE_AFTER: u32 = 5;
             loop {
                 match watch_events(events_tx.clone(), active_window_tx.clone()).await {
-                    Ok(()) => backoff = Duration::from_secs(1), // ended cleanly; re-attach
-                    Err(e) => tracing::warn!("hyprland: event listener stopped: {e}; retrying"),
+                    Ok(()) => {
+                        // Socket closed cleanly (Hyprland exited/replaced); the next
+                        // attempt re-resolves the live instance (self-heal).
+                        backoff = Duration::from_secs(1);
+                        consecutive_failures = 0;
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        if consecutive_failures == ESCALATE_AFTER {
+                            tracing::error!(
+                                consecutive_failures,
+                                "hyprland: event listener has failed to (re)connect {ESCALATE_AFTER} \
+                                 times in a row ({e}); the daemon is DEAF to the compositor — Hyprland \
+                                 is likely down or was restarted under a new instance signature. Kiosk \
+                                 fullscreen follow-focus and the gamepad presenter's follow-focus will \
+                                 not fire until this recovers."
+                            );
+                        } else {
+                            tracing::warn!("hyprland: event listener stopped: {e}; retrying");
+                        }
+                    }
                 }
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(30));
