@@ -225,21 +225,27 @@ pub fn input_bin() -> PathBuf {
 mod tests {
     use super::*;
 
-    /// Create a unique scratch directory for a test, under the crate's build
-    /// tree rather than the system temp dir. The system temp dir is unwritable
-    /// under the sandbox the Rust pre-commit/Stop hook runs in (writes there
-    /// fail `EACCES`), whereas the target/ tree is already writable — cargo just
-    /// compiled into it. Named by tag + pid + thread id so parallel test threads
-    /// never collide.
+    /// Create a unique scratch directory for a test, next to the running test
+    /// binary rather than in the system temp dir. The system temp dir is
+    /// unwritable under the sandbox the Rust pre-commit/Stop hook runs in (writes
+    /// there fail `EACCES`). The directory of `current_exe()` — the test binary's
+    /// own `target/<profile>/deps/` — is guaranteed writable, because cargo just
+    /// wrote the binary there. We deliberately do NOT derive the base from
+    /// `CARGO_MANIFEST_DIR/target`: in a cargo WORKSPACE the real target dir is
+    /// the workspace root's, not `<crate>/target`, so `daemon/target/` may not
+    /// exist and creating it fails under the sandbox (which only permits writes
+    /// to the pre-existing target tree). Named by tag + pid + thread id so
+    /// parallel test threads never collide.
     fn scratch(tag: &str) -> PathBuf {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("session-env-test-scratch")
-            .join(format!(
-                "{tag}-{}-{:?}",
-                std::process::id(),
-                std::thread::current().id()
-            ));
+        let base = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
+        let dir = base.join("session-env-test-scratch").join(format!(
+            "{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
