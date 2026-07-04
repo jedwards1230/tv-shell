@@ -211,11 +211,15 @@ Item {
         id: focusWindowAddr
         property string addr: ""
         command: ["hyprctl", "dispatch", "focuswindow", "address:" + addr]
+        // No client-side fullscreen re-assertion here (kiosk phase 2, see
+        // docs/KIOSK_WINDOW_MODEL.md): Hyprland's on_focus_under_fullscreen
+        // already swaps fullscreen to this window atomically, and the daemon's
+        // idempotent `fullscreen 0 set` enforcement is the sole writer. A
+        // client-side toggle raced both and could un-fullscreen the window
+        // (the split-view bug when a backgrounded app was tiled alongside it).
         onExited: exitCode => {
             if (exitCode !== 0 && root.shellState === "appRunning")
                 root.appClosed();
-            else
-                ensureFullscreen.running = true;
         }
     }
 
@@ -293,35 +297,16 @@ Item {
         id: focusWindow
         property string windowClass: ""
         command: ["hyprctl", "dispatch", "focuswindow", "class:" + windowClass]
+        // No client-side fullscreen re-assertion here (kiosk phase 2, see
+        // docs/KIOSK_WINDOW_MODEL.md): Hyprland's on_focus_under_fullscreen
+        // already swaps fullscreen to this window atomically, and the daemon's
+        // idempotent `fullscreen 0 set` enforcement is the sole writer. A
+        // client-side read-then-toggle raced that writer and could un-fullscreen
+        // the window instead of confirming it.
         onExited: exitCode => {
             if (exitCode !== 0 && root.shellState === "appRunning")
                 root.appClosed();
-            else
-                ensureFullscreenQuery.request("hypr-active");
         }
-    }
-
-    // Window rule only applies at creation — restore fullscreen on resume.
-    // Read the active window's fullscreen state via the daemon's hypr-active IPC
-    // (no hyprctl shell-out for the read); if it's not fullscreen, toggle it on.
-    SocketClient {
-        id: ensureFullscreenQuery
-        onResponseReceived: line => {
-            try {
-                let obj = JSON.parse(line);
-                if (obj.fullscreen === false)
-                    ensureFullscreen.running = true;
-            } catch (e) {
-                console.log("AppLifecycleManager: failed to parse hypr-active:", e);
-            }
-        }
-    }
-
-    // The fullscreen toggle stays a one-shot hyprctl dispatch (a write/action,
-    // not a read — per the daemon read / shell-out write split).
-    Process {
-        id: ensureFullscreen
-        command: ["hyprctl", "dispatch", "fullscreen", "0"]
     }
 
     function _handleWindowQueryResult(clients) {
