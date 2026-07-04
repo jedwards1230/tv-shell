@@ -55,7 +55,7 @@ cp "$here/stubs/lib/"*.qml "$build/components/lib/"
 # 3. Widget-contract harness (tst_widgetcontract): mirror the REAL home-widget
 #    subtree into .build so each widget's own relative imports resolve naturally
 #    (`../lib` → widgets/lib, `../../components` → the SAME flat stub module the
-#    existing tests use, `../../components/lib` → components.lib). The four widget
+#    existing tests use, `../../components/lib` → components.lib). The five widget
 #    ROOT files + their focus/segment framework are the REAL production files
 #    (zero drift for the contract under test); only Quickshell-backed clients and
 #    the pure-visual leaf CARDS are stubbed (widgetstubs/). See tests/qml/README.md.
@@ -97,7 +97,7 @@ cp "$shellw/lib/FilterChips.qml" "$build/widgets/lib/"
 cp "$shellw/lib/SegmentedHeader.qml" "$build/widgets/lib/"
 cp "$wstub/widgets/lib/qmldir" "$build/widgets/lib/qmldir"
 
-# 3d. The four REAL home widgets + their same-dir leaves (real view / stub cards).
+# 3d. The five REAL home widgets + their same-dir leaves (real view / stub cards).
 mkdir -p "$build/widgets/apps"
 cp "$shellw/apps/AppsWidget.qml" "$build/widgets/apps/"
 cp "$wstub/widgets/apps/qmldir" "$build/widgets/apps/qmldir"
@@ -109,20 +109,26 @@ cp "$wstub/widgets/plex/qmldir" "$build/widgets/plex/qmldir"
 
 mkdir -p "$build/widgets/moonlight"
 cp "$shellw/moonlight/MoonlightWidget.qml" "$build/widgets/moonlight/"
-cp "$shellw/moonlight/SteamLibraryView.qml" "$build/widgets/moonlight/"
-cp "$wstub/widgets/moonlight/SteamCard.qml" "$build/widgets/moonlight/"
 cp "$wstub/widgets/moonlight/qmldir" "$build/widgets/moonlight/qmldir"
+
+# steamlib: REAL SteamLibraryView (shared by moonlight + steam) + stub SteamCard.
+# MoonlightWidget now imports "../steamlib", so this module must exist for it to
+# load headless.
+mkdir -p "$build/widgets/steamlib"
+cp "$shellw/steamlib/SteamLibraryView.qml" "$build/widgets/steamlib/"
+cp "$wstub/widgets/steamlib/SteamCard.qml" "$build/widgets/steamlib/"
+cp "$wstub/widgets/steamlib/qmldir" "$build/widgets/steamlib/qmldir"
 
 mkdir -p "$build/widgets/nowplaying"
 cp "$shellw/nowplaying/NowPlayingWidget.qml" "$build/widgets/nowplaying/"
 cp "$wstub/widgets/nowplaying/NowPlayingStripView.qml" "$build/widgets/nowplaying/"
 cp "$wstub/widgets/nowplaying/qmldir" "$build/widgets/nowplaying/qmldir"
 
-# steam: the REAL single-stop SteamRpWidget (it instantiates the stub FocusFrame
-# above; no Quickshell.Io deps of its own). Covers the cross-PR drift that bricked
-# the shell — a leaf re-declaring a base signal is now a headless load failure.
+# steam: the REAL SteamWidget (hosts the shared SteamLibraryView above; no
+# Quickshell.Io deps of its own). Covers the cross-PR drift that bricked the
+# shell — a leaf re-declaring a base signal is now a headless load failure.
 mkdir -p "$build/widgets/steam"
-cp "$shellw/steam/SteamRpWidget.qml" "$build/widgets/steam/"
+cp "$shellw/steam/SteamWidget.qml" "$build/widgets/steam/"
 cp "$wstub/widgets/steam/qmldir" "$build/widgets/steam/qmldir"
 
 # 3e. Stub Quickshell modules on a second import path so real leaves that

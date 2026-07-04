@@ -31,7 +31,7 @@ Item {
     id: registry
 
     // Fixed entry set (registration order); `widgets` exposes them sorted by order.
-    readonly property var _entries: [moonlightEntry, nowPlayingEntry, plexEntry, recentEntry, steamRpEntry]
+    readonly property var _entries: [moonlightEntry, nowPlayingEntry, plexEntry, recentEntry, steamEntry]
 
     // Ordered widget set — a STABLE sort of _entries by each entry's `order`
     // (registration order breaks ties). Re-evaluates only when an `order` changes.
@@ -109,13 +109,13 @@ Item {
     }
 
     QtObject {
-        id: steamRpEntry
-        readonly property string widgetId: "steamrp"
+        id: steamEntry
+        readonly property string widgetId: "steam"
         readonly property Component component: Component {
-            SteamRpWidget {}
+            SteamWidget {}
         }
-        readonly property bool enabled: SettingsStore.widget("steamrp").enabled
-        readonly property string size: SettingsStore.widget("steamrp").size
-        readonly property int order: SettingsStore.widget("steamrp").order
+        readonly property bool enabled: SettingsStore.widget("steam").enabled
+        readonly property string size: SettingsStore.widget("steam").size
+        readonly property int order: SettingsStore.widget("steam").order
     }
 }

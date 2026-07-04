@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import "../lib"
 import "../../components"
+import "../steamlib"
 
 // Home-screen Moonlight widget — the single "jump into streaming" surface. It is
 // ONE widget with three sizes that render two different views (the user never

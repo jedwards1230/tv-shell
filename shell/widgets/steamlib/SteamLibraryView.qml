@@ -4,21 +4,25 @@ import "../lib"
 import "../../components"
 import "../../components/lib"
 
-// Steam-library poster view — the medium/large rendering of the unified Moonlight
-// home widget (MoonlightWidget hosts this; it is NOT an independently-enableable
-// widget anymore). ONE poster row with a segmented header that flips between
-// "Recently Played" and "Library", fed by the daemon's `steam-library` IPC, plus
-// a right-justified, status-only session indicator opposite the tabs.
+// Steam-library poster view — shared between the Moonlight and Steam home
+// widgets (`shell.widgets.steamlib` module; MoonlightWidget hosts this for its
+// medium/large sizes, SteamWidget hosts it exclusively). It is NOT an
+// independently-enableable widget itself. ONE poster row with a segmented
+// header that flips between "Recently Played" and "Library", fed by the
+// daemon's `steam-library` IPC, plus an optional right-justified, status-only
+// session indicator opposite the tabs (see `showSessionIndicator`).
 //
 // Selecting a card navigates Big Picture to that game on the host
 // (`steam-launch <appid>` now NAVIGATES BPM, it does not launch the game) and
 // then — only if no stream is already live — starts the single-target Moonlight
 // stream. There is exactly one session; cards do not own a stream. The
-// stream/session choreography stays in QML (HomeScreen owns it); this view only
-// emits `gameSelected(appid)`.
+// stream/session choreography stays in QML (each host widget's owning
+// HomeScreen logic decides); this view only emits `gameSelected(appid)`.
 //
 // The status-only session indicator in the header reads the `streaming` flag
-// from the `steam-library` reply (no separate `sunshine-status` probe).
+// from the `steam-library` reply (no separate `sunshine-status` probe). It is
+// meaningless for a widget that never streams (the local-Steam widget), which
+// sets `showSessionIndicator: false` to suppress it entirely.
 //
 // `posterScale` is set by the host so the same view renders at two sizes:
 //   medium = 0.62 (smaller posters)
@@ -61,6 +65,12 @@ ColumnLayout {
     // reply (a Moonlight stream is currently live on the host). Surfaced for the
     // parent / session indicator; the library data itself is independent of it.
     property bool streaming: false
+
+    // Whether to render the header's session indicator (a Moonlight stream is
+    // live). Default true keeps MoonlightWidget's rendering byte-for-byte
+    // unchanged. The local-Steam widget (SteamWidget) sets this false — the
+    // Sunshine `streaming` flag is meaningless there since it never streams.
+    property bool showSessionIndicator: true
 
     signal escaped
     // Emitted when a card is activated; HomeScreen launches + streams the appid.
@@ -348,12 +358,15 @@ ColumnLayout {
         // actionable). Tells the user at a glance whether a Moonlight stream is
         // live on the host, driven by the `streaming` flag from the same
         // `steam-library` reply that feeds the poster row (no separate
-        // `sunshine-status` probe). A Component so its `inSession` binding resolves
-        // in THIS view's scope; the header's Loader places it right-justified.
-        trailing: Component {
-            SessionIndicator {
-                inSession: root.streaming
-            }
+        // `sunshine-status` probe). Gated on `showSessionIndicator` — the local
+        // Steam widget hides it entirely (see the property doc above).
+        trailing: root.showSessionIndicator ? sessionIndicatorComp : null
+    }
+
+    Component {
+        id: sessionIndicatorComp
+        SessionIndicator {
+            inSession: root.streaming
         }
     }
 

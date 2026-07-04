@@ -1,2 +1,2 @@
 module shell.widgets.steam
-SteamRpWidget 1.0 SteamRpWidget.qml
+SteamWidget 1.0 SteamWidget.qml

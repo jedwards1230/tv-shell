@@ -32,6 +32,7 @@ FocusScope {
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
+    signal appResumeRequested(var app, string address)
     signal appFocusRequested(string address)
     signal appCloseRequested(string address)
     signal returnToShellRequested
@@ -228,6 +229,7 @@ FocusScope {
         onStreamRequested: target => root.streamRequested(target)
         onStreamQuitRequested: target => root.streamQuitRequested(target)
         onAppLaunchRequested: app => root.appLaunchRequested(app)
+        onAppResumeRequested: (app, address) => root.appResumeRequested(app, address)
         onAppFocusRequested: address => root.appFocusRequested(address)
         onAppCloseRequested: address => root.appCloseRequested(address)
         onLibraryRequested: screens.push("library")
