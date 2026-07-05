@@ -86,6 +86,29 @@
 # Textfile render/write interval in seconds. Default 15; 0 falls back to 15.
 #metrics_interval = 15
 
+# --- Per-app input contracts (optional) --------------------------------------
+# How the daemon presents the controller fleet to a focused external window,
+# keyed by its Hyprland window class. Follow-focus picks the presenter from the
+# focused window's contract:
+#   gamepad  — forward each pad to a clean per-player virtual Xbox pad (the app
+#              reads a real gamepad). DEFAULT for any class not listed below.
+#   keyboard — emulate keyboard/mouse from the pad, aimed at the focused app
+#              (d-pad→arrows, A→Enter, B→Esc, sticks→arrows/mouse). NO virtual
+#              pad exists — so a key-driven HTPC app (e.g. Plex) is drivable, and
+#              Steam has no always-alive virtual pad to exclusive-grab out from
+#              under the focused app (the reason this section exists).
+#   handoff  — ungrab the physical pad entirely so the app reads the raw evdev
+#              node directly (SDL/Moonlight-style). No virtual pad, no emulation.
+#
+# Built-in defaults (no config needed): "tv.plex.Plex" = keyboard, everything
+# else = gamepad. Entries here OVERRIDE the built-ins. Read once at startup —
+# changing a contract needs a daemon restart. Find a window's class with
+# `hyprctl activewindow` (the `class:` field) while it is focused.
+[input.contracts]
+#"tv.plex.Plex" = "keyboard"       # (built-in; shown for reference)
+#"steam" = "gamepad"               # (built-in; Big Picture takes a real pad)
+#"org.videolan.VLC" = "keyboard"   # a media player you drive with the d-pad
+
 # --- Operator escape hatch ---------------------------------------------------
 [dev]
 # Explicitly permit the otherwise-refused combination of a non-loopback bind +

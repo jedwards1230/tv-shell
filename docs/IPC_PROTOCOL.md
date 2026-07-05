@@ -2074,32 +2074,43 @@ LB and RB emit mouse left-click and right-click respectively (both in grabbed an
 
 Left and right triggers (`ABS_Z`, `ABS_RZ`) are treated as digital: held when analog value > 100, released otherwise. They appear in the `buttons:` debug event as `LT`/`RT` but do not emit any keyboard or mouse events.
 
-## Presenters: Shell vs Game vs Handoff
+## Presenters: Shell vs Keyboard vs Game vs Handoff
 
-The daemon keeps the physical `EVIOCGRAB` in the **Shell** and **Game** presenters
-(Phase 5) — no controller input leaks to the compositor in those modes. The
-**Handoff** presenter (#221) is the exception: it **releases** the grab so
+The daemon keeps the physical `EVIOCGRAB` in the **Shell**, **Keyboard**, and
+**Game** presenters — no controller input leaks to the compositor in those modes.
+The **Handoff** presenter (#221) is the exception: it **releases** the grab so
 SDL/Moonlight reads the real evdev node directly. `grab` selects the shell
-presenter, `release` the game presenter, and `handoff` the handoff presenter; they
-differ in where the pad's input goes and whether the physical grab is held.
+presenter, `release` the game presenter, and `handoff` the handoff presenter
+explicitly; the **Keyboard** presenter is selected only by follow-focus (a
+focused app whose input contract is `keyboard`, see below). They differ in where
+the pad's input goes and whether the physical grab is held.
 
-| Feature | Shell presenter (`grab`) | Game presenter (`release`) | Handoff presenter (`handoff`) |
-|---------|--------------------------|----------------------------|-------------------------------|
-| Physical pad grabbed | Yes | Yes | **No** (ungrabbed → SDL reads it directly) |
-| Per-player clean virtual gamepad | — | One per pad (`game-shell-virtual-pad-<slot>`) | — (game reads the real node) |
-| Button-to-keyboard mapping | Active | — (raw buttons forwarded to the virtual pad) | — |
-| D-pad / left stick → arrow keys | Active | — (forwarded as raw axes) | — |
-| Right stick → mouse cursor | Active | — (forwarded as raw axis) | — |
-| LB/RB → mouse clicks | Active | — (forwarded as raw buttons) | — |
-| Combo detection (end-session, force-quit, suspend) | Active | Active | Active |
-| Home → `intent:home-tap` / `intent:home-hold` | Active (intercepted) | Active (intercepted, never forwarded) | **No** (forwarded — remote Steam sees Guide) |
-| `buttons:` debug events | Active | — | — |
-| Input mode tracking | Active | — | — |
-| Capture mode | Active | — | — |
-| Force-quit `Ctrl+Alt+Shift+Q` emission | No (not needed) | Yes | Yes |
+| Feature | Shell presenter (`grab`) | Keyboard presenter (contract) | Game presenter (`release`) | Handoff presenter (`handoff`) |
+|---------|--------------------------|-------------------------------|----------------------------|-------------------------------|
+| Physical pad grabbed | Yes | Yes | Yes | **No** (ungrabbed → SDL reads it directly) |
+| Per-player clean virtual gamepad | — | **—** (no virtual pad) | One per pad (`game-shell-virtual-pad-<slot>`) | — (game reads the real node) |
+| Button-to-keyboard mapping | Active | Active (lands on the focused app) | — (raw buttons forwarded to the virtual pad) | — |
+| D-pad / left stick → arrow keys | Active | Active | — (forwarded as raw axes) | — |
+| Right stick → mouse cursor | Active | Active | — (forwarded as raw axis) | — |
+| LB/RB → mouse clicks | Active | Active | — (forwarded as raw buttons) | — |
+| Combo detection (end-session, force-quit, suspend) | Active | Active | Active | Active |
+| Home → `intent:home-tap` / `intent:home-hold` | Active (intercepted) | Active (intercepted) | Active (intercepted, never forwarded) | **No** (forwarded — remote Steam sees Guide) |
+| `buttons:` debug events | Active | Active | — | — |
+| Input mode tracking | Active | Active | — | — |
+| Capture mode | Active | Active | — | — |
+| Force-quit `Ctrl+Alt+Shift+Q` emission | No (not needed) | No (local app) | Yes | Yes |
 
-On entering the shell presenter: each pad's clean virtual gamepad is torn down;
-held keys/triggers reset and combos cancel on the underlying grab.
+The **Keyboard** presenter is mechanically the Shell presenter — the same
+button→keyboard/mouse mapping on the shared virtual devices — but the focused app
+holds Wayland focus, so the emitted keys land on *it*, not the shell. It holds
+**no** virtual pad, which is the point: a key-driven HTPC app like Plex becomes
+d-pad drivable, and — the bug this fixes — Steam has no always-alive virtual pad
+to take an exclusive `EVIOCGRAB` on out from under the focused app. `status`
+reports it as `grabbed` (like Shell: the daemon owns and translates the pad, it is
+not "released" to a game).
+
+On entering the shell/keyboard presenter: each pad's clean virtual gamepad is torn
+down; held keys/triggers reset and combos cancel on the underlying grab.
 On entering the game presenter: each pad gets a clean virtual gamepad mirroring
 its capabilities (keys, axes with calibration, `input_id`). The game reads the
 virtual pad; the daemon still intercepts Home so the shell can come up over a
@@ -2111,28 +2122,46 @@ remote Steam (Big Picture) sees the Guide button — but a local Home-tap can no
 longer raise the shell overlay over the stream. The gamepad force-quit combo
 (Back+Home+LB+RB) and the keyboard remain the escape hatches.
 
-### Follow-focus: presenter tracks the Hyprland-focused window
+### Follow-focus: presenter tracks the focused window's input contract
 
 `grab`/`release`/`handoff` are the *explicit* presenter switches the shell
 requests. On top of those, the Hyprland actor's `activewindow` event watcher
-also drives the presenter *continuously*, mirroring the kiosk fullscreen
-enforcement pattern (`hyprland.rs`'s `enforce_active_fullscreen`): whenever a
-real app toplevel is focused (a non-empty class — the shell's own layer-shell
-surface never appears in `activewindow` at all) the daemon switches Shell ->
-Game if it isn't already there; when focus returns to the shell home (empty
-class) it switches back to Shell. This is class-agnostic — it does not special-
-case any app — so a controller keeps working as a real gamepad in an app
-launched **out-of-band** of the shell's own launch/stream flow (e.g. a Steam
-Remote Play `streaming_client` window opened from Steam Big Picture), which
-previously left the pad stuck presented as a keyboard with the shell's nav
-shortcuts (including `BTN_SELECT` -> the right drawer) still firing into the
-game.
+drives the presenter *continuously*, mirroring the kiosk fullscreen enforcement
+pattern (`hyprland.rs`'s `enforce_active_fullscreen`). The focused window's
+**input contract** *is* the presenter it selects:
 
-Follow-focus never touches the **Handoff** presenter: once the shell hands a
-Moonlight stream off explicitly (`handoff`), the presenter stays Handoff
-regardless of which window holds focus, and only reverts to Shell when the
-shell explicitly `grab`s again on stream exit. Follow-focus only ever
-arbitrates between Shell and Game.
+- **empty class** (no toplevel focused — the shell's own layer-shell surface
+  never appears in `activewindow`) → **Shell**.
+- **`gamepad` contract** → **Game** (a clean per-player virtual pad). This is the
+  built-in default for any unlisted class, so a controller keeps working as a real
+  gamepad in an app launched **out-of-band** of the shell's own flow (e.g. a Steam
+  Remote Play `streaming_client` window opened from Big Picture).
+- **`keyboard` contract** → **Keyboard** (d-pad drives the focused app, no virtual
+  pad). The built-in default for `tv.plex.Plex`.
+- **`handoff` contract** → **Handoff** (ungrab so the app reads the raw node).
+
+Contracts are keyed by window class and configured under `[input.contracts]` in
+`config.toml` (window-class → `gamepad`|`keyboard`|`handoff`); user entries
+override the built-in defaults (`tv.plex.Plex` = keyboard, `steam` = gamepad,
+everything else = gamepad). Read once at startup — a change needs a daemon
+restart. See `config/config.toml.example`.
+
+**Handoff pinning.** A Moonlight stream is entered via the explicit `handoff` IPC
+and is **pinned**: follow-focus never overrides it while the streamed window holds
+focus for the whole stream, and only the shell's explicit `grab` (on stream exit)
+ends it. A Handoff reached instead via a `handoff` *contract* is **not** pinned —
+it follows focus like any other presenter, so it can never strand the pads
+ungrabbed.
+
+**Settle debounce.** Follow-focus is debounced by a short settle timer
+(`FOCUS_SETTLE_MS`, 300 ms): a focus change arms the timer and the transition
+applies only once focus has held that long. Hyprland churns focus during an app
+launch/close (empty↔toplevel flaps), and applying each flap would tear down and
+rebuild the virtual pad repeatedly — which Steam re-enumerates as a controller
+reconnect on every flap (audible/visible, worse than the original bug). The
+debounce collapses a flap burst into a single net transition. Only follow-focus is
+debounced; explicit `grab`/`release`/`handoff`/`overlay-focus` IPC applies
+instantly.
 
 Internally, `activewindow` changes reach the input runtime over a **coalescing
 `tokio::sync::watch` channel** (latest-wins), not the control channel — focus is

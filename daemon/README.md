@@ -262,7 +262,7 @@ env var (default `info`). Read a unit's logs with
 
 | Level | Shows |
 |-------|-------|
-| `info` (default) | startup/actors, pad join/leave + grab, **presenter ↔ Shell/Game transitions** (the grab-handoff that's most bug-prone), warnings/errors |
+| `info` (default) | startup/actors, pad join/leave + grab, **presenter transitions** (Shell/Keyboard/Game/Handoff, incl. follow-focus by window class + virtual-pad create/destroy — the grab-handoff that's most bug-prone), warnings/errors |
 | `debug` | every **published broadcast event** at the `publish()` chokepoint — `intent:*`, combos, `pad:*`, `input-mode:*`, `controller-wake`, status pushes |
 | `trace` | every **raw evdev event** from each pad (slot + type/code/value) and every `emit_key`/`emit_mouse_button` to the shared virtual devices |
 

@@ -49,6 +49,7 @@
 //! Cross-platform: pure parsing/validation, unit-tested on every host.
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -85,6 +86,7 @@ pub struct DaemonConfig {
     pub plex: PlexConfig,
     pub steam: SteamConfig,
     pub observability: ObservabilityConfig,
+    pub input: InputConfig,
     pub dev: DevConfig,
 }
 
@@ -183,6 +185,97 @@ impl Default for ObservabilityConfig {
             // Mirrors metrics.rs DEFAULT_INTERVAL_SECS (15).
             metrics_interval: 15,
         }
+    }
+}
+
+/// A per-app **input contract**: how the daemon presents the controller fleet
+/// to a focused external window, keyed by its Hyprland window class. Selected by
+/// the input runtime's follow-focus (the focused window's contract *is* the
+/// presenter it drives — see `input.rs`).
+///
+/// * `Gamepad` — forward each pad to a clean per-player virtual Xbox pad (the
+///   Game presenter). The app reads a real gamepad. This is the default for
+///   unknown classes, preserving the pre-contract "any app focused ⇒ virtual
+///   pad" behavior.
+/// * `Keyboard` — emulate keyboard/mouse from the pad, targeted at the focused
+///   app (the shell key-map: d-pad→arrows, A→Enter, B→Esc, sticks→arrows/mouse).
+///   **No virtual pad exists**, so a key-driven HTPC app like Plex is drivable —
+///   and, the point of the fix, Steam has no always-alive virtual pad to take an
+///   exclusive `EVIOCGRAB` on out from under the focused app.
+/// * `Handoff` — ungrab the physical pad entirely so the app reads the raw evdev
+///   node directly (SDL/Moonlight-style). No virtual pad, no key emulation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputContract {
+    Gamepad,
+    Keyboard,
+    Handoff,
+}
+
+/// `[input]` — per-app input contracts. Maps a focused window class to the
+/// contract the daemon honors while that window is focused. Entries **override**
+/// the built-in defaults (see [`builtin_contract`]); an unlisted class falls back
+/// to those defaults. Like the other `config.toml` sections this is read once at
+/// startup — changing a contract needs a daemon restart.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InputConfig {
+    /// window-class → contract, e.g. `"tv.plex.Plex" = "keyboard"`. TOML:
+    /// `[input.contracts]` with one `"<class>" = "<gamepad|keyboard|handoff>"`
+    /// line per app.
+    pub contracts: HashMap<String, InputContract>,
+}
+
+/// Resolver for per-app input contracts: user `[input.contracts]` overrides
+/// layered over the daemon's built-in defaults. Cloned into the input runtime at
+/// startup ([`DaemonConfig::input_contracts`]) so contract resolution on the hot
+/// focus path is a plain map lookup with no global/`OnceLock` access, and so the
+/// resolution logic is unit-tested here (cross-platform) rather than in the
+/// Linux-only input module.
+#[derive(Debug, Clone, Default)]
+pub struct InputContracts {
+    overrides: HashMap<String, InputContract>,
+}
+
+impl InputContracts {
+    /// Build from the parsed `[input]` config (clones the override map).
+    pub fn from_config(cfg: &InputConfig) -> Self {
+        Self {
+            overrides: cfg.contracts.clone(),
+        }
+    }
+
+    /// Construct directly from an override map (tests / explicit callers).
+    pub fn new(overrides: HashMap<String, InputContract>) -> Self {
+        Self { overrides }
+    }
+
+    /// Resolve the contract for a focused window `class`: a user override wins,
+    /// else the built-in default. An unknown class defaults to
+    /// [`InputContract::Gamepad`] — preserving the pre-contract behavior where
+    /// any focused app got a virtual pad. `class` is never empty here: an empty
+    /// focused-window class means "no toplevel focused → the shell itself owns
+    /// input", which the caller maps to the shell presenter before consulting a
+    /// contract.
+    pub fn resolve(&self, class: &str) -> InputContract {
+        self.overrides
+            .get(class)
+            .copied()
+            .unwrap_or_else(|| builtin_contract(class))
+    }
+}
+
+/// Built-in per-app contract defaults, overridable via `[input.contracts]`.
+/// `tv.plex.Plex` is keyboard-driven (the Plex HTPC UI reads keys, not a pad);
+/// `steam` takes a real gamepad; every other class defaults to gamepad (the
+/// pre-contract behavior). `steam` is listed explicitly even though it matches
+/// the fallback — it documents the intended contract and survives a future change
+/// to the default.
+fn builtin_contract(class: &str) -> InputContract {
+    match class {
+        "tv.plex.Plex" => InputContract::Keyboard,
+        "steam" => InputContract::Gamepad,
+        _ => InputContract::Gamepad,
     }
 }
 
@@ -353,6 +446,12 @@ impl DaemonConfig {
         } else {
             n
         }
+    }
+
+    /// The per-app input-contract resolver (built-in defaults layered under the
+    /// `[input.contracts]` overrides). Cloned by the input runtime at startup.
+    pub fn input_contracts(&self) -> InputContracts {
+        InputContracts::from_config(&self.input)
     }
 
     /// Validate cross-field invariants, refusing to run in a configuration that
@@ -578,6 +677,56 @@ mod tests {
             Some("/run/secrets/plex-token")
         );
         assert_eq!(c.http_bind().unwrap().unwrap().port(), 8089);
+    }
+
+    #[test]
+    fn input_contract_builtin_defaults() {
+        // No overrides: the built-ins apply. Plex is keyboard-driven; Steam and
+        // any unknown class take a gamepad (the pre-contract default).
+        let c = DaemonConfig::parse("").unwrap();
+        let contracts = c.input_contracts();
+        assert_eq!(contracts.resolve("tv.plex.Plex"), InputContract::Keyboard);
+        assert_eq!(contracts.resolve("steam"), InputContract::Gamepad);
+        assert_eq!(
+            contracts.resolve("org.some.UnknownApp"),
+            InputContract::Gamepad
+        );
+    }
+
+    #[test]
+    fn input_contract_overrides_win_and_parse() {
+        // A user can both override a built-in (force Plex to gamepad) and add a
+        // new class (VLC → keyboard, handoff for a raw-node app).
+        let c = DaemonConfig::parse(
+            r#"
+            [input.contracts]
+            "tv.plex.Plex" = "gamepad"
+            "org.videolan.VLC" = "keyboard"
+            "com.example.RawPad" = "handoff"
+        "#,
+        )
+        .unwrap();
+        let contracts = c.input_contracts();
+        // Override beats the built-in keyboard default.
+        assert_eq!(contracts.resolve("tv.plex.Plex"), InputContract::Gamepad);
+        assert_eq!(
+            contracts.resolve("org.videolan.VLC"),
+            InputContract::Keyboard
+        );
+        assert_eq!(
+            contracts.resolve("com.example.RawPad"),
+            InputContract::Handoff
+        );
+        // An unlisted class still falls through to the built-in default.
+        assert_eq!(contracts.resolve("steam"), InputContract::Gamepad);
+    }
+
+    #[test]
+    fn input_contract_invalid_value_rejected() {
+        // A typo'd contract value is a hard parse error (not silently ignored).
+        assert!(DaemonConfig::parse("[input.contracts]\n\"steam\" = \"joystick\"\n").is_err());
+        // An unknown key under [input] is rejected too (deny_unknown_fields).
+        assert!(DaemonConfig::parse("[input]\nbogus = 1\n").is_err());
     }
 
     #[test]
