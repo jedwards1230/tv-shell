@@ -1126,13 +1126,17 @@ impl PadDevice {
     fn check_quit_combo(&mut self, sh: &mut Shared) {
         if state::subset_held(&config::QUIT_COMBO_KEYS, &self.held_keys) {
             info!("Force-quit combo detected (Back+Home+LB+RB)");
-            // In the game presenter a stream/app owns the screen, so also send
-            // the Moonlight force-quit chord on the shared virtual keyboard. The
-            // shell presenter has no app to quit. (Pre-Phase-5 this keyed off the
-            // grab; the pad now stays grabbed in both modes, so it keys off the
-            // presenter instead.) Handoff (#221) is also a streaming presenter, so
-            // it fires the chord too.
-            if matches!(sh.presenter, Presenter::Game | Presenter::Handoff) {
+            // Whenever a focused app owns the screen — a stream (Game/Handoff) or
+            // a keyboard-contract app like Plex (Keyboard) — also send the quit
+            // chord on the shared virtual keyboard, so a couch user who can't
+            // reach a keyboard still has a controller escape from an app that
+            // captured input. Only the Shell home screen has no app to quit.
+            // (Pre-Phase-5 this keyed off the grab; the pad now stays grabbed in
+            // every non-Handoff presenter, so it keys off the presenter instead.)
+            // The chord is best-effort per app; the authoritative escape is the
+            // `ComboForceQuit` event below, which the shell turns into a
+            // force-quit/return-to-shell regardless of app.
+            if presenter_owns_app(sh.presenter) {
                 sh.send_moonlight_quit();
             }
             sh.publish(Event::ComboForceQuit);
@@ -2761,6 +2765,19 @@ fn should_grab(overlay_focus: bool, presenter: Presenter) -> bool {
     overlay_focus || presenter != Presenter::Handoff
 }
 
+/// Whether the current presenter means a focused *app* owns the screen (rather
+/// than the shell home). True for [`Presenter::Keyboard`]/[`Presenter::Game`]/
+/// [`Presenter::Handoff`], false for [`Presenter::Shell`]. Drives whether the
+/// force-quit combo (Back+Home+LB+RB) also emits the app-quit keyboard chord — a
+/// controller escape from an app that captured input, for a couch user with no
+/// keyboard in reach. The Shell home has no app to quit. `Keyboard` is included
+/// (a keyboard-contract app like Plex is receiving our emulated keys and owns the
+/// screen); its exclusion was the on-device "locked inside Plex" regression. Pure,
+/// so the escape policy is unit-tested without a controller.
+fn presenter_owns_app(presenter: Presenter) -> bool {
+    !matches!(presenter, Presenter::Shell)
+}
+
 /// Decide whether a KEY event should be forwarded to the Game presenter's
 /// virtual pad, given the pad's `masked` set (buttons held at the shell→app
 /// flip; see [`PadDevice::masked_keys`]) and the event's `code`/`value`.
@@ -3172,6 +3189,19 @@ mod presenter_tests {
         assert!(should_grab(false, Presenter::Shell));
         // Keyboard keeps the grab (shell-style emulation; no raw-node handoff).
         assert!(should_grab(false, Presenter::Keyboard));
+    }
+
+    #[test]
+    fn force_quit_chord_reaches_every_app_owning_presenter() {
+        // The force-quit combo emits the app-quit keyboard chord whenever a
+        // focused app owns the screen — Keyboard (e.g. Plex), Game, or Handoff —
+        // so a couch user can always escape an app that captured input. The Shell
+        // home has no app to quit. Keyboard's inclusion is the fix for the
+        // on-device "locked inside Plex, no controller path back" regression.
+        assert!(presenter_owns_app(Presenter::Keyboard));
+        assert!(presenter_owns_app(Presenter::Game));
+        assert!(presenter_owns_app(Presenter::Handoff));
+        assert!(!presenter_owns_app(Presenter::Shell));
     }
 
     #[test]
