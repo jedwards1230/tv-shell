@@ -44,6 +44,22 @@ Item {
     // naming the same class can).
     property string _pendingLaunchClass: ""
 
+    // One-shot guard for the STARTUP idle-adoption pass in windowPoller (below).
+    // A quickshell restart mid-session boots the state machine `idle` even when
+    // an app is already live and focused — the daemon's presenter keeps
+    // emulating gamepad input over it, so the controller is locked inside an app
+    // the shell doesn't know it's hosting. The shell's escape contract only
+    // works in `appRunning` (see shell.qml: overlayOverApp / onIntentHomeTap /
+    // resetToHome all gate on it), so the shell MUST adopt that foreground app.
+    // This flag makes the poller do that boot-under-app adoption exactly ONCE,
+    // on the first idle poll — never as a steady-state re-adopt: a deliberate
+    // return-to-shell (returnToShell) leaves the app running in the background
+    // AND still the compositor's active window, so a repeating poll adopt would
+    // bounce the user straight back into the app they just escaped. Ongoing
+    // out-of-band focus adoption is instead event-driven (the hypr:activewindow
+    // handler), which a deliberate escape never re-triggers.
+    property bool _startupAdoptionDone: false
+
     signal appLaunched
     signal appClosed
     // Emitted when the launcher process exits non-zero (app failed to start).
@@ -62,6 +78,45 @@ Item {
             root._pendingLaunchClass = "";
             root.windowConfirmed();
         }
+    }
+
+    // Shell-side ADOPTION of a focused external app (no daemon protocol change).
+    //
+    // The full escape contract in shell.qml is gated on `state === "appRunning"`:
+    // Meta HOLD -> intent:home-hold -> resetToHome -> returnToShell (grab +
+    // focusHome), and Meta TAP over an app -> the controllable overlay drawer via
+    // onIntentHomeTap -> overlayOverApp -> setOverlayFocus(true). BOTH are no-ops
+    // while the shell is `idle`. But the daemon's follow-focus can put a focused
+    // external app (e.g. Plex, class `tv.plex.Plex`) under the input presenter —
+    // emulating keyboard/mouse from the gamepad — for an app the shell never
+    // launched: (a) an app focused out-of-band of the shell's own launch flow, or
+    // (b) a quickshell restart mid-session under an already-running app. In both
+    // the shell stays `idle`, so NEITHER tap nor hold escapes and the user is
+    // locked inside the app with no controller path back.
+    //
+    // Adopting closes that gap WITHOUT any daemon/protocol change: set the SAME
+    // `runningAppClass` the launch flow sets and fire the SAME `appLaunched()`
+    // signal (shell.qml onAppLaunched: state = "appRunning"). Once appRunning +
+    // runningAppClass is set, the existing escape + overlay-drawer contract just
+    // works, and the existing teardown path (the poller's appClosed check below,
+    // which keys off runningAppClass, plus the `_maxMisses` disappearance
+    // handling) returns the shell to idle when the adopted window goes away — an
+    // adopted app is indistinguishable from a launched one to those paths.
+    //
+    // Guardrails: only adopt while `idle` (idempotent no-op otherwise, so an
+    // event-then-poll double fire can't churn), and skip the shell's own surfaces
+    // (empty / "quickshell") and prelaunch/transient classes — the SAME filters
+    // the launch-detect scans use, not a reinvented set.
+    function _maybeAdoptIdleApp(cls) {
+        if (root.shellState !== "idle")
+            return;
+        if (!cls || cls === "" || cls.indexOf("quickshell") >= 0)
+            return;
+        if (root._prelaunchClasses.indexOf(cls) >= 0)
+            return;
+        root.runningAppClass = cls;
+        // Drive the exact launch-flow signal path so state -> "appRunning".
+        appLaunched();
     }
 
     function launchDesktopApp(app) {
@@ -465,6 +520,34 @@ Item {
                 }
             }
 
+            // One-shot STARTUP idle-adoption (escape contract): the event-driven
+            // activewindow adoption above only fires on a focus CHANGE, which a
+            // quickshell restart mid-session under an already-running app never
+            // produces (the app was focused before the shell even started, so no
+            // event arrives). Catch that boot-under-app case from the FIRST idle
+            // poll instead — the client list is the source of truth here even
+            // with no activewindow event yet. Adopt the current foreground window
+            // (lowest Hyprland focusHistoryId == most-recently-focused). `windows`
+            // is already stripped of empty/"quickshell" classes, and
+            // _maybeAdoptIdleApp re-applies every filter. Guarded one-shot by
+            // _startupAdoptionDone so this cannot become a steady-state re-adopt:
+            // a deliberate return-to-shell leaves the app backgrounded but still
+            // the compositor's active window, and a repeating poll adopt would
+            // bounce the user right back into it (see _startupAdoptionDone).
+            if (!root._startupAdoptionDone && root.shellState === "idle") {
+                root._startupAdoptionDone = true;
+                let fgClass = "";
+                let fgHist = 1000000;
+                for (let i = 0; i < windows.length; i++) {
+                    if (windows[i].focusHistoryId < fgHist) {
+                        fgHist = windows[i].focusHistoryId;
+                        fgClass = windows[i].windowClass;
+                    }
+                }
+                if (fgClass !== "")
+                    root._maybeAdoptIdleApp(fgClass);
+            }
+
             // Only fire appClosed when in appRunning state and foreground app is truly gone
             if (root.shellState === "appRunning" && root.runningAppClass !== "") {
                 let found = false;
@@ -529,6 +612,16 @@ Item {
                     root.runningAppClass = root.activeWindowClass;
                     root._confirmWindow();
                 }
+                // Idle-adoption (escape contract): if the shell believes it is
+                // idle but a non-shell window just BECAME the compositor's active
+                // window, the daemon's follow-focus is (or is about to be)
+                // emulating gamepad input over an app the shell never launched.
+                // Adopt it into appRunning so the existing escape works (see
+                // _maybeAdoptIdleApp). This is the ongoing, event-driven path for
+                // out-of-band focus; it is loop-safe because a deliberate return-
+                // to-shell does NOT emit a fresh activewindow event naming the app
+                // class, so escaping can never re-trigger adoption here.
+                root._maybeAdoptIdleApp(root.activeWindowClass);
             } else if (line.indexOf("hypr:fullscreen:") === 0) {
                 root.activeWindowFullscreen = line.substring("hypr:fullscreen:".length) === "1";
                 root._onHyprWindowEvent();

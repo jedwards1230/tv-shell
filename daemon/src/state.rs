@@ -201,6 +201,120 @@ pub fn subset_held(combo: &[u16], held: &std::collections::HashSet<u16>) -> bool
     combo.iter().all(|c| held.contains(c))
 }
 
+/// How many distinct combo-participant buttons (see [`config::COMBO_PARTICIPANTS`])
+/// are currently held. Drives per-presenter arming of the combo buffer: the
+/// Keyboard presenter arms on the *first* held participant, the Game presenter on
+/// the *second* (so single-button gameplay stays latency-free). `BTN_MODE` is a
+/// participant here even though its own app-delivery is governed by the Meta
+/// tap/hold split — a held Meta must still count toward "two participants held"
+/// so a Meta-inclusive combo (force-quit, end-session) arms the buffer in Game.
+pub fn participant_held_count(held: &std::collections::HashSet<u16>) -> usize {
+    config::COMBO_PARTICIPANTS
+        .iter()
+        .filter(|c| held.contains(c))
+        .count()
+}
+
+/// True if the currently-held buttons satisfy the key set of ANY timed/instant
+/// safety combo (force-quit / suspend-stream / end-session). Note this fires the
+/// instant the full *set* is held — for the timed end-session combo that is well
+/// before its 3 s timer elapses — which is exactly what the combo buffer wants:
+/// as soon as a real combo chord is complete the buffered participants are
+/// swallowed rather than leaked, regardless of whether the timed variant later
+/// fires or is aborted.
+pub fn any_combo_matched(held: &std::collections::HashSet<u16>) -> bool {
+    subset_held(&config::QUIT_COMBO_KEYS, held)
+        || subset_held(&config::SUSPEND_COMBO_KEYS, held)
+        || subset_held(&config::COMBO_KEYS, held)
+}
+
+/// The decision the combo buffer makes for one KEY event in an app presenter
+/// (Keyboard/Game). Returned by [`combo_buffer_action`] — the pure core, so the
+/// arm/buffer/replay/swallow policy is unit-tested cross-platform (macOS/CI)
+/// without a controller. The buffered-event *replay* into uinput/the vpad is the
+/// only non-pure part and lives in the Linux-only input runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComboBufferAction {
+    /// Not buffering — forward the current event to the app as usual.
+    Forward,
+    /// Buffering — append the current event to the buffer and forward nothing
+    /// (arming the buffer if it was not already armed).
+    Buffer,
+    /// A combo is satisfied — discard the whole buffer and disarm; forward
+    /// nothing (the current event is a participant the app must never see).
+    Swallow,
+    /// Disqualified by a non-participant event — replay the buffer to the app in
+    /// order and disarm, THEN forward the current (non-participant) event.
+    ReplayThenForward,
+    /// Disqualified by a participant *release* without a completed combo — append
+    /// the current event to the buffer, replay the whole buffer to the app, and
+    /// disarm.
+    ReplayIncludingEvent,
+}
+
+/// Decide what the combo buffer does with one KEY event in an app presenter.
+///
+/// A focused app (Keyboard-contract like Plex, or a Game vpad) must not see the
+/// *partial* presses of a safety combo (force-quit / suspend / end-session) — a
+/// stray `BTN_TL`/`BTN_EAST` etc. leaks as a media key / phantom input, the bug
+/// this fixes. So participant presses are buffered and only revealed to the app
+/// once the sequence is proven NOT to be a combo.
+///
+/// * `armed` — is the buffer currently holding participant events.
+/// * `is_participant` — is this event's button a combo participant.
+/// * `value` — evdev KEY value: `1` press, `0` release, `2` autorepeat.
+/// * `participant_held_count` — participants held *after* this event updated the
+///   held set (see [`participant_held_count`]).
+/// * `arm_threshold` — participants that must be held to start buffering: `1` for
+///   the Keyboard presenter (a media app tolerates the latency; fully prevents
+///   leaks — the actual bug), `2` for the Game presenter (keep single-button
+///   gameplay latency-free — the first participant of a pair may forward before
+///   arming, which a game tolerates as one benign leaked button).
+/// * `any_combo_matched` — do the held buttons satisfy any combo's full set now.
+///
+/// A satisfied combo always wins (swallow), so no complete chord ever leaks; a
+/// non-participant press, a participant release, or (handled by the caller's
+/// guard timer) the settle window elapsing all disqualify the candidate and
+/// replay it. Pure — no I/O, no timers.
+pub fn combo_buffer_action(
+    armed: bool,
+    is_participant: bool,
+    value: i32,
+    participant_held_count: usize,
+    arm_threshold: usize,
+    any_combo_matched: bool,
+) -> ComboBufferAction {
+    // A complete combo chord always swallows whatever is buffered (and the
+    // completing participant), so a real force-quit/suspend/end-session never
+    // leaks a media key into the app. Works whether or not we were armed: if we
+    // never armed (single-button path) the buffer is empty and only the current
+    // participant is withheld.
+    if any_combo_matched {
+        return ComboBufferAction::Swallow;
+    }
+    if armed {
+        if !is_participant {
+            // A non-participant event ends combo candidacy: flush the buffer to
+            // the app in order, then forward this event.
+            return ComboBufferAction::ReplayThenForward;
+        }
+        if value == 0 {
+            // A participant released without completing a combo: this was not a
+            // combo — replay the buffer (including this release) to the app.
+            return ComboBufferAction::ReplayIncludingEvent;
+        }
+        // Participant press/autorepeat while armed: keep buffering.
+        return ComboBufferAction::Buffer;
+    }
+    // Not armed: only a participant PRESS that reaches the arm threshold starts
+    // buffering. Everything else (a below-threshold single-button press, a
+    // release, a non-participant) forwards immediately — latency-free.
+    if is_participant && value == 1 && participant_held_count >= arm_threshold {
+        return ComboBufferAction::Buffer;
+    }
+    ComboBufferAction::Forward
+}
+
 fn left_stick_label(key: u16) -> &'static str {
     match key {
         config::KEY_UP => "L↑",
@@ -318,6 +432,111 @@ mod tests {
             .collect();
         assert!(subset_held(&config::COMBO_KEYS, &held));
         assert!(!subset_held(&config::QUIT_COMBO_KEYS, &held));
+    }
+
+    #[test]
+    fn participant_count_and_any_combo() {
+        // A face button (A) is not a participant; the 6 combo buttons are.
+        let held: HashSet<u16> = [config::BTN_SOUTH].into_iter().collect();
+        assert_eq!(participant_held_count(&held), 0);
+        assert!(!any_combo_matched(&held));
+
+        // Home + B = 2 participants, and satisfies the end-session combo set.
+        let held: HashSet<u16> = [config::BTN_MODE, config::BTN_EAST].into_iter().collect();
+        assert_eq!(participant_held_count(&held), 2);
+        assert!(any_combo_matched(&held)); // COMBO_KEYS = [MODE, EAST]
+
+        // Start + LB + RB satisfies the suspend combo; A held alongside is not a
+        // participant so the count is 3.
+        let held: HashSet<u16> = [
+            config::BTN_START,
+            config::BTN_TL,
+            config::BTN_TR,
+            config::BTN_SOUTH,
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(participant_held_count(&held), 3);
+        assert!(any_combo_matched(&held));
+
+        // Back + LB alone: 2 participants, no full combo.
+        let held: HashSet<u16> = [config::BTN_SELECT, config::BTN_TL].into_iter().collect();
+        assert_eq!(participant_held_count(&held), 2);
+        assert!(!any_combo_matched(&held));
+    }
+
+    #[test]
+    fn combo_buffer_keyboard_arms_on_first_participant() {
+        // Keyboard (arm_threshold = 1): the very first participant press buffers.
+        // count reflects the held set AFTER the press (=1).
+        let a = combo_buffer_action(false, true, 1, 1, 1, false);
+        assert_eq!(a, ComboBufferAction::Buffer);
+    }
+
+    #[test]
+    fn combo_buffer_game_defers_first_participant() {
+        // Game (arm_threshold = 2): a lone participant press forwards (latency-free,
+        // one benign leaked button); the second held participant arms buffering.
+        assert_eq!(
+            combo_buffer_action(false, true, 1, 1, 2, false),
+            ComboBufferAction::Forward
+        );
+        assert_eq!(
+            combo_buffer_action(false, true, 1, 2, 2, false),
+            ComboBufferAction::Buffer
+        );
+    }
+
+    #[test]
+    fn combo_buffer_non_participant_forwards_when_disarmed() {
+        // A non-participant (e.g. A/X/Y) always forwards when not buffering.
+        assert_eq!(
+            combo_buffer_action(false, false, 1, 0, 1, false),
+            ComboBufferAction::Forward
+        );
+        // A participant release with nothing buffered also forwards.
+        assert_eq!(
+            combo_buffer_action(false, true, 0, 0, 1, false),
+            ComboBufferAction::Forward
+        );
+    }
+
+    #[test]
+    fn combo_buffer_swallows_on_full_combo() {
+        // Once a full combo set is held, the completing participant + the buffer
+        // are swallowed — no chord leaks, regardless of armed state.
+        assert_eq!(
+            combo_buffer_action(true, true, 1, 4, 1, true),
+            ComboBufferAction::Swallow
+        );
+        assert_eq!(
+            combo_buffer_action(false, true, 1, 4, 2, true),
+            ComboBufferAction::Swallow
+        );
+    }
+
+    #[test]
+    fn combo_buffer_replays_on_disqualifiers() {
+        // Armed + a non-participant press => flush buffer then forward the event.
+        assert_eq!(
+            combo_buffer_action(true, false, 1, 1, 1, false),
+            ComboBufferAction::ReplayThenForward
+        );
+        // Armed + a participant release (no combo) => replay incl. this release.
+        assert_eq!(
+            combo_buffer_action(true, true, 0, 1, 1, false),
+            ComboBufferAction::ReplayIncludingEvent
+        );
+        // Armed + a further participant press (still a candidate) => keep buffering.
+        assert_eq!(
+            combo_buffer_action(true, true, 1, 2, 1, false),
+            ComboBufferAction::Buffer
+        );
+        // Armed + participant autorepeat (value 2) => keep buffering.
+        assert_eq!(
+            combo_buffer_action(true, true, 2, 1, 1, false),
+            ComboBufferAction::Buffer
+        );
     }
 
     #[test]

@@ -212,18 +212,56 @@ pub enum InputContract {
     Handoff,
 }
 
-/// `[input]` — per-app input contracts. Maps a focused window class to the
-/// contract the daemon honors while that window is focused. Entries **override**
-/// the built-in defaults (see [`builtin_contract`]); an unlisted class falls back
-/// to those defaults. Like the other `config.toml` sections this is read once at
-/// startup — changing a contract needs a daemon restart.
-#[derive(Debug, Default, Clone, Deserialize)]
+/// Default for [`InputConfig::meta_hold_ms`] — the Meta (BTN_MODE / Guide)
+/// tap-vs-hold threshold in milliseconds. 500 ms is a comfortable press-and-hold
+/// that a deliberate long-press clears but a quick tap does not. This knob is the
+/// tap/hold split point for the Meta gesture in *every* grabbed presenter and
+/// replaces the former hard-coded 2 s `HOME_HOLD_SECS`; a shorter default makes
+/// the reserved shell escape (the hold) feel responsive.
+pub const DEFAULT_META_HOLD_MS: u64 = 500;
+
+/// Default for [`InputConfig::combo_guard_ms`] — the combo settle window in
+/// milliseconds. When a focused app owns the screen the daemon briefly buffers a
+/// combo-participant press instead of forwarding it, so a partial safety-combo
+/// chord (e.g. the first two of Back+Home+LB+RB) never leaks into the app as a
+/// stray media key. 120 ms is long enough for a human to complete a chorded combo
+/// yet short enough that a genuine single-button press replays with barely
+/// perceptible latency.
+pub const DEFAULT_COMBO_GUARD_MS: u64 = 120;
+
+/// `[input]` — per-app input contracts and Meta/combo timing. Maps a focused
+/// window class to the contract the daemon honors while that window is focused;
+/// entries **override** the built-in defaults (see [`builtin_contract`]), an
+/// unlisted class falls back to those defaults. Also carries the two input-timing
+/// knobs (`meta_hold_ms`, `combo_guard_ms`). Like the other `config.toml`
+/// sections this is read once at startup — a change needs a daemon restart.
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct InputConfig {
     /// window-class → contract, e.g. `"tv.plex.Plex" = "keyboard"`. TOML:
     /// `[input.contracts]` with one `"<class>" = "<gamepad|keyboard|handoff>"`
     /// line per app.
     pub contracts: HashMap<String, InputContract>,
+    /// Meta (BTN_MODE / Guide) tap-vs-hold threshold in milliseconds
+    /// ([`DEFAULT_META_HOLD_MS`]). Held past this ⇒ HOLD (the reserved shell
+    /// escape); released before ⇒ TAP (delivered to the focused app per its
+    /// contract). Threaded into the input runtime's `Shared` at startup.
+    pub meta_hold_ms: u64,
+    /// Combo settle window in milliseconds ([`DEFAULT_COMBO_GUARD_MS`]) — how long
+    /// a buffered combo-participant press waits for the rest of a combo before it
+    /// is replayed to the focused app as a normal press. Threaded into `Shared` at
+    /// startup.
+    pub combo_guard_ms: u64,
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        Self {
+            contracts: HashMap::new(),
+            meta_hold_ms: DEFAULT_META_HOLD_MS,
+            combo_guard_ms: DEFAULT_COMBO_GUARD_MS,
+        }
+    }
 }
 
 /// Resolver for per-app input contracts: user `[input.contracts]` overrides
@@ -727,6 +765,35 @@ mod tests {
         assert!(DaemonConfig::parse("[input.contracts]\n\"steam\" = \"joystick\"\n").is_err());
         // An unknown key under [input] is rejected too (deny_unknown_fields).
         assert!(DaemonConfig::parse("[input]\nbogus = 1\n").is_err());
+    }
+
+    #[test]
+    fn input_timing_defaults_and_parse() {
+        // Absent [input] ⇒ the timing knobs take their defaults.
+        let c = DaemonConfig::parse("").unwrap();
+        assert_eq!(c.input.meta_hold_ms, DEFAULT_META_HOLD_MS);
+        assert_eq!(c.input.combo_guard_ms, DEFAULT_COMBO_GUARD_MS);
+
+        // A [input] table with only contracts still defaults the timing knobs
+        // (container-level serde(default) fills missing fields from Default).
+        let c = DaemonConfig::parse("[input.contracts]\n\"steam\" = \"gamepad\"\n").unwrap();
+        assert_eq!(c.input.meta_hold_ms, DEFAULT_META_HOLD_MS);
+        assert_eq!(c.input.combo_guard_ms, DEFAULT_COMBO_GUARD_MS);
+
+        // Explicit values parse and override the defaults.
+        let c = DaemonConfig::parse(
+            r#"
+            [input]
+            meta_hold_ms = 750
+            combo_guard_ms = 60
+        "#,
+        )
+        .unwrap();
+        assert_eq!(c.input.meta_hold_ms, 750);
+        assert_eq!(c.input.combo_guard_ms, 60);
+
+        // A non-integer timing value is a hard parse error (not silently ignored).
+        assert!(DaemonConfig::parse("[input]\nmeta_hold_ms = \"soon\"\n").is_err());
     }
 
     #[test]

@@ -104,6 +104,25 @@
 # else = gamepad. Entries here OVERRIDE the built-ins. Read once at startup —
 # changing a contract needs a daemon restart. Find a window's class with
 # `hyprctl activewindow` (the `class:` field) while it is focused.
+#
+# --- Meta (Guide) + combo timing (optional) ----------------------------------
+# meta_hold_ms  — Meta/Guide (BTN_MODE) tap-vs-hold threshold in ms (default 500).
+#                 Held past this = HOLD, the reserved shell escape (raises the
+#                 controllable overlay drawer over a focused app; a full reset on
+#                 the shell home). Released before = TAP, delivered to the focused
+#                 app per its contract (Game: a real Guide tap to the pad;
+#                 Keyboard: nothing). Meta is never leaked to the app while the
+#                 daemon discriminates tap vs hold.
+# combo_guard_ms — combo settle window in ms (default 120). While a focused app
+#                 owns the screen the daemon briefly buffers a safety-combo
+#                 participant press (Back/Home/LB/RB/Start/B) instead of forwarding
+#                 it, so a PARTIAL combo never leaks in as a stray media key; a
+#                 genuine single-button press replays after at most this long.
+# These must appear under [input] BEFORE the [input.contracts] sub-table below.
+[input]
+#meta_hold_ms = 500
+#combo_guard_ms = 120
+
 [input.contracts]
 #"tv.plex.Plex" = "keyboard"       # (built-in; shown for reference)
 #"steam" = "gamepad"               # (built-in; Big Picture takes a real pad)
