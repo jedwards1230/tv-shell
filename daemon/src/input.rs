@@ -242,6 +242,12 @@ struct Shared {
     /// focus change so a superseded timer's `FocusSettle` is ignored — only the
     /// newest pending focus is applied.
     focus_settle_gen: u64,
+    /// Handle to the in-flight settle timer task, so a re-arm aborts the prior
+    /// one. Bounds the live settle tasks to exactly one during a focus-churn
+    /// burst instead of accumulating sleeping tasks (each superseded by the
+    /// `focus_settle_gen` check anyway; this just frees them eagerly). `None`
+    /// when no settle is pending.
+    focus_settle_task: Option<JoinHandle<()>>,
 
     /// Cached `rumbleEnabled` setting (#108) — refreshed on `set-config` via
     /// `Control::ConfigChanged` instead of re-reading settings.json on every
@@ -2218,6 +2224,7 @@ pub async fn run(
         handoff_pinned: false,
         pending_focus_class: None,
         focus_settle_gen: 0,
+        focus_settle_task: None,
         // rumble_enabled is derived from the single offloaded startup settings
         // read (M3), superseding origin/main's inline config::rumble_enabled call.
         rumble_enabled,
@@ -2893,14 +2900,21 @@ fn apply_focus_change(sh: &mut Shared, fleet: &mut Fleet, class: &str) {
 /// IPC (`grab`/`release`/`handoff`/overlay-focus) bypasses this and applies
 /// instantly — only the noisy compositor focus signal is debounced.
 fn schedule_focus_change(sh: &mut Shared, class: &str) {
+    // Abort any prior in-flight settle timer so at most one is ever alive: a
+    // focus-churn burst re-arms rather than piling up sleeping tasks. Correctness
+    // still rests on the `focus_settle_gen` check when the timer fires — this only
+    // frees the superseded tasks eagerly.
+    if let Some(t) = sh.focus_settle_task.take() {
+        t.abort();
+    }
     sh.pending_focus_class = Some(class.to_string());
     let generation = sh.next_generation();
     sh.focus_settle_gen = generation;
     let tx = sh.internal_tx.clone();
-    tokio::spawn(async move {
+    sh.focus_settle_task = Some(tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
         let _ = tx.send(Internal::FocusSettle { generation }).await;
-    });
+    }));
 }
 
 /// Pure per-pad grab invariant predicate: while the session is active a pad's
@@ -3621,6 +3635,11 @@ fn handle_internal(sh: &mut Shared, fleet: &mut Fleet, internal: Internal) {
             if generation != sh.focus_settle_gen {
                 return;
             }
+            // This is the live timer firing (not a superseded one): it has
+            // completed by sending this message, so drop its now-finished handle.
+            // A superseded timer never reaches here (gen mismatch above), so this
+            // can't clear the handle of a newer armed timer.
+            sh.focus_settle_task = None;
             if let Some(class) = sh.pending_focus_class.take() {
                 apply_focus_change(sh, fleet, &class);
             }
