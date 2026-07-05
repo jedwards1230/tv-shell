@@ -1772,20 +1772,65 @@ pad:index:{"id":"uniq:e4:17:...","index":0}
 pad:battery:{"id":"uniq:e4:17:...","level":80,"charging":false}
 ```
 
-### Home Button
+### Home Button (Meta / Guide) — tap vs hold
 
-The gamepad Home button (`BTN_MODE`) is **always intercepted** by the daemon and
-surfaced as a neutral [intent](#intents) on the broadcast stream — in **both**
-the shell and game presenters (so the shell overlay can come up over a running
-game). It is never mapped to a key and never forwarded to a game's virtual pad.
+The gamepad Home/Guide button (`BTN_MODE`) is **intercepted** by the daemon in
+every grabbed presenter (Shell/Keyboard/Game) and **never forwarded live** while
+the daemon discriminates tap vs hold — so no partial Meta press leaks to a focused
+app (no media-key / Guide leak window). The threshold is the `[input].meta_hold_ms`
+config knob (**default 500 ms**, was a hard-coded 2 s).
+
+- **TAP** — `BTN_MODE` released before `meta_hold_ms`. TAP belongs to the *app*:
+  - **Shell** (home screen) → publishes `intent:home-tap` (opens the drawer; there
+    is no app to forward to).
+  - **Game** → the buffered Guide is delivered to the app as a real tap: `BTN_MODE`
+    press+release is forwarded to the virtual pad (the game / remote Steam sees a
+    Guide tap).
+  - **Keyboard** (a keyboard-contract app like Plex) → delivers **nothing** (a
+    keyboard-contract app has no Guide concept; the escape here is the HOLD).
+- **HOLD** — `BTN_MODE` held past `meta_hold_ms`. HOLD belongs to *us* (the
+  reserved shell escape) and is fully swallowed from the app:
+  - **Shell** → publishes `intent:home-hold` (the idle reset-to-clean-home).
+  - **Keyboard / Game** → publishes **`intent:home-tap`**, which while an app is
+    running toggles the shell's *controllable overlay drawer* + overlay-focus — a
+    non-destructive everyday escape that works regardless of who holds compositor
+    toplevel focus. (The heavier `home-hold` full return-to-home is only the Shell
+    home's hold.)
 
 | Event | Trigger |
 |-------|---------|
-| `intent:home-tap` | `BTN_MODE` released before the 2-second hold threshold |
-| `intent:home-hold` | `BTN_MODE` held for 2 seconds |
+| `intent:home-tap` | `BTN_MODE` released before `meta_hold_ms` on the Shell home; **or** `BTN_MODE` held past `meta_hold_ms` in an app presenter (Keyboard/Game/unpinned Handoff) — the app-escape |
+| `intent:home-hold` | `BTN_MODE` held past `meta_hold_ms` on the Shell home only — the idle reset |
 
-The legacy `home-press` / `combo:home-hold` events were removed in Phase 5 — QML
-now consumes only the `intent:*` vocabulary.
+The fleet-level dedup latch still applies to the hold-fire, so two pads holding
+Meta at once publish the escape intent once. **Net semantic change:** the Meta TAP
+now belongs to the app (Game gets a real Guide tap; it used to always open our
+drawer), and the HOLD is the reliable shell escape. The legacy `home-press` /
+`combo:home-hold` events were removed in Phase 5 — QML consumes only the `intent:*`
+vocabulary (`onIntentHomeTap` / `onIntentHomeHold`).
+
+**Unpinned Handoff caveat.** A contract-driven (unpinned) Handoff leaves the pad
+ungrabbed, so the daemon cannot swallow Meta — the app reads the raw press for up
+to `meta_hold_ms`. The daemon still detects a HOLD and publishes `intent:home-tap`
+(the escape), best-effort. A **pinned** Handoff (the Moonlight `handoff` IPC) is
+untouched: Home flows straight through so remote Steam sees Guide.
+
+### Combo safety: buffered participants
+
+When a focused app owns the screen (**Keyboard** or **Game** presenter) the daemon
+buffers safety-combo *participant* buttons (`{Back, Home, LB, RB, Start, B}`)
+instead of forwarding them, so a **partial** combo chord never leaks into the app
+as a stray media key (the accidental-playback bug in Plex). A buffered sequence is
+**swallowed** if a combo completes, or **replayed** to the app (in order) if
+disqualified — a non-participant press, a participant released without a combo, or
+the settle window (`[input].combo_guard_ms`, **default 120 ms**) elapsing.
+Per-presenter arming is asymmetric by design: **Keyboard** buffers from the *first*
+participant (a media app is not latency-critical; fully prevents leaks), **Game**
+buffers only once a *second* participant is simultaneously held (single-button
+gameplay stays latency-free; the first participant of a pair may forward before
+arming — a game tolerates one benign leaked button). The combo *events* themselves
+(below) are unaffected — they always fire off the physically-held buttons; only
+the app-forwarding of participants is gated.
 
 ### Intents
 
@@ -2030,11 +2075,12 @@ command each interval as a self-healing floor, with the broadcast as the fast pa
 | `altSelect` | `BTN_NORTH` (Y) | `KEY_TAB` | Yes |
 | `confirm` | `BTN_START` (Start) | `KEY_ENTER` | Yes |
 
-`BTN_MODE` (Home) is **not** a mapped action. It is handled directly to broadcast
-`intent:home-tap` (tap) / `intent:home-hold` (hold) on the socket — mapping it to a
-key would leak `KEY_HOMEPAGE` to whatever app has keyboard focus. It is still a
-valid *target* for `set-binding` (it is in the remappable set), but no action
-defaults to it.
+`BTN_MODE` (Home/Guide) is **not** a mapped action. It is handled directly via the
+[tap-vs-hold split](#home-button-meta--guide--tap-vs-hold) — a tap belongs to the
+app (Shell drawer / Game Guide replay), a hold is the reserved shell escape —
+never mapped to a key (mapping it would leak `KEY_HOMEPAGE` to whatever app has
+keyboard focus). It is still a valid *target* for `set-binding` (it is in the
+remappable set), but no action defaults to it.
 
 ### Remappable Buttons
 
@@ -2094,7 +2140,7 @@ the pad's input goes and whether the physical grab is held.
 | Right stick → mouse cursor | Active | Active | — (forwarded as raw axis) | — |
 | LB/RB → mouse clicks | Active | Active | — (forwarded as raw buttons) | — |
 | Combo detection (end-session, force-quit, suspend) | Active | Active | Active | Active |
-| Home → `intent:home-tap` / `intent:home-hold` | Active (intercepted) | Active (intercepted) | Active (intercepted, never forwarded) | **No** (forwarded — remote Steam sees Guide) |
+| Meta/Home tap vs hold (see [Home Button](#home-button-meta--guide--tap-vs-hold)) | tap→`intent:home-tap`, hold→`intent:home-hold` (intercepted, never leaked) | tap→nothing, hold→`intent:home-tap` (intercepted, never leaked) | tap→Guide replayed to vpad, hold→`intent:home-tap` (never leaked live) | **Unpinned**: hold→`intent:home-tap` best-effort (app sees raw press ≤ threshold). **Pinned**: forwarded — remote Steam sees Guide |
 | `buttons:` debug events | Active | Active | — | — |
 | Input mode tracking | Active | Active | — | — |
 | Capture mode | Active | Active | — | — |
@@ -2254,4 +2300,4 @@ On disconnect (`OSError` during event read), the daemon sends `controller-discon
 
 ## Known Issues
 
-- **`BTN_MODE` is socket-only**: The Home button is not mapped to a keyboard key. It drives `intent:home-tap` (tap) and `intent:home-hold` (hold) subscriber events directly, intercepted in both presenters. Mapping it to `KEY_HOMEPAGE` was intentionally avoided because that keycode leaks to focused apps (browsers treat it as "go to home page"). `BTN_MODE` is still a valid `set-binding` *target*, but no action defaults to it.
+- **`BTN_MODE` is socket-only**: The Home/Guide button is not mapped to a keyboard key. It drives `intent:home-tap` / `intent:home-hold` subscriber events directly via the [tap-vs-hold split](#home-button-meta--guide--tap-vs-hold) (threshold = `[input].meta_hold_ms`, default 500 ms), never forwarded live to a focused app. Mapping it to `KEY_HOMEPAGE` was intentionally avoided because that keycode leaks to focused apps (browsers treat it as "go to home page"). `BTN_MODE` is still a valid `set-binding` *target*, but no action defaults to it.
