@@ -31,6 +31,7 @@
 
 use crate::config as cfg;
 use crate::config::{self, Binding};
+use crate::daemon_config::{InputContract, InputContracts};
 use crate::device::{self, ControllerDb, SlotAllocator, VirtualRegistry};
 use crate::protocol::{
     is_known_intent, pad_connected_json, resp_cancelled, resp_captured, resp_invalid_button,
@@ -66,6 +67,19 @@ const EV_LED: u16 = 0x11;
 /// Tasteful and brief — a single confirmation buzz, not a sustained rumble.
 const CONNECT_RUMBLE_MS: u16 = 150;
 
+/// Follow-focus settle debounce (ms). Hyprland churns the focused window during
+/// an app launch/close (the focus flaps empty↔toplevel, and between the shell
+/// layer and the app, several times over a fraction of a second). Waiting this
+/// long for focus to *settle* before applying the presenter transition collapses
+/// that churn into a single net transition — and, the point, avoids tearing down
+/// and rebuilding the per-player virtual pad on every flap, which Steam
+/// re-enumerates as a controller reconnect (audible/visible, and worse than the
+/// original bug). 300ms sits mid-range in the 200–500ms window: long enough to
+/// swallow a launch flap, short enough that a deliberate focus change still feels
+/// immediate. Only follow-focus is debounced; explicit `grab`/`release`/`handoff`
+/// / overlay-focus IPC still applies instantly.
+const FOCUS_SETTLE_MS: u64 = 300;
+
 /// Messages posted back into the select loop by timer/reader tasks.
 ///
 /// Each timer message carries a `gen` (generation) token, and the pad-scoped
@@ -92,6 +106,11 @@ enum Internal {
     ComboEndSessionFired { fd: RawFd, generation: u64 },
     /// A pending `capture-next` timed out (fleet-level).
     CaptureTimeout(u64),
+    /// The follow-focus settle debounce elapsed (fleet-level): apply the latest
+    /// pending focused-window class if this tick is still the live one. Carries a
+    /// `generation` so a superseded settle timer (focus moved again before it
+    /// fired) is ignored — only the newest pending focus is applied.
+    FocusSettle { generation: u64 },
 }
 
 /// Which presenter the fleet is currently driving (Phase 5). Mode is toggled by
@@ -103,6 +122,16 @@ enum Internal {
 ///   keyboard; the right stick drives the shared virtual mouse; gamepad Home
 ///   becomes `intent:home-tap`/`intent:home-hold`. This is the menu-navigation
 ///   presenter (#7: all pads share one focus).
+/// * [`Presenter::Keyboard`] — a focused external app with a **keyboard input
+///   contract** (e.g. `tv.plex.Plex`) owns input. Mechanically identical to
+///   [`Presenter::Shell`] — the same shell key-map is emitted onto the shared
+///   virtual keyboard/mouse — but the events land on the *focused app* (which
+///   holds Wayland focus), not the shell, so a key-driven HTPC UI is d-pad
+///   drivable. The distinction from `Shell` is which surface has focus, not the
+///   handler; kept a separate variant so follow-focus, `status`, and the logs can
+///   tell "shell home focused" from "keyboard-contract app focused". Critically,
+///   like `Shell` it holds **no virtual pad**, so Steam has nothing to
+///   exclusive-grab (the fix for the always-alive-vpad bug).
 /// * [`Presenter::Game`] — a streamed/launched app owns input. Each pad is
 ///   re-presented as one clean per-player virtual gamepad (`PadDevice.virtual_pad`,
 ///   #6) carrying the physical pad's events verbatim **except Home**, which is
@@ -121,6 +150,7 @@ enum Internal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Presenter {
     Shell,
+    Keyboard,
     Game,
     Handoff,
 }
@@ -184,6 +214,34 @@ struct Shared {
     /// so a VT-switched-to session (Plasma/Bigscreen) owns the controller.
     /// Orthogonal to `presenter`. Defaults `true`.
     session_active: bool,
+
+    /// Per-app input-contract resolver (built-in defaults + `[input.contracts]`
+    /// overrides from config.toml). Cloned once at startup from
+    /// [`crate::daemon_config`]; follow-focus consults it to pick the presenter
+    /// for a focused window class (gamepad→Game, keyboard→Keyboard,
+    /// handoff→Handoff). Read-only after startup — contracts change on restart.
+    contracts: InputContracts,
+
+    /// True only while [`Presenter::Handoff`] was entered by the explicit
+    /// `handoff` IPC (the Moonlight stream path, #221). A pinned Handoff is
+    /// **never** overridden by follow-focus — the streamed window holds
+    /// compositor focus for the whole stream, and only the shell's explicit
+    /// `grab` ends it. A Handoff reached instead via a `handoff` *contract*
+    /// (follow-focus) is NOT pinned, so focus moving to another app/the shell
+    /// arbitrates normally (no stranding). Set by `handoff_all`; cleared by every
+    /// other presenter transition.
+    handoff_pinned: bool,
+
+    /// Latest focused-window class awaiting the follow-focus settle debounce
+    /// ([`FOCUS_SETTLE_MS`]). A focus change stores the class here and (re)arms
+    /// the settle timer; the transition is applied only when
+    /// [`Internal::FocusSettle`] fires for the live [`Self::focus_settle_gen`].
+    /// `None` when no focus change is pending.
+    pending_focus_class: Option<String>,
+    /// Generation of the in-flight follow-focus settle timer. Bumped on every
+    /// focus change so a superseded timer's `FocusSettle` is ignored — only the
+    /// newest pending focus is applied.
+    focus_settle_gen: u64,
 
     /// Cached `rumbleEnabled` setting (#108) — refreshed on `set-config` via
     /// `Control::ConfigChanged` instead of re-reading settings.json on every
@@ -613,7 +671,11 @@ impl PadDevice {
         // handler over any base presenter so the pad drives the overlay, not the
         // app; the base presenter stays remembered in `sh.presenter`.
         match route_presenter(sh.overlay_focus, sh.presenter) {
-            Presenter::Shell => self.handle_shell(sh, ev),
+            // Keyboard shares the shell key-map handler — the difference between
+            // "shell home focused" and "keyboard-contract app focused" is which
+            // surface holds Wayland focus (where the emitted keys land), not how
+            // the pad is translated. Neither holds a virtual pad.
+            Presenter::Shell | Presenter::Keyboard => self.handle_shell(sh, ev),
             Presenter::Game => self.handle_game(sh, ev),
             Presenter::Handoff => self.handle_handoff(sh, ev),
         }
@@ -1829,9 +1891,14 @@ impl Fleet {
     /// would always report `grabbed` and break the `release` UI semantics that
     /// `ControllerSettings.qml` reads. For a single pad in the shell presenter
     /// this is byte-identical to the pre-fleet `connected:grabbed`.
+    ///
+    /// [`Presenter::Keyboard`] reports `grabbed` too: like Shell, the daemon is
+    /// actively translating the pad (to keyboard/mouse for the focused app) and
+    /// holds no virtual pad — the controller drives a UI, it is not "released" to
+    /// a game. Only [`Presenter::Game`]/[`Presenter::Handoff`] report released.
     fn status_string(&self, presenter: Presenter) -> String {
         let connected = !self.pads.is_empty();
-        let grabbed = presenter == Presenter::Shell;
+        let grabbed = matches!(presenter, Presenter::Shell | Presenter::Keyboard);
         resp_status(connected, grabbed)
     }
 
@@ -2140,6 +2207,13 @@ pub async fn run(
         presenter: Presenter::Shell,
         overlay_focus: false,
         session_active: true,
+        // Per-app contracts are read once at startup (like every other
+        // config.toml section); `global()` is populated in main before this
+        // thread spawns, and re-read cleanly on a supervisor respawn.
+        contracts: crate::daemon_config::global().input_contracts(),
+        handoff_pinned: false,
+        pending_focus_class: None,
+        focus_settle_gen: 0,
         // rumble_enabled is derived from the single offloaded startup settings
         // read (M3), superseding origin/main's inline config::rumble_enabled call.
         rumble_enabled,
@@ -2232,13 +2306,16 @@ pub async fn run(
             }
             // Coalesced compositor focus (latest-wins) from the Hyprland actor.
             // `borrow_and_update` marks the value seen so `changed()` re-fires only
-            // on a genuinely newer focus. The startup "" never fires (watch signals
-            // only post-construction values), and even a spurious "" is a clean
-            // no-op (`focus_presenter_target(Shell, "")` → None). See #221/#294.
+            // on a genuinely newer focus. Instead of applying immediately, arm the
+            // settle debounce (schedule_focus_change) so a burst of launch/close
+            // focus flaps collapses to one net transition and never thrashes the
+            // virtual pad (which Steam re-enumerates on each create/destroy). The
+            // startup "" never fires (watch signals only post-construction values),
+            // and even a spurious "" just settles to a no-op. See #221/#294.
             res = active_window_rx.changed(), if focus_watch_live => {
                 if res.is_ok() {
                     let class = active_window_rx.borrow_and_update().to_string();
-                    apply_focus_change(&mut sh, &mut fleet, &class);
+                    schedule_focus_change(&mut sh, &class);
                 } else {
                     // All watch senders dropped (shutdown in progress); stop
                     // polling this arm so it can't busy-spin.
@@ -2569,9 +2646,30 @@ fn grab_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Shell (grab)");
     sh.metrics.inc_transitions();
     sh.presenter = Presenter::Shell;
+    sh.handoff_pinned = false; // leaving any Handoff clears the Moonlight pin
     for pad in fleet.pads.values_mut() {
         pad.grab(sh); // no-op if already grabbed; re-grabs if somehow released
         pad.enter_shell(sh);
+    }
+    check_grab_invariant(sh, fleet);
+}
+
+/// Switch the fleet to the **keyboard presenter** (a follow-focus transition to a
+/// window with a `keyboard` input contract, e.g. `tv.plex.Plex`). Mechanically
+/// this is [`grab_all`] with a different presenter label: keep every pad
+/// physically grabbed (nothing leaks to the compositor) and tear down any
+/// per-player virtual pad — the focused app is driven by the shell key-map on the
+/// shared virtual keyboard/mouse (`handle_shell`), NOT a virtual gamepad. Dropping
+/// the virtual pad here is the fix's core: with no virtual pad alive, Steam has
+/// nothing to exclusive-grab, so a focused Plex actually receives the d-pad.
+fn keyboard_all(sh: &mut Shared, fleet: &mut Fleet) {
+    info!(pads = fleet.pads.len(), "presenter -> Keyboard (contract)");
+    sh.metrics.inc_transitions();
+    sh.presenter = Presenter::Keyboard;
+    sh.handoff_pinned = false;
+    for pad in fleet.pads.values_mut() {
+        pad.grab(sh); // keep the physical grab (shell-style key emulation)
+        pad.enter_shell(sh); // drop any virtual pad — no gamepad in this context
     }
     check_grab_invariant(sh, fleet);
 }
@@ -2586,6 +2684,7 @@ fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
     info!(pads = fleet.pads.len(), "presenter -> Game (release)");
     sh.metrics.inc_transitions();
     sh.presenter = Presenter::Game;
+    sh.handoff_pinned = false; // leaving any Handoff clears the Moonlight pin
     for pad in fleet.pads.values_mut() {
         // Keep the physical grab; only ensure it's grabbed (it is, post-join).
         pad.grab(sh);
@@ -2594,17 +2693,35 @@ fn release_all(sh: &mut Shared, fleet: &mut Fleet) {
     check_grab_invariant(sh, fleet);
 }
 
-/// Switch the fleet to the **handoff presenter** (the `handoff` IPC, #221). Hand
-/// the physical pads directly to a Moonlight stream: drop any virtual twin and
-/// **release** the physical `EVIOCGRAB` so SDL/Moonlight reads the real evdev
-/// node (true handoff, no virtual pad). The daemon keeps reading events so the
-/// session stays active and the safety combos still arm. Both `enter_shell`
-/// (drop vpad) and `ungrab` are idempotent. Never invoked by follow-focus — see
-/// [`focus_presenter_target`].
+/// The **`handoff` IPC** entry point (#221): hand the physical pads directly to a
+/// Moonlight stream. Delegates to [`enter_handoff`] with `pinned = true` so
+/// follow-focus never overrides it while the stream window holds focus — only the
+/// shell's explicit `grab` ends it. (A `handoff` *contract* reaches the same
+/// presenter via [`enter_handoff`] with `pinned = false`, from `apply_focus_change`.)
 fn handoff_all(sh: &mut Shared, fleet: &mut Fleet) {
-    info!(pads = fleet.pads.len(), "presenter -> Handoff (handoff)");
+    // The explicit `handoff` IPC is the Moonlight-stream path: PIN it so
+    // follow-focus never overrides it while the stream window holds focus.
+    enter_handoff(sh, fleet, true);
+}
+
+/// Enter the **handoff presenter**: drop any virtual twin and, unless an overlay
+/// forces the grab, release the physical `EVIOCGRAB` so SDL/Moonlight reads the
+/// real evdev node. `pinned` records *why* Handoff was entered:
+///
+/// * `true` — the explicit `handoff` IPC (Moonlight stream, #221). Follow-focus
+///   must not override it (the streamed window holds focus for the whole stream);
+///   only the shell's explicit `grab` ends it.
+/// * `false` — a `handoff` **input contract** matched by follow-focus. This one
+///   *does* follow focus: moving to another app (or back to the shell) arbitrates
+///   normally, so a contract-driven handoff can never strand the pads ungrabbed.
+fn enter_handoff(sh: &mut Shared, fleet: &mut Fleet, pinned: bool) {
+    info!(
+        pads = fleet.pads.len(),
+        pinned, "presenter -> Handoff (handoff)"
+    );
     sh.metrics.inc_transitions();
     sh.presenter = Presenter::Handoff;
+    sh.handoff_pinned = pinned;
     // Reconcile the grab against `should_grab` rather than unconditionally
     // ungrabbing: with an overlay focused, the invariant is that the physical
     // pad stays grabbed even over Handoff (#262), so the app can't read the raw
@@ -2716,17 +2833,21 @@ fn set_overlay_focus(sh: &mut Shared, fleet: &mut Fleet, on: bool) {
     check_grab_invariant(sh, fleet);
 }
 
-/// Apply a coalesced compositor focus change to the presenter (follow-focus).
+/// Apply a settled compositor focus change to the presenter (follow-focus).
 ///
-/// Extracted from the former `Control::HyprActiveWindowChanged` control arm so it
-/// can be driven directly by the `active_window` watch channel's select arm.
-/// `class` is empty when only the shell's own layer-shell surface remains (no
-/// toplevel focused). Delegates the decision to [`focus_presenter_target`] and
-/// routes through the same presenter transitions as an explicit `grab`/`release`
+/// Runs from the [`Internal::FocusSettle`] handler once the focus has held for
+/// [`FOCUS_SETTLE_MS`] (armed by [`schedule_focus_change`] off the `active_window`
+/// watch arm) — the debounce collapses launch/close focus flaps so this applies
+/// at most one net transition per settle. `class` is empty when only the shell's
+/// own layer-shell surface remains (no toplevel focused). Delegates the decision
+/// to [`focus_presenter_target`] (which consults the per-app [`InputContracts`])
+/// and routes through the same presenter transitions as an explicit `grab`/`release`
 /// (each of which asserts [`check_grab_invariant`] on its way out), so the
 /// invariant is checked after any transition this triggers.
 fn apply_focus_change(sh: &mut Shared, fleet: &mut Fleet, class: &str) {
-    if let Some(target) = focus_presenter_target(sh.presenter, class) {
+    if let Some(target) =
+        focus_presenter_target(sh.presenter, sh.handoff_pinned, &sh.contracts, class)
+    {
         info!(
             class = %class,
             from = ?sh.presenter,
@@ -2735,12 +2856,34 @@ fn apply_focus_change(sh: &mut Shared, fleet: &mut Fleet, class: &str) {
         );
         match target {
             Presenter::Shell => grab_all(sh, fleet),
+            Presenter::Keyboard => keyboard_all(sh, fleet),
             Presenter::Game => release_all(sh, fleet),
-            Presenter::Handoff => {
-                unreachable!("focus_presenter_target never targets Handoff")
-            }
+            // A `handoff` *contract* matched by follow-focus. Enter Handoff
+            // UNpinned so it still follows focus away again — unlike the Moonlight
+            // `handoff` IPC, which pins (handoff_all).
+            Presenter::Handoff => enter_handoff(sh, fleet, false),
         }
     }
+}
+
+/// Arm (or re-arm) the follow-focus settle debounce for the newest focused-window
+/// `class` ([`FOCUS_SETTLE_MS`]). Stores the pending class, bumps the settle
+/// generation, and spawns a one-shot timer that posts [`Internal::FocusSettle`];
+/// the handler applies the transition only if its generation is still live, so a
+/// burst of focus flaps during an app launch/close collapses to the single last
+/// change. Every focus event re-arms (superseding any prior timer), so a rapid
+/// flap can never tear down + rebuild the virtual pad mid-transition. Explicit
+/// IPC (`grab`/`release`/`handoff`/overlay-focus) bypasses this and applies
+/// instantly — only the noisy compositor focus signal is debounced.
+fn schedule_focus_change(sh: &mut Shared, class: &str) {
+    sh.pending_focus_class = Some(class.to_string());
+    let generation = sh.next_generation();
+    sh.focus_settle_gen = generation;
+    let tx = sh.internal_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
+        let _ = tx.send(Internal::FocusSettle { generation }).await;
+    });
 }
 
 /// Pure per-pad grab invariant predicate: while the session is active a pad's
@@ -2759,12 +2902,13 @@ fn grab_ok(session_active: bool, pad_grabbed: bool, expected: bool) -> bool {
 /// controller grab).
 ///
 /// While `session_active`, every pad's `grabbed` flag must equal
-/// `should_grab(overlay_focus, presenter)`. `grab_all`/`release_all` call
-/// `pad.grab()` unconditionally, which is consistent with `should_grab` because
-/// `should_grab(_, Shell)` and `should_grab(_, Game)` are both always `true` (only
-/// a `Handoff` base with no overlay ungrabs, and `handoff_all` already routes each
-/// pad through `should_grab`) — so the unconditional grab is correct by the truth
-/// table, and this asserts exactly that. On a violation it `error!`s (pad id,
+/// `should_grab(overlay_focus, presenter)`. `grab_all`/`keyboard_all`/`release_all`
+/// call `pad.grab()` unconditionally, which is consistent with `should_grab`
+/// because `should_grab(_, Shell)`, `should_grab(_, Keyboard)`, and
+/// `should_grab(_, Game)` are all always `true` (only a `Handoff` base with no
+/// overlay ungrabs, and `enter_handoff` already routes each pad through
+/// `should_grab`) — so the unconditional grab is correct by the truth table, and
+/// this asserts exactly that. On a violation it `error!`s (pad id,
 /// expected vs actual, presenter, overlay-focus), bumps a metrics counter, and
 /// `debug_assert!`s so it panics in dev/test but never in release.
 fn check_grab_invariant(sh: &Shared, fleet: &Fleet) {
@@ -2801,27 +2945,33 @@ fn check_grab_invariant(sh: &Shared, fleet: &Fleet) {
 /// `focused_class` is empty when no toplevel is focused — i.e. only the
 /// shell's own layer-shell surface remains, which never appears in
 /// Hyprland's `activewindow` at all (see `hyprland.rs`'s `needs_fullscreen`
-/// doc comment for the same fact used there). A non-empty class means some
-/// real app toplevel is focused, out-of-band or not — class-agnostic by
-/// design, so e.g. a Steam Remote Play `streaming_client` window gets a real
-/// gamepad without hardcoding its class.
+/// doc comment for the same fact used there). An empty class always maps to
+/// [`Presenter::Shell`] (the shell owns input). A non-empty class routes through
+/// its **input contract** ([`InputContracts::resolve`] → [`contract_presenter`]):
+/// `gamepad`→Game (the default for unknown classes, so a class-agnostic app like
+/// a Steam Remote Play `streaming_client` window still gets a real gamepad),
+/// `keyboard`→Keyboard (e.g. Plex), `handoff`→Handoff.
 ///
-/// Returns `None` when no change is warranted: the target already matches
-/// `current`, or `current` is [`Presenter::Handoff`]. Handoff is a deliberate
-/// exception (#221, the Moonlight stream presenter) — follow-focus must never
-/// downgrade it to Game just because the streamed window holds compositor
-/// focus (which it does, for the whole stream). The shell ends Handoff
-/// explicitly via the `grab` IPC when the stream exits, and follow-focus
-/// resumes arbitrating from there. Follow-focus therefore only ever toggles
-/// between [`Presenter::Shell`] and [`Presenter::Game`].
-fn focus_presenter_target(current: Presenter, focused_class: &str) -> Option<Presenter> {
-    if current == Presenter::Handoff {
+/// Returns `None` when no change is warranted: the resolved target already
+/// matches `current`, or `current` is a **pinned** [`Presenter::Handoff`].
+/// Pinned Handoff (#221, the Moonlight stream via the explicit `handoff` IPC) is
+/// a deliberate exception — follow-focus must never override it while the streamed
+/// window holds compositor focus for the whole stream; the shell ends it via the
+/// `grab` IPC. A Handoff reached instead via a `handoff` *contract* is NOT pinned
+/// and arbitrates like any other presenter, so it can never strand the pads.
+fn focus_presenter_target(
+    current: Presenter,
+    handoff_pinned: bool,
+    contracts: &InputContracts,
+    focused_class: &str,
+) -> Option<Presenter> {
+    if current == Presenter::Handoff && handoff_pinned {
         return None;
     }
     let target = if focused_class.is_empty() {
         Presenter::Shell
     } else {
-        Presenter::Game
+        contract_presenter(contracts.resolve(focused_class))
     };
     if target == current {
         None
@@ -2830,14 +2980,75 @@ fn focus_presenter_target(current: Presenter, focused_class: &str) -> Option<Pre
     }
 }
 
+/// Map a resolved [`InputContract`] to the presenter that honors it. The single
+/// point of truth for the contract→presenter correspondence.
+fn contract_presenter(contract: InputContract) -> Presenter {
+    match contract {
+        InputContract::Gamepad => Presenter::Game,
+        InputContract::Keyboard => Presenter::Keyboard,
+        InputContract::Handoff => Presenter::Handoff,
+    }
+}
+
 #[cfg(test)]
 mod presenter_tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// Contracts with only the built-in defaults (no user overrides):
+    /// `steam`→gamepad, `tv.plex.Plex`→keyboard, unknown→gamepad.
+    fn default_contracts() -> InputContracts {
+        InputContracts::default()
+    }
 
     #[test]
-    fn shell_to_game_when_app_focused() {
+    fn shell_to_game_when_gamepad_app_focused() {
+        // An unknown class defaults to the gamepad contract -> Game presenter
+        // (preserves the pre-contract "any app focused ⇒ virtual pad" behavior).
         assert_eq!(
-            focus_presenter_target(Presenter::Shell, "steam_app_12345"),
+            focus_presenter_target(
+                Presenter::Shell,
+                false,
+                &default_contracts(),
+                "steam_app_12345"
+            ),
+            Some(Presenter::Game)
+        );
+    }
+
+    #[test]
+    fn shell_to_keyboard_when_plex_focused() {
+        // Plex carries the built-in keyboard contract -> Keyboard presenter (no
+        // virtual pad, so Steam can't grab it and Plex gets the d-pad).
+        assert_eq!(
+            focus_presenter_target(
+                Presenter::Shell,
+                false,
+                &default_contracts(),
+                "tv.plex.Plex"
+            ),
+            Some(Presenter::Keyboard)
+        );
+    }
+
+    #[test]
+    fn game_to_keyboard_when_focus_moves_plex() {
+        // Steam (Game) focused, user opens Plex: flip Game -> Keyboard, which
+        // tears down the virtual pad (breaking Steam's exclusive grab).
+        assert_eq!(
+            focus_presenter_target(Presenter::Game, false, &default_contracts(), "tv.plex.Plex"),
+            Some(Presenter::Keyboard)
+        );
+    }
+
+    #[test]
+    fn user_override_beats_builtin() {
+        // A user can force Plex to a gamepad contract via config.
+        let mut over = HashMap::new();
+        over.insert("tv.plex.Plex".to_string(), InputContract::Gamepad);
+        let contracts = InputContracts::new(over);
+        assert_eq!(
+            focus_presenter_target(Presenter::Shell, false, &contracts, "tv.plex.Plex"),
             Some(Presenter::Game)
         );
     }
@@ -2845,7 +3056,7 @@ mod presenter_tests {
     #[test]
     fn game_to_shell_when_focus_empty() {
         assert_eq!(
-            focus_presenter_target(Presenter::Game, ""),
+            focus_presenter_target(Presenter::Game, false, &default_contracts(), ""),
             Some(Presenter::Shell)
         );
     }
@@ -2853,24 +3064,75 @@ mod presenter_tests {
     #[test]
     fn no_change_when_target_matches_current() {
         // Already Shell, still no toplevel focused -> no-op (no thrash).
-        assert_eq!(focus_presenter_target(Presenter::Shell, ""), None);
-        // Already Game, focus moved to a DIFFERENT app toplevel -> still Game,
-        // no-op (switching between two app windows must not flap the
-        // presenter).
-        assert_eq!(focus_presenter_target(Presenter::Game, "another_app"), None);
+        assert_eq!(
+            focus_presenter_target(Presenter::Shell, false, &default_contracts(), ""),
+            None
+        );
+        // Already Game, focus moved to a DIFFERENT gamepad-contract app -> still
+        // Game, no-op (switching between two app windows must not flap the
+        // presenter, which would thrash the virtual pad).
+        assert_eq!(
+            focus_presenter_target(Presenter::Game, false, &default_contracts(), "another_app"),
+            None
+        );
     }
 
     #[test]
-    fn handoff_is_never_touched_by_follow_focus() {
-        // The Moonlight stream window holding focus (the common case for the
-        // whole stream) must not downgrade Handoff to Game (#221).
+    fn pinned_handoff_is_never_touched_by_follow_focus() {
+        // A Moonlight stream (Handoff via the explicit `handoff` IPC) is PINNED:
+        // the stream window holding focus for the whole stream must not downgrade
+        // it to Game (#221), nor does focus returning to the shell end it — only
+        // an explicit `grab` IPC does.
         assert_eq!(
-            focus_presenter_target(Presenter::Handoff, "steam_app_moonlight"),
+            focus_presenter_target(
+                Presenter::Handoff,
+                true,
+                &default_contracts(),
+                "steam_app_moonlight"
+            ),
             None
         );
-        // Nor when focus returns to the shell home while still in Handoff —
-        // only an explicit `grab` IPC (handled elsewhere) ends Handoff.
-        assert_eq!(focus_presenter_target(Presenter::Handoff, ""), None);
+        assert_eq!(
+            focus_presenter_target(Presenter::Handoff, true, &default_contracts(), ""),
+            None
+        );
+    }
+
+    #[test]
+    fn contract_handoff_follows_focus() {
+        // A `handoff` CONTRACT matched by follow-focus is NOT pinned, so it still
+        // arbitrates: focus to a raw-node app -> Handoff; back to the shell ->
+        // Shell (no stranding). First, a class mapped to handoff enters Handoff.
+        let mut over = HashMap::new();
+        over.insert("com.example.RawPad".to_string(), InputContract::Handoff);
+        let contracts = InputContracts::new(over);
+        assert_eq!(
+            focus_presenter_target(Presenter::Shell, false, &contracts, "com.example.RawPad"),
+            Some(Presenter::Handoff)
+        );
+        // Now in an UNpinned Handoff, focus returning to the shell moves out.
+        assert_eq!(
+            focus_presenter_target(Presenter::Handoff, false, &contracts, ""),
+            Some(Presenter::Shell)
+        );
+        // ...and focus to a gamepad app moves to Game.
+        assert_eq!(
+            focus_presenter_target(Presenter::Handoff, false, &contracts, "steam"),
+            Some(Presenter::Game)
+        );
+    }
+
+    #[test]
+    fn contract_presenter_mapping() {
+        assert_eq!(contract_presenter(InputContract::Gamepad), Presenter::Game);
+        assert_eq!(
+            contract_presenter(InputContract::Keyboard),
+            Presenter::Keyboard
+        );
+        assert_eq!(
+            contract_presenter(InputContract::Handoff),
+            Presenter::Handoff
+        );
     }
 
     #[test]
@@ -2880,6 +3142,7 @@ mod presenter_tests {
         assert_eq!(route_presenter(true, Presenter::Game), Presenter::Shell);
         assert_eq!(route_presenter(true, Presenter::Handoff), Presenter::Shell);
         assert_eq!(route_presenter(true, Presenter::Shell), Presenter::Shell);
+        assert_eq!(route_presenter(true, Presenter::Keyboard), Presenter::Shell);
         // OFF: the base presenter routes as usual (no behavior change).
         assert_eq!(route_presenter(false, Presenter::Game), Presenter::Game);
         assert_eq!(
@@ -2887,6 +3150,11 @@ mod presenter_tests {
             Presenter::Handoff
         );
         assert_eq!(route_presenter(false, Presenter::Shell), Presenter::Shell);
+        // Keyboard passes through (routed to the shell key-map by handle_event).
+        assert_eq!(
+            route_presenter(false, Presenter::Keyboard),
+            Presenter::Keyboard
+        );
     }
 
     #[test]
@@ -2896,11 +3164,14 @@ mod presenter_tests {
         assert!(should_grab(true, Presenter::Handoff));
         assert!(should_grab(true, Presenter::Game));
         assert!(should_grab(true, Presenter::Shell));
+        assert!(should_grab(true, Presenter::Keyboard));
         // OFF: the base grab state is restored — only a Handoff base is ungrabbed
         // (re-ungrab so SDL/Moonlight reads the raw node again).
         assert!(!should_grab(false, Presenter::Handoff));
         assert!(should_grab(false, Presenter::Game));
         assert!(should_grab(false, Presenter::Shell));
+        // Keyboard keeps the grab (shell-style emulation; no raw-node handoff).
+        assert!(should_grab(false, Presenter::Keyboard));
     }
 
     #[test]
@@ -3033,9 +3304,11 @@ mod presenter_tests {
 
     #[test]
     fn grab_invariant_matches_should_grab_after_transitions() {
-        // The policy `check_grab_invariant` asserts: after grab_all/release_all the
-        // pads are grabbed (Shell/Game always grab), and should_grab agrees.
+        // The policy `check_grab_invariant` asserts: after grab_all/keyboard_all/
+        // release_all the pads are grabbed (Shell/Keyboard/Game always grab), and
+        // should_grab agrees.
         assert!(grab_ok(true, true, should_grab(false, Presenter::Shell)));
+        assert!(grab_ok(true, true, should_grab(false, Presenter::Keyboard)));
         assert!(grab_ok(true, true, should_grab(false, Presenter::Game)));
         // Handoff with no overlay ungrabs, and an ungrabbed pad then satisfies it.
         assert!(grab_ok(true, false, should_grab(false, Presenter::Handoff)));
@@ -3168,13 +3441,14 @@ fn try_join(sh: &mut Shared, fleet: &mut Fleet) {
         let mut pad = PadDevice::new(fd, stream, wire_id.clone(), name.clone(), path, slot);
         pad.calibrate();
         // Match the joining pad to the fleet's current presenter:
-        //   * Shell — grab so its input drives nav (default).
+        //   * Shell / Keyboard — grab so its input drives the shell key-map (nav,
+        //     or a keyboard-contract app like Plex). No virtual pad in either.
         //   * Game  — grab + clean virtual gamepad (a 2nd player joining a stream
         //     that runs through the virtual-pad path).
         //   * Handoff (#221) — leave it UNGRABBED so SDL/Moonlight reads the real
         //     evdev node directly, exactly like the pads already handed off.
         match sh.presenter {
-            Presenter::Shell => pad.grab(sh),
+            Presenter::Shell | Presenter::Keyboard => pad.grab(sh),
             Presenter::Game => {
                 pad.grab(sh);
                 pad.enter_game(sh);
@@ -3307,6 +3581,18 @@ fn handle_internal(sh: &mut Shared, fleet: &mut Fleet, internal: Internal) {
             sh.capture_timeout_task = None;
             if let Some(r) = sh.pending_capture.take() {
                 let _ = r.send(resp_timeout());
+            }
+        }
+        Internal::FocusSettle { generation } => {
+            // The follow-focus settle debounce elapsed. Ignore a superseded tick
+            // (focus moved again before this timer fired) — only the newest
+            // pending focus is applied, so a launch/close flap burst yields a
+            // single net presenter transition.
+            if generation != sh.focus_settle_gen {
+                return;
+            }
+            if let Some(class) = sh.pending_focus_class.take() {
+                apply_focus_change(sh, fleet, &class);
             }
         }
     }
