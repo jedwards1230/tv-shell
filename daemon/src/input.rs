@@ -3962,10 +3962,22 @@ fn handle_internal(sh: &mut Shared, fleet: &mut Fleet, internal: Internal) {
                 return;
             }
             pad.combo_guard_task = None;
-            // The settle window elapsed with no combo: the buffered participants
-            // were not a combo chord. Replay them to the app (in order) via the
-            // current routed presenter and disarm. If the presenter changed since
-            // arming, a transition already reset the buffer, so this is a no-op.
+            // A combo can complete via a button that never routes through the
+            // combo gate: the end-session chord is Home+B, and Home (`BTN_MODE`)
+            // goes through `handle_meta`, not the buffer — so `combo_buffer_action`
+            // never sees such a combo as matched. Re-check the LIVE held set at
+            // fire time: if a combo is now held, SWALLOW the buffer (clear, don't
+            // replay — replaying the buffered B would leak it into the app after
+            // the chord already fired). Otherwise the settle window genuinely
+            // elapsed with no combo.
+            if state::any_combo_matched(&pad.held_keys) {
+                pad.reset_combo_buffer(sh);
+                return;
+            }
+            // No combo: the buffered participants were not a chord. Replay them to
+            // the app (in order) via the current routed presenter and disarm. If
+            // the presenter changed since arming, a transition already reset the
+            // buffer, so this is a no-op.
             let routed = route_presenter(sh.overlay_focus, sh.presenter);
             pad.replay_combo_buffer(sh, routed);
             pad.disarm_combo_guard(sh);
