@@ -382,6 +382,49 @@ them with no focus knowledge; QML (which owns focus) decides what each means.
 `home` is the keyboard/automation global escape and is the only intent **not**
 state-guarded.
 
+### Meta / Guide gesture map (daemon tap/hold)
+
+The gamepad **Meta/Guide** button (`BTN_MODE`) is split by the daemon into a
+**tap** and a **hold** at the `[input].meta_hold_ms` threshold (default 500 ms).
+The button is **buffered while discriminating** — nothing is forwarded to a
+focused app until the daemon knows which it is, so a partial press never leaks.
+The semantic rule: **tap belongs to the app, hold belongs to us** (the reserved,
+non-destructive shell escape). Which `intent` (if any) fires depends on the
+daemon's routed presenter:
+
+| Presenter (focused surface) | Meta **TAP** (< threshold) | Meta **HOLD** (≥ threshold) |
+|-----------------------------|----------------------------|-----------------------------|
+| **Shell** (home screen) | `intent:home-tap` → `toggleMenu()` (nav drawer) | `intent:home-hold` → `resetToHome()` idle-branch (dismiss + clean home) |
+| **Keyboard** (a keyboard-contract app, e.g. Plex) | *nothing* — a keyboard app has no Guide concept; the escape is the HOLD | **`intent:home-tap`** → toggle the **controllable overlay drawer** over the app (engages overlay-focus; non-destructive, app keeps running) |
+| **Game** (virtual-pad app / stream) | Guide press+release **replayed to the virtual pad** (the game / remote Steam sees a real Guide tap) | **`intent:home-tap`** → same controllable overlay-drawer escape |
+| **Handoff** (unpinned; pad ungrabbed) | app reads the raw Guide directly | **`intent:home-tap`** best-effort (the daemon can't fully swallow an ungrabbed node — the app may see the press up to the threshold) |
+
+So the **everyday escape from any app is Meta-HOLD** → the controllable overlay
+drawer (`intent:home-tap` in an app presenter), which is deliberately
+**non-destructive**: the app keeps running foreground and the drawer engages
+overlay-focus so it is controllable regardless of who holds compositor toplevel
+focus. The heavier full return-to-home (`resetToHome()`/`returnToShell()`) is
+reached from that drawer's menu or via `Super+Backspace` (`intent:home-hold`) —
+it is **not** bound to the routine Meta hold. `intent:home-hold` from the Meta
+button now fires only on the Shell home. **This escape requires the shell to be in
+`appRunning`** — `AppLifecycleManager` adopts a focused external app into
+`appRunning` (via the `hypr:activewindow` stream, including a shell restart under
+an already-running app) precisely so the hold-escape arms.
+
+### Combo safety (buffered participants)
+
+While a focused app owns the screen (Keyboard/Game presenter) the daemon buffers
+safety-combo **participant** buttons (`{Back, Home, LB, RB, Start, B}`) instead of
+streaming them to the app, so a **partial** combo chord never leaks in (the Plex
+accidental-playback class). The buffer is **swallowed** if a combo completes or
+**replayed** to the app in order if disqualified (a non-participant press, a
+participant release with no match, or `[input].combo_guard_ms` — default 120 ms —
+elapsing). Arming is per-presenter: **Keyboard** buffers from the first
+participant (a media app must never see stray media keys); **Game** arms only once
+a second participant is co-held (single-button gameplay stays latency-free). The
+`combo:*` events themselves always fire off the physically-held buttons — only the
+app-forwarding of participants is gated. Full wire detail: [IPC_PROTOCOL.md](IPC_PROTOCOL.md#combo-safety-buffered-participants).
+
 ---
 
 ## 7. Gotchas
