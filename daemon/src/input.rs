@@ -104,6 +104,10 @@ enum Internal {
     HomeHoldFired { fd: RawFd, generation: u64 },
     /// Home + B held past the threshold on pad `fd`.
     ComboEndSessionFired { fd: RawFd, generation: u64 },
+    /// The combo settle window elapsed on pad `fd` with no combo matched: the
+    /// buffered combo-participant presses were not a combo, so replay them to the
+    /// focused app (see [`PadDevice::combo_buffer`]).
+    ComboGuardFired { fd: RawFd, generation: u64 },
     /// A pending `capture-next` timed out (fleet-level).
     CaptureTimeout(u64),
     /// The follow-focus settle debounce elapsed (fleet-level): apply the latest
@@ -267,6 +271,16 @@ struct Shared {
     /// Shared observability counters. Incremented on the relevant events
     /// (intents, transitions, pad join/leave) and read by the metrics exporter.
     metrics: std::sync::Arc<crate::metrics::Metrics>,
+
+    /// Meta (BTN_MODE / Guide) tap-vs-hold threshold. Read once at startup from
+    /// `daemon_config::global().input.meta_hold_ms` (like `contracts`); the Meta
+    /// hold timer sleeps this long before firing the shell escape. Replaces the
+    /// former hard-coded `config::HOME_HOLD_SECS`.
+    meta_hold: Duration,
+    /// Combo settle window. Read once at startup from
+    /// `daemon_config::global().input.combo_guard_ms`; the combo buffer replays a
+    /// buffered participant to the app if no combo completes within this window.
+    combo_guard: Duration,
 }
 
 impl Shared {
@@ -425,6 +439,28 @@ struct PadDevice {
     combo_task: Option<JoinHandle<()>>,
     combo_gen: u64,
 
+    /// Combo-safety buffer (#escape-contract). In an APP presenter
+    /// (Keyboard/Game) a combo-participant press is buffered here instead of
+    /// forwarded, so a *partial* safety combo (e.g. the first two of
+    /// Back+Home+LB+RB) never leaks into the focused app as a stray media key.
+    /// The buffer is replayed to the app (in order) if the sequence is proven not
+    /// to be a combo, or discarded if a combo completes. Holds `(code, value)`
+    /// pairs in arrival order. Empty + disarmed in the Shell/Handoff presenters
+    /// and reset on every presenter/session/overlay transition so a partial
+    /// sequence can never strand across a context change.
+    combo_buffer: Vec<(u16, i32)>,
+    /// Whether [`Self::combo_buffer`] is actively buffering (armed). Armed by the
+    /// first (Keyboard) / second (Game) held participant; cleared on
+    /// swallow/replay/guard-timeout and every transition.
+    combo_armed: bool,
+    /// The combo settle-window timer (`combo_guard_ms`), armed when buffering
+    /// starts. On fire it replays the buffer to the app (the "no combo arrived in
+    /// time" disqualifier). `None` when not buffering.
+    combo_guard_task: Option<JoinHandle<()>>,
+    /// Generation token for [`Self::combo_guard_task`], so a stale fire (the guard
+    /// disarmed/rearmed before its message was drained) is ignored.
+    combo_guard_gen: u64,
+
     // --- Fleet outputs (ride-along, Phase 5.5) ---
     /// One clean virtual gamepad per player in game-presenter mode (Phase 5).
     /// `None` in shell mode. Registered in `Shared.reg` at creation, dropped +
@@ -504,6 +540,10 @@ impl PadDevice {
             home_hold_gen: 0,
             combo_task: None,
             combo_gen: 0,
+            combo_buffer: Vec::new(),
+            combo_armed: false,
+            combo_guard_task: None,
+            combo_guard_gen: 0,
             virtual_pad: None,
             battery: None,
             led_index: None,
@@ -655,6 +695,15 @@ impl PadDevice {
         if let Some(t) = self.combo_task.take() {
             t.abort();
         }
+        // The combo-buffer guard timer + any buffered participants. No generation
+        // bump here (unlike `disarm_combo_guard`): this runs on pad-leave/shutdown
+        // where the pad is dropped immediately after, so a stale queued fire is
+        // reaped by the fd-miss guard in the `ComboGuardFired` handler.
+        if let Some(t) = self.combo_guard_task.take() {
+            t.abort();
+        }
+        self.combo_buffer.clear();
+        self.combo_armed = false;
     }
 
     // --- event handling --------------------------------------------------
@@ -720,49 +769,54 @@ impl PadDevice {
                 self.notify_held_buttons(sh);
             }
 
-            // Home button hold detection -> neutral `intent:home-*` (Phase 5).
+            // Meta (BTN_MODE / Guide): tap-vs-hold split, buffered delivery. Never
+            // forwarded live while discriminating (no partial-press leak); the tap
+            // is delivered per presenter and the hold is the reserved escape. See
+            // `handle_meta`. Handled the same in the Shell home and a Keyboard-
+            // contract app (both routed here) — only the tap *destination* differs
+            // by presenter, which `handle_meta` resolves from `routed`.
+            let routed = route_presenter(sh.overlay_focus, sh.presenter);
             if code == cfg::BTN_MODE {
-                if value == 1 {
-                    self.start_home_hold(sh);
-                } else if value == 0 {
-                    if let Some(t) = self.home_hold_task.take() {
-                        t.abort();
-                        // Invalidate a possibly-queued HomeHoldFired so the tap
-                        // doesn't also produce `intent:home-hold`.
-                        self.home_hold_gen = sh.next_generation();
-                        sh.publish(Event::Intent("home-tap".into()));
-                    }
-                }
+                self.handle_meta(sh, value, routed);
+                return;
             }
 
-            // View/Select button (single press) opens the right-edge Session
-            // QAM (#218): emit the `overlay:session` deep-link intent the shell
-            // routes to SessionQAM. Shell-only — deliberately NOT mirrored in
-            // `handle_game`, so it never interferes with the in-game force-quit
-            // combo (Back+Home+LB+RB, which also uses BTN_SELECT) or game input.
-            // The shell opens the QAM both on the home screen and over a running
-            // local app (`appRunning` keeps the Shell presenter, so this handler
-            // still runs). Over a Moonlight *stream* the presenter is Game and
-            // `handle_game` runs instead — which does NOT mirror this intercept,
-            // so streams are left untouched. BTN_SELECT has no default key
-            // binding, so nothing else consumes this press.
-            if code == cfg::BTN_SELECT && value == 1 {
-                sh.publish(Event::Intent("overlay:session".into()));
-            }
-
-            // LB/RB -> mouse left/right click.
-            if code == cfg::BTN_TL {
-                sh.emit_mouse_button(cfg::BTN_LEFT, value);
-            } else if code == cfg::BTN_TR {
-                sh.emit_mouse_button(cfg::BTN_RIGHT, value);
-            }
-
-            // Map to keyboard (layered: game > player > global, #104).
-            if let Some(mapped) = sh.resolved_key(self.player_slot, code) {
-                sh.emit_key(mapped, value);
+            // A Keyboard-contract app is a focused external app (Plex): route its
+            // combo participants through the combo buffer so a partial safety
+            // combo never leaks in as a media key (the bug this fixes). The Shell
+            // home has no app to leak into, so it forwards immediately (unchanged).
+            if routed == Presenter::Keyboard {
+                self.gate_and_forward_shell_key(sh, code, value);
+            } else {
+                self.shell_emit_key_event(sh, code, value);
             }
         } else if et == EventType::ABSOLUTE {
             self.handle_abs(sh, code, value);
+        }
+    }
+
+    /// Emit the shell key-map side effects for one KEY event: the View/Select
+    /// `overlay:session` deep-link (#218), LB/RB → mouse clicks, and the layered
+    /// button→keyboard map (#104). This is "forward a button to the app" in the
+    /// Shell/Keyboard presenter — used both for immediate forwarding (Shell) and
+    /// for replaying a buffered participant (Keyboard). Split out so the combo
+    /// buffer's replay reproduces exactly the same side effects as a live press.
+    ///
+    /// View/Select is deliberately NOT mirrored in `handle_game`, so it never
+    /// interferes with the in-game force-quit combo (Back+Home+LB+RB, which also
+    /// uses BTN_SELECT) or game input. BTN_SELECT has no default key binding, so
+    /// nothing else consumes its press.
+    fn shell_emit_key_event(&mut self, sh: &mut Shared, code: u16, value: i32) {
+        if code == cfg::BTN_SELECT && value == 1 {
+            sh.publish(Event::Intent("overlay:session".into()));
+        }
+        if code == cfg::BTN_TL {
+            sh.emit_mouse_button(cfg::BTN_LEFT, value);
+        } else if code == cfg::BTN_TR {
+            sh.emit_mouse_button(cfg::BTN_RIGHT, value);
+        }
+        if let Some(mapped) = sh.resolved_key(self.player_slot, code) {
+            sh.emit_key(mapped, value);
         }
     }
 
@@ -796,36 +850,19 @@ impl PadDevice {
                 self.cancel_combo(sh);
             }
 
-            // Home is always intercepted -> `intent:home-*`, never forwarded to
-            // the game's virtual pad, so the shell overlay can come up over a
-            // running game (#75 substrate).
+            // Meta (BTN_MODE / Guide): tap-vs-hold split. Never forwarded live;
+            // a TAP replays a real Guide press+release to the vpad (so the game/
+            // Steam sees a Guide tap), a HOLD is the reserved shell escape (never
+            // reaches the game). See `handle_meta`.
             if code == cfg::BTN_MODE {
-                if value == 1 {
-                    self.start_home_hold(sh);
-                } else if value == 0 {
-                    if let Some(t) = self.home_hold_task.take() {
-                        t.abort();
-                        // Invalidate a possibly-queued HomeHoldFired so the tap
-                        // doesn't also produce `intent:home-hold`.
-                        self.home_hold_gen = sh.next_generation();
-                        sh.publish(Event::Intent("home-tap".into()));
-                    }
-                }
-                return; // never forward Home to the game
+                self.handle_meta(sh, value, Presenter::Game);
+                return; // never forward the live Home to the game
             }
 
-            // Swallow buttons that were held at the shell→app flip until they've
-            // been released and pressed fresh (#295 follow-up): the single
-            // physical press that launched the app was already consumed by the
-            // shell, so forwarding the still-held down/up would double-activate
-            // in the app. `mask_forward_decision` clears the code from the mask
-            // on its release. ABS (below) is never masked.
-            if !mask_forward_decision(&mut self.masked_keys, code, value) {
-                return;
-            }
-
-            // Forward the raw button to the clean virtual pad (the game's input).
-            self.forward_to_virtual_pad(ev);
+            // Route the remaining buttons through the combo buffer (so a partial
+            // safety combo doesn't leak into the game) then, on forward/replay,
+            // through the flip-mask onto the clean virtual pad.
+            self.gate_and_forward_game_key(sh, code, value);
         } else if et == EventType::ABSOLUTE {
             // Forward sticks/triggers/d-pad verbatim — the game wants raw axes.
             self.forward_to_virtual_pad(ev);
@@ -856,6 +893,29 @@ impl PadDevice {
                 self.held_keys.remove(&code);
                 self.cancel_combo(sh);
             }
+
+            // Unpinned (contract-driven) Handoff: best-effort Meta HOLD escape.
+            // The node is UNGRABBED, so full swallowing is impossible — the app
+            // reads the raw Meta press directly (it may see Guide for up to the
+            // hold threshold). But the daemon still receives events, so a HOLD past
+            // the threshold publishes the escape intent (`home-tap` → the shell's
+            // controllable overlay). A tap-length press is left entirely to the app
+            // (no intent). A PINNED Handoff (the Moonlight `handoff` IPC, #221) is
+            // untouched: Home flows straight through so remote Steam sees Guide.
+            if code == cfg::BTN_MODE && !sh.handoff_pinned {
+                if value == 1 {
+                    self.start_home_hold(sh);
+                } else if value == 0 {
+                    if let Some(t) = self.home_hold_task.take() {
+                        t.abort();
+                        // Release before the hold fired: no escape, and no tap
+                        // intent (the ungrabbed app already saw the raw press —
+                        // publishing a tap would double-act). Invalidate any queued
+                        // HomeHoldFired so a near-miss can't still fire the escape.
+                        self.home_hold_gen = sh.next_generation();
+                    }
+                }
+            }
         }
         // ABS (sticks/triggers/d-pad) are intentionally ignored: the game reads
         // them off the ungrabbed physical node directly.
@@ -868,6 +928,188 @@ impl PadDevice {
         if let Some(vpad) = self.virtual_pad.as_mut() {
             let _ = vpad.emit(&[ev]);
         }
+    }
+
+    /// Forward one KEY event to the game's virtual pad, honoring the flip-mask
+    /// (#295 follow-up): a button held at the shell→app flip is swallowed until
+    /// released and pressed fresh. "Forward a button to the app" in the Game
+    /// presenter — used both for immediate forwarding and for replaying a buffered
+    /// combo participant. ABS axes are never masked and never routed here.
+    fn game_forward_key(&mut self, code: u16, value: i32) {
+        if mask_forward_decision(&mut self.masked_keys, code, value) {
+            self.forward_to_virtual_pad(InputEvent::new(EV_KEY, code, value));
+        }
+    }
+
+    /// Meta (BTN_MODE / Guide) tap-vs-hold split with buffered delivery.
+    ///
+    /// Net semantic change vs the pre-escape-contract daemon: the Meta press is
+    /// NEVER forwarded live (no partial-press leak while we discriminate). On
+    /// press we arm the hold timer; the button is "buffered" (withheld). On
+    /// release we know it was a TAP (timer still pending) or, if the timer already
+    /// fired, a HOLD whose escape was already published — so the release is
+    /// swallowed. Per presenter (`routed`):
+    ///
+    /// * **TAP** (release before the threshold):
+    ///   - Shell → publish `intent:home-tap` (the drawer; no app to forward to).
+    ///   - Game → deliver the buffered Guide to the app as a real tap: forward
+    ///     BTN_MODE press then release to the vpad (the game/Steam sees a Guide
+    ///     tap).
+    ///   - Keyboard → deliver NOTHING: a keyboard-contract app (Plex) has no Guide
+    ///     concept and a synthetic keyboard chord would be arbitrary — the user's
+    ///     escape here is the HOLD.
+    /// * **HOLD** (timer fired, [`Internal::HomeHoldFired`]): the escape intent is
+    ///   published by that handler (fleet-deduped). In an APP presenter that intent
+    ///   is `intent:home-tap` (the controllable overlay drawer over the app — a
+    ///   non-destructive everyday escape); only the Shell presenter's hold publishes
+    ///   `intent:home-hold` (the idle reset-to-clean-home). Either way Meta is fully
+    ///   swallowed — the app never sees it (except the Game-TAP replay above).
+    ///
+    /// This is the shell's reserved escape in every grabbed presenter; the app is
+    /// never shown the button while we discriminate, so there is no leak window.
+    fn handle_meta(&mut self, sh: &mut Shared, value: i32, routed: Presenter) {
+        if value == 1 {
+            // Press: arm the hold timer, buffer the Guide (do NOT forward).
+            self.start_home_hold(sh);
+        } else if value == 0 {
+            // Release: if the hold timer is still pending this is a TAP; if it
+            // already fired the HOLD path published the escape and we swallow.
+            if let Some(t) = self.home_hold_task.take() {
+                t.abort();
+                // Invalidate any queued HomeHoldFired so a tap never also fires a
+                // hold (race: released the instant the timer's message is in flight).
+                self.home_hold_gen = sh.next_generation();
+                match meta_tap_action(routed) {
+                    MetaTapAction::HomeTap => sh.publish(Event::Intent("home-tap".into())),
+                    MetaTapAction::ReplayToPad => {
+                        self.forward_to_virtual_pad(InputEvent::new(EV_KEY, cfg::BTN_MODE, 1));
+                        self.forward_to_virtual_pad(InputEvent::new(EV_KEY, cfg::BTN_MODE, 0));
+                    }
+                    MetaTapAction::Swallow => { /* keyboard-contract app: nothing */ }
+                }
+            }
+            // else: the hold already fired — swallow the release (escape published).
+        }
+    }
+
+    // --- combo buffer (per-presenter partial-combo suppression) -----------
+
+    /// Gate one KEY event in the **Keyboard** presenter through the combo buffer
+    /// (`arm_threshold = 1`: buffer from the first held participant — a media app
+    /// tolerates the latency and this fully prevents media-key leaks). Forwards
+    /// via [`Self::shell_emit_key_event`].
+    fn gate_and_forward_shell_key(&mut self, sh: &mut Shared, code: u16, value: i32) {
+        let action = state::combo_buffer_action(
+            self.combo_armed,
+            config::is_combo_participant(code),
+            value,
+            state::participant_held_count(&self.held_keys),
+            1,
+            state::any_combo_matched(&self.held_keys),
+        );
+        self.apply_combo_action(sh, Presenter::Keyboard, action, code, value);
+    }
+
+    /// Gate one KEY event in the **Game** presenter through the combo buffer
+    /// (`arm_threshold = 2`: buffer only once a second participant is held, so
+    /// single-button gameplay stays latency-free; the first participant of a pair
+    /// may forward before arming, which a game tolerates). Forwards via
+    /// [`Self::game_forward_key`].
+    fn gate_and_forward_game_key(&mut self, sh: &mut Shared, code: u16, value: i32) {
+        let action = state::combo_buffer_action(
+            self.combo_armed,
+            config::is_combo_participant(code),
+            value,
+            state::participant_held_count(&self.held_keys),
+            2,
+            state::any_combo_matched(&self.held_keys),
+        );
+        self.apply_combo_action(sh, Presenter::Game, action, code, value);
+    }
+
+    /// Carry out a [`state::ComboBufferAction`] for the given routed app presenter.
+    /// The pure decision lives in `state`; this applies its side effects — the
+    /// buffered-event replay into uinput/the vpad (the only non-pure part).
+    fn apply_combo_action(
+        &mut self,
+        sh: &mut Shared,
+        routed: Presenter,
+        action: state::ComboBufferAction,
+        code: u16,
+        value: i32,
+    ) {
+        use state::ComboBufferAction as A;
+        match action {
+            A::Forward => self.forward_app_key(sh, routed, code, value),
+            A::Buffer => {
+                let was_armed = self.combo_armed;
+                self.combo_buffer.push((code, value));
+                self.combo_armed = true;
+                // Arm the settle window only on the disarmed→armed edge — a fixed
+                // window from the first buffered press bounds the latency.
+                if !was_armed {
+                    self.start_combo_guard(sh);
+                }
+            }
+            A::Swallow => self.reset_combo_buffer(sh),
+            A::ReplayThenForward => {
+                // Disqualified by a non-participant: flush the buffer, then forward
+                // the current (non-participant) event after it.
+                self.replay_combo_buffer(sh, routed);
+                self.disarm_combo_guard(sh);
+                self.forward_app_key(sh, routed, code, value);
+            }
+            A::ReplayIncludingEvent => {
+                // Disqualified by a participant release: the current event is part
+                // of the (non-combo) sequence, so replay it with the rest.
+                self.combo_buffer.push((code, value));
+                self.replay_combo_buffer(sh, routed);
+                self.disarm_combo_guard(sh);
+            }
+        }
+    }
+
+    /// Forward one buffered/live KEY event to the app via the routed presenter's
+    /// path. Shell/Handoff are never armed, so they never reach here for a replay;
+    /// guarded defensively.
+    fn forward_app_key(&mut self, sh: &mut Shared, routed: Presenter, code: u16, value: i32) {
+        match routed {
+            Presenter::Keyboard => self.shell_emit_key_event(sh, code, value),
+            Presenter::Game => self.game_forward_key(code, value),
+            Presenter::Shell | Presenter::Handoff => {}
+        }
+    }
+
+    /// Replay the buffered participants to the app (in arrival order) via the
+    /// routed presenter's forward path, draining the buffer. Leaves `combo_armed`
+    /// / the guard for the caller to clear (they always [`Self::disarm_combo_guard`]
+    /// right after).
+    fn replay_combo_buffer(&mut self, sh: &mut Shared, routed: Presenter) {
+        let buffered = std::mem::take(&mut self.combo_buffer);
+        for (code, value) in buffered {
+            self.forward_app_key(sh, routed, code, value);
+        }
+    }
+
+    /// Abort + invalidate the combo guard timer and mark the buffer disarmed. Does
+    /// NOT touch buffer contents (callers either drained via replay or clear via
+    /// [`Self::reset_combo_buffer`]).
+    fn disarm_combo_guard(&mut self, sh: &mut Shared) {
+        self.combo_armed = false;
+        if let Some(t) = self.combo_guard_task.take() {
+            t.abort();
+        }
+        // Bump the generation so any already-queued ComboGuardFired is ignored.
+        self.combo_guard_gen = sh.next_generation();
+    }
+
+    /// Fully reset combo-buffer state: drop any buffered participants, disarm, and
+    /// invalidate the guard timer. Called on a combo swallow and on every
+    /// presenter/session/overlay transition so a partial sequence can never strand
+    /// across a context change.
+    fn reset_combo_buffer(&mut self, sh: &mut Shared) {
+        self.combo_buffer.clear();
+        self.disarm_combo_guard(sh);
     }
 
     fn handle_abs(&mut self, sh: &mut Shared, code: u16, value: i32) {
@@ -1158,6 +1400,11 @@ impl PadDevice {
         }
     }
 
+    /// Arm the Meta (BTN_MODE / Guide) hold timer: sleep `meta_hold` then post
+    /// [`Internal::HomeHoldFired`]. This is the tap-vs-hold discriminator for the
+    /// Meta gesture in every grabbed presenter (and best-effort in an unpinned
+    /// Handoff). The threshold is the `[input].meta_hold_ms` knob, not the old
+    /// 2 s constant.
     fn start_home_hold(&mut self, sh: &mut Shared) {
         if let Some(t) = self.home_hold_task.take() {
             t.abort();
@@ -1166,9 +1413,30 @@ impl PadDevice {
         self.home_hold_gen = generation;
         let tx = sh.internal_tx.clone();
         let fd = self.fd;
+        let hold = sh.meta_hold;
         self.home_hold_task = Some(tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs_f64(config::HOME_HOLD_SECS)).await;
+            tokio::time::sleep(hold).await;
             let _ = tx.send(Internal::HomeHoldFired { fd, generation }).await;
+        }));
+    }
+
+    /// Arm the combo settle-window timer (`combo_guard`): sleep then post
+    /// [`Internal::ComboGuardFired`]. Started when the combo buffer arms; on fire
+    /// the still-buffered participants (no combo completed) are replayed to the
+    /// app. A fixed window from the arm point (not reset per buffered event), so
+    /// the buffered-input latency is bounded by `combo_guard_ms`.
+    fn start_combo_guard(&mut self, sh: &mut Shared) {
+        if let Some(t) = self.combo_guard_task.take() {
+            t.abort();
+        }
+        let generation = sh.next_generation();
+        self.combo_guard_gen = generation;
+        let tx = sh.internal_tx.clone();
+        let fd = self.fd;
+        let guard = sh.combo_guard;
+        self.combo_guard_task = Some(tokio::spawn(async move {
+            tokio::time::sleep(guard).await;
+            let _ = tx.send(Internal::ComboGuardFired { fd, generation }).await;
         }));
     }
 
@@ -1179,6 +1447,9 @@ impl PadDevice {
     /// The physical pad stays grabbed; subsequent events route through
     /// [`PadDevice::handle_game`] onto the virtual pad. Idempotent.
     fn enter_game(&mut self, sh: &mut Shared) {
+        // A presenter transition: drop any partial combo sequence buffered under
+        // the previous presenter so it can't strand or replay into the wrong app.
+        self.reset_combo_buffer(sh);
         if self.virtual_pad.is_some() {
             return;
         }
@@ -1226,6 +1497,9 @@ impl PadDevice {
         // a Game→Shell transition (#295 follow-up); the next `enter_game`
         // recaptures from `held_keys` at that flip.
         self.masked_keys.clear();
+        // A presenter transition: drop any partial combo sequence buffered under
+        // the previous presenter (Keyboard/Game) so it can't strand.
+        self.reset_combo_buffer(sh);
         if let Some(mut vpad) = self.virtual_pad.take() {
             unregister_vpad_devnodes(&mut sh.reg, &mut vpad);
             info!(
@@ -2217,10 +2491,13 @@ pub async fn run(
         presenter: Presenter::Shell,
         overlay_focus: false,
         session_active: true,
-        // Per-app contracts are read once at startup (like every other
-        // config.toml section); `global()` is populated in main before this
-        // thread spawns, and re-read cleanly on a supervisor respawn.
+        // Per-app contracts + the Meta/combo timing knobs are read once at
+        // startup (like every other config.toml section); `global()` is populated
+        // in main before this thread spawns, and re-read cleanly on a supervisor
+        // respawn.
         contracts: crate::daemon_config::global().input_contracts(),
+        meta_hold: Duration::from_millis(crate::daemon_config::global().input.meta_hold_ms),
+        combo_guard: Duration::from_millis(crate::daemon_config::global().input.combo_guard_ms),
         handoff_pinned: false,
         pending_focus_class: None,
         focus_settle_gen: 0,
@@ -2637,6 +2914,10 @@ async fn handle_control(sh: &mut Shared, fleet: &mut Fleet, ctrl: Control) -> bo
                     );
                     for pad in fleet.pads.values_mut() {
                         pad.ungrab(sh);
+                        // Drop any in-flight combo buffer: a backgrounded session's
+                        // events are ignored, so a partial sequence must not linger
+                        // and replay when the session reactivates.
+                        pad.reset_combo_buffer(sh);
                     }
                 }
             }
@@ -2848,6 +3129,11 @@ fn set_overlay_focus(sh: &mut Shared, fleet: &mut Fleet, on: bool) {
         "overlay-focus toggled"
     );
     for pad in fleet.pads.values_mut() {
+        // Overlay open/close flips the routed presenter (an app presenter ⇄ Shell)
+        // without an enter_shell/enter_game, so drop any partial combo buffer here
+        // too — otherwise a sequence buffered under the app presenter could strand
+        // or replay to the wrong surface.
+        pad.reset_combo_buffer(sh);
         if grab {
             pad.grab(sh); // idempotent + session-aware
         } else {
@@ -3021,6 +3307,44 @@ fn contract_presenter(contract: InputContract) -> Presenter {
     }
 }
 
+/// What a Meta (BTN_MODE / Guide) TAP delivers, per (routed) presenter. Pure, so
+/// the gesture map is unit-tested without a controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetaTapAction {
+    /// Publish `intent:home-tap` (open the shell drawer). Shell home.
+    HomeTap,
+    /// Replay a real Guide press+release onto the game's virtual pad. Game.
+    ReplayToPad,
+    /// Deliver nothing — a keyboard-contract app has no Guide concept. Keyboard.
+    Swallow,
+}
+
+/// Resolve a Meta TAP's delivery from the effective (routed) presenter. Handoff
+/// is handled inline in `handle_handoff` (never routed here); mapped to
+/// `Swallow` for exhaustiveness.
+fn meta_tap_action(routed: Presenter) -> MetaTapAction {
+    match routed {
+        Presenter::Shell => MetaTapAction::HomeTap,
+        Presenter::Game => MetaTapAction::ReplayToPad,
+        Presenter::Keyboard => MetaTapAction::Swallow,
+        Presenter::Handoff => MetaTapAction::Swallow,
+    }
+}
+
+/// The intent a Meta HOLD fires publishes, per (routed) presenter. Only the Shell
+/// home's hold publishes `intent:home-hold` (the idle reset-to-clean-home); an
+/// APP presenter's hold publishes `intent:home-tap` — which, while an app is
+/// running, toggles the shell's *controllable overlay drawer* + overlay-focus (a
+/// non-destructive everyday escape that works regardless of who holds compositor
+/// toplevel focus), rather than the heavier `home-hold` full return-to-home.
+/// Pure — unit-tested without a controller.
+fn hold_fire_intent(routed: Presenter) -> &'static str {
+    match routed {
+        Presenter::Shell => "home-hold",
+        Presenter::Keyboard | Presenter::Game | Presenter::Handoff => "home-tap",
+    }
+}
+
 #[cfg(test)]
 mod presenter_tests {
     use super::*;
@@ -3164,6 +3488,25 @@ mod presenter_tests {
             contract_presenter(InputContract::Handoff),
             Presenter::Handoff
         );
+    }
+
+    #[test]
+    fn meta_tap_action_per_presenter() {
+        // Shell home: a tap opens the drawer. Game: replay a real Guide to the pad.
+        // Keyboard: nothing (a keyboard-contract app has no Guide concept).
+        assert_eq!(meta_tap_action(Presenter::Shell), MetaTapAction::HomeTap);
+        assert_eq!(meta_tap_action(Presenter::Game), MetaTapAction::ReplayToPad);
+        assert_eq!(meta_tap_action(Presenter::Keyboard), MetaTapAction::Swallow);
+    }
+
+    #[test]
+    fn hold_fire_intent_per_presenter() {
+        // Only the Shell home's hold fires the heavy `home-hold` reset; every app
+        // presenter's hold fires `home-tap` (the controllable overlay drawer).
+        assert_eq!(hold_fire_intent(Presenter::Shell), "home-hold");
+        assert_eq!(hold_fire_intent(Presenter::Keyboard), "home-tap");
+        assert_eq!(hold_fire_intent(Presenter::Game), "home-tap");
+        assert_eq!(hold_fire_intent(Presenter::Handoff), "home-tap");
     }
 
     #[test]
@@ -3595,14 +3938,37 @@ fn handle_internal(sh: &mut Shared, fleet: &mut Fleet, internal: Internal) {
             }
             pad.home_hold_task = None;
             info!("Home hold detected (slot {})", pad.player_slot);
-            // Fleet-level dedup: publish `intent:home-hold` only on the 0->1 edge
-            // of the latch, so two pads holding Home at once fire it once. The
-            // latch clears (loop event arm) when no pad holds Home. Single-pad:
-            // the latch toggles with the one pad, identical to the old behavior.
+            // Fleet-level dedup: publish the escape intent only on the 0->1 edge
+            // of the latch, so two pads holding Home at once fire it once (a
+            // double home-tap would toggle the drawer open then shut). The latch
+            // clears (loop event arm) when no pad holds Home. Single-pad: the latch
+            // toggles with the one pad, identical to the old behavior.
+            //
+            // Which intent depends on the presenter (see `hold_fire_intent`): the
+            // Shell home publishes `home-hold` (idle reset), an APP presenter
+            // publishes `home-tap` (the controllable overlay drawer over the app).
             if !sh.home_hold_active {
                 sh.home_hold_active = true;
-                sh.publish(Event::Intent("home-hold".into()));
+                let routed = route_presenter(sh.overlay_focus, sh.presenter);
+                sh.publish(Event::Intent(hold_fire_intent(routed).into()));
             }
+        }
+        Internal::ComboGuardFired { fd, generation } => {
+            let Some(pad) = fleet.pads.get_mut(&fd) else {
+                return; // pad left
+            };
+            // Stale (disarmed/rearmed since) or no longer buffering: ignore.
+            if generation != pad.combo_guard_gen || !pad.combo_armed {
+                return;
+            }
+            pad.combo_guard_task = None;
+            // The settle window elapsed with no combo: the buffered participants
+            // were not a combo chord. Replay them to the app (in order) via the
+            // current routed presenter and disarm. If the presenter changed since
+            // arming, a transition already reset the buffer, so this is a no-op.
+            let routed = route_presenter(sh.overlay_focus, sh.presenter);
+            pad.replay_combo_buffer(sh, routed);
+            pad.disarm_combo_guard(sh);
         }
         Internal::ComboEndSessionFired { fd, generation } => {
             let Some(pad) = fleet.pads.get_mut(&fd) else {

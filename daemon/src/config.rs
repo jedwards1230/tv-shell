@@ -197,7 +197,51 @@ pub const QUIT_COMBO_KEYS: [u16; 4] = [BTN_SELECT, BTN_MODE, BTN_TL, BTN_TR];
 /// LB + RB + Start, instant -> `combo:suspend-stream` (unless also force-quit).
 pub const SUSPEND_COMBO_KEYS: [u16; 3] = [BTN_START, BTN_TL, BTN_TR];
 
-pub const HOME_HOLD_SECS: f64 = 2.0;
+/// Union of every safety combo's key set — the "combo participant" buttons whose
+/// *partial* presses must not leak into a focused app while a combo is being
+/// discriminated (the combo-buffer safety, #escape-contract). Deduped union of
+/// [`QUIT_COMBO_KEYS`], [`SUSPEND_COMBO_KEYS`], and [`COMBO_KEYS`]:
+/// {Back, Home, LB, RB, Start, B}. `BTN_MODE` (Home) is a member — its own
+/// app-delivery is governed by the Meta tap/hold split, but it still counts
+/// toward the per-presenter participant-held arming (see
+/// `state::participant_held_count`). A compile-time check below keeps this in
+/// sync with the three source arrays.
+pub const COMBO_PARTICIPANTS: [u16; 6] =
+    [BTN_SELECT, BTN_MODE, BTN_TL, BTN_TR, BTN_START, BTN_EAST];
+
+/// True if `code` is a member of any safety combo (see [`COMBO_PARTICIPANTS`]).
+pub fn is_combo_participant(code: u16) -> bool {
+    COMBO_PARTICIPANTS.contains(&code)
+}
+
+// Compile-time guard: every button in the three combo arrays must appear in
+// COMBO_PARTICIPANTS, so adding a key to a combo can't silently bypass the
+// buffer. (A `const fn` contains check keeps this a zero-cost invariant.)
+const _: () = {
+    const fn in_participants(code: u16) -> bool {
+        let mut i = 0;
+        while i < COMBO_PARTICIPANTS.len() {
+            if COMBO_PARTICIPANTS[i] == code {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+    const fn all_in(combo: &[u16]) -> bool {
+        let mut i = 0;
+        while i < combo.len() {
+            if !in_participants(combo[i]) {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+    assert!(all_in(&QUIT_COMBO_KEYS));
+    assert!(all_in(&SUSPEND_COMBO_KEYS));
+    assert!(all_in(&COMBO_KEYS));
+};
 
 pub const STICK_DEADZONE: f64 = 0.30;
 pub const STICK_INITIAL_DELAY_MS: u64 = 300;
