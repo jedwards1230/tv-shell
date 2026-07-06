@@ -405,6 +405,25 @@ struct PadDevice {
     /// Steam-BPM A-leak, #295 follow-up). Kept SEPARATE from `held_keys`, which
     /// the safety combos read directly and must remain untouched.
     masked_keys: HashSet<u16>,
+    /// Latest raw value of every ABS axis this pad has reported, keyed by evdev
+    /// ABS code. Updated on **every** ABS event in [`PadDevice::handle_event`]
+    /// regardless of presenter (exactly as `held_keys` is maintained), so that
+    /// [`PadDevice::enter_game`] can tell which axes are physically deflected at
+    /// the shell→app flip and seed [`Self::masked_axes`] from them.
+    axis_values: HashMap<u16, i32>,
+    /// Continuous axes (d-pad hat + both analog sticks) that were deflected past
+    /// the neutral deadzone at the moment this pad entered the Game presenter —
+    /// the axis analogue of [`Self::masked_keys`]. Populated from
+    /// [`Self::axis_values`] in [`PadDevice::enter_game`]; cleared on
+    /// [`PadDevice::enter_shell`] and whenever the virtual pad is (re)built. In
+    /// the Game-presenter ABS forwarding path a masked axis is **swallowed**
+    /// (never forwarded, so the vpad rests at its neutral default) until it
+    /// returns to neutral and is deflected fresh — so the direction the user was
+    /// holding to navigate to the launched card (a d-pad hat or stick) does not
+    /// leak into the newly-focused game and latch it into a runaway scroll.
+    /// Triggers (`ABS_Z`/`ABS_RZ`) are never masked (see
+    /// [`PadDevice::axis_is_neutral`]).
+    masked_axes: HashSet<u16>,
     left_trigger_held: bool,
     right_trigger_held: bool,
 
@@ -513,6 +532,8 @@ impl PadDevice {
             grabbed: false,
             held_keys: HashSet::new(),
             masked_keys: HashSet::new(),
+            axis_values: HashMap::new(),
+            masked_axes: HashSet::new(),
             left_trigger_held: false,
             right_trigger_held: false,
             stick_x_key: None,
@@ -719,6 +740,14 @@ impl PadDevice {
             value = ev.value(),
             "pad event"
         );
+        // Track the latest value of every ABS axis, presenter-independently, so
+        // `enter_game` knows which axes are physically deflected at a shell→app
+        // flip (the axis flip-mask, mirroring how `held_keys` seeds the digital
+        // flip-mask). Kept out of the per-presenter handlers on purpose: the flip
+        // can be entered from any of them, so the cache must never miss an event.
+        if ev.event_type() == EventType::ABSOLUTE {
+            self.axis_values.insert(ev.code(), ev.value());
+        }
         // Route by the *effective* presenter, not the physical grab: the pad
         // stays grabbed in both Shell/Game modes (Phase 5), so `grabbed` no
         // longer discriminates. `route_presenter` folds in overlay-focus (#262)
@@ -864,8 +893,15 @@ impl PadDevice {
             // through the flip-mask onto the clean virtual pad.
             self.gate_and_forward_game_key(sh, code, value);
         } else if et == EventType::ABSOLUTE {
-            // Forward sticks/triggers/d-pad verbatim — the game wants raw axes.
-            self.forward_to_virtual_pad(ev);
+            // Route sticks/d-pad through the axis flip-mask (#295 follow-up): a
+            // direction deflected at the shell→app flip — the d-pad hat or stick
+            // the user was holding to reach the launched card — is swallowed until
+            // it returns to neutral, so it never latches the fresh vpad into a
+            // runaway Steam Big Picture scroll. Triggers and any unmasked axis
+            // forward verbatim (the game wants raw axes) — see `axis_is_neutral`.
+            if self.axis_forward_decision(code, value) {
+                self.forward_to_virtual_pad(ev);
+            }
         }
     }
 
@@ -939,6 +975,36 @@ impl PadDevice {
         if mask_forward_decision(&mut self.masked_keys, code, value) {
             self.forward_to_virtual_pad(InputEvent::new(EV_KEY, code, value));
         }
+    }
+
+    /// Whether an ABS `value` on `code` sits within its neutral deadzone — the
+    /// axis analogue of "a button is released". The d-pad hat is discrete
+    /// (neutral only at exactly `0`); the analog sticks use their per-axis
+    /// calibrated center + deadzone. Triggers (`ABS_Z`/`ABS_RZ`) and any other
+    /// axis report neutral unconditionally, so they are never added to (and never
+    /// gate through) [`Self::masked_axes`] — analog trigger use is left untouched.
+    fn axis_is_neutral(&self, code: u16, value: i32) -> bool {
+        match code {
+            cfg::ABS_HAT0X | cfg::ABS_HAT0Y => abs_in_neutral_zone(value, 0, 0),
+            cfg::ABS_X => abs_in_neutral_zone(value, self.stick_center_x, self.stick_threshold_x),
+            cfg::ABS_Y => abs_in_neutral_zone(value, self.stick_center_y, self.stick_threshold_y),
+            cfg::ABS_RX => {
+                abs_in_neutral_zone(value, self.rstick_center_x, self.rstick_threshold_x)
+            }
+            cfg::ABS_RY => {
+                abs_in_neutral_zone(value, self.rstick_center_y, self.rstick_threshold_y)
+            }
+            _ => true,
+        }
+    }
+
+    /// Decide whether an ABS event should reach the Game presenter's virtual pad,
+    /// honoring the axis flip-mask. A masked axis is swallowed until it returns to
+    /// neutral (which lifts the mask); thereafter it forwards normally. Mirrors
+    /// [`Self::game_forward_key`] for continuous axes.
+    fn axis_forward_decision(&mut self, code: u16, value: i32) -> bool {
+        let neutral = self.axis_is_neutral(code, value);
+        mask_axis_forward_decision(&mut self.masked_axes, code, neutral)
     }
 
     /// Meta (BTN_MODE / Guide) tap-vs-hold split with buffered delivery.
@@ -1464,6 +1530,20 @@ impl PadDevice {
                 // fresh (re)build starts from a clean mask before recapturing.
                 self.masked_keys.clear();
                 self.masked_keys.extend(self.held_keys.iter().copied());
+                // Same for continuous axes: swallow any d-pad hat / stick that is
+                // deflected past its neutral deadzone at this flip until it returns
+                // to neutral (the axis analogue of the held-button mask above).
+                // Collect first to end the shared borrow of `axis_values` before
+                // mutating `masked_axes`. An idle centered stick has no deflected
+                // entry, so it is not masked and keeps working immediately.
+                self.masked_axes.clear();
+                let deflected: Vec<u16> = self
+                    .axis_values
+                    .iter()
+                    .filter(|(&code, &value)| !self.axis_is_neutral(code, value))
+                    .map(|(&code, _)| code)
+                    .collect();
+                self.masked_axes.extend(deflected);
                 // Invariant: the flip-mask is only ever populated FROM held_keys,
                 // so every masked code must be currently held. Holds by
                 // construction here (clear + extend(held_keys)); the debug_assert
@@ -1497,6 +1577,7 @@ impl PadDevice {
         // a Game→Shell transition (#295 follow-up); the next `enter_game`
         // recaptures from `held_keys` at that flip.
         self.masked_keys.clear();
+        self.masked_axes.clear();
         // A presenter transition: drop any partial combo sequence buffered under
         // the previous presenter (Keyboard/Game) so it can't strand.
         self.reset_combo_buffer(sh);
@@ -3102,6 +3183,50 @@ fn mask_forward_decision(masked: &mut HashSet<u16>, code: u16, value: i32) -> bo
     false
 }
 
+/// Whether an ABS `value` lies within `[center - deadzone, center + deadzone]` —
+/// the neutral zone used by the axis flip-mask. The discrete d-pad hat passes
+/// `center = 0, deadzone = 0` (neutral only at exactly `0`); the analog sticks
+/// pass their calibrated center + deadzone. Pure, so the neutrality rule is
+/// unit-tested without a controller.
+fn abs_in_neutral_zone(value: i32, center: i32, deadzone: i32) -> bool {
+    (value - center).abs() <= deadzone
+}
+
+/// Decide whether an ABS event should be forwarded to the Game presenter's
+/// virtual pad, given the pad's `masked` axis set (continuous axes deflected at
+/// the shell→app flip; see [`PadDevice::masked_axes`]), the event's `code`, and
+/// whether the value is `neutral` (within the axis's deadzone —
+/// [`abs_in_neutral_zone`]).
+///
+/// A **masked** axis must not reach the game until it has physically returned to
+/// neutral — otherwise the direction the user was holding to reach the launched
+/// card would latch the fresh virtual pad (a runaway Steam Big Picture scroll,
+/// the axis sibling of the #295 A-leak). The vpad sits at its own neutral default
+/// while masked, so a swallowed event costs nothing.
+///
+/// * `code` not in `masked` → forward normally (`true`). A fresh deflection after
+///   the user re-centered is unaffected.
+/// * `code` in `masked`, `neutral == true` → remove it from `masked` and
+///   **swallow** (`false`): the mask lifts here, so the *next* deflection of this
+///   axis forwards, but this neutral report is dropped (the vpad already rests at
+///   neutral).
+/// * `code` in `masked`, `neutral == false` (still deflected) → **swallow**
+///   (`false`): it was held across the flip.
+///
+/// Mutates `masked` (clears the code once it reads neutral). Pure otherwise.
+fn mask_axis_forward_decision(masked: &mut HashSet<u16>, code: u16, neutral: bool) -> bool {
+    if !masked.contains(&code) {
+        return true; // not masked -> forward as usual
+    }
+    if neutral {
+        // The axis returned to neutral: the mask lifts, but this neutral report is
+        // swallowed (the vpad already rests at its neutral default).
+        masked.remove(&code);
+    }
+    // Still-deflected, or the neutral event that lifts the mask: never forward.
+    false
+}
+
 /// Toggle overlay-focus (#262): a modal shell overlay opened (`on`) or closed
 /// (`off`) over a running app. Idempotent (a no-op when already in the requested
 /// state). The base presenter in `sh.presenter` is deliberately left untouched —
@@ -3670,6 +3795,138 @@ mod presenter_tests {
         masked2.extend(empty.iter().copied());
         assert!(masked2.iter().all(|c| empty.contains(c)));
         assert!(masked2.is_empty());
+    }
+
+    // --- axis flip-mask (swallow an axis deflected at the shell→app flip) ---
+
+    /// The reported repro: the **d-pad hat** held to navigate to the launched
+    /// card is deflected at the flip. It must be swallowed until it returns to
+    /// neutral (`0`), and only then does a fresh deflection forward — so the fresh
+    /// virtual pad never latches the held direction into a runaway Steam Big
+    /// Picture scroll. Neutrality is derived with the same rule the runtime uses
+    /// for the discrete hat (`abs_in_neutral_zone(value, 0, 0)` == `value == 0`).
+    #[test]
+    fn masked_hat_swallowed_until_neutral_then_fresh_deflection_forwards() {
+        const HAT: u16 = cfg::ABS_HAT0X;
+        // Simulate `enter_game` snapshotting the hat as held LEFT (-1) at the flip.
+        let mut masked: HashSet<u16> = HashSet::new();
+        masked.insert(HAT);
+
+        // A still-deflected LEFT report is swallowed and does NOT lift the mask.
+        assert!(!mask_axis_forward_decision(
+            &mut masked,
+            HAT,
+            abs_in_neutral_zone(-1, 0, 0)
+        ));
+        assert!(
+            masked.contains(&HAT),
+            "deflection must not clear the axis mask"
+        );
+
+        // The return to center (0) lifts the mask AND is swallowed (the vpad hat
+        // already rests at its neutral default, so nothing needs forwarding).
+        assert!(!mask_axis_forward_decision(
+            &mut masked,
+            HAT,
+            abs_in_neutral_zone(0, 0, 0)
+        ));
+        assert!(
+            !masked.contains(&HAT),
+            "neutral must clear the axis from the mask"
+        );
+
+        // A fresh LEFT deflection after re-centering forwards normally.
+        assert!(mask_axis_forward_decision(
+            &mut masked,
+            HAT,
+            abs_in_neutral_zone(-1, 0, 0)
+        ));
+    }
+
+    /// An **analog stick** deflected past its calibrated deadzone at the flip is
+    /// swallowed until it settles back inside the deadzone, then re-deflections
+    /// forward — the stick sibling of the hat case above.
+    #[test]
+    fn masked_stick_swallowed_until_inside_deadzone() {
+        const AXIS: u16 = cfg::ABS_X;
+        const CENTER: i32 = 128;
+        const DEADZONE: i32 = 30;
+        // Full-left (value 0) at the flip — well past the deadzone.
+        let mut masked: HashSet<u16> = HashSet::new();
+        masked.insert(AXIS);
+
+        assert!(!mask_axis_forward_decision(
+            &mut masked,
+            AXIS,
+            abs_in_neutral_zone(0, CENTER, DEADZONE)
+        ));
+        assert!(
+            masked.contains(&AXIS),
+            "deflection must not clear the axis mask"
+        );
+
+        // Drift back to just inside the deadzone lifts the mask (and is swallowed).
+        assert!(!mask_axis_forward_decision(
+            &mut masked,
+            AXIS,
+            abs_in_neutral_zone(CENTER + DEADZONE, CENTER, DEADZONE)
+        ));
+        assert!(
+            !masked.contains(&AXIS),
+            "inside-deadzone must clear the mask"
+        );
+
+        // A fresh deflection past the deadzone forwards normally.
+        assert!(mask_axis_forward_decision(
+            &mut masked,
+            AXIS,
+            abs_in_neutral_zone(255, CENTER, DEADZONE)
+        ));
+    }
+
+    /// An axis that was neutral (centered) at the flip is never added to the mask,
+    /// so it forwards immediately at any value — an idle stick keeps working the
+    /// instant the game starts (a centered stick sends no events, but a stray
+    /// centered report must not be swallowed either).
+    #[test]
+    fn unmasked_axis_forwards_immediately() {
+        const AXIS: u16 = cfg::ABS_Y;
+        let mut masked: HashSet<u16> = HashSet::new();
+        // A DIFFERENT axis was held at the flip; ABS_Y was neutral, so it is absent.
+        masked.insert(cfg::ABS_X);
+        assert!(mask_axis_forward_decision(
+            &mut masked,
+            AXIS,
+            abs_in_neutral_zone(0, 128, 30)
+        ));
+        assert!(mask_axis_forward_decision(
+            &mut masked,
+            AXIS,
+            abs_in_neutral_zone(255, 128, 30)
+        ));
+        assert!(mask_axis_forward_decision(
+            &mut masked,
+            AXIS,
+            abs_in_neutral_zone(128, 128, 30)
+        ));
+        // The unrelated masked axis is untouched by decisions about ABS_Y.
+        assert!(masked.contains(&cfg::ABS_X));
+    }
+
+    /// `abs_in_neutral_zone` treats the deadzone as inclusive on both edges and
+    /// the discrete hat (`deadzone = 0`) as neutral only at exactly `0`.
+    #[test]
+    fn abs_neutral_zone_boundaries() {
+        // Hat: only 0 is neutral.
+        assert!(abs_in_neutral_zone(0, 0, 0));
+        assert!(!abs_in_neutral_zone(-1, 0, 0));
+        assert!(!abs_in_neutral_zone(1, 0, 0));
+        // Stick: inclusive band around center.
+        assert!(abs_in_neutral_zone(128, 128, 30));
+        assert!(abs_in_neutral_zone(158, 128, 30)); // upper edge
+        assert!(abs_in_neutral_zone(98, 128, 30)); // lower edge
+        assert!(!abs_in_neutral_zone(159, 128, 30));
+        assert!(!abs_in_neutral_zone(97, 128, 30));
     }
 
     #[test]
