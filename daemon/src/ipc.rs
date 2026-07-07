@@ -341,7 +341,7 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         // `{"enabled":false,…}` / empty hubs.
         Command::PlexHubs => Some(plex::handle_plex_hubs().await),
         // Steam library + launch for the home-screen Steam widget. Stateless +
-        // cross-platform like `plex-hubs`; the game-shell-host base URL + token
+        // cross-platform like `plex-hubs`; the tv-shell-host base URL + token
         // come from the daemon env. Unconfigured ⇒ `{"status":"disabled",…}`.
         Command::SteamLibrary => Some(steam::handle_steam_library().await),
         Command::SteamLaunch(appid) => Some(steam::handle_steam_launch(*appid).await),

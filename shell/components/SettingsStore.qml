@@ -5,8 +5,8 @@ import "../widgets/lib"
 import "../widgets/lib/widgetConfig.js" as WidgetConfig
 import "settingsPayload.js" as SettingsPayload
 
-// Centralized settings I/O for game-shell — the QML-side façade over
-// ~/.config/game-shell/settings.json.
+// Centralized settings I/O for tv-shell — the QML-side façade over
+// ~/.config/tv-shell/settings.json.
 //
 // IMPORTANT: root MUST be Item (not QtObject). Quickshell 0.3.0 cannot host
 // Process/Timer children inside a QtObject singleton, and this store needs
@@ -449,7 +449,7 @@ Item {
         store._saveKeys(["cecDeviceNames"]);
     }
 
-    // === Binding IPC (respects GAME_SHELL_SOCK; no hardcoded socket path) ===
+    // === Binding IPC (respects TV_SHELL_SOCK; no hardcoded socket path) ===
     function getBindings() {
         getBindingsProc.request("get-bindings");
     }
@@ -526,14 +526,14 @@ Item {
     // re-applies when that page is opened; this ensures the correct sink is
     // active even if the user never visits Audio Settings. (#131)
     //
-    // The sink name is passed via the GAME_SHELL_SINK environment variable so
+    // The sink name is passed via the TV_SHELL_SINK environment variable so
     // it cannot inject shell commands regardless of its content. (#131 injection fix)
     Process {
         id: startupSinkApply
         environment: ({
-                "GAME_SHELL_SINK": store.defaultSink
+                "TV_SHELL_SINK": store.defaultSink
             })
-        command: ["bash", "-c", "[ -z \"$GAME_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$GAME_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$GAME_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
+        command: ["bash", "-c", "[ -z \"$TV_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$TV_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$TV_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
     }
 
     onDefaultSinkChanged: {

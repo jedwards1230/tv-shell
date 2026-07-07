@@ -6,7 +6,7 @@
 //! - Emit Linux-native, standard, self-describing formats so ANY consumer can
 //!   collect it their way. Collection/forwarding stays out of this repo.
 //! - The genuinely valuable signal is the **app-specific counters**
-//!   (`game_shell_*_total`) that node_exporter cannot give: input events,
+//!   (`tv_shell_*_total`) that node_exporter cannot give: input events,
 //!   intents, shell↔game transitions, pad joins/leaves, shell restarts.
 //! - Resource gauges (cpu/mem/load/temps) are a convenience reusing the existing
 //!   `system::SysMetrics` reader; they are better sourced from node_exporter if
@@ -69,7 +69,7 @@ pub struct Metrics {
     /// `POST /dev/deploy` attempts that succeeded (git fetch+checkout+reset OK).
     pub deploy_ok: AtomicU64,
     /// `POST /dev/deploy` attempts that failed (git error). Together with
-    /// `deploy_ok` these render as `game_shell_deploy_total{outcome="ok|error"}`.
+    /// `deploy_ok` these render as `tv_shell_deploy_total{outcome="ok|error"}`.
     pub deploy_err: AtomicU64,
     /// `POST /dev/build` attempts (build via scripts/build-daemon.sh + install).
     pub build_actions: AtomicU64,
@@ -173,9 +173,9 @@ impl Metrics {
     }
 }
 
-/// Current-deployment provenance for the `game_shell_build_info` info-metric.
+/// Current-deployment provenance for the `tv_shell_build_info` info-metric.
 /// Resolved live (re-read on each render) from the same `capture_meta()` source
-/// that backs the `/screenshot` `X-GameShell-*` headers and `/dev/status`, so a
+/// that backs the `/screenshot` `X-TvShell-*` headers and `/dev/status`, so a
 /// `/dev/deploy` HEAD swap under the live daemon is reflected next render.
 #[derive(Debug, Clone)]
 pub struct BuildInfo {
@@ -216,11 +216,11 @@ fn fmt_f64(v: f64) -> String {
 ///
 /// `counters` supplies the app-specific `*_total` values; `sys` (optional)
 /// supplies the convenience resource gauges; `build` (optional) supplies the
-/// `game_shell_build_info` deployment identity. When an optional is `None` that
+/// `tv_shell_build_info` deployment identity. When an optional is `None` that
 /// section is omitted — the counters are always emitted.
 ///
 /// Every metric carries `# HELP` and `# TYPE` lines. All metrics are namespaced
-/// `game_shell_`. The output ends with a trailing newline (required by the
+/// `tv_shell_`. The output ends with a trailing newline (required by the
 /// node_exporter textfile collector parser).
 pub fn render(
     counters: &Metrics,
@@ -232,11 +232,11 @@ pub fn render(
     // ── Current-deployment info metric (always value 1; identity in labels) ───
     if let Some(b) = build {
         out.push_str(
-            "# HELP game_shell_build_info Currently deployed game-shell revision (value is always 1; identity is in the labels).\n",
+            "# HELP tv_shell_build_info Currently deployed tv-shell revision (value is always 1; identity is in the labels).\n",
         );
-        out.push_str("# TYPE game_shell_build_info gauge\n");
+        out.push_str("# TYPE tv_shell_build_info gauge\n");
         out.push_str(&format!(
-            "game_shell_build_info{{sha=\"{}\",branch=\"{}\",version=\"{}\"}} 1\n",
+            "tv_shell_build_info{{sha=\"{}\",branch=\"{}\",version=\"{}\"}} 1\n",
             escape_label_value(&b.sha),
             escape_label_value(&b.branch),
             escape_label_value(&b.version),
@@ -252,51 +252,51 @@ pub fn render(
 
     counter(
         &mut out,
-        "game_shell_input_events_total",
+        "tv_shell_input_events_total",
         "Raw gamepad input events read and processed by the input runtime.",
         counters.input_events.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_intents_emitted_total",
+        "tv_shell_intents_emitted_total",
         "Shell intents broadcast on the event bus (intent:<name>).",
         counters.intents_emitted.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_transitions_total",
+        "tv_shell_transitions_total",
         "Shell<->game presenter transitions (grab/release/handoff).",
         counters.transitions.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_pad_joins_total",
+        "tv_shell_pad_joins_total",
         "Gamepads that joined the fleet (hot-join or initial enumeration).",
         counters.pad_joins.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_pad_leaves_total",
+        "tv_shell_pad_leaves_total",
         "Gamepads that left the fleet (disconnect).",
         counters.pad_leaves.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_shell_restarts_total",
-        "game-shell-input daemon starts observed this boot session.",
+        "tv_shell_shell_restarts_total",
+        "tv-shell-input daemon starts observed this boot session.",
         counters.shell_restarts.load(Ordering::Relaxed),
     );
 
     // ── Input-runtime supervision ────────────────────────────────────────────
     counter(
         &mut out,
-        "game_shell_input_runtime_restarts_total",
-        "In-process input-runtime respawns after a panic (distinct from daemon process starts in game_shell_shell_restarts_total).",
+        "tv_shell_input_runtime_restarts_total",
+        "In-process input-runtime respawns after a panic (distinct from daemon process starts in tv_shell_shell_restarts_total).",
         counters.runtime_restarts.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_grab_invariant_violations_total",
+        "tv_shell_grab_invariant_violations_total",
         "Grab-state drift detected: a pad's physical EVIOCGRAB disagreed with the presenter policy after a transition (should stay 0).",
         counters.grab_invariant_violations.load(Ordering::Relaxed),
     );
@@ -304,11 +304,11 @@ pub fn render(
     // convenience sys gauges gated behind `Some(sys)` below): a scrape must be able
     // to alert on the runtime being dead even when no sys metrics are present.
     out.push_str(
-        "# HELP game_shell_input_runtime_up Input runtime liveness (1 = supervised event loop running, 0 = dead/panic-exhausted).\n",
+        "# HELP tv_shell_input_runtime_up Input runtime liveness (1 = supervised event loop running, 0 = dead/panic-exhausted).\n",
     );
-    out.push_str("# TYPE game_shell_input_runtime_up gauge\n");
+    out.push_str("# TYPE tv_shell_input_runtime_up gauge\n");
     out.push_str(&format!(
-        "game_shell_input_runtime_up {}\n",
+        "tv_shell_input_runtime_up {}\n",
         counters.runtime_up.load(Ordering::Relaxed),
     ));
 
@@ -316,38 +316,38 @@ pub fn render(
     // deploy carries an outcome label so failed deploys are visible; one
     // HELP/TYPE block, two labelled samples.
     out.push_str(
-        "# HELP game_shell_deploy_total /dev/deploy attempts via the HTTP bridge, by outcome.\n",
+        "# HELP tv_shell_deploy_total /dev/deploy attempts via the HTTP bridge, by outcome.\n",
     );
-    out.push_str("# TYPE game_shell_deploy_total counter\n");
+    out.push_str("# TYPE tv_shell_deploy_total counter\n");
     out.push_str(&format!(
-        "game_shell_deploy_total{{outcome=\"ok\"}} {}\n",
+        "tv_shell_deploy_total{{outcome=\"ok\"}} {}\n",
         counters.deploy_ok.load(Ordering::Relaxed),
     ));
     out.push_str(&format!(
-        "game_shell_deploy_total{{outcome=\"error\"}} {}\n",
+        "tv_shell_deploy_total{{outcome=\"error\"}} {}\n",
         counters.deploy_err.load(Ordering::Relaxed),
     ));
     counter(
         &mut out,
-        "game_shell_build_total",
+        "tv_shell_build_total",
         "/dev/build attempts via the HTTP bridge.",
         counters.build_actions.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_restart_shell_total",
+        "tv_shell_restart_shell_total",
         "/dev/restart-shell attempts via the HTTP bridge.",
         counters.restart_shell_actions.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_restart_daemon_total",
+        "tv_shell_restart_daemon_total",
         "/dev/restart-daemon (re-exec) requests via the HTTP bridge.",
         counters.restart_daemon_actions.load(Ordering::Relaxed),
     );
     counter(
         &mut out,
-        "game_shell_quickshell_multi_instance_total",
+        "tv_shell_quickshell_multi_instance_total",
         "Times a shell restart (HTTP /dev/restart-shell or MCP restart_shell) detected >1 quickshell process after a restart settle (#254; should stay 0).",
         counters.quickshell_multi_instance.load(Ordering::Relaxed),
     );
@@ -362,25 +362,25 @@ pub fn render(
 
         gauge(
             &mut out,
-            "game_shell_cpu_percent",
+            "tv_shell_cpu_percent",
             "Aggregate CPU utilisation 0..=100 (convenience; prefer node_exporter).",
             fmt_f64(m.cpu_pct),
         );
         gauge(
             &mut out,
-            "game_shell_mem_used_bytes",
+            "tv_shell_mem_used_bytes",
             "Used memory in bytes (convenience; prefer node_exporter).",
             m.mem_used.to_string(),
         );
         gauge(
             &mut out,
-            "game_shell_mem_total_bytes",
+            "tv_shell_mem_total_bytes",
             "Total memory in bytes (convenience; prefer node_exporter).",
             m.mem_total.to_string(),
         );
         gauge(
             &mut out,
-            "game_shell_load1",
+            "tv_shell_load1",
             "1-minute load average (convenience; prefer node_exporter).",
             fmt_f64(m.load1),
         );
@@ -389,12 +389,12 @@ pub fn render(
         // sample per sensor (multiple labelled samples of the same metric).
         if !m.temps.is_empty() {
             out.push_str(
-                "# HELP game_shell_temperature_celsius Hardware temperature sensor reading in degrees Celsius (convenience; prefer node_exporter).\n",
+                "# HELP tv_shell_temperature_celsius Hardware temperature sensor reading in degrees Celsius (convenience; prefer node_exporter).\n",
             );
-            out.push_str("# TYPE game_shell_temperature_celsius gauge\n");
+            out.push_str("# TYPE tv_shell_temperature_celsius gauge\n");
             for t in &m.temps {
                 out.push_str(&format!(
-                    "game_shell_temperature_celsius{{sensor=\"{}\"}} {}\n",
+                    "tv_shell_temperature_celsius{{sensor=\"{}\"}} {}\n",
                     escape_label_value(&t.label),
                     fmt_f64(t.celsius),
                 ));
@@ -407,7 +407,7 @@ pub fn render(
 
 /// Resolve the current-deployment [`BuildInfo`] live from the shared
 /// `capture_meta()` provenance resolver (same source as the `/screenshot`
-/// `X-GameShell-*` headers and `/dev/status`). Async because it shells out to
+/// `X-TvShell-*` headers and `/dev/status`). Async because it shells out to
 /// `git`; callers `.await` this BEFORE `render_blocking` and pass the result in,
 /// so a `/dev/deploy` HEAD swap is reflected on the next render (re-read on
 /// render, not cached at startup).
@@ -453,7 +453,7 @@ fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
         ".{}.{}.tmp",
         path.file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("game-shell"),
+            .unwrap_or("tv-shell"),
         pid
     ));
     {
@@ -552,19 +552,19 @@ mod tests {
         let text = render(&m, None, None);
 
         // Each counter has HELP + TYPE + a sample line.
-        assert!(text.contains("# HELP game_shell_input_events_total"));
-        assert!(text.contains("# TYPE game_shell_input_events_total counter"));
-        assert!(text.contains("\ngame_shell_input_events_total 2\n"));
-        assert!(text.contains("\ngame_shell_intents_emitted_total 1\n"));
-        assert!(text.contains("\ngame_shell_transitions_total 1\n"));
-        assert!(text.contains("\ngame_shell_pad_joins_total 1\n"));
-        assert!(text.contains("\ngame_shell_pad_leaves_total 0\n"));
-        assert!(text.contains("\ngame_shell_shell_restarts_total 1\n"));
+        assert!(text.contains("# HELP tv_shell_input_events_total"));
+        assert!(text.contains("# TYPE tv_shell_input_events_total counter"));
+        assert!(text.contains("\ntv_shell_input_events_total 2\n"));
+        assert!(text.contains("\ntv_shell_intents_emitted_total 1\n"));
+        assert!(text.contains("\ntv_shell_transitions_total 1\n"));
+        assert!(text.contains("\ntv_shell_pad_joins_total 1\n"));
+        assert!(text.contains("\ntv_shell_pad_leaves_total 0\n"));
+        assert!(text.contains("\ntv_shell_shell_restarts_total 1\n"));
         // Trailing newline (textfile collector requirement).
         assert!(text.ends_with('\n'));
         // No gauges when sys is None; no build_info when build is None.
-        assert!(!text.contains("game_shell_cpu_percent"));
-        assert!(!text.contains("game_shell_build_info"));
+        assert!(!text.contains("tv_shell_cpu_percent"));
+        assert!(!text.contains("tv_shell_build_info"));
     }
 
     #[test]
@@ -573,25 +573,25 @@ mod tests {
         // Fresh: the up-gauge defaults to 0 and both new counters are 0, but all
         // three are ALWAYS present (no Some(sys)/Some(build) gating).
         let text0 = render(&m, None, None);
-        assert!(text0.contains("# TYPE game_shell_input_runtime_up gauge"));
-        assert!(text0.contains("\ngame_shell_input_runtime_up 0\n"));
-        assert!(text0.contains("# TYPE game_shell_input_runtime_restarts_total counter"));
-        assert!(text0.contains("\ngame_shell_input_runtime_restarts_total 0\n"));
-        assert!(text0.contains("# TYPE game_shell_grab_invariant_violations_total counter"));
-        assert!(text0.contains("\ngame_shell_grab_invariant_violations_total 0\n"));
+        assert!(text0.contains("# TYPE tv_shell_input_runtime_up gauge"));
+        assert!(text0.contains("\ntv_shell_input_runtime_up 0\n"));
+        assert!(text0.contains("# TYPE tv_shell_input_runtime_restarts_total counter"));
+        assert!(text0.contains("\ntv_shell_input_runtime_restarts_total 0\n"));
+        assert!(text0.contains("# TYPE tv_shell_grab_invariant_violations_total counter"));
+        assert!(text0.contains("\ntv_shell_grab_invariant_violations_total 0\n"));
 
         m.set_runtime_up(true);
         m.inc_runtime_restarts();
         m.inc_runtime_restarts();
         m.inc_grab_invariant_violations();
         let text = render(&m, None, None);
-        assert!(text.contains("\ngame_shell_input_runtime_up 1\n"));
-        assert!(text.contains("\ngame_shell_input_runtime_restarts_total 2\n"));
-        assert!(text.contains("\ngame_shell_grab_invariant_violations_total 1\n"));
+        assert!(text.contains("\ntv_shell_input_runtime_up 1\n"));
+        assert!(text.contains("\ntv_shell_input_runtime_restarts_total 2\n"));
+        assert!(text.contains("\ntv_shell_grab_invariant_violations_total 1\n"));
 
         // The gauge tracks liveness both directions.
         m.set_runtime_up(false);
-        assert!(render(&m, None, None).contains("\ngame_shell_input_runtime_up 0\n"));
+        assert!(render(&m, None, None).contains("\ntv_shell_input_runtime_up 0\n"));
     }
 
     #[test]
@@ -606,13 +606,13 @@ mod tests {
         m.inc_quickshell_multi_instance();
         let text = render(&m, None, None);
 
-        assert!(text.contains("# TYPE game_shell_deploy_total counter"));
-        assert!(text.contains("game_shell_deploy_total{outcome=\"ok\"} 2\n"));
-        assert!(text.contains("game_shell_deploy_total{outcome=\"error\"} 1\n"));
-        assert!(text.contains("\ngame_shell_build_total 1\n"));
-        assert!(text.contains("\ngame_shell_restart_shell_total 1\n"));
-        assert!(text.contains("\ngame_shell_restart_daemon_total 1\n"));
-        assert!(text.contains("\ngame_shell_quickshell_multi_instance_total 1\n"));
+        assert!(text.contains("# TYPE tv_shell_deploy_total counter"));
+        assert!(text.contains("tv_shell_deploy_total{outcome=\"ok\"} 2\n"));
+        assert!(text.contains("tv_shell_deploy_total{outcome=\"error\"} 1\n"));
+        assert!(text.contains("\ntv_shell_build_total 1\n"));
+        assert!(text.contains("\ntv_shell_restart_shell_total 1\n"));
+        assert!(text.contains("\ntv_shell_restart_daemon_total 1\n"));
+        assert!(text.contains("\ntv_shell_quickshell_multi_instance_total 1\n"));
     }
 
     #[test]
@@ -624,9 +624,9 @@ mod tests {
             version: "0.1.0".into(),
         };
         let text = render(&m, None, Some(&build));
-        assert!(text.contains("# TYPE game_shell_build_info gauge"));
+        assert!(text.contains("# TYPE tv_shell_build_info gauge"));
         assert!(text.contains(
-            "game_shell_build_info{sha=\"a1b2c3d\",branch=\"feat/daemon-observability\",version=\"0.1.0\"} 1\n"
+            "tv_shell_build_info{sha=\"a1b2c3d\",branch=\"feat/daemon-observability\",version=\"0.1.0\"} 1\n"
         ));
     }
 
@@ -652,14 +652,14 @@ mod tests {
         };
         let text = render(&m, Some(&sys), None);
 
-        assert!(text.contains("# TYPE game_shell_cpu_percent gauge"));
-        assert!(text.contains("\ngame_shell_cpu_percent 12.5\n"));
-        assert!(text.contains("\ngame_shell_mem_used_bytes 1024\n"));
-        assert!(text.contains("\ngame_shell_mem_total_bytes 4096\n"));
-        assert!(text.contains("\ngame_shell_load1 0.42\n"));
-        assert!(text.contains("# TYPE game_shell_temperature_celsius gauge"));
-        assert!(text.contains("game_shell_temperature_celsius{sensor=\"CPU Tctl\"} 55\n"));
-        assert!(text.contains("game_shell_temperature_celsius{sensor=\"GPU edge\"} 48.5\n"));
+        assert!(text.contains("# TYPE tv_shell_cpu_percent gauge"));
+        assert!(text.contains("\ntv_shell_cpu_percent 12.5\n"));
+        assert!(text.contains("\ntv_shell_mem_used_bytes 1024\n"));
+        assert!(text.contains("\ntv_shell_mem_total_bytes 4096\n"));
+        assert!(text.contains("\ntv_shell_load1 0.42\n"));
+        assert!(text.contains("# TYPE tv_shell_temperature_celsius gauge"));
+        assert!(text.contains("tv_shell_temperature_celsius{sensor=\"CPU Tctl\"} 55\n"));
+        assert!(text.contains("tv_shell_temperature_celsius{sensor=\"GPU edge\"} 48.5\n"));
     }
 
     #[test]
@@ -681,7 +681,7 @@ mod tests {
     fn write_atomic_creates_file_with_exact_contents() {
         let dir = std::env::temp_dir().join(format!("gs-metrics-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("game-shell.prom");
+        let path = dir.join("tv-shell.prom");
         let body = "# HELP x test\n# TYPE x counter\nx 1\n";
         write_atomic(&path, body).expect("atomic write succeeds");
         let read_back = std::fs::read_to_string(&path).unwrap();

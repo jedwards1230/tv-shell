@@ -1,4 +1,4 @@
-# Installing game-shell
+# Installing tv-shell
 
 A standalone install on any Linux box with Hyprland + Quickshell. The repo ships
 the installer and config examples, so you don't need any external deployment
@@ -7,15 +7,15 @@ section in [CLAUDE.md](../CLAUDE.md).
 
 ## What gets installed
 
-- The Rust input daemon (`game-shell-input`) → `<prefix>/bin/`
-- The QML shell + Hyprland config + scripts → `<prefix>/` (default prefix `/opt/game-shell`)
-- A Wayland session entry → `/usr/share/wayland-sessions/game-shell-wayland.desktop`
-- A `systemd --user` unit for the daemon → `~/.config/systemd/user/game-shell-input.service` (see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md))
-- A Quickshell config symlink → `~/.config/quickshell/game-shell`
-- A per-user config dir seeded from examples → `~/.config/game-shell/`
+- The Rust input daemon (`tv-shell-input`) → `<prefix>/bin/`
+- The QML shell + Hyprland config + scripts → `<prefix>/` (default prefix `/opt/tv-shell`)
+- A Wayland session entry → `/usr/share/wayland-sessions/tv-shell-wayland.desktop`
+- A `systemd --user` unit for the daemon → `~/.config/systemd/user/tv-shell-input.service` (see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md))
+- A Quickshell config symlink → `~/.config/quickshell/tv-shell`
+- A per-user config dir seeded from examples → `~/.config/tv-shell/`
 
 The shell is **prefix-agnostic** and resolves its install root at runtime, so any
-`--prefix` works; `/opt/game-shell` is just the installer's default.
+`--prefix` works; `/opt/tv-shell` is just the installer's default.
 
 ## 1. Dependencies
 
@@ -43,18 +43,18 @@ HDR — enable HDR inside VacuumTube (`wayland_hdr`) on an HDR-capable display.
 ## 2. Build + install
 
 ```bash
-sudo ./scripts/install.sh                 # default prefix /opt/game-shell
-sudo ./scripts/install.sh --prefix ~/.local/share/game-shell --user "$USER"
+sudo ./scripts/install.sh                 # default prefix /opt/tv-shell
+sudo ./scripts/install.sh --prefix ~/.local/share/tv-shell --user "$USER"
 ```
 
 Re-runnable: it rebuilds the daemon, refreshes the tree and session file, and
-never overwrites your existing `~/.config/game-shell` files. Useful flags:
+never overwrites your existing `~/.config/tv-shell` files. Useful flags:
 `--no-build` (reuse an existing binary), `--features` (daemon Cargo features,
 default `cec,mcp`), `--session-dir`, `--user`. See `./scripts/install.sh --help`.
 
 ## 3. Configure
 
-Everything machine-specific lives under `~/.config/game-shell/` and is seeded
+Everything machine-specific lives under `~/.config/tv-shell/` and is seeded
 from the `config/*.example` files on first install.
 
 ### Streaming targets — `targets.json`
@@ -74,7 +74,7 @@ bridge / MCP server binds, the auth toggle, CEC lifecycle, and the optional Plex
 Steam home-screen widgets. Every key is documented inline in
 `config/config.toml.example`. The shared bearer token is **never inline** — it
 lives in a separate `0600` file that `[http] token_file` points at (e.g.
-`openssl rand -hex 32 > ~/.config/game-shell/http-token`). Leave the file
+`openssl rand -hex 32 > ~/.config/tv-shell/http-token`). Leave the file
 untouched and the shell still boots fully.
 
 > **Startup safety check:** the daemon **refuses to start** if a control surface
@@ -92,13 +92,13 @@ will now hit the startup-refusal above. On such a box the deploy is no longer ju
 "restart the shell"; do it in this order so the daemon doesn't refuse to start:
 
 1. Run the installer/migration so the new tree + `config.toml.example` are in place.
-2. **Write `~/.config/game-shell/config.toml`** translating the box's old
+2. **Write `~/.config/tv-shell/config.toml`** translating the box's old
    `daemon.env` (and, if it ran LAN + dev + no-auth, include `[dev]
    allow_insecure_lan = true` — without it the daemon refuses to start). The old
-   `GAME_SHELL_*` env vars map to typed keys: HTTP/MCP → `[http]`/`[mcp]`, CEC →
+   `TV_SHELL_*` env vars map to typed keys: HTTP/MCP → `[http]`/`[mcp]`, CEC →
    `[cec].lifecycle`, Plex/Steam → `[plex]`/`[steam]`, and observability
-   (`GAME_SHELL_LOG_JOURNAL` / `GAME_SHELL_METRICS_TEXTFILE` /
-   `GAME_SHELL_METRICS_INTERVAL`) → `[observability]`. Only `RUST_LOG` stays an
+   (`TV_SHELL_LOG_JOURNAL` / `TV_SHELL_METRICS_TEXTFILE` /
+   `TV_SHELL_METRICS_INTERVAL`) → `[observability]`. Only `RUST_LOG` stays an
    env var.
 3. **Then** restart the daemon/shell.
 
@@ -121,17 +121,17 @@ allow_insecure_lan = true
 
 To **lock such a box down** instead of preserving the insecure loop, drop the
 `[dev]` block, set `[http] auth_enabled = true`, and point `[http] token_file` at
-a `0600` token file (`openssl rand -hex 32 > ~/.config/game-shell/http-token`).
+a `0600` token file (`openssl rand -hex 32 > ~/.config/tv-shell/http-token`).
 
 ### Display tuning — `hyprland-local.conf` (optional)
 
-`config/hyprland.conf` sources `~/.config/game-shell/hyprland-local.conf` if
+`config/hyprland.conf` sources `~/.config/tv-shell/hyprland-local.conf` if
 present (ignored if absent). Drop your `monitor=` line and any HDR/VRR quirks
 there — `config/hyprland.conf.example` is a worked 4K@120 10-bit HDR example.
 
 ## 4. Log in
 
-Pick **Game Shell (Wayland)** in your display manager and log in. For a kiosk box
+Pick **TV Shell (Wayland)** in your display manager and log in. For a kiosk box
 you'll usually also want autologin into this session — that's display-manager
 specific (SDDM `autologin`, plasmalogin, GDM) and intentionally left to you.
 
@@ -147,11 +147,11 @@ After logging in, the daemon runs as a `systemd --user` unit — check it and it
 logs:
 
 ```bash
-systemctl --user status game-shell-input         # active (running)
-journalctl --user -u game-shell-input -f         # daemon logs
-journalctl --user -t game-shell-quickshell -f    # quickshell output
+systemctl --user status tv-shell-input         # active (running)
+journalctl --user -u tv-shell-input -f         # daemon logs
+journalctl --user -t tv-shell-quickshell -f    # quickshell output
 ```
 
 If the LAN bridge is bound, `curl http://<host>:8089/metrics` returns Prometheus
-metrics — `game_shell_build_info` shows the deployed revision. Details in
+metrics — `tv_shell_build_info` shows the deployed revision. Details in
 [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) and [OBSERVABILITY.md](OBSERVABILITY.md).

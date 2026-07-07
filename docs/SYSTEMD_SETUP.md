@@ -1,7 +1,7 @@
 # systemd --user integration
 
-game-shell runs **both** its input/backend daemon (`game-shell-input`) **and** the
-Quickshell UI (`quickshell -c game-shell`) as **`systemd --user` services**. This
+tv-shell runs **both** its input/backend daemon (`tv-shell-input`) **and** the
+Quickshell UI (`quickshell -c tv-shell`) as **`systemd --user` services**. This
 is an operational wrapper around the same session boot — it does not change *what*
 runs, only *how* it's supervised and logged.
 
@@ -10,7 +10,7 @@ runs, only *how* it's supervised and logged.
 Running each process under `systemd --user` gives, natively and for free:
 
 - **journald log capture with unit metadata** — logs are queryable by unit
-  (`journalctl --user -u game-shell-input`, `-t game-shell-quickshell`) with
+  (`journalctl --user -u tv-shell-input`, `-t tv-shell-quickshell`) with
   timestamps, boot IDs, and priority, instead of being absorbed by the display
   manager.
 - **cgroup resource accounting** — each unit gets its own cgroup, so
@@ -25,9 +25,9 @@ Running each process under `systemd --user` gives, natively and for free:
 
 Quickshell was previously a bare Hyprland `exec-once` child with **no** supervisor
 — no restart-on-crash and no single-instance guarantee. It is now started as
-`game-shell-quickshell.service` (still *by* the compositor's `exec-once`, so
+`tv-shell-quickshell.service` (still *by* the compositor's `exec-once`, so
 Hyprland owns the window tree, but the process lifecycle is systemd's). Its merged
-stdout/stderr are tee'd to both the journal (tagged `game-shell-quickshell`) and
+stdout/stderr are tee'd to both the journal (tagged `tv-shell-quickshell`) and
 `/tmp/qs-log.txt` (the dev bridge's log), so existing `journalctl` and
 `/dev/logs` queries keep working unchanged.
 
@@ -35,23 +35,23 @@ stdout/stderr are tee'd to both the journal (tagged `game-shell-quickshell`) and
 
 | File | Role |
 |------|------|
-| `config/game-shell-input.service` | Daemon user unit (template — `ExecStart` rewritten at install). |
-| `config/game-shell-quickshell.service` | Quickshell UI user unit (installed verbatim; `quickshell` resolves from PATH). |
-| `scripts/game-shell-session.sh` | `systemctl --user start`s the daemon unit (bare-process fallback); `reset-failed`s + `stop`s the Quickshell unit around the session. |
+| `config/tv-shell-input.service` | Daemon user unit (template — `ExecStart` rewritten at install). |
+| `config/tv-shell-quickshell.service` | Quickshell UI user unit (installed verbatim; `quickshell` resolves from PATH). |
+| `scripts/tv-shell-session.sh` | `systemctl --user start`s the daemon unit (bare-process fallback); `reset-failed`s + `stop`s the Quickshell unit around the session. |
 | `config/hyprland.conf` | `exec-once` imports the Wayland session env, then `systemctl --user start`s the Quickshell unit (direct-spawn fallback). |
 | `scripts/install.sh` | Installs both units to `~/.config/systemd/user/` + `daemon-reload`. |
 
 ## The unit
 
-`config/game-shell-input.service`:
+`config/tv-shell-input.service`:
 
-- `Type=simple`, `ExecStart=<prefix>/bin/game-shell-input`. The committed copy
-  defaults `ExecStart` to `/opt/game-shell/bin/game-shell-input`; `install.sh`
+- `Type=simple`, `ExecStart=<prefix>/bin/tv-shell-input`. The committed copy
+  defaults `ExecStart` to `/opt/tv-shell/bin/tv-shell-input`; `install.sh`
   rewrites it to the resolved `--prefix` (the same way it rewrites the session
   `.desktop` `Exec=`).
 - **No `EnvironmentFile=`** — per-machine daemon options (HTTP/MCP binds +
   `token_file`, CEC lifecycle, Plex/Steam, observability) live in the typed
-  `~/.config/game-shell/config.toml`, which the daemon reads directly at startup.
+  `~/.config/tv-shell/config.toml`, which the daemon reads directly at startup.
   They are deliberately **not** environment variables, which is precisely what
   lets the daemon be configured correctly under this env-less unit (the unit
   inherits none of the session script's environment).
@@ -63,7 +63,7 @@ stdout/stderr are tee'd to both the journal (tagged `game-shell-quickshell`) and
   single owner of the daemon lifecycle.
 
 The daemon self-discovers everything else: its **install root** from its own
-binary path (`current_exe`), its **socket** (`/run/user/$UID/game-shell-input.sock`
+binary path (`current_exe`), its **socket** (`/run/user/$UID/tv-shell-input.sock`
 by default — the same path the session script and QML use), and the Wayland /
 Hyprland session env (resolved lazily from `$XDG_RUNTIME_DIR`, since the daemon
 starts before the compositor). So the unit needs no `Environment=`/`WorkingDirectory=`
@@ -71,11 +71,11 @@ wiring.
 
 ## The Quickshell unit
 
-`config/game-shell-quickshell.service`:
+`config/tv-shell-quickshell.service`:
 
 - `Type=simple`, `ExecStartPre=-/usr/bin/pkill -x quickshell` (belt-and-braces:
   reap any stray Quickshell before starting; the `-` makes a no-match non-fatal),
-  `ExecStart=/bin/bash -o pipefail -c 'quickshell -c game-shell 2>&1 | tee /tmp/qs-log.txt'`
+  `ExecStart=/bin/bash -o pipefail -c 'quickshell -c tv-shell 2>&1 | tee /tmp/qs-log.txt'`
   (`bash -o pipefail`, not `sh`, so a Quickshell crash propagates through the
   `| tee` pipeline instead of being masked as `tee`'s exit 0 — otherwise
   `Restart=on-failure` would never fire).
@@ -84,7 +84,7 @@ wiring.
   verbatim.
 - **Dual-sink logging.** `tee` writes the merged output to `/tmp/qs-log.txt` (the
   dev bridge's log — `bridge_core` `get_logs` / `/dev/restart-shell`), and `tee`'s
-  stdout flows to the journal under `SyslogIdentifier=game-shell-quickshell`. `tee`
+  stdout flows to the journal under `SyslogIdentifier=tv-shell-quickshell`. `tee`
   truncates the file on each (re)start, matching the old `exec-once` behavior and
   the dev bridge's truncate-on-restart. So both sinks the rest of the system reads
   are preserved.
@@ -109,23 +109,23 @@ wiring.
 
 ## Session boot flow
 
-`scripts/game-shell-session.sh` (launched by the display manager):
+`scripts/tv-shell-session.sh` (launched by the display manager):
 
-1. Exports `GAME_SHELL_*` session vars (install root, socket, targets path). It no
+1. Exports `TV_SHELL_*` session vars (install root, socket, targets path). It no
    longer sources a `daemon.env` — per-machine daemon options are in `config.toml`,
    read by the daemon itself.
 2. Starts the daemon:
-   - **Preferred:** `systemctl --user start game-shell-input.service` (after a
+   - **Preferred:** `systemctl --user start tv-shell-input.service` (after a
      `reset-failed` to clear any stale state).
    - **Fallback:** a bare background process (`"$INPUT_BIN" &`) — the legacy
      path — used when `systemctl --user` is unavailable (no user manager / bus)
-     **or** when a dev override `GAME_SHELL_INPUT_BIN` is set (the unit's
+     **or** when a dev override `TV_SHELL_INPUT_BIN` is set (the unit's
      `ExecStart` is the installed binary and can't honor an arbitrary override).
-   - Also `reset-failed`s `game-shell-quickshell.service` (best-effort, gated on
+   - Also `reset-failed`s `tv-shell-quickshell.service` (best-effort, gated on
      user-systemd availability) so a lingering `StartLimit` failure from a prior
      session doesn't refuse this session's `exec-once` start.
 3. `exec`s Hyprland, whose `exec-once` imports the Wayland session env and
-   `systemctl --user start`s `game-shell-quickshell.service` (direct-spawn
+   `systemctl --user start`s `tv-shell-quickshell.service` (direct-spawn
    fallback if the user manager or unit is absent).
 4. On session exit, the `EXIT` trap `systemctl --user stop`s the daemon unit (or
    `kill`s the bare PID in the fallback path), and also `stop`s the Quickshell
@@ -140,20 +140,20 @@ before, just without the journald/cgroup benefits.
 
 ```bash
 # Daemon unit — status, recent logs, follow
-systemctl --user status game-shell-input
-journalctl --user -u game-shell-input -f
+systemctl --user status tv-shell-input
+journalctl --user -u tv-shell-input -f
 
 # Quickshell unit — status + logs (SyslogIdentifier keeps the -t query working)
-systemctl --user status game-shell-quickshell
-journalctl --user -u game-shell-quickshell -f    # by unit
-journalctl --user -t game-shell-quickshell -f    # by tag (same stream)
+systemctl --user status tv-shell-quickshell
+journalctl --user -u tv-shell-quickshell -f    # by unit
+journalctl --user -t tv-shell-quickshell -f    # by tag (same stream)
 
 # Confirm exactly one instance of each (single-instance check)
-systemctl --user show -p MainPID -p ActiveState game-shell-input game-shell-quickshell
+systemctl --user show -p MainPID -p ActiveState tv-shell-input tv-shell-quickshell
 pgrep -xc quickshell   # should print 1
 
 # Per-unit cgroup resource accounting (what node_exporter's systemd collector sees)
-systemctl --user status game-shell-input game-shell-quickshell
+systemctl --user status tv-shell-input tv-shell-quickshell
 systemd-cgtop --user
 ```
 
@@ -171,11 +171,11 @@ hand (e.g. a custom prefix wired up without the installer):
 # unit is copied verbatim (quickshell resolves from PATH).
 mkdir -p ~/.config/systemd/user
 awk -v prefix="$PREFIX" \
-    '/^ExecStart=/ { print "ExecStart=" prefix "/bin/game-shell-input"; next } { print }' \
-    "$PREFIX/config/game-shell-input.service" \
-    > ~/.config/systemd/user/game-shell-input.service
-cp "$PREFIX/config/game-shell-quickshell.service" \
-    ~/.config/systemd/user/game-shell-quickshell.service
+    '/^ExecStart=/ { print "ExecStart=" prefix "/bin/tv-shell-input"; next } { print }' \
+    "$PREFIX/config/tv-shell-input.service" \
+    > ~/.config/systemd/user/tv-shell-input.service
+cp "$PREFIX/config/tv-shell-quickshell.service" \
+    ~/.config/systemd/user/tv-shell-quickshell.service
 systemctl --user daemon-reload
 ```
 
@@ -189,24 +189,24 @@ flow the session script's explicit `start`/`stop` is the intended lifecycle.
 - **No journald logs for the daemon?** The bare-process fallback was taken.
   Check `systemctl --user show-environment` works in the session; if not, the
   user manager isn't running. Logs then go wherever the session's stdout goes.
-- **Dev override active?** If `GAME_SHELL_INPUT_BIN` is set, the session
+- **Dev override active?** If `TV_SHELL_INPUT_BIN` is set, the session
   intentionally bypasses the unit (bare process) so your override binary runs.
   Unset it to go back through systemd.
 - **Two daemons after a crash?** Shouldn't happen — the session does
   `reset-failed` then `start`, and `stop`s on exit. If you started one by hand,
-  `systemctl --user stop game-shell-input` and let the session own it.
+  `systemctl --user stop tv-shell-input` and let the session own it.
 - **Stacked Quickshell instances (#254)?** Shouldn't happen under systemd — the
   unit guarantees a single instance and `/dev/restart-shell` prefers
   `systemctl --user restart` over kill+spawn. If `pgrep -xc quickshell` prints >1,
   a non-systemd path stacked them (a manual `quickshell &`, or the exec-once /
   daemon fallback ran because the user manager was unavailable). Recover with
-  `systemctl --user restart game-shell-quickshell` (or `pkill -x quickshell` then
-  re-run the exec-once). The daemon bumps `game_shell_quickshell_multi_instance_total`
+  `systemctl --user restart tv-shell-quickshell` (or `pkill -x quickshell` then
+  re-run the exec-once). The daemon bumps `tv_shell_quickshell_multi_instance_total`
   whenever it observes this, so alert on that counter being non-zero.
 - **Frequent restarts / unit gives up?** `Restart=on-failure` is rate-limited to
   `StartLimitBurst=3` per `StartLimitIntervalSec=60` — if the daemon hits a
   persistent error (e.g. evdev/uinput permission denied, socket creation failure)
   it restarts at most 3×/60s, then systemd stops trying (no 2s thrash loop).
-  Check `journalctl --user -u game-shell-input` for the root cause; after the
-  window elapses, `systemctl --user reset-failed game-shell-input && systemctl
-  --user start game-shell-input` to retry.
+  Check `journalctl --user -u tv-shell-input` for the root cause; after the
+  window elapses, `systemctl --user reset-failed tv-shell-input && systemctl
+  --user start tv-shell-input` to retry.

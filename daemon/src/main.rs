@@ -1,4 +1,4 @@
-//! game-shell input daemon.
+//! tv-shell input daemon.
 //!
 //! Grabs a gamepad exclusively via `EVIOCGRAB`, emits keyboard/mouse events via
 //! uinput, and serves a newline-delimited IPC protocol on a Unix socket
@@ -12,20 +12,20 @@
 //! scheduler. The two communicate over an `mpsc` control channel and a
 //! `broadcast` event bus.
 
-// Daemon modules live in the library crate (`game_shell_input`); this binary
+// Daemon modules live in the library crate (`tv_shell_input`); this binary
 // only wires them together. (lib+bin split — see lib.rs — so the cross-platform
 // modules aren't dead-code on non-Linux hosts where `main` is cfg-excluded.)
 #[cfg(target_os = "linux")]
-use game_shell_input::{
+use tv_shell_input::{
     bluetooth, http, hyprland, input, ipc, network, power, protocol, session, session_env, state,
     watch,
 };
 
 #[cfg(all(target_os = "linux", feature = "mcp"))]
-use game_shell_input::mcp;
+use tv_shell_input::mcp;
 
 #[cfg(target_os = "linux")]
-use game_shell_input::ipc::{ControllerDbState, SharedControllerDbState};
+use tv_shell_input::ipc::{ControllerDbState, SharedControllerDbState};
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -35,23 +35,29 @@ fn main() -> anyhow::Result<()> {
     // module imported at the top of the file (`watch::run`).
     use tokio::sync::{broadcast, mpsc, Notify};
 
-    // Load the typed config (~/.config/game-shell/config.toml) FIRST — before
+    // Load the typed config (~/.config/tv-shell/config.toml) FIRST — before
     // tracing init, so the logging backend can be driven by
     // [observability].log_journal. A missing file is fine (all-default ⇒ no
     // control surface); a malformed file or an unsafe combination (LAN bind +
     // dev tools + no auth, without [dev].allow_insecure_lan) is a hard startup
     // failure (the `?` surfaces it to stderr even before tracing is up). Validate
     // BEFORE installing the global / opening any socket.
-    let daemon_cfg = game_shell_input::daemon_config::DaemonConfig::load()?;
+    let daemon_cfg = tv_shell_input::daemon_config::DaemonConfig::load()?;
     daemon_cfg.validate()?;
 
     init_tracing(daemon_cfg.observability.log_journal);
 
-    game_shell_input::daemon_config::init_global(daemon_cfg.clone());
+    tv_shell_input::daemon_config::init_global(daemon_cfg.clone());
 
     let uid = unsafe { libc::getuid() };
-    let sock_path = std::env::var("GAME_SHELL_SOCK")
-        .unwrap_or_else(|_| format!("/run/user/{uid}/game-shell-input.sock"));
+    // TV_SHELL_SOCK (legacy GAME_SHELL_SOCK) override; default socket basename
+    // comes from brand::socket_name() so the daemon and QML shell agree on it.
+    let sock_path = tv_shell_protocol::brand::env("SOCK").unwrap_or_else(|| {
+        format!(
+            "/run/user/{uid}/{}",
+            tv_shell_protocol::brand::socket_name()
+        )
+    });
 
     let (events_tx, _events_rx) = broadcast::channel::<protocol::Event>(256);
     let (control_tx, control_rx) = mpsc::channel::<state::Control>(64);
@@ -69,7 +75,7 @@ fn main() -> anyhow::Result<()> {
     // (textfile writer + `/metrics` HTTP route). Count this start as a restart:
     // the daemon re-execs on /dev/restart-daemon and is otherwise supervised, so
     // the running total is the shell-input restart count for this boot session.
-    let metrics = game_shell_input::metrics::Metrics::new();
+    let metrics = tv_shell_input::metrics::Metrics::new();
     metrics.inc_shell_restarts();
 
     // Dedicated channel for the file-watch actor to signal the input runtime
@@ -150,7 +156,7 @@ fn main() -> anyhow::Result<()> {
             let textfile = daemon_cfg.observability.metrics_textfile.clone();
             let interval = daemon_cfg.metrics_interval_secs();
             tokio::spawn(async move {
-                game_shell_input::metrics::run_textfile_writer(writer_metrics, textfile, interval)
+                tv_shell_input::metrics::run_textfile_writer(writer_metrics, textfile, interval)
                     .await;
             });
         }
@@ -176,7 +182,7 @@ fn main() -> anyhow::Result<()> {
         {
             let health_events = events_tx.clone();
             tokio::spawn(async move {
-                game_shell_input::service_health::run(health_events).await;
+                tv_shell_input::service_health::run(health_events).await;
             });
         }
 
@@ -278,7 +284,7 @@ fn main() -> anyhow::Result<()> {
         use std::os::unix::process::CommandExt;
         // Re-exec the canonical install-path binary, NOT current_exe(): a fresh
         // `/dev/build` replaces the binary inode, so /proc/self/exe resolves to
-        // "…/game-shell-input (deleted)" and exec()ing that path fails ENOENT.
+        // "…/tv-shell-input (deleted)" and exec()ing that path fails ENOENT.
         // The install path always points at the just-built binary.
         let exe = session_env::input_bin();
         let err = std::process::Command::new(&exe)
@@ -299,7 +305,7 @@ fn main() -> anyhow::Result<()> {
 ///
 /// `control_tx` is a clone of the input runtime's control channel. It is handed
 /// to the CEC actor (under `--features cec`) so CEC remote keypresses can be
-/// injected as `Control::Key` nav events — gated by `GAME_SHELL_CEC_LIFECYCLE`.
+/// injected as `Control::Key` nav events — gated by `TV_SHELL_CEC_LIFECYCLE`.
 ///
 /// `active_window_tx` is the sender half of the coalescing focused-window watch
 /// channel, handed to the Hyprland actor so `activewindow` changes drive the
@@ -345,7 +351,7 @@ fn spawn_dbus_actors(
         // Hand the power actor a clone of the CEC channel so logind
         // PrepareForSleep can drive the CEC lifecycle (standby on suspend, wake
         // on resume). Only present under `--features cec`; the CEC actor no-ops
-        // these unless GAME_SHELL_CEC_LIFECYCLE is enabled.
+        // these unless TV_SHELL_CEC_LIFECYCLE is enabled.
         #[cfg(feature = "cec")]
         let power_cec_tx = Some(cec_tx.clone());
         tokio::spawn(async move {
@@ -377,7 +383,7 @@ fn spawn_dbus_actors(
         // keypresses as nav `Control::Key` events (gated by the lifecycle flag).
         let cec_control_tx = control_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = game_shell_input::cec::run(cec_rx, events_tx, cec_control_tx).await {
+            if let Err(e) = tv_shell_input::cec::run(cec_rx, events_tx, cec_control_tx).await {
                 tracing::warn!("cec actor exited: {e}");
             }
         });
@@ -440,7 +446,7 @@ fn init_tracing(log_journal: Option<bool>) {
                 return;
             }
             Err(e) => {
-                eprintln!("game-shell-input: journald unavailable ({e}), logging to stdout");
+                eprintln!("tv-shell-input: journald unavailable ({e}), logging to stdout");
             }
         }
     }
@@ -468,6 +474,6 @@ async fn wait_for_signal() {
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("game-shell-input only runs on Linux (requires evdev/uinput).");
+    eprintln!("tv-shell-input only runs on Linux (requires evdev/uinput).");
     std::process::exit(1);
 }

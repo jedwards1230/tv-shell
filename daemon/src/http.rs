@@ -2,13 +2,13 @@
 //! `POST /intent/<target>`, `POST /key/<name>`, and `GET /screenshot` onto the
 //! daemon's existing intent/key broadcast paths and the `grim` screenshotter.
 //!
-//! **Opt-in**: the bridge only starts when the `GAME_SHELL_HTTP_BIND`
+//! **Opt-in**: the bridge only starts when the `TV_SHELL_HTTP_BIND`
 //! environment variable is set to a `host:port` address. When it is unset, no
 //! socket is opened and no control surface is exposed.
 //!
-//! **Auth**: controlled by `GAME_SHELL_HTTP_AUTH_ENABLED` (default: enabled).
+//! **Auth**: controlled by `TV_SHELL_HTTP_AUTH_ENABLED` (default: enabled).
 //! Set to `0` or `false` to skip auth entirely (local-only dev). When enabled
-//! (the default), `GAME_SHELL_HTTP_TOKEN` must be set; every request must carry
+//! (the default), `TV_SHELL_HTTP_TOKEN` must be set; every request must carry
 //! `Authorization: Bearer <token>` (constant-time comparison, #151). If auth is
 //! enabled but no token is configured, all requests are rejected with 401 and a
 //! loud warning is logged. When the token variable is unset AND auth is disabled,
@@ -307,7 +307,7 @@ pub fn http_response(status: u16, body: &str) -> String {
 /// write these bytes then immediately write the raw PNG bytes — do NOT use
 /// `http_response` for binary bodies since it assumes a UTF-8 `&str` body.
 ///
-/// Capture provenance rides in `X-GameShell-*` headers (not the body), so the
+/// Capture provenance rides in `X-TvShell-*` headers (not the body), so the
 /// PNG stays byte-identical to a metadata-unaware client (`curl -o shot.png`).
 /// All four values are header-safe: git SHAs/branch names and the RFC3339
 /// timestamp contain no CR/LF.
@@ -316,10 +316,10 @@ fn png_response_header(png_len: usize, meta: &bridge_core::CaptureMeta) -> Vec<u
         "HTTP/1.1 200 OK\r\n\
          Content-Type: image/png\r\n\
          Content-Length: {png_len}\r\n\
-         X-GameShell-Sha: {sha}\r\n\
-         X-GameShell-Branch: {branch}\r\n\
-         X-GameShell-Version: {version}\r\n\
-         X-GameShell-Captured-At: {captured_at}\r\n\
+         X-TvShell-Sha: {sha}\r\n\
+         X-TvShell-Branch: {branch}\r\n\
+         X-TvShell-Version: {version}\r\n\
+         X-TvShell-Captured-At: {captured_at}\r\n\
          Connection: close\r\n\r\n",
         sha = meta.sha,
         branch = meta.branch,
@@ -597,7 +597,7 @@ async fn handle_metrics(metrics: &std::sync::Arc<crate::metrics::Metrics>) -> St
 // These thin wrappers translate bridge_core Results into HTTP response strings.
 
 /// `POST /dev/deploy[?ref=<ref>]` — git fetch + checkout + reset to remote.
-/// Records the outcome on `game_shell_deploy_total{outcome="ok|error"}`.
+/// Records the outcome on `tv_shell_deploy_total{outcome="ok|error"}`.
 async fn handle_dev_deploy(
     git_ref: Option<&str>,
     metrics: &std::sync::Arc<crate::metrics::Metrics>,
@@ -677,8 +677,8 @@ const DEV_TIMEOUT_SECS: u64 = 180;
 /// connections beyond the cap receive an immediate 503 and are dropped.
 ///
 /// The `token` parameter is the optional bearer token from
-/// `GAME_SHELL_HTTP_TOKEN`. The `auth_enabled` parameter is read from
-/// `GAME_SHELL_HTTP_AUTH_ENABLED` (default `true`). When auth is enabled but no
+/// `TV_SHELL_HTTP_TOKEN`. The `auth_enabled` parameter is read from
+/// `TV_SHELL_HTTP_AUTH_ENABLED` (default `true`). When auth is enabled but no
 /// token is configured, all requests are rejected with 401 and a loud warning is
 /// logged. When auth is disabled, a warning is logged and auth is skipped
 /// entirely (for local-only dev). A warning is also emitted when binding to an
@@ -694,22 +694,22 @@ pub async fn serve(
     reexec_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     metrics: std::sync::Arc<crate::metrics::Metrics>,
 ) {
-    // Treat an empty token as no token at all, so GAME_SHELL_HTTP_TOKEN="" fails
+    // Treat an empty token as no token at all, so TV_SHELL_HTTP_TOKEN="" fails
     // closed (rejects all) rather than accepting an empty `Bearer ` credential.
     let token = token.filter(|t| !t.is_empty());
 
     if !auth_enabled {
         tracing::warn!(
-            "http bridge: AUTH DISABLED (GAME_SHELL_HTTP_AUTH_ENABLED=0) — \
+            "http bridge: AUTH DISABLED (TV_SHELL_HTTP_AUTH_ENABLED=0) — \
              any host on the network can send control commands without authentication"
         );
     } else if token.is_none() {
         // Auth is enabled but no token is configured — all requests will be
         // rejected with 401. Log a loud warning so the operator knows to set it.
         tracing::warn!(
-            "http bridge: auth is ENABLED but GAME_SHELL_HTTP_TOKEN is not set — \
+            "http bridge: auth is ENABLED but TV_SHELL_HTTP_TOKEN is not set — \
              all requests will be rejected with 401 (set the token or disable auth \
-             with GAME_SHELL_HTTP_AUTH_ENABLED=0)"
+             with TV_SHELL_HTTP_AUTH_ENABLED=0)"
         );
     } else if addr.ip().is_unspecified() {
         // Token is set but we're binding to 0.0.0.0/:: — still worth a note.
@@ -1051,10 +1051,10 @@ mod tests {
         assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(s.contains("Content-Type: image/png\r\n"));
         assert!(s.contains("Content-Length: 1234\r\n"));
-        assert!(s.contains("X-GameShell-Sha: a1b2c3d\r\n"));
-        assert!(s.contains("X-GameShell-Branch: feat/screenshot-metadata\r\n"));
-        assert!(s.contains("X-GameShell-Version: 0.1.0\r\n"));
-        assert!(s.contains("X-GameShell-Captured-At: 2026-06-14T18:26:00Z\r\n"));
+        assert!(s.contains("X-TvShell-Sha: a1b2c3d\r\n"));
+        assert!(s.contains("X-TvShell-Branch: feat/screenshot-metadata\r\n"));
+        assert!(s.contains("X-TvShell-Version: 0.1.0\r\n"));
+        assert!(s.contains("X-TvShell-Captured-At: 2026-06-14T18:26:00Z\r\n"));
         assert!(s.contains("Connection: close\r\n"));
         assert!(s.ends_with("\r\n\r\n"));
     }

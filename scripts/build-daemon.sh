@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Canonical release build for the game-shell input daemon.
+# Canonical release build for the tv-shell input daemon.
 #
 # Single source of truth for the daemon's on-device / deploy build flags (Cargo
 # features, profile). Consumers that build the daemon on a device — the dev HTTP
@@ -18,19 +18,19 @@
 # pkg-config + network to fetch the prebuilt static archive). A host can then
 # manage/remove system libcec without breaking the daemon.
 #
-# Env overrides:
-#   GAME_SHELL_ROOT      repo root (default: parent of this script's directory)
-#   GAME_SHELL_FEATURES  cargo --features list (default: "cec,mcp")
+# Env overrides (legacy GAME_SHELL_* names honored as a fallback):
+#   TV_SHELL_ROOT      repo root (default: parent of this script's directory)
+#   TV_SHELL_FEATURES  cargo --features list (default: "cec,mcp")
 set -euo pipefail
 
-ROOT="${GAME_SHELL_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-FEATURES="${GAME_SHELL_FEATURES:-cec,mcp}"
+ROOT="${TV_SHELL_ROOT:-${GAME_SHELL_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
+FEATURES="${TV_SHELL_FEATURES:-${GAME_SHELL_FEATURES:-cec,mcp}}"
 
 # The repo is a Cargo workspace (daemon/ + host/ + protocol/). Build the daemon
-# package explicitly (`-p game-shell-input`) from the workspace root so the
+# package explicitly (`-p tv-shell-input`) from the workspace root so the
 # host's pure-Rust crate is never dragged into the daemon's Linux/cec build, and
 # so the output lands at the workspace-root `target/release/` (one shared target
 # dir). `--features` only applies to the daemon's own cec/mcp gates.
 cd "$ROOT"
-echo "build-daemon: cargo build --release -p game-shell-input --features ${FEATURES} (in ${ROOT})"
-exec cargo build --release -p game-shell-input --features "${FEATURES}"
+echo "build-daemon: cargo build --release -p tv-shell-input --features ${FEATURES} (in ${ROOT})"
+exec cargo build --release -p tv-shell-input --features "${FEATURES}"

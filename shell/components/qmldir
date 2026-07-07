@@ -1,4 +1,5 @@
 module components
+singleton Brand 1.0 Brand.qml
 singleton Paths 1.0 Paths.qml
 singleton SettingsStore 1.0 SettingsStore.qml
 singleton AppDiscoveryManager 1.0 AppDiscoveryManager.qml

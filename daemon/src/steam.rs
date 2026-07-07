@@ -6,7 +6,7 @@
 //! installed Steam games on the gaming PC; selecting one fires `steam-launch
 //! <appid>` (also handled here) and then starts the existing Moonlight stream.
 //!
-//! The actual enumeration + launch live in `game-shell-host` — a thin
+//! The actual enumeration + launch live in `tv-shell-host` — a thin
 //! cross-platform sidecar that runs **on the gaming PC** (a *different machine*;
 //! see `docs/HOST_SETUP.md`). This daemon module is an **HTTP client** to that
 //! host: it proxies the host's `GET /library` / `GET /status` / `POST /launch` /
@@ -14,10 +14,10 @@
 //! [`crate::sidecar::Sidecar`] client. It does **not** spawn, supervise, or
 //! restart the host — the host is deployed independently on the gaming PC.
 //!
-//! **Config** lives in `~/.config/game-shell/config.toml` under `[steam]`:
-//! - `url`        — game-shell-host base, e.g. `http://192.0.2.1:47995`
+//! **Config** lives in `~/.config/tv-shell/config.toml` under `[steam]`:
+//! - `url`        — tv-shell-host base, e.g. `http://192.0.2.1:47995`
 //! - `token_file` — path to a `0600` file holding the host's bearer token
-//!   (`GAME_SHELL_HOST_TOKEN`). The token lives only in the daemon's config;
+//!   (`TV_SHELL_HOST_TOKEN`). The token lives only in the daemon's config;
 //!   QML never reads it.
 //!
 //! The reply carries a `status` field from the shared [`crate::service_health`]
@@ -25,7 +25,7 @@
 //! host apart from an empty library. When unconfigured the command returns
 //! `{"status":"disabled",…}` so the widget collapses to nothing.
 //!
-//! Host responses are deserialized into the shared [`game_shell_protocol`] types
+//! Host responses are deserialized into the shared [`tv_shell_protocol`] types
 //! (`LibraryResponse` / `StatusResponse`), so the daemon↔host JSON contract is
 //! single-sourced and can't silently drift. The response *normalizer*
 //! ([`normalize_library`]) is a pure function, unit-tested on every platform; only
@@ -33,8 +33,8 @@
 
 use crate::service_health::ServiceStatus;
 use crate::sidecar::Sidecar;
-use game_shell_protocol::{LibraryEntry, LibraryResponse, StatusResponse};
 use serde_json::{json, Value};
+use tv_shell_protocol::{LibraryEntry, LibraryResponse, StatusResponse};
 
 /// Recently-played rail cap. The rows only show a handful at 4K.
 const RECENT_LIMIT: usize = 12;
@@ -199,10 +199,10 @@ pub async fn handle_steam_quit(appid: u32) -> String {
 }
 
 /// The `{appid}` POST body for `/launch` and `/quit`, built from the shared
-/// [`game_shell_protocol::LaunchRequest`] so the request shape is single-sourced
+/// [`tv_shell_protocol::LaunchRequest`] so the request shape is single-sourced
 /// with the host (which deserializes the same type). Serializes to `{"appid":N}`.
 fn launch_body(appid: u32) -> Value {
-    serde_json::to_value(game_shell_protocol::LaunchRequest { appid })
+    serde_json::to_value(tv_shell_protocol::LaunchRequest { appid })
         .expect("LaunchRequest always serializes")
 }
 

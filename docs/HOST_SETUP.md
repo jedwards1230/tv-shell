@@ -1,14 +1,14 @@
 # Host Setup & Pairing
 
-`game-shell-host` is a small cross-platform sidecar you run **on the gaming PC**
-(the Steam machine that Sunshine streams from). The game-shell TV client's daemon
+`tv-shell-host` is a small cross-platform sidecar you run **on the gaming PC**
+(the Steam machine that Sunshine streams from). The tv-shell TV client's daemon
 talks to it over HTTP to list installed Steam games, show their art on the home
 screen, and launch a game into Big Picture before Moonlight streams it.
 
 ```
 game-client (TV)                          gaming PC (Steam host)
-  game-shell-input daemon ──HTTP :47995──▶ game-shell-host
-    [steam] url   (config.toml)              GAME_SHELL_HOST_TOKEN  (env)
+  tv-shell-input daemon ──HTTP :47995──▶ tv-shell-host
+    [steam] url   (config.toml)              TV_SHELL_HOST_TOKEN  (env)
     [steam] token (bearer, must match the host token)
 ```
 
@@ -36,9 +36,9 @@ It never touches Sunshine config, so other Moonlight clients are unaffected.
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `GAME_SHELL_HOST_TOKEN` | random (logged at startup) | Bearer token. **Set it** to a stable value so the daemon can be paired. |
-| `GAME_SHELL_HOST_PORT`  | `47995` | Listen port (chosen outside Sunshine's 47984–47990 range). |
-| `GAME_SHELL_HOST_BIND`  | `0.0.0.0` | Listen address (all LAN interfaces). |
+| `TV_SHELL_HOST_TOKEN` | random (logged at startup) | Bearer token. **Set it** to a stable value so the daemon can be paired. |
+| `TV_SHELL_HOST_PORT`  | `47995` | Listen port (chosen outside Sunshine's 47984–47990 range). |
+| `TV_SHELL_HOST_BIND`  | `0.0.0.0` | Listen address (all LAN interfaces). |
 
 Generate a token once and reuse it on both ends:
 
@@ -55,46 +55,46 @@ role. You don't run anything by hand — set the flags and apply:
 
 ```yaml
 # host_vars/gaming-host.yaml
-game_shell_host_enabled: true
-game_shell_host_install_method: fetch          # download the released binary
-game_shell_host_version: "0.1.0"               # the host-v<version> release tag
-game_shell_host_binary_sha256: "<from the release checksums.txt>"
-game_shell_host_token: !vault | ...            # vault-encrypted; reuse the daemon's token
+tv_shell_host_enabled: true
+tv_shell_host_install_method: fetch          # download the released binary
+tv_shell_host_version: "0.1.0"               # the host-v<version> release tag
+tv_shell_host_binary_sha256: "<from the release checksums.txt>"
+tv_shell_host_token: !vault | ...            # vault-encrypted; reuse the daemon's token
 ```
 
 ```bash
-ansible-playbook playbooks/site-desktop.yml --tags game-shell-host,firewall
+ansible-playbook playbooks/site-desktop.yml --tags tv-shell-host,firewall
 ```
 
-The role installs the binary to `/usr/local/bin/game-shell-host`, writes a `0600`
+The role installs the binary to `/usr/local/bin/tv-shell-host`, writes a `0600`
 env file, enables linger so the unit survives logout/reboot, and opens the LAN
 firewall to port 47995. See the role for the full variable list.
 
 ## Install path B — manual (any gaming PC)
 
 1. **Download** the binary for your OS from the latest `host-v*`
-   [release](https://github.com/jedwards1230/game-shell/releases):
+   [release](https://github.com/jedwards1230/tv-shell/releases):
 
    | OS | Asset |
    |----|-------|
-   | Linux | `game-shell-host-x86_64-unknown-linux-musl` |
-   | macOS (Apple Silicon) | `game-shell-host-aarch64-apple-darwin` |
-   | macOS (Intel) | `game-shell-host-x86_64-apple-darwin` |
-   | Windows | `game-shell-host-x86_64-pc-windows-msvc.exe` |
+   | Linux | `tv-shell-host-x86_64-unknown-linux-musl` |
+   | macOS (Apple Silicon) | `tv-shell-host-aarch64-apple-darwin` |
+   | macOS (Intel) | `tv-shell-host-x86_64-apple-darwin` |
+   | Windows | `tv-shell-host-x86_64-pc-windows-msvc.exe` |
 
    Verify it against the release `checksums.txt`, then install it
-   (e.g. `install -m755 game-shell-host-* /usr/local/bin/game-shell-host`).
+   (e.g. `install -m755 tv-shell-host-* /usr/local/bin/tv-shell-host`).
 
 2. **Run it** with a stable token. Quick smoke test:
 
    ```bash
-   GAME_SHELL_HOST_TOKEN=<token> game-shell-host
-   # → game-shell-host listening on 0.0.0.0:47995
+   TV_SHELL_HOST_TOKEN=<token> tv-shell-host
+   # → tv-shell-host listening on 0.0.0.0:47995
    ```
 
    To keep it running, install it as a service. On Linux a user unit bound to the
    graphical session works (Steam must reach the live desktop session to launch a
-   game) — mirror `roles/desktop-common/templates/game-shell-host.service.j2` from
+   game) — mirror `roles/desktop-common/templates/tv-shell-host.service.j2` from
    the homelab-ansible repo. On Windows use Task Scheduler (at-logon); on macOS a
    launchd LaunchAgent.
 
@@ -114,19 +114,19 @@ firewall to port 47995. See the role for the full variable list.
 
 ### Windows
 
-1. **Download** `game-shell-host-x86_64-pc-windows-msvc.exe` from the latest
-   `host-v*` [release](https://github.com/jedwards1230/game-shell/releases) and
+1. **Download** `tv-shell-host-x86_64-pc-windows-msvc.exe` from the latest
+   `host-v*` [release](https://github.com/jedwards1230/tv-shell/releases) and
    verify it against `checksums.txt`.
 
-2. **Set env vars** for the same user session Steam runs in: `GAME_SHELL_HOST_TOKEN`
+2. **Set env vars** for the same user session Steam runs in: `TV_SHELL_HOST_TOKEN`
    (the **same** token used on the Linux boot, see the dual-boot note below),
    optionally `STEAM_PATH` (only if Steam isn't at the default
-   `C:\Program Files (x86)\Steam`) and `GAME_SHELL_HOST_PORT`.
+   `C:\Program Files (x86)\Steam`) and `TV_SHELL_HOST_PORT`.
 
 3. **Open the firewall** (LAN-scoped):
 
    ```powershell
-   New-NetFirewallRule -DisplayName "game-shell-host" -Direction Inbound -Action Allow `
+   New-NetFirewallRule -DisplayName "tv-shell-host" -Direction Inbound -Action Allow `
      -Protocol TCP -LocalPort 47995 -RemoteAddress 192.0.2.0/24
    ```
 
@@ -135,15 +135,15 @@ firewall to port 47995. See the role for the full variable list.
    then register the task:
 
    ```powershell
-   setx GAME_SHELL_HOST_TOKEN <token>
-   schtasks /Create /TN "game-shell-host" /TR "\"C:\path\to\game-shell-host.exe\"" `
+   setx TV_SHELL_HOST_TOKEN <token>
+   schtasks /Create /TN "tv-shell-host" /TR "\"C:\path\to\tv-shell-host.exe\"" `
      /SC ONLOGON /RL LIMITED /F
    ```
 
    Steam must be running in the same interactive session for launches to work.
 
 > **Dual-boot note.** desktop-2 (Windows) and the CachyOS boot are the **same
-> machine, same LAN IP**. Reuse the same `GAME_SHELL_HOST_TOKEN` on both OSes so
+> machine, same LAN IP**. Reuse the same `TV_SHELL_HOST_TOKEN` on both OSes so
 > the TV daemon's `[steam]` config (`url` + `token`) never has to change —
 > whichever OS is currently booted answers on the same IP:port with zero
 > client-side changes.
@@ -159,12 +159,12 @@ firewall to port 47995. See the role for the full variable list.
 Point the daemon at the host and give it the **same token**:
 
 ```toml
-# ~/.config/game-shell/config.toml on the game-client
+# ~/.config/tv-shell/config.toml on the game-client
 [steam]
 url = "http://<host-ip>:47995"
 # Either inline …
-token = "<same token as GAME_SHELL_HOST_TOKEN>"
-# … or, preferred, a 0600 file: token_file = "~/.config/game-shell/steam-token"
+token = "<same token as TV_SHELL_HOST_TOKEN>"
+# … or, preferred, a 0600 file: token_file = "~/.config/tv-shell/steam-token"
 ```
 
 Restart the daemon to pick it up. Under config management this is typically

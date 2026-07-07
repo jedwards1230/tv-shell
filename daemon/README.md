@@ -1,15 +1,15 @@
-# game-shell-input (Rust)
+# tv-shell-input (Rust)
 
 A Rust backend daemon replacing `input/gamepad-input.py` and the QML shell's
 inline `python3`/shell-out parsers. Same Unix socket + newline-delimited wire
 protocol (`docs/IPC_PROTOCOL.md`). Phases 1–4 of
-[#28](https://github.com/jedwards1230/game-shell/issues/28) (HDMI-CEC deployed
+[#28](https://github.com/jedwards1230/tv-shell/issues/28) (HDMI-CEC deployed
 and verified on gaming-client via `cec.rs`/cec-rs with static-linked libcec).
 
 The QML shell depends on this daemon for the Settings / app-discovery / system
 pages as well as input; it is the sole backend (the Python
 `gamepad-input.py` and its rollback were retired in #96). See
-`scripts/game-shell-session.sh`, which spawns the binary directly.
+`scripts/tv-shell-session.sh`, which spawns the binary directly.
 
 ## What it does
 
@@ -57,10 +57,10 @@ hand-formats config JSON; the old per-call `python3 -c` socket shims are gone.
 | `plex.rs` | Plex hubs fetch for the home-screen Plex widget — `plex-hubs` IPC (cross-platform, stateless) |
 | `service_health.rs` | Shared remote-service reachability vocabulary (`ServiceStatus`) + HTTP probe + background `health:*` poller (cross-platform) |
 | `sidecar.rs` | Reusable remote-widget-**sidecar** HTTP client: base URL + bearer, reachability probe, typed + size-capped request helpers. The daemon is an HTTP *client* to a sidecar on another machine — **not** a process supervisor (no spawn/health-restart). Cross-platform; `steam` is the first consumer |
-| `steam.rs` | Steam library/launch proxy to the `game-shell-host` sidecar **over HTTP** (`steam-library`/`steam-launch`/`steam-bigpicture`/`steam-quit` IPC). Deserializes host responses through the shared `game-shell-protocol` types. Cross-platform, stateless |
+| `steam.rs` | Steam library/launch proxy to the `tv-shell-host` sidecar **over HTTP** (`steam-library`/`steam-launch`/`steam-bigpicture`/`steam-quit` IPC). Deserializes host responses through the shared `tv-shell-protocol` types. Cross-platform, stateless |
 | `system.rs` | System/storage status reads for the System settings page — `sys-status` / `storage-status` IPC |
 | `session_env.rs` | Session-environment self-discovery (resolves `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, install root) |
-| `daemon_config.rs` | Typed `~/.config/game-shell/config.toml` parse + startup `validate()` — the single per-machine config source |
+| `daemon_config.rs` | Typed `~/.config/tv-shell/config.toml` parse + startup `validate()` — the single per-machine config source |
 | `bridge_core.rs` | Shared action logic for the HTTP bridge and MCP server (intent dispatch, screenshot, status, log read) |
 | `http.rs` | LAN HTTP/1.1 control bridge (`[http].bind`) — `POST /intent`, `POST /key`, `GET /screenshot`, `/dev/*` |
 | `mcp.rs` | MCP server (`[mcp].bind`, `--features mcp`) — 14 tools over streamable-HTTP at `/mcp` |
@@ -74,7 +74,7 @@ unit-tested on macOS.
 ### Widget sidecars (remote HTTP backends)
 
 A home-screen widget that needs heavy backend logic ships a **sidecar process**.
-`game-shell-host` (the Steam library/launch backend) is the first and only one
+`tv-shell-host` (the Steam library/launch backend) is the first and only one
 today. The sidecar runs on a **different machine** (the gaming PC) and the daemon
 reaches it **over HTTP on the LAN** with a bearer token — see
 [`docs/HOST_SETUP.md`](../docs/HOST_SETUP.md). The daemon does **not** spawn,
@@ -84,7 +84,7 @@ is reachability (`GET /status`), not process management.
 `sidecar.rs` owns the reusable client plumbing (base URL + bearer, reachability
 probe, typed/size-capped request helpers) so a future widget backend reuses it
 instead of re-deriving it. The daemon↔sidecar JSON contract is single-sourced in
-the `game-shell-protocol` crate (`LibraryResponse` / `StatusResponse` /
+the `tv-shell-protocol` crate (`LibraryResponse` / `StatusResponse` /
 `LaunchRequest`): the host serializes those types, the daemon deserializes them,
 so the wire shape can't silently drift.
 
@@ -216,7 +216,7 @@ compile and test on macOS:
 
 ```bash
 cargo test            # runs everywhere (protocol/config/apps/recents/device/state/ipc)
-cargo build --release # Linux only -> target/release/game-shell-input
+cargo build --release # Linux only -> target/release/tv-shell-input
 ```
 
 **Linux build deps:** the Phase 3 Bluetooth module uses `bluer`, which pulls in
@@ -238,18 +238,18 @@ Arch/CachyOS these come with `systemd` / `base-devel`.
 ## Deploy
 
 1. `cargo build --release`
-2. Install `target/release/game-shell-input` to `$GAME_SHELL_DIR/bin/`
-   (the install prefix — `/opt/game-shell` is just a fallback default; the
-   binary resolves its own root from `current_exe`. `GAME_SHELL_INPUT_BIN`
+2. Install `target/release/tv-shell-input` to `$TV_SHELL_DIR/bin/`
+   (the install prefix — `/opt/tv-shell` is just a fallback default; the
+   binary resolves its own root from `current_exe`. `TV_SHELL_INPUT_BIN`
    overrides the exact binary path for the re-exec / dev-override hook.)
 
-`scripts/game-shell-session.sh` spawns the binary directly — it is the sole
+`scripts/tv-shell-session.sh` spawns the binary directly — it is the sole
 backend (the Python rollback was retired in #96).
 
-Honors `GAME_SHELL_DIR` (install root; also derived from `current_exe`),
-`GAME_SHELL_INPUT_BIN` (override the binary path used for the `/dev/restart-daemon`
-re-exec), `GAME_SHELL_SOCK`, `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` (exact-pin
-override), and `GAME_SHELL_GAMECONTROLLERDB` (fuller controller DB).
+Honors `TV_SHELL_DIR` (install root; also derived from `current_exe`),
+`TV_SHELL_INPUT_BIN` (override the binary path used for the `/dev/restart-daemon`
+re-exec), `TV_SHELL_SOCK`, `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` (exact-pin
+override), and `TV_SHELL_GAMECONTROLLERDB` (fuller controller DB).
 
 ## Logging & debugging
 
@@ -258,7 +258,7 @@ unit (or any journal-attached context — auto-detected via `JOURNAL_STREAM`,
 overridable with `[observability].log_journal = true`/`false` in `config.toml`),
 else to **stderr**. Either way they ride `tracing`, filtered by the `RUST_LOG`
 env var (default `info`). Read a unit's logs with
-`journalctl --user -u game-shell-input`. Tiers:
+`journalctl --user -u tv-shell-input`. Tiers:
 
 | Level | Shows |
 |-------|-------|
@@ -268,22 +268,22 @@ env var (default `info`). Read a unit's logs with
 
 ```bash
 # Full input pipeline trace for one run (scoped to the input module):
-RUST_LOG=game_shell_input::input=trace "$GAME_SHELL_DIR/bin/game-shell-input"
+RUST_LOG=tv_shell_input::input=trace "$TV_SHELL_DIR/bin/tv-shell-input"
 # High-level event flow only (intents/combos/pad events), less noise:
-RUST_LOG=game_shell_input::input=debug ...
+RUST_LOG=tv_shell_input::input=debug ...
 ```
 
 The live **`subscribe`** IPC stream is the other debug surface — it shows the
 daemon's outbound events in real time without restarting:
 
 ```bash
-printf 'subscribe\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"
+printf 'subscribe\n' | socat - UNIX-CONNECT:"$TV_SHELL_SOCK"
 ```
 
 Inject a control-surface intent by hand (e.g. to test the keyboard escape path):
 
 ```bash
-printf 'intent home\n' | socat - UNIX-CONNECT:"$GAME_SHELL_SOCK"   # -> ok
+printf 'intent home\n' | socat - UNIX-CONNECT:"$TV_SHELL_SOCK"   # -> ok
 ```
 
 ## Metrics
@@ -292,7 +292,7 @@ The daemon exports Prometheus/OpenMetrics two ways: an **auth-exempt `GET /metri
 on the HTTP bridge, and/or an atomically-written **node_exporter textfile**
 (`[observability].metrics_textfile`; refresh `[observability].metrics_interval`,
 default 15s; unset = off). One shared renderer feeds both (`metrics.rs`). Series are all
-`game_shell_*`: `build_info{sha,branch,version}` (current deployment), dev-action
+`tv_shell_*`: `build_info{sha,branch,version}` (current deployment), dev-action
 counters (`deploy_total{outcome}`, `build_total`, `restart_*_total`),
 input/intent/transition/pad counters, and cpu/mem/load/temp gauges (the gauges are
 a convenience — prefer node_exporter for host resources). Full catalogue in

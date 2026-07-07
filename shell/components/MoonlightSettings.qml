@@ -71,12 +71,12 @@ FocusScope {
     }
 
     // Ensure the targets file's parent dir exists before the first write — a
-    // fresh install may have no ~/.config/game-shell yet, so `tee` would fail
+    // fresh install may have no ~/.config/tv-shell yet, so `tee` would fail
     // with no directory. `mkdir -p` is idempotent. The dir literal is a plain
     // path arg (no shell), so no injection surface.
     Process {
         id: ensureTargetsDir
-        command: ["mkdir", "-p", Paths.gameShellConfigDir]
+        command: ["mkdir", "-p", Paths.tvShellConfigDir]
         onExited: saveServers.running = true
     }
 

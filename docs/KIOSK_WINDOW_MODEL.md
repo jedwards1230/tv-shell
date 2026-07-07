@@ -1,6 +1,6 @@
 # Kiosk Window Model
 
-How game-shell guarantees the kiosk contract on Hyprland, why the previous
+How tv-shell guarantees the kiosk contract on Hyprland, why the previous
 reactive approach kept failing, and how the current implementation makes it
 structural.
 

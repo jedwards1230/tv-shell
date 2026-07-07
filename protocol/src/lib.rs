@@ -1,8 +1,8 @@
-//! Shared wire types for the game-shell Steam-library feature.
+//! Shared wire types for the tv-shell Steam-library feature.
 //!
 //! These types are the single source of truth for the JSON shape exchanged
-//! between `game-shell-host` (the cross-platform sidecar that enumerates and
-//! launches Steam games on the gaming PC) and `game-shell-input` (the daemon on
+//! between `tv-shell-host` (the cross-platform sidecar that enumerates and
+//! launches Steam games on the gaming PC) and `tv-shell-input` (the daemon on
 //! the TV client that proxies `GET /library` / `POST /launch` / `GET /status`
 //! for the QML shell). The daemon reaches the host over **HTTP on the LAN** — the
 //! host runs on a separate machine (the gaming PC; see `docs/HOST_SETUP.md`), so
@@ -14,6 +14,13 @@
 //!
 //! Pure serde, no I/O — so both crates depend on it without dragging in either
 //! one's heavier graph (axum on the host, evdev/cec on the daemon).
+//!
+//! The [`brand`] module carries the product identity (slug, env prefix, metric
+//! prefix, config-dir resolution) shared by the daemon and host, with the
+//! game-shell → tv-shell backward-compat shims in one place.
+
+/// Central brand identity + backward-compat shims (see module docs).
+pub mod brand;
 
 use serde::{Deserialize, Serialize};
 
@@ -62,7 +69,7 @@ pub struct LaunchRequest {
 /// foreground-game id and stream state it reads alongside that.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct StatusResponse {
-    /// `game-shell-host` package version (`CARGO_PKG_VERSION`). Informational; the
+    /// `tv-shell-host` package version (`CARGO_PKG_VERSION`). Informational; the
     /// daemon does not act on it today.
     #[serde(default)]
     pub version: String,

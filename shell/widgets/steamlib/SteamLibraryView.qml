@@ -285,7 +285,7 @@ ColumnLayout {
                 if (root._fastPolling)
                     root._endFastPoll();
             } else if (d && d.status === "disabled") {
-                // Unconfigured (GAME_SHELL_STEAM_URL unset): collapse for real.
+                // Unconfigured (TV_SHELL_STEAM_URL unset): collapse for real.
                 root.recentItems = [];
                 root.allItems = [];
                 root.runningAppid = -1;

@@ -934,66 +934,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "game-shell-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "game-shell-protocol",
- "keyvalues-parser",
- "libc",
- "serde",
- "serde_json",
- "subtle",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "game-shell-input"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrayvec",
- "axum",
- "base64",
- "bluer",
- "cec-rs",
- "evdev",
- "freedesktop-desktop-entry",
- "futures",
- "game-shell-protocol",
- "http",
- "libc",
- "libcec-sys",
- "notify-debouncer-full",
- "reqwest",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "subtle",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-journald",
- "tracing-subscriber",
- "zbus",
-]
-
-[[package]]
-name = "game-shell-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2885,6 +2825,66 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tv-shell-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "keyvalues-parser",
+ "libc",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tv-shell-protocol",
+]
+
+[[package]]
+name = "tv-shell-input"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "axum",
+ "base64",
+ "bluer",
+ "cec-rs",
+ "evdev",
+ "freedesktop-desktop-entry",
+ "futures",
+ "http",
+ "libc",
+ "libcec-sys",
+ "notify-debouncer-full",
+ "reqwest",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "subtle",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-journald",
+ "tracing-subscriber",
+ "tv-shell-protocol",
+ "zbus",
+]
+
+[[package]]
+name = "tv-shell-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "typenum"

@@ -1,9 +1,9 @@
-# Virtual workspace manifest for game-shell's Rust crates.
+# Virtual workspace manifest for tv-shell's Rust crates.
 #
 # Three crates, one lockfile, shared dependency versions:
-#   - daemon/    game-shell-input    — Linux/cec/mcp input daemon (UNTOUCHED machinery)
-#   - host/      game-shell-host     — cross-platform Steam-library sidecar (axum)
-#   - protocol/  game-shell-protocol — shared /library wire types (serde only)
+#   - daemon/    tv-shell-input    — Linux/cec/mcp input daemon (UNTOUCHED machinery)
+#   - host/      tv-shell-host     — cross-platform Steam-library sidecar (axum)
+#   - protocol/  tv-shell-protocol — shared /library wire types (serde only)
 #
 # Why a workspace (not two independent crates, not one crate w/ two bins): one
 # lockfile + shared dep versions; the `protocol` crate is the single source of
@@ -31,4 +31,4 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 axum = "0.8"
 subtle = "2"
 keyvalues-parser = "0.2"
-game-shell-protocol = { path = "protocol" }
+tv-shell-protocol = { path = "protocol" }

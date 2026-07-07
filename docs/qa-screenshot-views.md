@@ -1,14 +1,14 @@
 # QA Screenshot Views
 
-A living catalog of game-shell views/overlays/states worth capturing in a visual-QA
+A living catalog of tv-shell views/overlays/states worth capturing in a visual-QA
 screenshot batch. Keep this updated as views are added or changed.
 
 ## How to capture
 
-See the `game-shell-dev` skill ("Driving the UI for Screenshots"). In short there
+See the `tv-shell-dev` skill ("Driving the UI for Screenshots"). In short there
 are **two CLI channels** (see [IPC_PROTOCOL.md](IPC_PROTOCOL.md)):
 - **Directional nav / select / back = real key events.** Either `wtype -k <Left|Right|Up|Down|Return|Escape>` (Wayland virtual keyboard) **or** the daemon's `key <name>` IPC (`key up|down|left|right|select|back` over the socket). Both reach the focused surface's `KeyNavigation`. **`Tab` toggles the nav drawer** when the shell window holds Wayland focus (K400 on the couch, `ShellLayout.Keys.onTabPressed → toggleMenu()`, idle only) — but `wtype -k Tab` from an external session may not reach the shell window if focus is elsewhere; prefer `intent menu` over the socket for reliable automation.
-- **Drawer / settings / power / home = the `intent` control surface** (socket): `echo "intent menu" | nc -U /run/user/1000/game-shell-input.sock` toggles the **left nav drawer**; `intent settings` / `intent power` / `intent home` open those. (At the TV the drawer also opens via gamepad **Home** tap or a bare **Super** press — Hyprland bind → `super-intent.sh` → `intent menu`. Super+Escape = escape; Super+Backspace = reset.) Deep-link targets also use this surface: `intent settings:<page>` opens a specific settings page in one command (e.g. `intent settings:bluetooth`); `intent overlay:volume` / `intent overlay:network` open the respective QAM popover; `intent app:<wmClass>` launches a local app by its StartupWMClass.
+- **Drawer / settings / power / home = the `intent` control surface** (socket): `echo "intent menu" | nc -U /run/user/1000/tv-shell-input.sock` toggles the **left nav drawer**; `intent settings` / `intent power` / `intent home` open those. (At the TV the drawer also opens via gamepad **Home** tap or a bare **Super** press — Hyprland bind → `super-intent.sh` → `intent menu`. Super+Escape = escape; Super+Backspace = reset.) Deep-link targets also use this surface: `intent settings:<page>` opens a specific settings page in one command (e.g. `intent settings:bluetooth`); `intent overlay:volume` / `intent overlay:network` open the respective QAM popover; `intent app:<wmClass>` launches a local app by its StartupWMClass.
 - Screenshots are 4K (~2000 tokens each) — shoot in **tiers** (below), not all at once.
 
 ## Home screen index map (QuickActions, top-right)
@@ -85,7 +85,7 @@ quiet no-op. B does **not** open Settings — use QuickActions idx 1 (→ Return
 | — | AV Control — CEC unavailable card, per reason (#22) | substate — the unavailable card (shown via `!cecAvailable`) now reads its title + body off the daemon health reply's `reason` field, so the three distinct unavailable causes no longer collapse into one misleading message: **`no_libcec`** → "HDMI-CEC Not Available" / "CEC requires the daemon built with libcec support." (neutral, the original copy); **`no_adapter`** → "No CEC Adapter" / "No CEC adapter detected — plug in the USB CEC adapter." (neutral); **`adapter_open_failed`** → "CEC Adapter Not Responding" / "CEC adapter detected but not responding — re-seat the USB adapter or power-cycle the AVR…" rendered as an **ember/warning** card (warning title + border) because it is actionable — the adapter is physically present but hardware-wedged. Footer hint mirrors the reason. Before the first `cec-health` reply (reason unknown) the generic neutral copy shows as a safe fallback. |
 | — | Moonlight — add/edit server form | substate, reached via Widgets ▸ Moonlight ▸ Add Server (inline) |
 | — | Display — each theme mode selected (auto/light/dark) | substate in Display page Appearance section |
-| — | Display — live external reload | QA: edit `~/.config/game-shell/settings.json` over SSH (e.g. flip `themeMode` `dark`→`light`) while the shell is open; confirm the theme switches without a Quickshell restart. The daemon broadcasts `config:changed` and `SettingsStore` re-fetches via `get-config`. No new screenshot view — the existing theme substates cover the visual. |
+| — | Display — live external reload | QA: edit `~/.config/tv-shell/settings.json` over SSH (e.g. flip `themeMode` `dark`→`light`) while the shell is open; confirm the theme switches without a Quickshell restart. The daemon broadcasts `config:changed` and `SettingsStore` re-fetches via `get-config`. No new screenshot view — the existing theme substates cover the visual. |
 | — | Accessibility — Reduce Motion on/off; Text Size Default/Large/Larger | substate |
 | — | Audio — default-sink persistence (by node.name, re-applied on boot), 5.1 speaker-test buttons (FL/FR/Center/LFE/RL/RR + All channels), sample-rate/format read-out | substate |
 | — | Power — sleep-timer cycle (Off/5/10/15/30/60 min), wake-on-controller toggle (On/Off), End session button reachable via `intent settings:power` | substate — the auto-suspend idle timer lives at the shell root and fires regardless of which settings page is open |

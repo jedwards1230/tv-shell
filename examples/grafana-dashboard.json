@@ -3,7 +3,7 @@
     {
       "name": "DS_PROMETHEUS",
       "label": "Prometheus",
-      "description": "Prometheus datasource that scrapes game_shell_* metrics",
+      "description": "Prometheus datasource that scrapes tv_shell_* metrics",
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
@@ -47,7 +47,7 @@
   "refresh": "30s",
   "schemaVersion": 39,
   "tags": [
-    "game-shell",
+    "tv-shell",
     "observability"
   ],
   "templating": {
@@ -70,8 +70,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "game-shell-input",
-  "uid": "game-shell-input",
+  "title": "tv-shell-input",
+  "uid": "tv-shell-input",
   "version": 1,
   "panels": [
     {
@@ -89,7 +89,7 @@
     {
       "type": "table",
       "title": "Current deployment",
-      "description": "What's actually deployed right now (game_shell_build_info).",
+      "description": "What's actually deployed right now (tv_shell_build_info).",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -126,7 +126,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_build_info",
+          "expr": "tv_shell_build_info",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -183,7 +183,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(rate(game_shell_deploy_total[15m])) by (outcome)",
+          "expr": "sum(rate(tv_shell_deploy_total[15m])) by (outcome)",
           "legendFormat": "deploy {{outcome}}",
           "refId": "A"
         },
@@ -192,7 +192,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_build_total[15m])",
+          "expr": "rate(tv_shell_build_total[15m])",
           "legendFormat": "build",
           "refId": "B"
         },
@@ -201,7 +201,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_restart_shell_total[15m])",
+          "expr": "rate(tv_shell_restart_shell_total[15m])",
           "legendFormat": "restart shell",
           "refId": "C"
         },
@@ -210,7 +210,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_restart_daemon_total[15m])",
+          "expr": "rate(tv_shell_restart_daemon_total[15m])",
           "legendFormat": "restart daemon",
           "refId": "D"
         }
@@ -257,7 +257,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_input_events_total[5m])",
+          "expr": "rate(tv_shell_input_events_total[5m])",
           "legendFormat": "input events",
           "refId": "A"
         }
@@ -292,7 +292,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_intents_emitted_total[5m])",
+          "expr": "rate(tv_shell_intents_emitted_total[5m])",
           "legendFormat": "intents",
           "refId": "A"
         }
@@ -327,7 +327,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_transitions_total[5m])",
+          "expr": "rate(tv_shell_transitions_total[5m])",
           "legendFormat": "transitions",
           "refId": "A"
         },
@@ -336,7 +336,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_pad_joins_total[5m])",
+          "expr": "rate(tv_shell_pad_joins_total[5m])",
           "legendFormat": "pad joins",
           "refId": "B"
         },
@@ -345,7 +345,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(game_shell_pad_leaves_total[5m])",
+          "expr": "rate(tv_shell_pad_leaves_total[5m])",
           "legendFormat": "pad leaves",
           "refId": "C"
         }
@@ -384,7 +384,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_shell_restarts_total",
+          "expr": "tv_shell_shell_restarts_total",
           "legendFormat": "restarts",
           "refId": "A"
         }
@@ -423,7 +423,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_intents_emitted_total",
+          "expr": "tv_shell_intents_emitted_total",
           "legendFormat": "intents",
           "refId": "A"
         }
@@ -472,7 +472,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_cpu_percent",
+          "expr": "tv_shell_cpu_percent",
           "legendFormat": "cpu",
           "refId": "A"
         }
@@ -507,7 +507,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_mem_used_bytes",
+          "expr": "tv_shell_mem_used_bytes",
           "legendFormat": "used",
           "refId": "A"
         },
@@ -516,7 +516,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_mem_total_bytes",
+          "expr": "tv_shell_mem_total_bytes",
           "legendFormat": "total",
           "refId": "B"
         }
@@ -564,7 +564,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_temperature_celsius",
+          "expr": "tv_shell_temperature_celsius",
           "legendFormat": "{{sensor}}",
           "refId": "A"
         },
@@ -573,7 +573,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "game_shell_load1",
+          "expr": "tv_shell_load1",
           "legendFormat": "load1",
           "refId": "B"
         }

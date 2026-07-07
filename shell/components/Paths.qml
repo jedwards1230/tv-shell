@@ -23,28 +23,30 @@ Item {
         return home + "/.config";
     }
 
-    // Per-user game-shell config dir (~/.config/game-shell by default).
-    readonly property string gameShellConfigDir: configDir + "/game-shell"
+    // Per-user tv-shell config dir (~/.config/tv-shell by default).
+    readonly property string tvShellConfigDir: configDir + "/tv-shell"
 
     // Streaming targets file. Resolution order:
-    //   1. $GAME_SHELL_TARGETS (set by game-shell-session.sh / a dev override)
-    //   2. <gameShellConfigDir>/targets.json
+    //   1. $TV_SHELL_TARGETS (set by tv-shell-session.sh / a dev override),
+    //      falling back to the legacy $GAME_SHELL_TARGETS via Brand.env
+    //   2. <tvShellConfigDir>/targets.json
     readonly property string targetsPath: {
-        let override = Quickshell.env("GAME_SHELL_TARGETS");
+        let override = Brand.env("TARGETS");
         if (override && override !== "")
             return override;
-        return gameShellConfigDir + "/targets.json";
+        return tvShellConfigDir + "/targets.json";
     }
 
     // "End game session" command, run on the daemon's `combo:end-session` (the
     // controller end-session combo). The script is supplied by the deployment
     // environment, not the prefix-agnostic shell tree, so its location varies.
     // Resolution order:
-    //   1. $GAME_SHELL_END_SESSION (deployment override)
+    //   1. $TV_SHELL_END_SESSION (deployment override), falling back to the
+    //      legacy $GAME_SHELL_END_SESSION via Brand.env
     //   2. /usr/local/bin/end-game-session (documented last-ditch fallback,
-    //      matching the GAME_SHELL_DIR fallback idiom in game-shell-session.sh)
+    //      matching the TV_SHELL_DIR fallback idiom in tv-shell-session.sh)
     readonly property string endSessionCmd: {
-        let override = Quickshell.env("GAME_SHELL_END_SESSION");
+        let override = Brand.env("END_SESSION");
         if (override && override !== "")
             return override;
         return "/usr/local/bin/end-game-session";

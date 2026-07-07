@@ -1,6 +1,6 @@
-//! Typed daemon configuration: `~/.config/game-shell/config.toml`.
+//! Typed daemon configuration: `~/.config/tv-shell/config.toml`.
 //!
-//! Replaces the old `daemon.env` `KEY=VALUE` file that `game-shell-session.sh`
+//! Replaces the old `daemon.env` `KEY=VALUE` file that `tv-shell-session.sh`
 //! sourced into the environment. The daemon now reads a typed TOML document
 //! directly, so the config surface is parsed once, validated at startup, and
 //! never leaks the bearer token into the process environment (where any child
@@ -12,7 +12,7 @@
 //! [http]                      # LAN HTTP control bridge (opt-in)
 //! bind = "127.0.0.1:8089"     #   absent ⇒ bridge off
 //! auth_enabled = true         #   default true; only disable on a trusted LAN
-//! token_file = "~/.config/game-shell/http-token"  # 0600; the shared bearer token
+//! token_file = "~/.config/tv-shell/http-token"  # 0600; the shared bearer token
 //!
 //! [mcp]                       # MCP server (opt-in; needs --features mcp)
 //! bind = "127.0.0.1:8090"     #   absent ⇒ off; shares [http].token_file + auth
@@ -24,11 +24,11 @@
 //!
 //! [plex]                      # Plex home-screen widget (optional)
 //! url = "http://plex:32400"
-//! token_file = "~/.config/game-shell/plex-token"   # or: token = "…"
+//! token_file = "~/.config/tv-shell/plex-token"   # or: token = "…"
 //!
 //! [steam]                     # Steam library row (optional)
 //! url = "http://gaming-pc:47995"
-//! token_file = "~/.config/game-shell/steam-token"  # or: token = "…"
+//! token_file = "~/.config/tv-shell/steam-token"  # or: token = "…"
 //!
 //! [dev]                       # operator escape hatch
 //! allow_insecure_lan = false  # see validate(): permit LAN + dev + no-auth on purpose
@@ -144,7 +144,7 @@ pub struct PlexConfig {
     pub token_file: Option<String>,
 }
 
-/// `[steam]` — Steam library row, pointing at a `game-shell-host` sidecar.
+/// `[steam]` — Steam library row, pointing at a `tv-shell-host` sidecar.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SteamConfig {
@@ -158,8 +158,8 @@ pub struct SteamConfig {
 ///
 /// `RUST_LOG` is deliberately NOT modelled here: it's the standard
 /// `tracing-subscriber` EnvFilter variable, read directly at logging init, and
-/// kept as an env var so the usual `RUST_LOG=debug game-shell-input` workflow
-/// still works. Everything else that used to be a `GAME_SHELL_*` env var is
+/// kept as an env var so the usual `RUST_LOG=debug tv-shell-input` workflow
+/// still works. Everything else that used to be a `TV_SHELL_*` env var is
 /// typed config now.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -167,13 +167,13 @@ pub struct ObservabilityConfig {
     /// Logging backend: `Some(true)` forces the systemd journal
     /// (tracing-journald), `Some(false)` forces plain stdout, `None` = auto
     /// (journald when `JOURNAL_STREAM` indicates a systemd-spawned service).
-    /// Was `GAME_SHELL_LOG_JOURNAL`.
+    /// Was `TV_SHELL_LOG_JOURNAL`.
     pub log_journal: Option<bool>,
     /// node_exporter textfile-collector output path (the PRIMARY metrics path).
     /// `None` ⇒ the textfile writer is disabled (the `/metrics` HTTP route, when
-    /// the bridge is bound, is unaffected). Was `GAME_SHELL_METRICS_TEXTFILE`.
+    /// the bridge is bound, is unaffected). Was `TV_SHELL_METRICS_TEXTFILE`.
     pub metrics_textfile: Option<String>,
-    /// Textfile render/write interval in seconds. Was `GAME_SHELL_METRICS_INTERVAL`.
+    /// Textfile render/write interval in seconds. Was `TV_SHELL_METRICS_INTERVAL`.
     pub metrics_interval: u64,
 }
 
@@ -326,22 +326,15 @@ pub struct DevConfig {
     pub allow_insecure_lan: bool,
 }
 
-/// Default config path: `~/.config/game-shell/config.toml`.
+/// Default config path: `~/.config/tv-shell/config.toml`.
 pub fn config_path() -> PathBuf {
     config_dir().join("config.toml")
 }
 
-/// `${XDG_CONFIG_HOME:-$HOME/.config}/game-shell`.
+/// `${XDG_CONFIG_HOME:-$HOME/.config}/tv-shell` (legacy `…/game-shell` honored
+/// as a read-fallback via [`tv_shell_protocol::brand::config_dir`]).
 fn config_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default()
-                .join(".config")
-        });
-    base.join("game-shell")
+    tv_shell_protocol::brand::config_dir()
 }
 
 /// Expand a leading `~/` (or bare `~`) in a config path to `$HOME`. Other paths
@@ -367,7 +360,7 @@ fn expand_tilde(p: &str) -> PathBuf {
 /// A token file holds a secret the daemon reads with its own privileges, so a
 /// config writer must not be able to point it at arbitrary paths
 /// (`../../../etc/shadow`, `/tmp/attacker`). After tilde-expansion the path is
-/// canonicalized and required to live within `~/.config/game-shell/`; anything
+/// canonicalized and required to live within `~/.config/tv-shell/`; anything
 /// escaping the config dir is a hard error (refuse startup). Canonicalizing also
 /// resolves `..`/symlinks, so a symlink inside the config dir pointing out is
 /// caught too.
@@ -391,7 +384,7 @@ fn resolve_token_path(p: &str, field: &str) -> anyhow::Result<PathBuf> {
     if !canonical.starts_with(&config_dir) {
         return Err(anyhow::anyhow!(
             "{field} {} escapes the config directory {} — a token file must live \
-             under ~/.config/game-shell/ (refusing to read a secret from an \
+             under ~/.config/tv-shell/ (refusing to read a secret from an \
              arbitrary path)",
             canonical.display(),
             config_dir.display()
@@ -530,7 +523,7 @@ impl DaemonConfig {
                 self.refuse_or_warn(
                     "MCP server",
                     addr,
-                    "GAME_SHELL dev tools over MCP are an unauthenticated RCE surface",
+                    "tv-shell dev tools over MCP are an unauthenticated RCE surface",
                 )?;
             }
         }
@@ -654,7 +647,7 @@ mod tests {
             r#"
             [observability]
             log_journal = true
-            metrics_textfile = "/var/lib/node_exporter/textfile/game-shell.prom"
+            metrics_textfile = "/var/lib/node_exporter/textfile/tv-shell.prom"
             metrics_interval = 30
         "#,
         )
@@ -662,7 +655,7 @@ mod tests {
         assert_eq!(c.observability.log_journal, Some(true));
         assert_eq!(
             c.observability.metrics_textfile.as_deref(),
-            Some("/var/lib/node_exporter/textfile/game-shell.prom")
+            Some("/var/lib/node_exporter/textfile/tv-shell.prom")
         );
         assert_eq!(c.metrics_interval_secs(), 30);
 
@@ -867,16 +860,16 @@ mod tests {
     static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Run `f` with XDG_CONFIG_HOME pointed at a fresh temp dir whose
-    /// `game-shell/` subdir exists; cleans up after. Serialized via ENV_GUARD.
+    /// `tv-shell/` subdir exists; cleans up after. Serialized via ENV_GUARD.
     #[cfg(unix)]
     fn with_temp_config_dir(f: impl FnOnce(&std::path::Path)) {
         let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let base = std::env::temp_dir().join(format!(
-            "gs-cfgdir-{}-{:?}",
+            "tv-cfgdir-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
-        let gs = base.join("game-shell");
+        let gs = base.join("tv-shell");
         std::fs::create_dir_all(&gs).unwrap();
         let prev = std::env::var_os("XDG_CONFIG_HOME");
         // SAFETY: serialized by ENV_GUARD; restored before returning.

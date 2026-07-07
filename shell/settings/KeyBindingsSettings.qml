@@ -4,7 +4,7 @@ import "../components"
 import "../components/lib"
 
 // Binding IPC is routed through the SettingsStore singleton (which respects
-// GAME_SHELL_SOCK). See docs/IPC_PROTOCOL.md.
+// TV_SHELL_SOCK). See docs/IPC_PROTOCOL.md.
 // Commands used (via SettingsStore): get-bindings, set-binding, capture-next, capture-cancel
 //
 // Intentionally NOT migrated onto SettingsPageBase: this page uses an internal

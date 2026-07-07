@@ -11,7 +11,7 @@ import QtQuick
 //   cec-power-on <addr>  -> ok | error:*
 //   cec-active-source    -> ok | error:*
 //
-// Wake sequence (mirrors the daemon's GAME_SHELL_CEC_LIFECYCLE wake path):
+// Wake sequence (mirrors the daemon's TV_SHELL_CEC_LIFECYCLE wake path):
 //   1. cec-power-on 5  (AVR = AudioSystem, logical address 5)
 //   2. cec-power-on 0  (TV  = Tv,          logical address 0)
 //   3. cec-active-source (set this adapter as the active source)

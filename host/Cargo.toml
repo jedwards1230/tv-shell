@@ -1,15 +1,15 @@
 [package]
-name = "game-shell-host"
+name = "tv-shell-host"
 version = "0.1.0"
 edition.workspace = true
 # Not inherited from the workspace (1.75): the host's dep closure (axum/reqwest
 # transitives) pulls edition2024 crates that require Cargo >=1.85.
 rust-version = "1.85"
 license.workspace = true
-description = "Cross-platform game-shell host sidecar: enumerates installed Steam games and launches them via steam://rungameid"
+description = "Cross-platform tv-shell host sidecar: enumerates installed Steam games and launches them via steam://rungameid"
 
 [[bin]]
-name = "game-shell-host"
+name = "tv-shell-host"
 path = "src/main.rs"
 
 [dependencies]
@@ -27,7 +27,7 @@ subtle = { workspace = true }
 # Pure-Rust Valve KeyValues (VDF/ACF) parser for libraryfolders.vdf +
 # appmanifest_*.acf.
 keyvalues-parser = { workspace = true }
-game-shell-protocol = { workspace = true }
+tv-shell-protocol = { workspace = true }
 
 # POSIX kill(2) for the graceful-quit path (SIGTERM to the running game's process
 # group). Only needed on Linux; gating it here keeps the macOS/Windows graph

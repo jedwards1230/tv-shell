@@ -123,14 +123,14 @@ impl ControllerDb {
 
 /// The bundled baseline DB (common controllers). A fuller upstream
 /// `SDL_GameControllerDB` can be supplied at runtime via the
-/// `GAME_SHELL_GAMECONTROLLERDB` env var (see `load_db`).
+/// `TV_SHELL_GAMECONTROLLERDB` env var (see `load_db`).
 const BUNDLED_DB: &str = include_str!("../assets/gamecontrollerdb.txt");
 
 /// Load the controller DB: an operator-supplied file (env override) layered
 /// over the bundled baseline.
 pub fn load_db() -> ControllerDb {
     let mut db = ControllerDb::parse(BUNDLED_DB);
-    if let Some(path) = std::env::var_os("GAME_SHELL_GAMECONTROLLERDB") {
+    if let Some(path) = tv_shell_protocol::brand::env("GAMECONTROLLERDB") {
         if let Ok(text) = std::fs::read_to_string(&path) {
             let extra = ControllerDb::parse(&text);
             db.known.extend(extra.known);
@@ -146,7 +146,7 @@ pub fn load_db() -> ControllerDb {
 /// and *consumes* physical gamepads. Without a way to tell its own devices
 /// apart it would re-grab them during the next discovery pass — the old code
 /// papered over this with `is_synthetic`, a brittle name-string match against
-/// `game-shell-virtual-*` and `ydotoold`.
+/// `tv-shell-virtual-*` and `ydotoold`.
 ///
 /// We replace that with ownership by **devnode path**: every per-player virtual
 /// pad we create registers its `/dev/input/eventN` node(s), and discovery skips
@@ -343,7 +343,7 @@ mod linux {
     /// Requiring a DB match rejects foreign injectors structurally. An operator
     /// with a controller the bundled DB doesn't know can either pin it via
     /// `GAMEPAD_VENDOR`/`GAMEPAD_PRODUCT` or extend the DB via
-    /// `GAME_SHELL_GAMECONTROLLERDB`.
+    /// `TV_SHELL_GAMECONTROLLERDB`.
     ///
     /// Returns one handle per matching device, in ascending `/dev/input/eventN`
     /// path order (deterministic). The fleet caller additionally dedups against
@@ -485,6 +485,7 @@ mod tests {
     #[test]
     fn load_db_includes_baseline() {
         // No env override set -> just the bundled baseline.
+        std::env::remove_var("TV_SHELL_GAMECONTROLLERDB");
         std::env::remove_var("GAME_SHELL_GAMECONTROLLERDB");
         let db = load_db();
         assert!(db.is_known(0x045e, 0x028e));

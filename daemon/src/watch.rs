@@ -1,4 +1,4 @@
-//! File-watch actor (Linux-only): watches `~/.config/game-shell/settings.json`
+//! File-watch actor (Linux-only): watches `~/.config/tv-shell/settings.json`
 //! for external modifications and notifies the input runtime via a dedicated
 //! [`tokio::sync::Notify`] channel (not the global event broadcast bus).
 //!

@@ -2,7 +2,7 @@ pragma Singleton
 import Quickshell.Io
 import QtQuick
 
-// Tracks recently launched apps in ~/.local/share/game-shell/recents.json.
+// Tracks recently launched apps in ~/.local/share/tv-shell/recents.json.
 //
 // The input daemon owns the recents file: this component asks it to read
 // (`get-recents`) and to append a launch (`record-launch`) over the IPC socket

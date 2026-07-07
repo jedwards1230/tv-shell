@@ -43,7 +43,7 @@ then the only gate.
 |--------|------|--------|
 | POST | `/intent/<name>` | dispatch intent (`<name>` percent-decoded; see vocab below) |
 | POST | `/key/<name>` | synthesize nav key: `up\|down\|left\|right\|select\|back` |
-| GET | `/screenshot[.png]` `[?flash=1]` | `grim -` PNG; `flash=1` paints a post-capture vignette. Capture provenance rides in `X-GameShell-{Sha,Branch,Version,Captured-At}` response headers (body stays pure PNG) |
+| GET | `/screenshot[.png]` `[?flash=1]` | `grim -` PNG; `flash=1` paints a post-capture vignette. Capture provenance rides in `X-TvShell-{Sha,Branch,Version,Captured-At}` response headers (body stays pure PNG) |
 | GET | `/dev/status` | JSON `StatusInfo` blob |
 | GET | `/dev/logs` `[?lines=N&filter=str]` | tail `/tmp/qs-log.txt` (lines default 100, max 1000) |
 | POST | `/dev/deploy` `[?ref=git-ref]` | git fetch + checkout + reset (ref default `main`) |
@@ -73,9 +73,9 @@ second Quickshell on the same output:
   kill/spawn immediately after) — it returns `restart already in progress` (HTTP
   `200`) and no-ops. This closes the race where two overlapping HTTP/MCP calls
   each killed and respawned, leaving 2+ instances.
-- **Prefers the systemd unit.** When `game-shell-quickshell.service` is active
+- **Prefers the systemd unit.** When `tv-shell-quickshell.service` is active
   (`systemctl --user is-active`), the restart runs `systemctl --user restart
-  game-shell-quickshell.service` — systemd stops the old instance before starting
+  tv-shell-quickshell.service` — systemd stops the old instance before starting
   the new one. Otherwise it falls back to the serialized `pkill -x quickshell` +
   detached `setsid quickshell` spawn (a fresh/dev install with no unit, or a
   session with no user manager).
@@ -83,7 +83,7 @@ second Quickshell on the same output:
   quickshell processes (`ps -eo stat=,comm=`, excluding `Z`/`<defunct>` zombies —
   a plain `pgrep -xc` would miscount the fallback path's transient defunct
   children); if it ever sees more than one live shell it logs an `error!` and bumps
-  `game_shell_quickshell_multi_instance_total` (should always stay 0). See
+  `tv_shell_quickshell_multi_instance_total` (should always stay 0). See
   [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) for the unit.
 
 ## Observability (`/metrics`)
@@ -91,12 +91,12 @@ second Quickshell on the same output:
 `GET /metrics` returns the daemon's Prometheus/OpenMetrics exposition text
 (`Content-Type: text/plain; version=0.0.4; charset=utf-8`). Unlike every other route it
 **bypasses the bearer-token auth** — scrapers don't send tokens, and it exposes
-only aggregate counters (`game_shell_*_total`) and convenience resource gauges
+only aggregate counters (`tv_shell_*_total`) and convenience resource gauges
 (no screen content, no control). It is always available when the bridge is bound.
 
 This is the *portable* metrics path; the *primary* path is the node_exporter
 textfile collector (`[observability].metrics_textfile` in config.toml). Logs go
-to the systemd journal (`journalctl --user -u game-shell-input`). The full emit
+to the systemd journal (`journalctl --user -u tv-shell-input`). The full emit
 contract — config keys, the complete metric catalogue with types, and both
 collection options — is in [`OBSERVABILITY.md`](OBSERVABILITY.md).
 
@@ -145,7 +145,7 @@ URIs return a JSON-RPC `resource_not_found` (-32002).
 - `get_ui_state` reports compositor-level window focus (class + title + whether
   quickshell is focused) — NOT QML-internal state. Use `take_screenshot` for
   in-shell view state.
-- `take_screenshot` returns capture provenance alongside the frame (HTTP: `X-GameShell-*`
+- `take_screenshot` returns capture provenance alongside the frame (HTTP: `X-TvShell-*`
   headers; MCP: a trailing JSON text block) so a caller can tell *which* deployed
   checkout produced the image — latest `main`, a feature branch, or another agent's
   work. It's read live per capture (via `bridge_core::capture_meta`), because a

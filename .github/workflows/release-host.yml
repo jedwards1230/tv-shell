@@ -1,15 +1,15 @@
 # Per-binary release workflow for the cross-platform host sidecar (host/).
 #
 # Triggered by pushing a `host-v*` tag (e.g. `host-v0.1.0`). Builds
-# `game-shell-host` for Linux (static musl), macOS (arm64 + x86_64), and Windows,
+# `tv-shell-host` for Linux (static musl), macOS (arm64 + x86_64), and Windows,
 # then publishes ONE GitHub Release at the tag carrying every binary plus a
 # `checksums.txt`. The Ansible `desktop-common` role fetches the musl binary by
 # this tag (`install_method: fetch`) instead of building it on-host.
 #
 # The host crate is pure Rust (tokio/axum/serde/subtle/keyvalues-parser — no
 # evdev/cec/zbus, no C deps), so every target cross-compiles with nothing but the
-# musl gcc wrapper on the Linux leg. The daemon (game-shell-input) has its own
-# release-input.yml; this workflow is `-p game-shell-host`-scoped and never builds
+# musl gcc wrapper on the Linux leg. The daemon (tv-shell-input) has its own
+# release-input.yml; this workflow is `-p tv-shell-host`-scoped and never builds
 # the daemon's Linux-only graph.
 #
 # Tag scheme (see CLAUDE.md › CI): `host-v<semver>` releases the host;
@@ -37,16 +37,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            asset: game-shell-host-x86_64-unknown-linux-musl
+            asset: tv-shell-host-x86_64-unknown-linux-musl
           - os: macos-latest
             target: aarch64-apple-darwin
-            asset: game-shell-host-aarch64-apple-darwin
+            asset: tv-shell-host-aarch64-apple-darwin
           - os: macos-latest
             target: x86_64-apple-darwin
-            asset: game-shell-host-x86_64-apple-darwin
+            asset: tv-shell-host-x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset: game-shell-host-x86_64-pc-windows-msvc.exe
+            asset: tv-shell-host-x86_64-pc-windows-msvc.exe
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -68,16 +68,16 @@ jobs:
           key: release-host-${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release -p game-shell-host --target ${{ matrix.target }}
+        run: cargo build --release -p tv-shell-host --target ${{ matrix.target }}
 
       - name: Stage binary
         shell: bash
         run: |
           mkdir -p dist
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp "target/${{ matrix.target }}/release/game-shell-host.exe" "dist/${{ matrix.asset }}"
+            cp "target/${{ matrix.target }}/release/tv-shell-host.exe" "dist/${{ matrix.asset }}"
           else
-            cp "target/${{ matrix.target }}/release/game-shell-host" "dist/${{ matrix.asset }}"
+            cp "target/${{ matrix.target }}/release/tv-shell-host" "dist/${{ matrix.asset }}"
           fi
 
       - name: Upload artifact
@@ -103,7 +103,7 @@ jobs:
       # this file to verify the fetched artifact before installing it as root.
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum game-shell-host-* | tee checksums.txt
+        run: sha256sum tv-shell-host-* | tee checksums.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v3

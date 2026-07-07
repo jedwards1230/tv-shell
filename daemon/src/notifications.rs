@@ -1,4 +1,4 @@
-//! Notification history tracking (`~/.local/share/game-shell/notifications.json`).
+//! Notification history tracking (`~/.local/share/tv-shell/notifications.json`).
 //!
 //! Persists the notification history shown in `components/NotificationManager.qml`
 //! so the notification center survives Quickshell restarts. Exposed over IPC as
@@ -53,12 +53,11 @@ pub struct Notification {
     pub time: f64,
 }
 
-/// Default notifications path: `~/.local/share/game-shell/notifications.json`.
+/// Default notifications path: `~/.local/share/tv-shell/notifications.json`
+/// (legacy `~/.local/share/game-shell/` honored as a read-fallback via
+/// [`tv_shell_protocol::brand::data_dir`]).
 pub fn notifications_path() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    home.join(".local/share/game-shell/notifications.json")
+    tv_shell_protocol::brand::data_dir().join("notifications.json")
 }
 
 /// Parse the notifications file contents into a list. Invalid/missing JSON yields
