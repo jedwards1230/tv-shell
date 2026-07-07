@@ -26,8 +26,9 @@ import QtQuick
 //     (mirroring the old per-listener reconnect timers). Start with start();
 //     stop with stop().
 //
-// Socket path: GAME_SHELL_SOCK if set, else $XDG_RUNTIME_DIR/game-shell-input.sock
-// (== /run/user/$UID/…), matching the python shims' resolution.
+// Socket path: TV_SHELL_SOCK (legacy GAME_SHELL_SOCK fallback via Brand.env) if
+// set, else $XDG_RUNTIME_DIR/tv-shell-input.sock (== /run/user/$UID/…), matching
+// the python shims' resolution.
 Item {
     id: client
 
@@ -62,14 +63,14 @@ Item {
     property bool _reconnecting: false  // request: closing to replace an in-flight request, not a failure
 
     function _socketPath() {
-        let override = Quickshell.env("GAME_SHELL_SOCK");
+        let override = Brand.env("SOCK");
         if (override && override !== "")
             return override;
         let runtime = Quickshell.env("XDG_RUNTIME_DIR");
         if (runtime && runtime !== "")
-            return runtime + "/game-shell-input.sock";
+            return runtime + "/tv-shell-input.sock";
         // Last-ditch fallback; XDG_RUNTIME_DIR is always set in a real session.
-        return "/run/user/1000/game-shell-input.sock";
+        return "/run/user/1000/tv-shell-input.sock";
     }
 
     // --- Request/response API ---

@@ -6,7 +6,7 @@ import QtQuick
 // SettingsApp) talk to whatever StreamProviders.active points at via these
 // members. The base itself is a valid NO-STREAMING provider — an empty
 // targets list, no settings section, and no-op launch/quit — so selecting it
-// turns game-shell into a pure app launcher with no null-guards at call sites.
+// turns tv-shell into a pure app launcher with no null-guards at call sites.
 //
 // `id` is reserved in QML, so the backend identity property is `providerId`.
 Item {

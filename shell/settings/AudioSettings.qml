@@ -89,9 +89,9 @@ SettingsPageBase {
         // Pass sink name via env variable so it cannot inject shell commands
         // regardless of its content. (#131 shell injection fix)
         environment: ({
-                "GAME_SHELL_SINK": wantName
+                "TV_SHELL_SINK": wantName
             })
-        command: ["bash", "-c", "[ -z \"$GAME_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$GAME_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$GAME_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
+        command: ["bash", "-c", "[ -z \"$TV_SHELL_SINK\" ] && exit 0; " + "if command -v jq >/dev/null 2>&1; then " + "  id=$(pw-dump 2>/dev/null | jq -r --arg n \"$TV_SHELL_SINK\" " + "    '.[] | select(.info.props[\"node.name\"]==$n) | .id' | head -1); " + "else " + "  id=$(wpctl status 2>/dev/null | grep -F \"$TV_SHELL_SINK\" | grep -oE '[0-9]+' | head -1); " + "fi; " + "[ -n \"$id\" ] && wpctl set-default \"$id\" || true"]
         onExited: {
             // Refresh the list so UI reflects the re-applied default
             AudioController.refresh();
@@ -420,7 +420,7 @@ SettingsPageBase {
         // no orphaned child left playing. Fixed temp path → no file accumulation.
         // The WAV channel count (GS_NCH) tracks the active layout so each masked
         // channel index lands on its real speaker.
-        command: ["python3", "-c", "import wave,struct,math,os\n" + "mask=[int(x) for x in os.environ.get('GS_MASK','0').split(',') if x!='']\n" + "nch=int(os.environ.get('GS_NCH','2') or 2)\n" + "if nch<1: nch=1\n" + "sr=48000;freq=480;amp=0.5;blk=24000\n" + "block=bytearray()\n" + "for i in range(blk):\n" + " s=int(amp*32767*math.sin(2*math.pi*freq*i/sr))\n" + " fr=[0]*nch\n" + " for c in mask:\n" + "  if 0<=c<nch: fr[c]=s\n" + " block+=struct.pack('<%dh'%nch,*fr)\n" + "data=bytes(block)*40\n" + "fn=os.path.join(os.environ.get('XDG_RUNTIME_DIR','/tmp'),'game-shell-tone.wav')\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "w.writeframes(data);w.close()\n" + "os.execvp('pw-play',['pw-play','--volume','0.85',fn])\n"]
+        command: ["python3", "-c", "import wave,struct,math,os\n" + "mask=[int(x) for x in os.environ.get('GS_MASK','0').split(',') if x!='']\n" + "nch=int(os.environ.get('GS_NCH','2') or 2)\n" + "if nch<1: nch=1\n" + "sr=48000;freq=480;amp=0.5;blk=24000\n" + "block=bytearray()\n" + "for i in range(blk):\n" + " s=int(amp*32767*math.sin(2*math.pi*freq*i/sr))\n" + " fr=[0]*nch\n" + " for c in mask:\n" + "  if 0<=c<nch: fr[c]=s\n" + " block+=struct.pack('<%dh'%nch,*fr)\n" + "data=bytes(block)*40\n" + "fn=os.path.join(os.environ.get('XDG_RUNTIME_DIR','/tmp'),'tv-shell-tone.wav')\n" + "w=wave.open(fn,'w');w.setnchannels(nch);w.setsampwidth(2);w.setframerate(sr)\n" + "w.writeframes(data);w.close()\n" + "os.execvp('pw-play',['pw-play','--volume','0.85',fn])\n"]
         onExited: {
             if (root.anyChannelActive)
                 running = true;
