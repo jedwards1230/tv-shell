@@ -26,7 +26,7 @@ jobs:
         qml-quality@jedwards1230-plugins
         rust-quality@jedwards1230-plugins
       focus: |
-        game-shell is a Quickshell (QML) + Rust couch-gaming shell.
+        tv-shell is a Quickshell (QML) + Rust couch-gaming shell.
         - QML correctness: binding loops, unhandled signals, leaked Connections,
           null property access.
         - Rust safety: unwrap()/expect()/panic! on fallible paths, error

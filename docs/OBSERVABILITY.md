@@ -1,6 +1,6 @@
 # Observability
 
-The `game-shell-input` daemon emits observability in Linux-native, standard,
+The `tv-shell-input` daemon emits observability in Linux-native, standard,
 self-describing formats so **any** consumer can collect it their way. This repo
 emits the signal; **collection and forwarding are intentionally out of scope**
 (they are deployment-private — point your own node_exporter / Prometheus /
@@ -26,7 +26,7 @@ There are two signals:
   non-Linux.
 
 Selection is automatic but overridable via `[observability]` in
-`~/.config/game-shell/config.toml`:
+`~/.config/tv-shell/config.toml`:
 
 | Config key (`[observability]`) | Values | Effect |
 |---|---|---|
@@ -35,11 +35,11 @@ Selection is automatic but overridable via `[observability]` in
 | | _omitted_ (default) | **Auto**: use journald when `JOURNAL_STREAM` is set (i.e. launched under a systemd unit) and the journal socket is reachable; otherwise stdout. |
 
 The log level/targets remain an env var (NOT a config key), so the standard
-`RUST_LOG=… game-shell-input` workflow is unchanged:
+`RUST_LOG=… tv-shell-input` workflow is unchanged:
 
 | Env var | Values | Effect |
 |---|---|---|
-| `RUST_LOG` | e.g. `info`, `game_shell_input=debug` | Standard `EnvFilter` syntax. Honoured identically on **both** paths. Default `info`. |
+| `RUST_LOG` | e.g. `info`, `tv_shell_input=debug` | Standard `EnvFilter` syntax. Honoured identically on **both** paths. Default `info`. |
 
 If the journald layer is requested but the journal socket cannot be opened, the
 daemon logs a one-line notice to stderr and falls back to stdout — it is never
@@ -50,14 +50,14 @@ left without logging.
 When run under the user service (the common deployment):
 
 ```bash
-journalctl --user -u game-shell-input            # all logs
-journalctl --user -u game-shell-input -f         # follow
-journalctl --user -u game-shell-input -p warning # warnings and above
-journalctl --user -u game-shell-input -o json    # structured fields
+journalctl --user -u tv-shell-input            # all logs
+journalctl --user -u tv-shell-input -f         # follow
+journalctl --user -u tv-shell-input -p warning # warnings and above
+journalctl --user -u tv-shell-input -o json    # structured fields
 ```
 
 Raise verbosity by setting the `RUST_LOG` env var (it stays an env var, not a
-config key), e.g. `RUST_LOG=game_shell_input=debug game-shell-input`. The
+config key), e.g. `RUST_LOG=tv_shell_input=debug tv-shell-input`. The
 `publish` chokepoint at `debug` is a full event tracer (intents, combos,
 `pad:*`, input-mode, controller-wake).
 
@@ -65,12 +65,12 @@ config key), e.g. `RUST_LOG=game_shell_input=debug game-shell-input`. The
 
 ## Metrics
 
-All metrics are namespaced `game_shell_` and carry `# HELP`/`# TYPE` lines. The
+All metrics are namespaced `tv_shell_` and carry `# HELP`/`# TYPE` lines. The
 exposition text is rendered **once** by `metrics::render` and shared between the
 textfile writer and `/metrics`, so the two never drift.
 
-> **Resource gauges are a convenience.** `game_shell_cpu_percent`,
-> `game_shell_mem_*`, `game_shell_load1`, and `game_shell_temperature_celsius`
+> **Resource gauges are a convenience.** `tv_shell_cpu_percent`,
+> `tv_shell_mem_*`, `tv_shell_load1`, and `tv_shell_temperature_celsius`
 > are reused from the daemon's existing sys-metrics reader. If a **node_exporter
 > is present on the host, prefer its** `node_cpu_*` / `node_memory_*` /
 > `node_hwmon_temp_*` — they are more complete and authoritative. The genuinely
@@ -81,25 +81,25 @@ textfile writer and `/metrics`, so the two never drift.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `game_shell_build_info` | gauge | `sha`, `branch`, `version` | Currently deployed revision. Standard info-metric: value is always `1`, identity is in the labels. Resolved **live on each render** from the same provenance as the `/screenshot` `X-GameShell-*` headers and `/dev/status`, so a `/dev/deploy` HEAD swap shows up on the next render. |
-| `game_shell_input_events_total` | counter | — | Raw gamepad evdev events read and processed by the input runtime (hot path). |
-| `game_shell_intents_emitted_total` | counter | — | Shell intents broadcast (`intent:<name>`) — IPC, HTTP `/intent/*`, MCP `send_intent`, and gamepad Home-tap/Home-hold all funnel through one chokepoint. |
-| `game_shell_transitions_total` | counter | — | Shell↔game presenter transitions (`grab`/`release`/`handoff`). |
-| `game_shell_pad_joins_total` | counter | — | Gamepads that joined the fleet (hot-join or initial enumeration). |
-| `game_shell_pad_leaves_total` | counter | — | Gamepads that left the fleet (disconnect). |
-| `game_shell_shell_restarts_total` | counter | — | Daemon starts observed this boot session (the daemon re-execs on `/dev/restart-daemon` and is otherwise supervised, so this is the input-daemon restart count). |
-| `game_shell_input_runtime_up` | gauge | — | Input-runtime liveness: `1` while the supervised input event loop is running, `0` during a respawn gap or after it has panicked past its retry budget (the daemon stays alive; IPC input commands then reply `error:input-runtime-down`). Always emitted. |
-| `game_shell_input_runtime_restarts_total` | counter | — | **In-process** input-runtime respawns after a caught panic — the supervisor rebuilds the input event loop (fresh fleet → released grabs) without re-execing the daemon. Distinct from `game_shell_shell_restarts_total` (whole-process starts); a rising value flags a recurring panic in the input path. |
-| `game_shell_grab_invariant_violations_total` | counter | — | Detected grab-state drift: a pad's physical `EVIOCGRAB` disagreed with the presenter policy (`should_grab`) after a transition. Should stay `0`; nonzero means the daemon's grab bookkeeping and the kernel diverged. |
-| `game_shell_deploy_total` | counter | `outcome` (`ok`\|`error`) | `POST /dev/deploy` attempts via the HTTP bridge, split by success/failure. |
-| `game_shell_build_total` | counter | — | `POST /dev/build` attempts via the HTTP bridge. |
-| `game_shell_restart_shell_total` | counter | — | `POST /dev/restart-shell` attempts via the HTTP bridge. |
-| `game_shell_restart_daemon_total` | counter | — | `POST /dev/restart-daemon` (re-exec) requests via the HTTP bridge. Counted before the process image is replaced; the re-exec'd process starts its own counters at zero. |
-| `game_shell_cpu_percent` | gauge | — | Aggregate CPU utilisation 0..=100. _Convenience — prefer node_exporter._ |
-| `game_shell_mem_used_bytes` | gauge | — | Used memory in bytes. _Convenience._ |
-| `game_shell_mem_total_bytes` | gauge | — | Total memory in bytes. _Convenience._ |
-| `game_shell_load1` | gauge | — | 1-minute load average. _Convenience._ |
-| `game_shell_temperature_celsius` | gauge | `sensor` | Per-sensor hardware temperature (e.g. `sensor="CPU Tctl"`). _Convenience._ |
+| `tv_shell_build_info` | gauge | `sha`, `branch`, `version` | Currently deployed revision. Standard info-metric: value is always `1`, identity is in the labels. Resolved **live on each render** from the same provenance as the `/screenshot` `X-TvShell-*` headers and `/dev/status`, so a `/dev/deploy` HEAD swap shows up on the next render. |
+| `tv_shell_input_events_total` | counter | — | Raw gamepad evdev events read and processed by the input runtime (hot path). |
+| `tv_shell_intents_emitted_total` | counter | — | Shell intents broadcast (`intent:<name>`) — IPC, HTTP `/intent/*`, MCP `send_intent`, and gamepad Home-tap/Home-hold all funnel through one chokepoint. |
+| `tv_shell_transitions_total` | counter | — | Shell↔game presenter transitions (`grab`/`release`/`handoff`). |
+| `tv_shell_pad_joins_total` | counter | — | Gamepads that joined the fleet (hot-join or initial enumeration). |
+| `tv_shell_pad_leaves_total` | counter | — | Gamepads that left the fleet (disconnect). |
+| `tv_shell_shell_restarts_total` | counter | — | Daemon starts observed this boot session (the daemon re-execs on `/dev/restart-daemon` and is otherwise supervised, so this is the input-daemon restart count). |
+| `tv_shell_input_runtime_up` | gauge | — | Input-runtime liveness: `1` while the supervised input event loop is running, `0` during a respawn gap or after it has panicked past its retry budget (the daemon stays alive; IPC input commands then reply `error:input-runtime-down`). Always emitted. |
+| `tv_shell_input_runtime_restarts_total` | counter | — | **In-process** input-runtime respawns after a caught panic — the supervisor rebuilds the input event loop (fresh fleet → released grabs) without re-execing the daemon. Distinct from `tv_shell_shell_restarts_total` (whole-process starts); a rising value flags a recurring panic in the input path. |
+| `tv_shell_grab_invariant_violations_total` | counter | — | Detected grab-state drift: a pad's physical `EVIOCGRAB` disagreed with the presenter policy (`should_grab`) after a transition. Should stay `0`; nonzero means the daemon's grab bookkeeping and the kernel diverged. |
+| `tv_shell_deploy_total` | counter | `outcome` (`ok`\|`error`) | `POST /dev/deploy` attempts via the HTTP bridge, split by success/failure. |
+| `tv_shell_build_total` | counter | — | `POST /dev/build` attempts via the HTTP bridge. |
+| `tv_shell_restart_shell_total` | counter | — | `POST /dev/restart-shell` attempts via the HTTP bridge. |
+| `tv_shell_restart_daemon_total` | counter | — | `POST /dev/restart-daemon` (re-exec) requests via the HTTP bridge. Counted before the process image is replaced; the re-exec'd process starts its own counters at zero. |
+| `tv_shell_cpu_percent` | gauge | — | Aggregate CPU utilisation 0..=100. _Convenience — prefer node_exporter._ |
+| `tv_shell_mem_used_bytes` | gauge | — | Used memory in bytes. _Convenience._ |
+| `tv_shell_mem_total_bytes` | gauge | — | Total memory in bytes. _Convenience._ |
+| `tv_shell_load1` | gauge | — | 1-minute load average. _Convenience._ |
+| `tv_shell_temperature_celsius` | gauge | `sensor` | Per-sensor hardware temperature (e.g. `sensor="CPU Tctl"`). _Convenience._ |
 
 ### Option A — node_exporter textfile collector (primary)
 
@@ -109,7 +109,7 @@ A background task periodically renders the exposition text and writes it
 
 | Config key (`[observability]`) | Default | Effect |
 |---|---|---|
-| `metrics_textfile` | _omitted_ → **writer disabled** | Absolute path to the `.prom` file to write (e.g. `/var/lib/node_exporter/textfile/game-shell.prom`). |
+| `metrics_textfile` | _omitted_ → **writer disabled** | Absolute path to the `.prom` file to write (e.g. `/var/lib/node_exporter/textfile/tv-shell.prom`). |
 | `metrics_interval` | `15` | Render/write interval in seconds. `0` falls back to the default. |
 
 When `metrics_textfile` is omitted, **no file is written** — the textfile path is
@@ -139,7 +139,7 @@ curl -s http://<host>:<port>/metrics
 
 ## Configuration summary
 
-Everything below is `[observability]` in `~/.config/game-shell/config.toml`,
+Everything below is `[observability]` in `~/.config/tv-shell/config.toml`,
 except `RUST_LOG` which stays a standard env var:
 
 | Setting | Default | Purpose |

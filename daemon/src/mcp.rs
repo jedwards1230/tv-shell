@@ -1,18 +1,18 @@
-//! MCP server for the game-shell daemon, built on the official `rmcp` 1.7.0 crate.
+//! MCP server for the tv-shell daemon, built on the official `rmcp` 1.7.0 crate.
 //!
-//! **Opt-in**: the server only starts when the `GAME_SHELL_MCP_BIND` environment
+//! **Opt-in**: the server only starts when the `TV_SHELL_MCP_BIND` environment
 //! variable is set to a `host:port` address. When unset, no socket is opened.
 //!
 //! **Auth**: bearer-token auth at parity with the HTTP bridge. Uses the same
-//! `GAME_SHELL_HTTP_TOKEN` and `GAME_SHELL_HTTP_AUTH_ENABLED` env vars so
+//! `TV_SHELL_HTTP_TOKEN` and `TV_SHELL_HTTP_AUTH_ENABLED` env vars so
 //! operators only need one token. Applied via an axum middleware layer wrapping
 //! the `/mcp` route; constant-time comparison via `bridge_core::ct_eq_str`.
 //! If auth is enabled but no token is configured, all requests are rejected (fail
-//! closed). `GAME_SHELL_MCP_ALLOWED_HOSTS` (comma-separated host[:port]) overrides
+//! closed). `TV_SHELL_MCP_ALLOWED_HOSTS` (comma-separated host[:port]) overrides
 //! the rmcp host allowlist.
 //!
 //! **Dev tools**: `dev_deploy`, `dev_build`, and `dev_restart_daemon` are only
-//! registered when `GAME_SHELL_MCP_DEV` is set (any non-empty value). This keeps
+//! registered when `TV_SHELL_MCP_DEV` is set (any non-empty value). This keeps
 //! the production tool surface minimal.
 //!
 //! **Transport**: StreamableHttpService over axum, served at `/mcp`. The MCP
@@ -75,7 +75,7 @@ fn screenshot_resource_descriptor() -> RawResource {
     RawResource::new(SCREENSHOT_RESOURCE_URI, "Current screen")
         .with_title("Current screen")
         .with_description(
-            "Live game-shell display, captured as a PNG on read (no flash). \
+            "Live tv-shell display, captured as a PNG on read (no flash). \
              Host/user-driven context — for the autonomous observe→verify loop, \
              use the take_screenshot tool instead.",
         )
@@ -270,12 +270,12 @@ struct Handles {
 // ─── MCP handler ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct GameShellMcp {
+pub struct TvShellMcp {
     handles: Handles,
     tool_router: ToolRouter<Self>,
 }
 
-impl GameShellMcp {
+impl TvShellMcp {
     fn new(handles: Handles) -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -285,7 +285,7 @@ impl GameShellMcp {
 }
 
 #[tool_handler(router = self.tool_router)]
-impl ServerHandler for GameShellMcp {
+impl ServerHandler for TvShellMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
@@ -306,11 +306,11 @@ impl ServerHandler for GameShellMcp {
                 .build(),
         )
         .with_server_info(Implementation::new(
-            "game-shell-mcp",
+            tv_shell_protocol::brand::mcp_server_name(),
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(
-            "Controls the game-shell Quickshell UI on the game client.\n\
+            "Controls the tv-shell Quickshell UI on the game client.\n\
                  \n\
                  Observe → Act → Verify loop:\n\
                  1. take_screenshot or get_ui_state to observe current state.\n\
@@ -385,11 +385,11 @@ impl ServerHandler for GameShellMcp {
 }
 
 #[tool_router(router = tool_router)]
-impl GameShellMcp {
+impl TvShellMcp {
     // ── Navigation / intents ──────────────────────────────────────────────────
 
     #[tool(
-        description = "Send a bare top-level action to the game-shell UI. \
+        description = "Send a bare top-level action to the tv-shell UI. \
             Valid actions: home, home-tap, home-hold, menu, settings, power. \
             Deep-links (containing ':') are NOT accepted here — \
             use open_settings / open_overlay / launch_app for those specific targets.",
@@ -427,7 +427,7 @@ impl GameShellMcp {
 
     #[tool(
         description = "Synthesize a directional or action keypress on the \
-            game-shell virtual keyboard. Moves focus RELATIVE to the currently \
+            tv-shell virtual keyboard. Moves focus RELATIVE to the currently \
             focused element — observe first (take_screenshot or get_ui_state) \
             to know what is focused before navigating. \
             `select` = activate/confirm the focused element (A button / Enter); \
@@ -559,12 +559,12 @@ impl GameShellMcp {
 
     #[tool(
         description = "Capture the current Wayland display as a PNG image. \
-            Set flash=true to trigger a brief white vignette on the game-shell UI \
+            Set flash=true to trigger a brief white vignette on the tv-shell UI \
             after capture (visual feedback for the user at the TV). \
             Call this after every UI action to confirm the expected state was reached. \
             Returns two content blocks: the PNG image, then a JSON text block of \
             capture metadata {captured_at, sha, branch, version} identifying which \
-            deployed game-shell produced the frame (main vs a feature branch).",
+            deployed tv-shell produced the frame (main vs a feature branch).",
         annotations(read_only_hint = true)
     )]
     async fn take_screenshot(
@@ -623,7 +623,7 @@ impl GameShellMcp {
     #[tool(
         description = "Kill and restart the quickshell process. \
             Waits 3 seconds for startup and returns the first WARN/ERROR log lines \
-            (or a 'no errors' confirmation). Use after deploying a new game-shell \
+            (or a 'no errors' confirmation). Use after deploying a new tv-shell \
             build to pick up QML changes without rebooting.",
         annotations(read_only_hint = false, destructive_hint = true)
     )]
@@ -634,14 +634,14 @@ impl GameShellMcp {
         }
     }
 
-    // ── Dev operations (gated on GAME_SHELL_MCP_DEV) ─────────────────────────
+    // ── Dev operations (gated on TV_SHELL_MCP_DEV) ─────────────────────────
     // These are only *registered* when dev_enabled is true; the tool_router
     // includes them unconditionally at compile time but they return a clear
     // error when the dev flag is absent — this is the safest approach with the
     // current rmcp macro model (conditional registration is not yet supported).
 
     #[tool(
-        description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
+        description = "DEV ONLY (requires TV_SHELL_MCP_DEV env var). \
             git fetch + checkout + reset to remote. Defaults to 'main'. \
             Use to pull a branch onto the device without a full re-deploy.",
         annotations(read_only_hint = false, destructive_hint = true)
@@ -652,7 +652,7 @@ impl GameShellMcp {
     ) -> CallToolResult {
         if !self.handles.dev_enabled {
             return CallToolResult::error(vec![Content::text(
-                "dev tools disabled — set GAME_SHELL_MCP_DEV to enable",
+                "dev tools disabled — set TV_SHELL_MCP_DEV to enable",
             )]);
         }
         match bridge_core::dev_deploy(git_ref.as_deref()).await {
@@ -662,7 +662,7 @@ impl GameShellMcp {
     }
 
     #[tool(
-        description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
+        description = "DEV ONLY (requires TV_SHELL_MCP_DEV env var). \
             Run scripts/build-daemon.sh and install the resulting binary. \
             This is a long-running operation (~15-60 seconds depending on cache).",
         annotations(read_only_hint = false, destructive_hint = true)
@@ -670,7 +670,7 @@ impl GameShellMcp {
     async fn dev_build(&self) -> CallToolResult {
         if !self.handles.dev_enabled {
             return CallToolResult::error(vec![Content::text(
-                "dev tools disabled — set GAME_SHELL_MCP_DEV to enable",
+                "dev tools disabled — set TV_SHELL_MCP_DEV to enable",
             )]);
         }
         match bridge_core::dev_build().await {
@@ -680,7 +680,7 @@ impl GameShellMcp {
     }
 
     #[tool(
-        description = "DEV ONLY (requires GAME_SHELL_MCP_DEV env var). \
+        description = "DEV ONLY (requires TV_SHELL_MCP_DEV env var). \
             Re-exec the daemon process (picks up a newly built binary). \
             The MCP connection will drop immediately after the response.",
         annotations(read_only_hint = false, destructive_hint = true)
@@ -688,7 +688,7 @@ impl GameShellMcp {
     async fn dev_restart_daemon(&self) -> CallToolResult {
         if !self.handles.dev_enabled {
             return CallToolResult::error(vec![Content::text(
-                "dev tools disabled — set GAME_SHELL_MCP_DEV to enable",
+                "dev tools disabled — set TV_SHELL_MCP_DEV to enable",
             )]);
         }
         bridge_core::request_reexec(&self.handles.reexec_flag, &self.handles.shutdown);
@@ -741,7 +741,7 @@ async fn auth_middleware(
 /// Bind an axum listener to `addr` and serve the MCP Streamable HTTP server
 /// on `/mcp` until the shared `shutdown` token is cancelled.
 ///
-/// Called from `main.rs` when `GAME_SHELL_MCP_BIND` is set. The shared
+/// Called from `main.rs` when `TV_SHELL_MCP_BIND` is set. The shared
 /// CancellationToken is cancelled on SIGTERM/SIGINT or when a re-exec is
 /// requested — both paths call `bridge_core::request_reexec` which cancels
 /// the token. The MCP server then shuts down cleanly and the main loop
@@ -772,7 +772,7 @@ pub async fn serve(
     };
 
     // Treat an empty token as no token at all, so an operator who sets
-    // GAME_SHELL_HTTP_TOKEN="" can never accidentally satisfy the auth check —
+    // TV_SHELL_HTTP_TOKEN="" can never accidentally satisfy the auth check —
     // it fails closed (rejects all) instead of accepting `Bearer ` (empty).
     let token = token.filter(|t| !t.is_empty());
 
@@ -788,7 +788,7 @@ pub async fn serve(
     // Build auth state for the middleware.
     let auth_state = if !auth_enabled {
         tracing::warn!(
-            "mcp: AUTH DISABLED (GAME_SHELL_HTTP_AUTH_ENABLED=0) — \
+            "mcp: AUTH DISABLED (TV_SHELL_HTTP_AUTH_ENABLED=0) — \
              any host on the network can send MCP commands without authentication"
         );
         AuthState {
@@ -799,9 +799,9 @@ pub async fn serve(
         match &token {
             None => {
                 tracing::warn!(
-                    "mcp: auth is ENABLED but GAME_SHELL_HTTP_TOKEN is not set — \
+                    "mcp: auth is ENABLED but TV_SHELL_HTTP_TOKEN is not set — \
                      all MCP requests will be rejected with 401 (set the token or \
-                     disable auth with GAME_SHELL_HTTP_AUTH_ENABLED=0)"
+                     disable auth with TV_SHELL_HTTP_AUTH_ENABLED=0)"
                 );
                 AuthState {
                     expected_bearer: None,
@@ -881,9 +881,9 @@ pub async fn serve(
     }
 
     let handles_clone = handles.clone();
-    let service: StreamableHttpService<GameShellMcp, LocalSessionManager> =
+    let service: StreamableHttpService<TvShellMcp, LocalSessionManager> =
         StreamableHttpService::new(
-            move || Ok(GameShellMcp::new(handles_clone.clone())),
+            move || Ok(TvShellMcp::new(handles_clone.clone())),
             Default::default(),
             config,
         );
@@ -923,7 +923,7 @@ mod tests {
     // validation in CI so the regression can't ship again.
     #[test]
     fn tool_router_builds_without_panic() {
-        let _ = GameShellMcp::tool_router();
+        let _ = TvShellMcp::tool_router();
     }
 
     // ── advertised server capabilities ────────────────────────────────────────

@@ -1,13 +1,13 @@
 # IPC Protocol Specification
 
-The input/backend daemon (`game-shell-input`, Rust source in `daemon/`) communicates with QML components over a Unix domain socket using a newline-delimited text protocol.
+The input/backend daemon (`tv-shell-input`, Rust source in `daemon/`) communicates with QML components over a Unix domain socket using a newline-delimited text protocol.
 
 ## Socket Connection
 
 | Property | Value |
 |----------|-------|
-| Path | `/run/user/$UID/game-shell-input.sock` |
-| Env override | `GAME_SHELL_SOCK` |
+| Path | `/run/user/$UID/tv-shell-input.sock` |
+| Env override | `TV_SHELL_SOCK` |
 | Type | `AF_UNIX`, `SOCK_STREAM` |
 | Framing | Newline-delimited (`\n`) UTF-8 text |
 | Permissions | `0o600` (owner only) |
@@ -211,7 +211,7 @@ missing optional fields are `""`). An empty result is `[]`.
 
 ### `get-config`
 
-Return the full settings document (`~/.config/game-shell/settings.json`).
+Return the full settings document (`~/.config/tv-shell/settings.json`).
 Stateless. A missing or unparseable file yields `{}`.
 
 **Response:** The settings document as a compact single-line JSON **object**:
@@ -291,7 +291,7 @@ merge replaces that subtree wholesale.
 ### `record-launch <json-object>`
 
 Record an app launch into the recents file
-(`~/.local/share/game-shell/recents.json`). The body is a compact single-line
+(`~/.local/share/tv-shell/recents.json`). The body is a compact single-line
 JSON object `{"name":...,"exec":...,"comment":...}` (all optional, default
 `""`). The daemon prepends a `{name,exec,comment,time}` entry (where `time` is
 unix seconds set by the daemon), removing any existing entry with the same
@@ -348,7 +348,7 @@ unparseable file yields `[]`. Returns at most 100 entries.
 ### `record-notification <json-object>`
 
 Append a notification to the history file
-(`~/.local/share/game-shell/notifications.json`). The body is a compact
+(`~/.local/share/tv-shell/notifications.json`). The body is a compact
 single-line JSON object `{"id":N,"title":...,"message":...,"level":...,"source":...,"icon":...}`.
 The daemon prepends the entry (newest first), stamps `time` with the current
 wall-clock unix seconds, and caps the file at 100 entries. **No de-duplication**
@@ -415,7 +415,7 @@ button that issues `controllerdb-refresh` and updates the status line in place.
 ### `controllerdb-refresh`
 
 Fetch the upstream SDL `GameControllerDB`, persist it to
-`~/.local/share/game-shell/gamecontrollerdb.txt`, and hot-swap the live db in
+`~/.local/share/tv-shell/gamecontrollerdb.txt`, and hot-swap the live db in
 the input runtime (new controllers are identified without a daemon restart — the
 IPC layer sends `Control::ControllerDbRefreshed` to the runtime after a
 successful fetch). **Linux-only** (`reqwest` HTTPS); on non-Linux the fetch
@@ -873,7 +873,7 @@ by namespace.
 **Example (open Bluetooth settings directly):**
 
 ```
-echo "intent settings:bluetooth" | nc -U "$GAME_SHELL_SOCK"
+echo "intent settings:bluetooth" | nc -U "$TV_SHELL_SOCK"
 ```
 
 | Condition | Response |
@@ -885,7 +885,7 @@ echo "intent settings:bluetooth" | nc -U "$GAME_SHELL_SOCK"
 **Example (automation):**
 
 ```
-echo "intent home" | nc -U "$GAME_SHELL_SOCK"
+echo "intent home" | nc -U "$TV_SHELL_SOCK"
 ```
 
 ### `rumble <id> <ms>`
@@ -913,7 +913,7 @@ This is a **best-effort, cap-gated no-op**:
 **Example (automation):**
 
 ```
-echo "rumble uniq:e4:17:d8:01:02:03 200" | nc -U "$GAME_SHELL_SOCK"
+echo "rumble uniq:e4:17:d8:01:02:03 200" | nc -U "$TV_SHELL_SOCK"
 ```
 
 > **`rumbleEnabled` setting.** A QML-owned boolean in `settings.json`
@@ -953,9 +953,9 @@ never sees as intents).
 **Example (automation — open Settings from home, then walk down the sidebar):**
 
 ```
-echo "intent settings" | nc -U "$GAME_SHELL_SOCK"   # control surface
-echo "key down"         | nc -U "$GAME_SHELL_SOCK"   # synthesized input
-echo "key select"       | nc -U "$GAME_SHELL_SOCK"
+echo "intent settings" | nc -U "$TV_SHELL_SOCK"   # control surface
+echo "key down"         | nc -U "$TV_SHELL_SOCK"   # synthesized input
+echo "key select"       | nc -U "$TV_SHELL_SOCK"
 ```
 
 ## Phase 4 Commands (Hyprland + Sunshine)
@@ -1115,10 +1115,10 @@ Fetch the Plex server's **On Deck** (continue-watching / up-next) and **Recently
 Added** hubs for the home-screen Plex widget. Bare command — no body. Stateless
 and cross-platform (`reqwest`), served like `sunshine-status`.
 
-Config comes from the **`[plex]` section** of `~/.config/game-shell/config.toml`:
+Config comes from the **`[plex]` section** of `~/.config/tv-shell/config.toml`:
 
 - `url` — server base, e.g. `https://plex.example.com`
-- `token_file` — path to a `0600` file (under `~/.config/game-shell/`) holding an
+- `token_file` — path to a `0600` file (under `~/.config/tv-shell/`) holding an
   `X-Plex-Token`. Token-file only; inline tokens are not supported.
 
 The token never leaves the daemon: the reply embeds ready-to-load, tokenized
@@ -1329,7 +1329,7 @@ internal behavior with no IPC verb, gated entirely by a config flag.
 
 | Key | Purpose |
 |-----|---------|
-| `[cec] lifecycle` | Enable daemon-owned CEC lifecycle (a TOML bool, default `false`). **Unset/`false` → disabled (the default).** Set it in `~/.config/game-shell/config.toml` on the deploy host. |
+| `[cec] lifecycle` | Enable daemon-owned CEC lifecycle (a TOML bool, default `false`). **Unset/`false` → disabled (the default).** Set it in `~/.config/tv-shell/config.toml` on the deploy host. |
 
 When **enabled** (and the daemon is built `--features cec` on a host with a
 working libcec adapter), the daemon:
@@ -1409,18 +1409,18 @@ The daemon reads an optional machine-local typed config at startup, so per-box
 overrides survive git deploys without touching tracked files:
 
 ```
-~/.config/game-shell/config.toml
+~/.config/tv-shell/config.toml
 ```
 
 Example to opt a box into the LAN HTTP bridge:
 
 ```toml
-# ~/.config/game-shell/config.toml
+# ~/.config/tv-shell/config.toml
 [http]
 # Bind the HTTP bridge to the LAN interface on this box.
 bind = "192.168.1.50:8731"
 # A 0600 file holding the bearer token (required when auth is enabled, the default).
-token_file = "~/.config/game-shell/http-token"
+token_file = "~/.config/tv-shell/http-token"
 # Uncomment to disable auth entirely for local-only dev:
 # auth_enabled = false
 ```
@@ -1458,17 +1458,17 @@ re-validate).
 ```yaml
 # configuration.yaml
 rest_command:
-  game_shell_intent:
+  tv_shell_intent:
     url: "http://192.168.1.50:8731/intent/{{ intent }}"
     method: POST
     headers:
       Authorization: "Bearer {{ token }}"
-  game_shell_key:
+  tv_shell_key:
     url: "http://192.168.1.50:8731/key/{{ key }}"
     method: POST
     headers:
       Authorization: "Bearer mysecret"
-  game_shell_screenshot:
+  tv_shell_screenshot:
     url: "http://192.168.1.50:8731/screenshot"
     method: GET
     headers:
@@ -1478,7 +1478,7 @@ rest_command:
 Usage in an automation:
 
 ```yaml
-action: rest_command.game_shell_intent
+action: rest_command.tv_shell_intent
 data:
   intent: "settings:bluetooth"
   token: "mysecret"
@@ -1528,7 +1528,7 @@ trusted LAN box, but never expose the bridge to a public interface. (This is
 exactly the combination `DaemonConfig::validate` refuses on a non-loopback bind
 with auth off, absent `[dev] allow_insecure_lan = true`.)
 
-The daemon reads its options from a typed `~/.config/game-shell/config.toml` at
+The daemon reads its options from a typed `~/.config/tv-shell/config.toml` at
 startup, and separately self-discovers session env (#165): it resolves
 `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE` from `$XDG_RUNTIME_DIR` when
 they are not inherited. This means the bridge binds and subprocesses (`grim`,
@@ -1594,7 +1594,7 @@ one line per line. 200 even when the file is absent:
 #### `POST /dev/restart-shell`
 
 Sends `pkill -x quickshell` (ignoring failures if quickshell is not running), then
-spawns a new `quickshell -c game-shell` process detached via `setsid` with stdout and
+spawns a new `quickshell -c tv-shell` process detached via `setsid` with stdout and
 stderr redirected to `/tmp/qs-log.txt`. Session env (`WAYLAND_DISPLAY`,
 `HYPRLAND_INSTANCE_SIGNATURE`, `XDG_RUNTIME_DIR`) is injected into the child via
 `session_env`. The handler waits 3 seconds for initial log output, then returns the
@@ -1609,8 +1609,8 @@ started (no WARN/ERROR in first 3s)
 #### `POST /dev/build`
 
 Runs `cargo build --release` inside the `daemon/` subdirectory of the install root
-(resolved via `session_env::install_root()` — from `current_exe` / `$GAME_SHELL_DIR`;
-`/opt/game-shell` is only a last-ditch default). On success, installs the built binary to `bin/game-shell-input`
+(resolved via `session_env::install_root()` — from `current_exe` / `$TV_SHELL_DIR`;
+`/opt/tv-shell` is only a last-ditch default). On success, installs the built binary to `bin/tv-shell-input`
 with `install -m755`. Returns the last 12 lines of cargo stderr plus `ok` on success,
 or a 500 with the cargo/install error on failure. Typical build time is ~15 s on a
 warm cache; the connection timeout is 180 s to cover cold builds.
@@ -1716,8 +1716,8 @@ dropped), those commands receive:
 
 This is a distinct, actionable reply — a dead backend is **not** reported as
 `unknown` (which is reserved for genuinely unrecognized commands / client typos).
-Watch `game_shell_input_runtime_up` (0 = down) and
-`game_shell_input_runtime_restarts_total` in the metrics for the same signal.
+Watch `tv_shell_input_runtime_up` (0 = down) and
+`tv_shell_input_runtime_restarts_total` in the metrics for the same signal.
 
 ## Daemon-to-Subscriber Events
 
@@ -2134,7 +2134,7 @@ the pad's input goes and whether the physical grab is held.
 | Feature | Shell presenter (`grab`) | Keyboard presenter (contract) | Game presenter (`release`) | Handoff presenter (`handoff`) |
 |---------|--------------------------|-------------------------------|----------------------------|-------------------------------|
 | Physical pad grabbed | Yes | Yes | Yes | **No** (ungrabbed → SDL reads it directly) |
-| Per-player clean virtual gamepad | — | **—** (no virtual pad) | One per pad (`game-shell-virtual-pad-<slot>`) | — (game reads the real node) |
+| Per-player clean virtual gamepad | — | **—** (no virtual pad) | One per pad (`tv-shell-virtual-pad-<slot>`) | — (game reads the real node) |
 | Button-to-keyboard mapping | Active | Active (lands on the focused app) | — (raw buttons forwarded to the virtual pad) | — |
 | D-pad / left stick → arrow keys | Active | Active | — (forwarded as raw axes) | — |
 | Right stick → mouse cursor | Active | Active | — (forwarded as raw axis) | — |
@@ -2216,7 +2216,7 @@ never drop or back up a focus change (it retains just the latest).
 
 ## Settings Persistence
 
-Key bindings are persisted to `~/.config/game-shell/settings.json` under the `keyBindings` key. The daemon reads on startup and writes on each `set-binding` command (read-modify-write, compact JSON).
+Key bindings are persisted to `~/.config/tv-shell/settings.json` under the `keyBindings` key. The daemon reads on startup and writes on each `set-binding` command (read-modify-write, compact JSON).
 
 ```json
 {"keyBindings":{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}}
@@ -2270,13 +2270,13 @@ and is never written to `settings.json`.
 
 The daemon creates two uinput devices on startup:
 
-### `game-shell-virtual-kb`
+### `tv-shell-virtual-kb`
 
 Emits keyboard events for mapped buttons, arrow keys (D-pad and left stick), and the force-quit key combo.
 
 Registered capabilities: all mapped keyboard codes (deduplicated, from button bindings) plus `KEY_UP`, `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`, `KEY_LEFTCTRL`, `KEY_LEFTALT`, `KEY_LEFTSHIFT`, `KEY_Q`.
 
-### `game-shell-virtual-mouse`
+### `tv-shell-virtual-mouse`
 
 Emits relative mouse movement (right stick) and mouse button clicks (LB/RB).
 
@@ -2287,7 +2287,7 @@ Registered capabilities: `REL_X`, `REL_Y`, `REL_WHEEL`, `REL_HWHEEL`, `BTN_LEFT`
 The daemon scans `/dev/input/event*` for devices with `EV_KEY` capability containing
 `BTN_SOUTH`. The Rust daemon selects an **arbitrary** known controller by computing the
 SDL joystick GUID from the device's `input_id` and checking it against a bundled
-`SDL_GameControllerDB` (extendable via `GAME_SHELL_GAMECONTROLLERDB`); if no DB match is
+`SDL_GameControllerDB` (extendable via `TV_SHELL_GAMECONTROLLERDB`); if no DB match is
 found it falls back to the first `BTN_SOUTH` device. Setting **both** env overrides below
 pins discovery to an exact vendor/product (legacy behavior).
 

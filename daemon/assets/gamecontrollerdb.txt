@@ -1,4 +1,4 @@
-# Baseline controller database for game-shell-input (SDL_GameControllerDB format).
+# Baseline controller database for tv-shell-input (SDL_GameControllerDB format).
 #
 # Only the GUID (field 0) is consumed: the daemon extracts vendor/product from
 # it to recognize known controllers. Mapping fields are ignored — the daemon
@@ -6,7 +6,7 @@
 #
 # This is a small baseline of common pads. Unknown controllers still work: any
 # device exposing BTN_SOUTH is grabbed as a fallback. To recognize more models,
-# point GAME_SHELL_GAMECONTROLLERDB at a full upstream copy:
+# point TV_SHELL_GAMECONTROLLERDB at a full upstream copy:
 #   https://github.com/mdqinc/SDL_GameControllerDB/raw/master/gamecontrollerdb.txt
 #
 # Format per line: <32-hex-char guid>,<name>,<mappings...>

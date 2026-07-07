@@ -1,4 +1,4 @@
-# Per-machine display override — copy to ~/.config/game-shell/hyprland-local.conf
+# Per-machine display override — copy to ~/.config/tv-shell/hyprland-local.conf
 # and edit for YOUR display. The committed config/hyprland.conf `source`s that
 # path (ignored if absent), so a fresh clone boots on the generic
 # `monitor=,preferred,auto,auto` default until you drop a file in.

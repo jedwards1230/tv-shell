@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Install game-shell on a Linux machine: build the input daemon, lay the install
+# Install tv-shell on a Linux machine: build the input daemon, lay the install
 # tree under a prefix, register the Wayland session, and scaffold the per-user
 # config dir from the shipped *.example files.
 #
 # This is the generic, distribution-agnostic install path — the same steps the
 # homelab Ansible role used to hand-roll, now owned by the repo so anyone can
-# install game-shell without that private tooling. It does NOT install system
+# install tv-shell without that private tooling. It does NOT install system
 # dependencies (Hyprland, Quickshell, Rust, build libs) — run scripts/install-deps.sh
 # first, or install them via your package manager. See docs/INSTALL.md.
 #
 # Usage:
 #   sudo ./scripts/install.sh [--prefix DIR] [--user NAME] [options]
 #
-#   --prefix DIR        Install root (default: /opt/game-shell). The shell itself
+#   --prefix DIR        Install root (default: /opt/tv-shell). The shell itself
 #                       is prefix-agnostic and resolves this at runtime; /opt is
 #                       only this installer's default.
 #   --user NAME         User whose ~/.config gets scaffolded and who owns the
 #                       prefix (default: $SUDO_USER, else the invoking user).
 #   --session-dir DIR   Where to write the .desktop (default: /usr/share/wayland-sessions).
 #   --session-exec CMD  Exec= line for the session .desktop (default:
-#                       <prefix>/scripts/game-shell-session.sh). Override when a
+#                       <prefix>/scripts/tv-shell-session.sh). Override when a
 #                       deployment wraps the session (e.g. a site launcher that
 #                       runs site-specific setup before the repo launcher).
 #   --no-build          Skip building the daemon (reuse an existing binary if any).
@@ -30,7 +30,10 @@
 # and never clobbers existing per-user config (only fills in missing files).
 set -euo pipefail
 
-PREFIX="/opt/game-shell"
+PREFIX="/opt/tv-shell"
+# Legacy prefix kept as a compat symlink one migration cycle (see step 2b) so an
+# old game-shell-wayland.desktop / session path still resolves after the rename.
+LEGACY_PREFIX="/opt/game-shell"
 SESSION_DIR="/usr/share/wayland-sessions"
 SESSION_EXEC=""
 TARGET_USER="${SUDO_USER:-}"
@@ -56,7 +59,7 @@ while [ $# -gt 0 ]; do
 done
 
 # Default the session Exec to the repo launcher under the resolved prefix.
-SESSION_EXEC="${SESSION_EXEC:-$PREFIX/scripts/game-shell-session.sh}"
+SESSION_EXEC="${SESSION_EXEC:-$PREFIX/scripts/tv-shell-session.sh}"
 
 # Resolve the target user: --user wins, else $SUDO_USER, else the invoking user.
 # Guard the footgun where someone runs as plain root (e.g. `sudo -i`) with no
@@ -71,8 +74,12 @@ fi
 # Resolve the target user's home (works whether or not we're under sudo).
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 [ -n "$TARGET_HOME" ] || die "could not resolve home for user '$TARGET_USER' (does the user exist?)"
-CONFIG_DIR="$TARGET_HOME/.config/game-shell"
-QS_LINK="$TARGET_HOME/.config/quickshell/game-shell"
+CONFIG_DIR="$TARGET_HOME/.config/tv-shell"
+QS_LINK="$TARGET_HOME/.config/quickshell/tv-shell"
+# Legacy Quickshell config link kept one cycle so an old `quickshell -c game-shell`
+# (a not-yet-updated session/exec-once during a mid-migration git pull) still finds
+# the shell tree.
+QS_LINK_LEGACY="$TARGET_HOME/.config/quickshell/game-shell"
 
 # Writing under /opt + /usr/share needs root; the per-user bits get chowned back.
 if [ "$(id -u)" -ne 0 ]; then
@@ -90,10 +97,10 @@ mkdir -p "$PREFIX" || die "cannot create prefix directory: $PREFIX (check permis
 
 # 1. Build the daemon (canonical script owns the feature flags / profile). The
 #    workspace builds to the repo-root target/ (see scripts/build-daemon.sh).
-DAEMON_BIN="$REPO_ROOT/target/release/game-shell-input"
+DAEMON_BIN="$REPO_ROOT/target/release/tv-shell-input"
 if [ "$DO_BUILD" -eq 1 ]; then
-    log "building game-shell-input (features=$FEATURES) ..."
-    GAME_SHELL_FEATURES="$FEATURES" "$REPO_ROOT/scripts/build-daemon.sh" || die "daemon build failed"
+    log "building tv-shell-input (features=$FEATURES) ..."
+    TV_SHELL_FEATURES="$FEATURES" "$REPO_ROOT/scripts/build-daemon.sh" || die "daemon build failed"
     [ -f "$DAEMON_BIN" ] || die "build finished but $DAEMON_BIN is missing"
     log "daemon build succeeded"
 fi
@@ -114,54 +121,76 @@ fi
 # python-fallback deploy, or target/ was cleaned after a prior install), leave any
 # already-installed binary in place rather than failing.
 if [ -f "$DAEMON_BIN" ]; then
-    install -m755 "$DAEMON_BIN" "$PREFIX/bin/game-shell-input"
-elif [ -x "$PREFIX/bin/game-shell-input" ]; then
+    install -m755 "$DAEMON_BIN" "$PREFIX/bin/tv-shell-input"
+elif [ -x "$PREFIX/bin/tv-shell-input" ]; then
     log "no build artifact at $DAEMON_BIN — keeping the installed daemon binary"
 else
     log "WARNING: no daemon binary built or installed (continuing — shell will use any fallback)"
 fi
 
-# 3. Register the Wayland session, rewriting Exec to the resolved prefix.
+# 2b. Back-compat: a $LEGACY_PREFIX symlink -> the new default prefix so any
+#     lingering game-shell-wayland.desktop / old $GAME_SHELL_DIR path still
+#     resolves for one migration cycle. Only when installing to the default
+#     prefix, and NEVER clobber a real directory (an old in-place install) — in
+#     that case just log so the operator can migrate it deliberately.
+if [ "$PREFIX" = "/opt/tv-shell" ]; then
+    if [ ! -e "$LEGACY_PREFIX" ] || [ -L "$LEGACY_PREFIX" ]; then
+        ln -sfn "$PREFIX" "$LEGACY_PREFIX" \
+            && log "compat symlink $LEGACY_PREFIX -> $PREFIX" \
+            || log "note: could not create compat symlink $LEGACY_PREFIX (continuing)"
+    else
+        log "note: $LEGACY_PREFIX exists as a real directory — skipping compat symlink (remove it to enable)"
+    fi
+fi
+
+# 3. Register the Wayland session, rewriting Exec to the resolved prefix. Write
+#    BOTH the new tv-shell-wayland.desktop and the legacy game-shell-wayland.desktop
+#    (identical content, both pointing at the NEW session exec) for one migration
+#    cycle so a display manager still lists a working entry under either name. The
+#    old file is left in place, not deleted.
 install -d -m755 "$SESSION_DIR"
-SESSION_FILE="$SESSION_DIR/game-shell-wayland.desktop"
-log "writing session file $SESSION_FILE"
-cat > "$SESSION_FILE" <<EOF
+write_session_file() { # write_session_file <path>
+    log "writing session file $1"
+    cat > "$1" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Game Shell (Wayland)
+Name=TV Shell (Wayland)
 Comment=Quickshell game streaming launcher on Hyprland
 Exec=$SESSION_EXEC
 DesktopNames=Hyprland
 EOF
+}
+write_session_file "$SESSION_DIR/tv-shell-wayland.desktop"
+write_session_file "$SESSION_DIR/game-shell-wayland.desktop"
 
 # 3b. Install the systemd --user units, rewriting ExecStart to the resolved prefix
 #     where needed (mirrors the session .desktop Exec rewrite above). Two units:
-#       - game-shell-input.service   (daemon) — ExecStart rewritten to the prefix.
-#       - game-shell-quickshell.service (UI)  — installed verbatim; `quickshell`
+#       - tv-shell-input.service   (daemon) — ExecStart rewritten to the prefix.
+#       - tv-shell-quickshell.service (UI)  — installed verbatim; `quickshell`
 #         resolves from PATH, so no prefix rewrite. It enforces a single Quickshell
 #         instance (#254) and is started by Hyprland's exec-once.
 #     Neither unit is enabled (no [Install]) — the session/compositor start them —
 #     so installing is just file placement + a daemon-reload.
-UNIT_SRC="$REPO_ROOT/config/game-shell-input.service"
-QS_UNIT_SRC="$REPO_ROOT/config/game-shell-quickshell.service"
+UNIT_SRC="$REPO_ROOT/config/tv-shell-input.service"
+QS_UNIT_SRC="$REPO_ROOT/config/tv-shell-quickshell.service"
 if [ -f "$UNIT_SRC" ]; then
     UNIT_DIR="$TARGET_HOME/.config/systemd/user"
-    UNIT_FILE="$UNIT_DIR/game-shell-input.service"
+    UNIT_FILE="$UNIT_DIR/tv-shell-input.service"
     log "installing systemd --user unit -> $UNIT_FILE"
     install -d -m755 "$UNIT_DIR"
-    # Rewrite the committed default ExecStart (/opt/game-shell/...) to the
-    # resolved prefix's binary. Keep the rest of the unit verbatim. Use awk with
-    # the prefix passed as a variable (not sed) so a prefix containing `#` (sed
-    # delimiter) or `&` (sed replacement backreference) can't corrupt the unit.
+    # Rewrite the committed default ExecStart (/opt/tv-shell/...) to the resolved
+    # prefix's binary. Keep the rest of the unit verbatim. Use awk with the prefix
+    # passed as a variable (not sed) so a prefix containing `#` (sed delimiter) or
+    # `&` (sed replacement backreference) can't corrupt the unit.
     awk -v prefix="$PREFIX" \
-        '/^ExecStart=/ { print "ExecStart=" prefix "/bin/game-shell-input"; next } { print }' \
+        '/^ExecStart=/ { print "ExecStart=" prefix "/bin/tv-shell-input"; next } { print }' \
         "$UNIT_SRC" > "$UNIT_FILE" \
         || die "failed to write $UNIT_FILE"
     # Quickshell UI unit — copied verbatim (no ExecStart rewrite needed).
     if [ -f "$QS_UNIT_SRC" ]; then
-        log "installing systemd --user unit -> $UNIT_DIR/game-shell-quickshell.service"
-        install -m644 "$QS_UNIT_SRC" "$UNIT_DIR/game-shell-quickshell.service" \
-            || die "failed to write $UNIT_DIR/game-shell-quickshell.service"
+        log "installing systemd --user unit -> $UNIT_DIR/tv-shell-quickshell.service"
+        install -m644 "$QS_UNIT_SRC" "$UNIT_DIR/tv-shell-quickshell.service" \
+            || die "failed to write $UNIT_DIR/tv-shell-quickshell.service"
     else
         log "WARNING: $QS_UNIT_SRC missing — Quickshell will run via the exec-once fallback (bare process)"
     fi
@@ -188,11 +217,15 @@ else
     log "WARNING: $UNIT_SRC missing — daemon will run via the session script fallback (bare process)"
 fi
 
-# 4. Per-user setup: Quickshell config symlink + config dir seeded from examples.
+# 4. Per-user setup: Quickshell config symlinks + config dir seeded from examples.
+#    Create BOTH the new (tv-shell) and legacy (game-shell) config-name symlinks so
+#    either `quickshell -c <name>` resolves during the migration cycle.
 log "linking Quickshell config -> $PREFIX/shell"
 install -d -m755 "$(dirname "$QS_LINK")"
 ln -sfn "$PREFIX/shell" "$QS_LINK" || die "failed to create symlink $QS_LINK"
 [ -d "$QS_LINK" ] || die "symlink $QS_LINK is broken — target $PREFIX/shell does not exist"
+ln -sfn "$PREFIX/shell" "$QS_LINK_LEGACY" \
+    || log "note: could not create legacy Quickshell symlink $QS_LINK_LEGACY (continuing)"
 
 install -d -m755 "$CONFIG_DIR"
 # Seed real config from *.example without ever clobbering a user's edits.
@@ -213,8 +246,9 @@ seed targets.json.example targets.json
 #    dev bridge) from editing or rebuilding later.
 chown -R "$TARGET_USER" "$PREFIX" \
     || die "failed to chown $PREFIX to $TARGET_USER (check permissions / filesystem type)"
+chown -h "$TARGET_USER" "$QS_LINK" "$QS_LINK_LEGACY" 2>/dev/null || true
 chown -R "$TARGET_USER" "$CONFIG_DIR" "$(dirname "$QS_LINK")" \
     || die "failed to chown config dirs to $TARGET_USER (does $TARGET_USER own ~/.config?)"
 
-log "done. Select 'Game Shell (Wayland)' in your display manager, then log in."
+log "done. Select 'TV Shell (Wayland)' in your display manager, then log in."
 log "Edit $CONFIG_DIR/config.toml and targets.json to taste (see docs/INSTALL.md)."

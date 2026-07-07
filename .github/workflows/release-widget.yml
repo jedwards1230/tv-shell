@@ -7,8 +7,8 @@
 # Release with auto-generated notes.
 #
 # Tag scheme (see CLAUDE.md › CI):
-#   host-v*            → release-host.yml   (builds game-shell-host binaries)
-#   input-v*           → release-input.yml  (builds game-shell-input binary)
+#   host-v*            → release-host.yml   (builds tv-shell-host binaries)
+#   input-v*           → release-input.yml  (builds tv-shell-input binary)
 #   widget-<id>-v*     → release-widget.yml (notes-only; no build artifact)
 #
 # The three streams are independent. Widget versions are per-widget, not

@@ -6,9 +6,9 @@
 //! of poster cards — "On Deck" (continue-watching / up-next) and "Recently
 //! Added".
 //!
-//! **Config via env** (set in `~/.config/game-shell/daemon.env`):
-//! - `GAME_SHELL_PLEX_URL`   — server base, e.g. `https://plex.example.com`
-//! - `GAME_SHELL_PLEX_TOKEN` — an `X-Plex-Token`
+//! **Config via env** (set in `~/.config/tv-shell/daemon.env`):
+//! - `TV_SHELL_PLEX_URL`   — server base, e.g. `https://plex.example.com`
+//! - `TV_SHELL_PLEX_TOKEN` — an `X-Plex-Token`
 //!
 //! The reply carries a `status` field from the shared [`crate::service_health`]
 //! vocabulary (`disabled`/`ok`/`unreachable`/`error`) so the widget can tell a

@@ -1,4 +1,4 @@
-# Prometheus scrape snippet for game-shell-input's portable /metrics endpoint.
+# Prometheus scrape snippet for tv-shell-input's portable /metrics endpoint.
 #
 # This is the ALTERNATIVE collection path — use it when you'd rather scrape the
 # daemon directly instead of going through a node_exporter textfile collector
@@ -11,7 +11,7 @@
 # Drop this under `scrape_configs:` in your prometheus.yml.
 
 scrape_configs:
-  - job_name: game-shell-input
+  - job_name: tv-shell-input
     metrics_path: /metrics
     scrape_interval: 15s
     static_configs:
@@ -19,4 +19,4 @@ scrape_configs:
           - "<host>:8089"
         labels:
           # Optional: tag the series with the box this shell runs on.
-          instance: game-shell
+          instance: tv-shell

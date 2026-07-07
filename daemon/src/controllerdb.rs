@@ -7,12 +7,12 @@
 //! the daemon reads only the bundled baseline plus any already-present on-disk
 //! cache and env override. The runtime match set is:
 //!
-//!   cached upstream ∪ bundled baseline ∪ GAME_SHELL_GAMECONTROLLERDB env override
+//!   cached upstream ∪ bundled baseline ∪ TV_SHELL_GAMECONTROLLERDB env override
 //!
 //! The bundled baseline is always present (offline floor) so the daemon never
 //! starts with zero known pads.
 //!
-//! Cache location: `~/.local/share/game-shell/gamecontrollerdb.txt` alongside a
+//! Cache location: `~/.local/share/tv-shell/gamecontrollerdb.txt` alongside a
 //! `gamecontrollerdb.last_updated` timestamp (Unix seconds, plain text).
 //!
 //! This module is **cross-platform** (no Linux-only imports) so it compiles and
@@ -40,7 +40,7 @@ pub struct DbStatus {
     /// Which source was applied **last** (last-applied-source-wins, not a
     /// union): `"bundled_baseline"` when only the shipped DB loaded,
     /// `"upstream_cache"` when the on-disk cache merged over the baseline, or
-    /// `"env_override"` when the `GAME_SHELL_GAMECONTROLLERDB` override merged
+    /// `"env_override"` when the `TV_SHELL_GAMECONTROLLERDB` override merged
     /// last. All lower-priority sources are still merged into `entry_count`;
     /// this label only names the highest-priority active source.
     pub source: String,
@@ -57,14 +57,12 @@ pub struct DbStatus {
     pub error: Option<String>,
 }
 
-/// Return the XDG cache directory for game-shell state files.
+/// Return the XDG data directory for tv-shell state files.
 ///
-/// `~/.local/share/game-shell/`
+/// `~/.local/share/tv-shell/` (legacy `~/.local/share/game-shell/` honored as a
+/// read-fallback via [`tv_shell_protocol::brand::data_dir`]).
 pub fn state_dir() -> PathBuf {
-    let base = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join(".local/share/game-shell")
+    tv_shell_protocol::brand::data_dir()
 }
 
 /// Path to the cached upstream DB file.
@@ -128,7 +126,7 @@ pub fn load_merged_db() -> (ControllerDb, String) {
     }
 
     // Layer in the operator override, if any.
-    if let Some(path) = std::env::var_os("GAME_SHELL_GAMECONTROLLERDB") {
+    if let Some(path) = tv_shell_protocol::brand::env("GAMECONTROLLERDB") {
         if let Ok(text) = std::fs::read_to_string(&path) {
             let extra = ControllerDb::parse(&text);
             if !extra.is_empty() {
@@ -279,6 +277,7 @@ mod tests {
     fn load_merged_db_always_has_baseline() {
         // Without a cache file or env override, the merged DB must still
         // contain the bundled baseline (Xbox 360 is the canonical test entry).
+        std::env::remove_var("TV_SHELL_GAMECONTROLLERDB");
         std::env::remove_var("GAME_SHELL_GAMECONTROLLERDB");
         let (db, _source) = load_merged_db();
         // Xbox 360: vendor=0x045e, product=0x028e

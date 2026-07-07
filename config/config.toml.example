@@ -1,6 +1,6 @@
-# Per-machine configuration for the game-shell input daemon.
+# Per-machine configuration for the tv-shell input daemon.
 #
-# Copy to ~/.config/game-shell/config.toml and edit. The daemon reads this
+# Copy to ~/.config/tv-shell/config.toml and edit. The daemon reads this
 # typed TOML file directly at startup (it replaced the old daemon.env env file).
 # Everything here is OPTIONAL — with no config.toml the shell still boots; these
 # sections only turn on the LAN control surface and the optional Plex / Steam
@@ -8,11 +8,11 @@
 #
 # ALL tokens (HTTP bearer, Plex, Steam) are by reference only — never inline.
 # Each lives in a separate file that the matching `*_token_file` points at. Every
-# token file MUST be mode 0600 AND live under ~/.config/game-shell/ — the daemon
+# token file MUST be mode 0600 AND live under ~/.config/tv-shell/ — the daemon
 # refuses to start on a world-readable token file or a path that escapes the
 # config dir. Generate the bearer token:
-#   install -m600 /dev/null ~/.config/game-shell/http-token
-#   openssl rand -hex 32 > ~/.config/game-shell/http-token
+#   install -m600 /dev/null ~/.config/tv-shell/http-token
+#   openssl rand -hex 32 > ~/.config/tv-shell/http-token
 #
 # The daemon REFUSES to start if a control surface is bound to a non-loopback
 # address with dev tools on and auth effectively off — unless you explicitly set
@@ -32,7 +32,7 @@
 
 # Path to the 0600 file holding the shared bearer token (HTTP bridge + MCP).
 # Required when auth_enabled = true. ~ is expanded to $HOME.
-#token_file = "~/.config/game-shell/http-token"
+#token_file = "~/.config/tv-shell/http-token"
 
 # --- MCP server (optional, requires the daemon built with --features mcp) -----
 [mcp]
@@ -54,20 +54,20 @@
 # On Deck / Recently Added hubs on the home screen. BOTH a url and a token are
 # required or the widget collapses even when toggled on in settings.
 #url = "http://plex-host:32400"
-# The Plex token is by reference only (a 0600 file inside ~/.config/game-shell/);
+# The Plex token is by reference only (a 0600 file inside ~/.config/tv-shell/);
 # inline tokens are not supported (same policy as [http]). Must be mode 0600 and
 # live under the config dir or the daemon refuses to start.
-#token_file = "~/.config/game-shell/plex-token"
+#token_file = "~/.config/tv-shell/plex-token"
 
 # --- Steam library row (optional) --------------------------------------------
 [steam]
-# Points at a game-shell-host sidecar (see docs/HOST_SETUP.md) running on the
+# Points at a tv-shell-host sidecar (see docs/HOST_SETUP.md) running on the
 # gaming PC to enumerate and launch installed Steam games. BOTH url and token
 # are required or the Steam row collapses; the token must match the host's token.
 #url = "http://gaming-pc:47995"
-# Token by reference only (0600 file under ~/.config/game-shell/); inline tokens
-# are not supported. The token must match the host's GAME_SHELL_HOST_TOKEN.
-#token_file = "~/.config/game-shell/steam-token"
+# Token by reference only (0600 file under ~/.config/tv-shell/); inline tokens
+# are not supported. The token must match the host's TV_SHELL_HOST_TOKEN.
+#token_file = "~/.config/tv-shell/steam-token"
 
 # --- Observability: logs + metrics (optional) --------------------------------
 # See docs/OBSERVABILITY.md for the full emit contract (metric catalogue, etc.).
@@ -77,12 +77,12 @@
 # (tracing-journald: structured fields + syslog priority); false = force stdout.
 #log_journal = true
 # Standard tracing log level/targets stay an ENV var (RUST_LOG), not a config key
-# — e.g. `RUST_LOG=debug game-shell-input`. Default: info.
+# — e.g. `RUST_LOG=debug tv-shell-input`. Default: info.
 #
 # Metrics PRIMARY path: node_exporter textfile collector. Absolute path to the
 # .prom file to write. Omit/unset = textfile writer disabled (the /metrics HTTP
 # route on the bridge, when [http].bind is set, is unaffected).
-#metrics_textfile = "/var/lib/node_exporter/textfile/game-shell.prom"
+#metrics_textfile = "/var/lib/node_exporter/textfile/tv-shell.prom"
 # Textfile render/write interval in seconds. Default 15; 0 falls back to 15.
 #metrics_interval = 15
 

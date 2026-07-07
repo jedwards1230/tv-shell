@@ -9,9 +9,9 @@
 //! Everything here is pure (no network, no daemon state), so the parser is
 //! unit-tested on every platform against a checked-in `appmanifest` fixture.
 
-use game_shell_protocol::LibraryEntry;
 use keyvalues_parser::Vdf;
 use std::path::{Path, PathBuf};
+use tv_shell_protocol::LibraryEntry;
 
 /// `StateFlags` bit indicating a fully-installed app (Steam's
 /// `k_EAppStateFullyInstalled`). A manifest can exist for a game that's only
@@ -75,7 +75,7 @@ fn steam_roots() -> Vec<PathBuf> {
     }
 
     // Allow an explicit override on any OS (used by tests and unusual installs).
-    if let Ok(p) = std::env::var("GAME_SHELL_STEAM_ROOT") {
+    if let Some(p) = tv_shell_protocol::brand::env("STEAM_ROOT") {
         roots.insert(0, PathBuf::from(p));
     }
 
@@ -660,7 +660,7 @@ fn running_appid_registry() -> Option<u32> {
 #[cfg(target_os = "windows")]
 fn registry_vdf_path() -> Option<PathBuf> {
     // Test/override hook: point at a fixture.
-    if let Ok(p) = std::env::var("GAME_SHELL_STEAM_REGISTRY") {
+    if let Some(p) = tv_shell_protocol::brand::env("STEAM_REGISTRY") {
         return Some(PathBuf::from(p));
     }
     // Default install; a STEAM_PATH override refines this. registry.vdf sits at
@@ -706,7 +706,7 @@ pub fn parse_running_appid(text: &str) -> Option<u32> {
 /// is also GPU-agnostic (no `nvidia-smi`), so it works on AMD/Intel hosts.
 ///
 /// Best-effort: a minimal sync HTTP GET to Sunshine's HTTP port (default 47989,
-/// override via `GAME_SHELL_SUNSHINE_PORT`) on loopback — the *unpaired*
+/// override via `TV_SHELL_SUNSHINE_PORT`) on loopback — the *unpaired*
 /// `serverinfo` returns basic state (incl. `<state>`) with no client cert.
 /// Sunshine down / unreachable / any error ⇒ `false` (never fail the endpoint).
 pub fn streaming() -> bool {
@@ -714,10 +714,9 @@ pub fn streaming() -> bool {
 }
 
 /// Sunshine GameStream HTTP port. Default 47989 (Sunshine's GameStream base);
-/// override with `GAME_SHELL_SUNSHINE_PORT` for a non-default install.
+/// override with `TV_SHELL_SUNSHINE_PORT` for a non-default install.
 fn sunshine_http_port() -> u16 {
-    std::env::var("GAME_SHELL_SUNSHINE_PORT")
-        .ok()
+    tv_shell_protocol::brand::env("SUNSHINE_PORT")
         .and_then(|p| p.trim().parse::<u16>().ok())
         .unwrap_or(47989)
 }

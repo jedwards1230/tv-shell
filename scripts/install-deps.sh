@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the system dependencies game-shell needs: the Hyprland compositor, the
+# Install the system dependencies tv-shell needs: the Hyprland compositor, the
 # Quickshell QML runtime, a Rust toolchain, and the daemon's build libs
 # (libudev + pkg-config; the cec feature static-links its own libcec).
 #

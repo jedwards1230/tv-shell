@@ -244,7 +244,7 @@ pub async fn run(
     // on logind `PrepareForSleep` this forwards `StandbyAll` (suspend) /
     // `WakeSequence` (resume). Cloned from the CEC channel in `main.rs` and only
     // present under `--features cec`; the CEC actor itself no-ops these unless
-    // `GAME_SHELL_CEC_LIFECYCLE` is enabled, so this is inert on dev/CI.
+    // `TV_SHELL_CEC_LIFECYCLE` is enabled, so this is inert on dev/CI.
     #[cfg(feature = "cec")] cec_tx: Option<mpsc::Sender<CecReq>>,
 ) -> Result<()> {
     // A missing system bus is fatal for this actor (nothing it can do), but it
@@ -283,7 +283,7 @@ pub async fn run(
     // wake). Runs as its OWN task, not a `select!` arm: `tokio::select!` cannot
     // take a `#[cfg(...)]` branch (the macro rejects the attribute even on a
     // no-`cec` build). The task owns a cloned system-bus connection + its own
-    // logind proxy. Inert unless GAME_SHELL_CEC_LIFECYCLE is set (the CEC actor
+    // logind proxy. Inert unless TV_SHELL_CEC_LIFECYCLE is set (the CEC actor
     // no-ops the reqs). On a default (no-`cec`) build the `cec_tx` param and
     // this whole block compile out.
     #[cfg(feature = "cec")]

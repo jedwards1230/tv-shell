@@ -731,7 +731,7 @@ impl PadDevice {
 
     fn handle_event(&mut self, sh: &mut Shared, ev: InputEvent) {
         // Deepest debug level: every raw evdev event from the physical pad.
-        // `RUST_LOG=game_shell_input::input=trace` shows the full input stream
+        // `RUST_LOG=tv_shell_input::input=trace` shows the full input stream
         // (slot + type/code/value) for diagnosing a misbehaving button/axis.
         trace!(
             slot = self.player_slot,
@@ -853,7 +853,7 @@ impl PadDevice {
     /// per-player virtual gamepad, forwarding its events verbatim **except Home**.
     ///
     /// The physical pad stays grabbed, so nothing leaks to the compositor; the
-    /// game reads `game-shell-virtual-pad-<slot>` instead. Home (`BTN_MODE`) is
+    /// game reads `tv-shell-virtual-pad-<slot>` instead. Home (`BTN_MODE`) is
     /// always intercepted into `intent:home-tap`/`intent:home-hold` (never
     /// forwarded) so the shell overlay can come up over a running game. The
     /// gamepad-only safety combos (force-quit / suspend / end-session) still run
@@ -1557,7 +1557,7 @@ impl PadDevice {
                     self.held_keys,
                 );
                 info!(
-                    "Created virtual pad game-shell-virtual-pad-{} for slot {} ({})",
+                    "Created virtual pad tv-shell-virtual-pad-{} for slot {} ({})",
                     self.player_slot, self.player_slot, self.wire_id
                 );
                 self.virtual_pad = Some(vpad);
@@ -2156,14 +2156,14 @@ mod led_tests {
 /// Build a clean per-player virtual gamepad mirroring the physical pad's
 /// capabilities (Phase 5). The virtual device advertises the same key set,
 /// absolute axes (with the source's calibration), and `input_id` so a game
-/// recognizes `game-shell-virtual-pad-<slot>` as the same controller model —
+/// recognizes `tv-shell-virtual-pad-<slot>` as the same controller model —
 /// minus the daemon's internal Home/combo synthesis, which never reaches it.
 ///
 /// We deliberately copy Home (`BTN_MODE`) into the *capability* set so the
 /// virtual pad's profile matches the physical one, but `handle_game` never
 /// forwards a Home event, so the game still never sees a Home press.
 fn build_virtual_pad(src: &Device, slot: u8) -> std::io::Result<VirtualDevice> {
-    let name = format!("game-shell-virtual-pad-{slot}");
+    let name = format!("tv-shell-virtual-pad-{slot}");
 
     let keys: AttributeSet<KeyCode> = src
         .supported_keys()
@@ -2457,7 +2457,7 @@ pub async fn run_supervised(
                     return;
                 }
                 // A respawn WILL occur (attempts remain): count it now, so
-                // `game_shell_input_runtime_restarts_total` advances exactly once
+                // `tv_shell_input_runtime_restarts_total` advances exactly once
                 // per actual re-invocation of `run` (never on the terminal panic).
                 metrics.inc_runtime_restarts();
                 // Growing backoff: 200ms, 400ms, 800ms.
@@ -2546,7 +2546,7 @@ pub async fn run(
 
     let db = device::load_db();
     if db.is_empty() {
-        warn!("controller DB is empty; non-pinned discovery will reject all pads — set GAME_SHELL_GAMECONTROLLERDB or pin GAMEPAD_VENDOR/GAMEPAD_PRODUCT");
+        warn!("controller DB is empty; non-pinned discovery will reject all pads — set TV_SHELL_GAMECONTROLLERDB or pin GAMEPAD_VENDOR/GAMEPAD_PRODUCT");
     } else {
         info!("controller DB loaded: {} known models", db.len());
     }
@@ -2751,7 +2751,7 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
         .map(|&k| KeyCode::new(k))
         .collect();
     let kb = VirtualDevice::builder()?
-        .name("game-shell-virtual-kb")
+        .name("tv-shell-virtual-kb")
         .with_keys(&keys)?
         .build()?;
     info!("uinput keyboard device created");
@@ -2767,7 +2767,7 @@ fn build_uinput(button_map: &HashMap<u16, u16>) -> std::io::Result<(VirtualDevic
             .map(RelativeAxisCode)
             .collect();
     let mouse = VirtualDevice::builder()?
-        .name("game-shell-virtual-mouse")
+        .name("tv-shell-virtual-mouse")
         .with_keys(&mkeys)?
         .with_relative_axes(&axes)?
         .build()?;

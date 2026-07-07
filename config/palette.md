@@ -1,4 +1,4 @@
-# Game Shell Color Palette
+# TV Shell Color Palette
 
 ## Base Accent Colors (shared across themes)
 
@@ -60,7 +60,7 @@ Note: `focusBorder` and `focusGlow` are in the palette objects (they reference t
 - **Light**: Snow-white background with navy-tinted grays
 - **Auto**: Time-based switching (dark 8 PM - 7 AM, light otherwise)
 
-Persisted to `~/.config/game-shell/settings.json`.
+Persisted to `~/.config/tv-shell/settings.json`.
 
 ## Palette Object Pattern
 

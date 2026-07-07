@@ -1,7 +1,7 @@
-# Cross-platform CI for the game-shell host sidecar (host/) + the shared
+# Cross-platform CI for the tv-shell host sidecar (host/) + the shared
 # protocol crate (protocol/).
 #
-# `game-shell-host` enumerates and launches Steam games on the gaming PC; it must
+# `tv-shell-host` enumerates and launches Steam games on the gaming PC; it must
 # build for ANY cloner's machine (Linux/Windows/macOS), so this matrix exercises
 # all three on the stable toolchain. The host is a distributed prebuilt binary
 # built from CI (not constrained to the daemon's declared 1.75 MSRV — its modern
@@ -51,19 +51,19 @@ jobs:
 
       - name: Format check
         id: fmt
-        run: cargo fmt --check -p game-shell-host -p game-shell-protocol
+        run: cargo fmt --check -p tv-shell-host -p tv-shell-protocol
 
       - name: Clippy
         id: clippy
-        run: cargo clippy -p game-shell-host -p game-shell-protocol --all-targets -- -D warnings
+        run: cargo clippy -p tv-shell-host -p tv-shell-protocol --all-targets -- -D warnings
 
       - name: Build
         id: build
-        run: cargo build -p game-shell-host -p game-shell-protocol
+        run: cargo build -p tv-shell-host -p tv-shell-protocol
 
       - name: Test
         id: test
-        run: cargo test -p game-shell-host -p game-shell-protocol
+        run: cargo test -p tv-shell-host -p tv-shell-protocol
 
       - name: Summary
         if: always()

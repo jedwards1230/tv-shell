@@ -1,8 +1,8 @@
-//! Reusable client plumbing for a remote game-shell widget **sidecar**.
+//! Reusable client plumbing for a remote tv-shell widget **sidecar**.
 //!
 //! A widget that needs heavy backend logic ships a sidecar process; the daemon
 //! reaches it over the LAN. [`crate::steam`] (the Steam library/launch backend,
-//! `game-shell-host`, running on the gaming PC) is the first — and today only —
+//! `tv-shell-host`, running on the gaming PC) is the first — and today only —
 //! consumer.
 //!
 //! **The daemon is an HTTP _client_, not a process supervisor.** The sidecar runs

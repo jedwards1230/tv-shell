@@ -1,4 +1,4 @@
-# Rust CI for the game-shell input daemon (daemon/).
+# Rust CI for the tv-shell input daemon (daemon/).
 #
 # Builds, formats, lints, and tests the daemon crate on a Linux runner — the only
 # place the evdev/uinput code compiles (it is excluded on non-Linux dev hosts).
@@ -6,7 +6,7 @@
 # vs the ~30 GB ubuntu-latest image; no system libs needed — evdev is pure Rust).
 #
 # Since the repo is a Cargo workspace (daemon/ + host/ + protocol/), every cargo
-# command is `-p game-shell-input`-scoped so the host crate (cross-platform, CI'd
+# command is `-p tv-shell-input`-scoped so the host crate (cross-platform, CI'd
 # separately in host.yml) is never dragged into the daemon's Linux/cec build. The
 # workspace shares one target dir at the repo ROOT, so the build output is at
 # `../target/release/...` from `working-directory: daemon`.
@@ -53,19 +53,19 @@ jobs:
 
       - name: Format check
         id: fmt
-        run: cargo fmt --check -p game-shell-input
+        run: cargo fmt --check -p tv-shell-input
 
       - name: Clippy
         id: clippy
-        run: cargo clippy -p game-shell-input --all-targets -- -D warnings
+        run: cargo clippy -p tv-shell-input --all-targets -- -D warnings
 
       - name: Build
         id: build
-        run: cargo build --release -p game-shell-input
+        run: cargo build --release -p tv-shell-input
 
       - name: Test
         id: test
-        run: cargo test -p game-shell-input
+        run: cargo test -p tv-shell-input
 
       - name: Summary
         if: always()
@@ -122,11 +122,11 @@ jobs:
 
       - name: Clippy (--features cec)
         id: clippy
-        run: cargo clippy -p game-shell-input --features cec --all-targets -- -D warnings
+        run: cargo clippy -p tv-shell-input --features cec --all-targets -- -D warnings
 
       - name: Build (--features cec)
         id: build
-        run: cargo build --release -p game-shell-input --features cec
+        run: cargo build --release -p tv-shell-input --features cec
 
       # Acceptance gate (#179): the static build must NOT pull in the system
       # libcec.so / libp8-platform.so — those are bundled into the binary. The
@@ -135,18 +135,18 @@ jobs:
       - name: Assert no system libcec dependency
         id: ldd
         run: |
-          BIN=../target/release/game-shell-input
+          BIN=../target/release/tv-shell-input
           echo "ldd $BIN:"
           ldd "$BIN" || true
           if ldd "$BIN" | grep -Eiq 'libcec|libp8-platform'; then
-            echo "::error::game-shell-input dynamically links system libcec/libp8-platform — static bundling (#179) regressed"
+            echo "::error::tv-shell-input dynamically links system libcec/libp8-platform — static bundling (#179) regressed"
             exit 1
           fi
           echo "OK: no system libcec/libp8-platform dynamic dependency"
 
       - name: Test (--features cec)
         id: test
-        run: cargo test -p game-shell-input --features cec
+        run: cargo test -p tv-shell-input --features cec
 
       - name: Summary
         if: always()

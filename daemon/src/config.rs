@@ -485,15 +485,15 @@ pub fn kbd_key_info(code: u16, raw_kernel_name: Option<&str>) -> (String, String
 }
 
 // ---------------------------------------------------------------------------
-// Settings persistence (~/.config/game-shell/settings.json)
+// Settings persistence (~/.config/tv-shell/settings.json)
 // ---------------------------------------------------------------------------
 
-/// Default settings path: `~/.config/game-shell/settings.json`.
+/// Default settings path: `~/.config/tv-shell/settings.json` (legacy
+/// `~/.config/game-shell/` honored as a read-fallback via
+/// [`tv_shell_protocol::brand::config_dir`], shared with the daemon's
+/// `config.toml` resolution so both live in the same directory).
 pub fn settings_path() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    home.join(".config/game-shell/settings.json")
+    tv_shell_protocol::brand::config_dir().join("settings.json")
 }
 
 /// Apply `keyBindings` overrides from a parsed settings document onto a set of

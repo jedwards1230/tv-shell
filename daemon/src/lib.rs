@@ -1,4 +1,4 @@
-//! game-shell-input library: every daemon module lives here as public API.
+//! tv-shell-input library: every daemon module lives here as public API.
 //!
 //! The binary (`main.rs`) only wires these together. Exposing the modules as a
 //! library's public surface keeps the cross-platform modules out of dead-code
@@ -9,7 +9,7 @@
 
 pub mod apps;
 pub mod config;
-// Typed daemon configuration (~/.config/game-shell/config.toml). Cross-platform
+// Typed daemon configuration (~/.config/tv-shell/config.toml). Cross-platform
 // (toml + serde); replaces the old daemon.env env-var loader. Carries the
 // startup validate() that refuses an unauthenticated LAN control surface.
 pub mod controllerdb;
@@ -36,7 +36,7 @@ pub mod recents;
 // Cross-platform; `steam` is the first consumer.
 pub mod sidecar;
 // Steam library proxy (steam-library + steam-launch) for the home-screen Steam
-// widget. Cross-platform: stateless reqwest + JSON to the game-shell-host
+// widget. Cross-platform: stateless reqwest + JSON to the tv-shell-host
 // sidecar (over HTTP, via `sidecar`), like `plex`.
 pub mod steam;
 // Generic remote-service health: shared probe + status vocabulary + background

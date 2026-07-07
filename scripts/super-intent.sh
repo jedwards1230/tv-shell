@@ -1,5 +1,5 @@
 #!/bin/bash
-# super-intent.sh — keyboard control-surface bridge for the game-shell.
+# super-intent.sh — keyboard control-surface bridge for the tv-shell.
 #
 # Hyprland binds inject a shell intent by passing its name as $1:
 #   bare Super        -> super-intent.sh menu             (toggle the nav drawer)
@@ -15,7 +15,8 @@
 # times with a short backoff. Uses socat or nc -U (whichever is installed).
 
 INTENT="${1:-menu}"
-SOCK="${GAME_SHELL_SOCK:-/run/user/$(id -u)/game-shell-input.sock}"
+# TV_SHELL_SOCK (legacy GAME_SHELL_SOCK) override; default tv-shell-input.sock.
+SOCK="${TV_SHELL_SOCK:-${GAME_SHELL_SOCK:-/run/user/$(id -u)/tv-shell-input.sock}}"
 
 send_intent() {
     if command -v socat >/dev/null 2>&1; then

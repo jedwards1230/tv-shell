@@ -1,8 +1,8 @@
 [Unit]
-# systemd --user unit for the game-shell input/backend daemon (game-shell-input).
+# systemd --user unit for the tv-shell input/backend daemon (tv-shell-input).
 #
-# The session wrapper (scripts/game-shell-session.sh) starts this explicitly with
-# `systemctl --user start game-shell-input.service` before launching Hyprland, so
+# The session wrapper (scripts/tv-shell-session.sh) starts this explicitly with
+# `systemctl --user start tv-shell-input.service` before launching Hyprland, so
 # there is no [Install] WantedBy= here — it is NOT enabled into a user target and
 # is not auto-started on login by systemd. The session script is the single owner
 # of the daemon lifecycle; running it as a unit just buys journald capture,
@@ -11,8 +11,8 @@
 # scripts/install.sh installs a copy to ~/.config/systemd/user/ with the ExecStart
 # path rewritten to the resolved --prefix (mirroring how it rewrites the session
 # .desktop Exec=). This committed copy uses the installer's default prefix
-# (/opt/game-shell); edit ExecStart to match if you wire the unit up by hand.
-Description=game-shell input/backend daemon
+# (/opt/tv-shell); edit ExecStart to match if you wire the unit up by hand.
+Description=tv-shell input/backend daemon
 # Rate-limit restarts (these are [Unit]-level directives in modern systemd): at
 # most 3 starts per 60s, after which systemd stops retrying. Without this,
 # Restart=on-failure + RestartSec=2 would restart every 2s indefinitely on a hard
@@ -23,15 +23,15 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-# Rewritten by scripts/install.sh to <prefix>/bin/game-shell-input. The daemon
+# Rewritten by scripts/install.sh to <prefix>/bin/tv-shell-input. The daemon
 # self-discovers its install root from this binary path (current_exe) and its
-# socket (/run/user/%U/game-shell-input.sock by default), and reads its typed
-# per-machine config from ~/.config/game-shell/config.toml itself — so no extra
+# socket (/run/user/%U/tv-shell-input.sock by default), and reads its typed
+# per-machine config from ~/.config/tv-shell/config.toml itself — so no extra
 # Environment=/EnvironmentFile= wiring is required here. (Per-machine daemon
 # options — HTTP/MCP binds + token_file, CEC lifecycle, Plex/Steam, observability
 # — all live in config.toml, NOT the environment, which is exactly why this unit
 # needs no EnvironmentFile and why config works under the env-less unit.)
-ExecStart=/opt/game-shell/bin/game-shell-input
+ExecStart=/opt/tv-shell/bin/tv-shell-input
 Restart=on-failure
 RestartSec=2
 

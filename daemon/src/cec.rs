@@ -17,7 +17,7 @@
 //! (folded into `cec-scan` and run explicitly by `cec-test`) update it, and a
 //! `cec:health` event fires on each real transition.
 //!
-//! **Remote input -> navigation.** When the `GAME_SHELL_CEC_LIFECYCLE` flag is
+//! **Remote input -> navigation.** When the `TV_SHELL_CEC_LIFECYCLE` flag is
 //! on, the worker registers a libcec key-press callback. Each TV/AVR remote
 //! button (a `CecUserControlCode`) arriving on the CEC bus is forwarded over a
 //! std channel to a dedicated forwarder thread, debounced (initial press only),
@@ -293,7 +293,7 @@ fn scan_devices(conn: &cec_rs::CecConnection) -> Vec<String> {
 fn reopen_connection() -> Option<cec_rs::CecConnection> {
     tracing::warn!("cec: reopening libcec connection (recovery after transmit failure)");
     cec_rs::CecConnectionCfgBuilder::default()
-        .device_name("game-shell".to_string())
+        .device_name("tv-shell".to_string())
         .device_types(cec_rs::CecDeviceTypeVec::new(
             cec_rs::CecDeviceType::PlaybackDevice,
         ))
@@ -595,7 +595,7 @@ fn blocking_worker(
     // CecConnectionCfgBuilder (owned pattern, so each setter consumes+returns
     // the builder); `open(self)` consumes the config.
     let mut builder = cec_rs::CecConnectionCfgBuilder::default()
-        .device_name("game-shell".to_string())
+        .device_name("tv-shell".to_string())
         .device_types(cec_rs::CecDeviceTypeVec::new(
             cec_rs::CecDeviceType::PlaybackDevice,
         ))

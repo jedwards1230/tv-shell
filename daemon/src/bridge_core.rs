@@ -114,7 +114,7 @@ pub async fn capture_screenshot(
 }
 
 /// Capture-time provenance returned alongside a screenshot so a caller can tell
-/// *which* deployed game-shell produced the frame — distinguishing latest `main`,
+/// *which* deployed tv-shell produced the frame — distinguishing latest `main`,
 /// a feature branch, or another agent's checkout at a glance.
 ///
 /// **Read live per capture, never cached:** a `dev_deploy` mutates HEAD under the
@@ -372,7 +372,7 @@ pub async fn dev_build() -> Result<String, String> {
     let build_script = root.join("scripts/build-daemon.sh");
     let out = tokio::process::Command::new("bash")
         .arg(&build_script)
-        .env("GAME_SHELL_ROOT", &root)
+        .env("TV_SHELL_ROOT", &root)
         .current_dir(&root)
         .output()
         .await;
@@ -398,8 +398,8 @@ pub async fn dev_build() -> Result<String, String> {
             // writes to the workspace-root `target/` (shared target dir) even
             // when invoked from `daemon/` — so the build output is at
             // `<root>/target/release/...`, NOT `daemon/target/...`.
-            let src = root.join("target/release/game-shell-input");
-            let dst = root.join("bin/game-shell-input");
+            let src = root.join("target/release/tv-shell-input");
+            let dst = root.join("bin/tv-shell-input");
             let install = tokio::process::Command::new("install")
                 .args(["-m755"])
                 .arg(&src)
@@ -462,7 +462,7 @@ fn count_live_quickshell(ps_output: &str) -> usize {
 /// concurrent restart is a no-op with a clear message, avoiding a redundant
 /// kill/spawn right after the first. HTTP maps the `Ok` to 200.
 ///
-/// **Prefer the systemd unit.** When `game-shell-quickshell.service` (a
+/// **Prefer the systemd unit.** When `tv-shell-quickshell.service` (a
 /// `systemd --user` unit) is active it is the single supervised instance, so we
 /// `systemctl --user restart` it — and if that restart fails we return an error
 /// rather than falling back, because a `pkill`/spawn under a live unit would race
@@ -484,7 +484,7 @@ pub async fn dev_restart_shell(
     // Prefer the systemd --user unit when it supervises Quickshell — it is the
     // single-instance guarantee. `systemctl is-active` prints "active" and exits
     // 0 only when the unit is running.
-    let unit = "game-shell-quickshell.service";
+    let unit = "tv-shell-quickshell.service";
     let is_active = match tokio::process::Command::new("systemctl")
         .args(["--user", "is-active", unit])
         .output()
@@ -565,7 +565,7 @@ pub async fn dev_restart_shell(
 
             // Spawn quickshell detached (new session so it outlives this handler task).
             let mut cmd = std::process::Command::new("setsid");
-            cmd.args(["quickshell", "-c", "game-shell"]);
+            cmd.args(["quickshell", "-c", "tv-shell"]);
             cmd.stdout(log_file);
             cmd.stderr(log_stderr);
             for (k, v) in env_pairs {

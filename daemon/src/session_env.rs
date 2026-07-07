@@ -1,7 +1,7 @@
 //! Session-environment self-discovery (#165).
 //!
 //! The daemon is often launched before the Wayland compositor starts (the
-//! session wrapper runs `exec game-shell-input &; exec Hyprland`), so
+//! session wrapper runs `exec tv-shell-input &; exec Hyprland`), so
 //! `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, and friends are not
 //! inherited. This module provides helpers to:
 //!
@@ -12,7 +12,7 @@
 //! 3. Collect the session variables that should be injected into child
 //!    subprocesses (grim, quickshell, …).
 //! 4. Resolve the installation root (resolved from `current_exe` /
-//!    `$GAME_SHELL_DIR`; `/opt/game-shell` is only a last-ditch fallback).
+//!    `$TV_SHELL_DIR`; `/opt/tv-shell` is only a last-ditch fallback).
 //!
 //! Per-machine daemon options (HTTP/MCP/CEC/Plex/Steam) no longer live here as a
 //! `daemon.env` env file — they are a typed `config.toml` read by
@@ -184,37 +184,33 @@ pub fn session_env_pairs() -> Vec<(String, String)> {
 ///
 /// Resolution order:
 /// 1. `std::env::current_exe()` → `parent()` (bin/) → `parent()` (install root).
-/// 2. `GAME_SHELL_DIR` environment variable.
-/// 3. `/opt/game-shell` is only a last-ditch fallback.
+/// 2. `TV_SHELL_DIR` environment variable (legacy `GAME_SHELL_DIR` honored).
+/// 3. `/opt/tv-shell` is only a last-ditch fallback (`brand::install_root_default`).
 pub fn install_root() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(root) = exe.parent().and_then(|p| p.parent()) {
             return root.to_path_buf();
         }
     }
-    if let Ok(dir) = std::env::var("GAME_SHELL_DIR") {
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
+    if let Some(dir) = tv_shell_protocol::brand::env("DIR") {
+        return PathBuf::from(dir);
     }
-    PathBuf::from("/opt/game-shell")
+    tv_shell_protocol::brand::install_root_default()
 }
 
-/// Return the path to the `game-shell-input` daemon binary.
+/// Return the path to the `tv-shell-input` daemon binary.
 ///
 /// Resolution order:
-/// 1. `$GAME_SHELL_INPUT_BIN` when set and non-empty (lets a packaged
-///    dev-override point the re-exec target at an arbitrary build).
-/// 2. [`install_root`]`.join("bin/game-shell-input")` (the canonical
-///    install-path binary; `/opt/game-shell` is only a last-ditch fallback via
-///    `install_root`).
+/// 1. `$TV_SHELL_INPUT_BIN` (legacy `$GAME_SHELL_INPUT_BIN`) when set and
+///    non-empty (lets a packaged dev-override point the re-exec target at an
+///    arbitrary build).
+/// 2. [`install_root`]`.join("bin/tv-shell-input")` (the canonical install-path
+///    binary; `/opt/tv-shell` is only a last-ditch fallback via `install_root`).
 pub fn input_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("GAME_SHELL_INPUT_BIN") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
+    if let Some(p) = tv_shell_protocol::brand::env("INPUT_BIN") {
+        return PathBuf::from(p);
     }
-    install_root().join("bin/game-shell-input")
+    install_root().join("bin/tv-shell-input")
 }
 
 // ---------------------------------------------------------------------------
@@ -351,28 +347,29 @@ mod tests {
 
     // ── input_bin resolution ─────────────────────────────────────────────────
 
-    // GAME_SHELL_INPUT_BIN is process-global, so the three cases are exercised in
-    // one test to avoid a set/remove race between parallel test threads.
+    // TV_SHELL_INPUT_BIN is process-global, so the three cases are exercised in
+    // one test to avoid a set/remove race between parallel test threads. The
+    // legacy GAME_SHELL_INPUT_BIN is removed throughout so the brand::env
+    // fallback can't leak an ambient value into the empty/unset cases.
     #[test]
     fn input_bin_resolution() {
+        std::env::remove_var("GAME_SHELL_INPUT_BIN");
+
         // 1. Override set + non-empty → wins outright.
-        std::env::set_var(
-            "GAME_SHELL_INPUT_BIN",
-            "/custom/prefix/bin/game-shell-input",
-        );
+        std::env::set_var("TV_SHELL_INPUT_BIN", "/custom/prefix/bin/tv-shell-input");
         assert_eq!(
             input_bin(),
-            PathBuf::from("/custom/prefix/bin/game-shell-input")
+            PathBuf::from("/custom/prefix/bin/tv-shell-input")
         );
 
         // 2. Empty override → treated as unset → install_root fallback.
-        std::env::set_var("GAME_SHELL_INPUT_BIN", "");
-        assert_eq!(input_bin(), install_root().join("bin/game-shell-input"));
+        std::env::set_var("TV_SHELL_INPUT_BIN", "");
+        assert_eq!(input_bin(), install_root().join("bin/tv-shell-input"));
 
         // 3. Unset → install_root fallback.
-        std::env::remove_var("GAME_SHELL_INPUT_BIN");
+        std::env::remove_var("TV_SHELL_INPUT_BIN");
         let bin = input_bin();
-        assert_eq!(bin, install_root().join("bin/game-shell-input"));
-        assert!(bin.ends_with("bin/game-shell-input"));
+        assert_eq!(bin, install_root().join("bin/tv-shell-input"));
+        assert!(bin.ends_with("bin/tv-shell-input"));
     }
 }

@@ -211,36 +211,36 @@ pub enum Command {
 
     /// `plex-hubs` -> compact JSON `{enabled,onDeck:[…],recentlyAdded:[…]}` for
     /// the home-screen Plex widget. Bare command (no body); the server URL +
-    /// token come from the daemon environment (`GAME_SHELL_PLEX_URL` /
-    /// `GAME_SHELL_PLEX_TOKEN`). Stateless + cross-platform (`reqwest`), served
+    /// token come from the daemon environment (`TV_SHELL_PLEX_URL` /
+    /// `TV_SHELL_PLEX_TOKEN`). Stateless + cross-platform (`reqwest`), served
     /// like `sunshine-status`. Unconfigured/unreachable degrades to
     /// `{"enabled":false,…}` / empty hubs rather than erroring.
     PlexHubs,
 
     /// `steam-library` -> compact JSON `{status,recentlyPlayed:[…],allGames:[…]}`
     /// for the home-screen Steam widget. Bare command (no body); the
-    /// game-shell-host base URL + token come from the daemon environment
-    /// (`GAME_SHELL_STEAM_URL` / `GAME_SHELL_STEAM_TOKEN`). Stateless +
+    /// tv-shell-host base URL + token come from the daemon environment
+    /// (`TV_SHELL_STEAM_URL` / `TV_SHELL_STEAM_TOKEN`). Stateless +
     /// cross-platform (`reqwest`), served like `plex-hubs`. Unconfigured ⇒
     /// `{"status":"disabled",…}`.
     SteamLibrary,
 
     /// `steam-launch <appid>` -> launch a Steam game on the host (proxies
-    /// `POST /launch` to game-shell-host). The body is a single numeric appid
+    /// `POST /launch` to tv-shell-host). The body is a single numeric appid
     /// token. Replies `ok` / `error:*`. Stateless + cross-platform.
     SteamLaunch(u32),
     /// `steam-launch` with a missing/non-numeric `<appid>` body.
     SteamLaunchUsage,
 
     /// `steam-bigpicture` -> open Steam Big Picture's HOME screen on the host
-    /// (proxies `POST /open-bpm` to game-shell-host — no body). Bare command (no
+    /// (proxies `POST /open-bpm` to tv-shell-host — no body). Bare command (no
     /// args), mirroring `steam-launch` but landing on the BPM home instead of a
     /// game's page. Replies a compact-JSON status object (`{"status":"ok"}` /
     /// `{"status":"error",…}`). Stateless + cross-platform.
     SteamBigPicture,
 
     /// `steam-quit <appid>` -> gracefully terminate a running Steam game on the
-    /// host (proxies `POST /quit` to game-shell-host with `{appid}`). The body is a
+    /// host (proxies `POST /quit` to tv-shell-host with `{appid}`). The body is a
     /// single numeric appid token, mirroring `steam-launch`. Replies a compact-JSON
     /// status object (`{"status":"ok"}` / `{"status":"error",…}`). Stateless +
     /// cross-platform.

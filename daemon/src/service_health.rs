@@ -143,7 +143,7 @@ pub async fn probe_plex() -> ServiceStatus {
     }
 }
 
-/// Probe the Steam host helper (game-shell-host) for reachability. Returns
+/// Probe the Steam host helper (tv-shell-host) for reachability. Returns
 /// `Disabled` when unconfigured, otherwise the classification of the sidecar's
 /// lightweight authenticated `GET /status` (cheaper than the full library fetch;
 /// 401 ⇒ Error/bad token, 5xx ⇒ Unreachable). Delegates to

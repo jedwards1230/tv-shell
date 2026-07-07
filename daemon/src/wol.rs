@@ -11,7 +11,7 @@
 //! host is normally online, and thus present in the neighbor table, shortly
 //! before it goes to sleep, keeping the cache warm) and persist the learned
 //! `host → MAC` mapping to a sibling of `settings.json`
-//! (`~/.config/game-shell/host-macs.json`, NOT inside the user-authored config).
+//! (`~/.config/tv-shell/host-macs.json`, NOT inside the user-authored config).
 //! On a lookup miss we fall back to the cached MAC, so a wake works even from a
 //! cold neighbor table.
 //!
@@ -101,7 +101,7 @@ pub fn parse_ip_neigh(output: &str) -> HashMap<String, Mac> {
 }
 
 /// Path to the learned `host → MAC` cache: a sibling of `settings.json`
-/// (`~/.config/game-shell/host-macs.json`), NOT inside the user-authored config
+/// (`~/.config/tv-shell/host-macs.json`), NOT inside the user-authored config
 /// so we never clobber hand-edited settings.
 fn mac_cache_path() -> PathBuf {
     let mut p = crate::config::settings_path();

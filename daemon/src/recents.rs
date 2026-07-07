@@ -1,4 +1,4 @@
-//! Recently-launched-app tracking (`~/.local/share/game-shell/recents.json`).
+//! Recently-launched-app tracking (`~/.local/share/tv-shell/recents.json`).
 //!
 //! Replaces the two inline `python3 -c` processes that
 //! `components/RecentsTracker.qml` used to read and write the recents file.
@@ -39,12 +39,11 @@ pub struct Recent {
     pub time: f64,
 }
 
-/// Default recents path: `~/.local/share/game-shell/recents.json`.
+/// Default recents path: `~/.local/share/tv-shell/recents.json` (legacy
+/// `~/.local/share/game-shell/` honored as a read-fallback via
+/// [`tv_shell_protocol::brand::data_dir`]).
 pub fn recents_path() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    home.join(".local/share/game-shell/recents.json")
+    tv_shell_protocol::brand::data_dir().join("recents.json")
 }
 
 /// Parse the recents file contents into a list. Invalid/missing JSON yields an

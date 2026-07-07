@@ -1,11 +1,11 @@
 # Wayland session entry for a display manager (SDDM, plasmalogin, GDM, …).
 # scripts/install.sh installs a copy to /usr/share/wayland-sessions/ with the
 # Exec line rewritten to the resolved --prefix. This committed copy uses the
-# installer's default prefix (/opt/game-shell); edit Exec to match if you wire
+# installer's default prefix (/opt/tv-shell); edit Exec to match if you wire
 # the session up by hand.
 [Desktop Entry]
 Type=Application
-Name=Game Shell (Wayland)
+Name=TV Shell (Wayland)
 Comment=Quickshell game streaming launcher on Hyprland
-Exec=/opt/game-shell/scripts/game-shell-session.sh
+Exec=/opt/tv-shell/scripts/tv-shell-session.sh
 DesktopNames=Hyprland

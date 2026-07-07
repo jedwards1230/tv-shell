@@ -1,10 +1,10 @@
 //! logind session-active watcher.
 //!
 //! The daemon holds an exclusive `EVIOCGRAB` on the gamepad so no input leaks to
-//! the compositor. But the game-shell session can be left *running in the
+//! the compositor. But the tv-shell session can be left *running in the
 //! background* — e.g. the user VT-switches to Plasma/Bigscreen without logging
-//! game-shell out. While backgrounded, a held grab starves the foreground
-//! session of the controller (the classic "game-shell -> plasma and my pad is
+//! tv-shell out. While backgrounded, a held grab starves the foreground
+//! session of the controller (the classic "tv-shell -> plasma and my pad is
 //! dead" bug).
 //!
 //! This actor watches our own logind session's `Active` property and tells the

@@ -1,5 +1,5 @@
-//! game-shell-host — a thin, cross-platform sidecar that answers two questions
-//! for the game-shell TV client: "what Steam games are installed?" and "launch
+//! tv-shell-host — a thin, cross-platform sidecar that answers two questions
+//! for the tv-shell TV client: "what Steam games are installed?" and "launch
 //! this one." Moonlight remains the stream engine; this service never touches
 //! Sunshine config, so other Moonlight clients are unaffected.
 //!
@@ -23,11 +23,11 @@
 //!                        header. `appid` is parsed as `u32` (non-numeric ⇒ 404),
 //!                        so no raw string ever reaches a filesystem path.
 //!
-//! Config (env):
-//!   GAME_SHELL_HOST_TOKEN — bearer token. If unset, a random one is generated
-//!                           and logged on startup.
-//!   GAME_SHELL_HOST_PORT  — listen port (default 47995).
-//!   GAME_SHELL_HOST_BIND  — listen address (default 0.0.0.0 = all LAN ifaces).
+//! Config (env; legacy `GAME_SHELL_*` names honored as a fallback):
+//!   TV_SHELL_HOST_TOKEN — bearer token. If unset, a random one is generated
+//!                         and logged on startup.
+//!   TV_SHELL_HOST_PORT  — listen port (default 47995).
+//!   TV_SHELL_HOST_BIND  — listen address (default 0.0.0.0 = all LAN ifaces).
 
 mod launch;
 mod steam;
@@ -39,10 +39,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use game_shell_protocol::{LaunchRequest, LibraryEntry, LibraryResponse, StatusResponse};
 use serde_json::json;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
+use tv_shell_protocol::{LaunchRequest, LibraryEntry, LibraryResponse, StatusResponse};
 
 /// Default listen port. Picked outside Sunshine/Moonlight's 47984–47990 range to
 /// avoid any collision with a co-hosted Sunshine.
@@ -62,11 +62,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let token = resolve_token();
-    let port: u16 = std::env::var("GAME_SHELL_HOST_PORT")
-        .ok()
+    let port: u16 = tv_shell_protocol::brand::env("HOST_PORT")
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_PORT);
-    let bind = std::env::var("GAME_SHELL_HOST_BIND").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let bind = tv_shell_protocol::brand::env("HOST_BIND").unwrap_or_else(|| "0.0.0.0".to_string());
 
     let state = Arc::new(AppState { token });
 
@@ -83,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     let addr = format!("{bind}:{port}");
-    tracing::info!("game-shell-host listening on {addr}");
+    tracing::info!("tv-shell-host listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -93,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
 /// generated token is logged once at startup so an operator can copy it into the
 /// daemon's config; it's never written to disk.
 fn resolve_token() -> String {
-    if let Ok(t) = std::env::var("GAME_SHELL_HOST_TOKEN") {
+    if let Some(t) = tv_shell_protocol::brand::env("HOST_TOKEN") {
         let t = t.trim().to_string();
         if !t.is_empty() {
             return t;
@@ -101,7 +100,7 @@ fn resolve_token() -> String {
     }
     let generated = generate_token();
     tracing::warn!(
-        "GAME_SHELL_HOST_TOKEN unset — generated a random token for this run: {generated}"
+        "TV_SHELL_HOST_TOKEN unset — generated a random token for this run: {generated}"
     );
     generated
 }
