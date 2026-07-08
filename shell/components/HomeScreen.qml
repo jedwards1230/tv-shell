@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import "lib"
 import "../widgets/lib"
+import "steamLaunch.js" as SteamLaunch
 
 // Home screen — the "glance + jump back in" overview (#249), composed of
 // standardized, individually-toggleable, individually-sized home widgets. The
@@ -208,97 +209,33 @@ FocusScope {
         console.log("HomeScreen: no Plex app found to launch");
     }
 
-    // === Steam widget: LOCAL launch helpers ===
-    // The Steam home widget (default-disabled) shows the host's Steam library
-    // poster grid, but activation launches Steam LOCALLY on this machine, via the
-    // normal LOCAL app-launch path (appLaunchRequested → AppLifecycleManager.
-    // checkAndLaunchApp), landing the shell in `appRunning` with window class
-    // `steam` — kiosk fullscreen (class-agnostic) and StreamAudioMuter's
-    // mute-on-background (`streamClasses: ["steam"]`) cover it automatically. This
-    // is NOT the streaming state machine, and it does NOT touch the host-side
-    // `steam-launch`/`steam-bigpicture` daemon commands below (those stay wired to
-    // the MOONLIGHT widget, for navigating/streaming the GAMING HOST's Big
-    // Picture over Moonlight).
-    //
-    // Steam is a SINGLE-INSTANCE app: delivering a steam:// URL to an
-    // already-running instance navigates it in place but spawns NO new window,
-    // so the generic cold-start path (checkAndLaunchApp waiting for a new/
-    // matching window before it confirms the launch) can never resolve for it —
-    // the "Launching…" overlay would hang until its safety timeout, and the
-    // window would never get focused (checkAndLaunchApp's match-found branch
-    // only focuses; it doesn't redeliver the URL). So check the live
-    // `runningWindows` model (the same data the recent-apps "Focus" context
-    // action reads) FIRST: if Steam is already running, skip launchApp entirely
-    // and fire appResumeRequested, which redelivers the URL AND focuses the
-    // window by address in one call — mirroring focusByAddress, so it never
-    // flashes the launch overlay, exactly like resuming any other
-    // already-running app. Cold start (Steam not running yet) is unaffected —
-    // it still goes through the normal launchApp/checkAndLaunchApp flow.
+    // === Steam launch / resume / quit choreography ===
+    // The substantial Steam choreography — LOCAL launch/resume of Steam on this
+    // machine, the host-navigate + Moonlight-stream game launch, the Big-Picture
+    // home reset, and the running-game quit — lives in steamLaunch.js as pure
+    // functions (one readable place). These thin forwarding wrappers keep the
+    // external call surface unchanged (homeScreen.launchSteamGame(appid), …). The
+    // three SocketClient objects the host-command functions fire through are QML
+    // objects, so they stay declared below and are passed into the functions.
     function launchSteamLocalGame(appid) {
-        root.userActivity();
-        root._launchOrResumeSteamLocal("steam steam://nav/games/details/" + appid);
+        SteamLaunch.launchSteamLocalGame(root, appid);
     }
-
     function launchSteamLocalBigPicture() {
-        root.userActivity();
-        root._launchOrResumeSteamLocal("steam steam://open/bigpicture");
+        SteamLaunch.launchSteamLocalBigPicture(root);
     }
-
-    function _launchOrResumeSteamLocal(execCmd) {
-        let app = {
-            "name": "Steam",
-            "exec": execCmd,
-            "wmClass": "steam",
-            "icon": "steam",
-            "comment": "Steam"
-        };
-        let running = root.runningWindows || [];
-        for (let i = 0; i < running.length; i++) {
-            if ((running[i].windowClass || "").toLowerCase() === "steam") {
-                root.appResumeRequested(app, running[i].address);
-                return;
-            }
-        }
-        root.launchApp(app);
-    }
-
-    // === Steam launch choreography ===
-    // Select a Steam card →
-    //   1. `steam-launch <appid>` → the host NAVIGATES Big Picture to that game's
-    //      page (it no longer launches the game directly — just moves BPM).
-    //   2. If THIS client is NOT already viewing a stream (`shellState !==
-    //      "streaming"`) → start one stream to the primary target (targets[0]).
-    //      Moonlight RESUMES a host that already has a session, so this both opens
-    //      a fresh stream and reconnects to a resumable one — selecting a game must
-    //      ALWAYS get you onto the screen.
-    //   3. If this client IS already streaming → the nav alone moved the live BPM;
-    //      don't launch a 2nd local Moonlight process.
-    // The gate is THIS client's own `shellState`, NOT the host's session flag
-    // (`moonlightWidget.streaming`, which is true whenever *any* client — e.g. the
-    // laptop — holds a resumable session). Gating on the host flag wrongly blocked
-    // launching/resuming whenever a session existed elsewhere; that flag drives the
-    // session INDICATOR only. Never trigger a `rungameid`-style direct launch.
     function launchSteamGame(appid) {
-        root.userActivity();
-        // Fire the host-side navigate (fire-and-forget; the reply is just ok/error).
-        steamLaunchReq.request("steam-launch", appid);
-        if (root.shellState === "streaming") {
-            // This client is already in the stream — the nav moved the live BPM.
-            // Don't start a 2nd local Moonlight process.
-            return;
-        }
-        // Not viewing a stream here → start/resume one to the primary target. With
-        // no target configured there's nothing to stream into; the nav still fired.
-        let ts = root.targets || [];
-        if (ts.length > 0)
-            root.streamRequested(ts[0]);
-        else
-            console.log("HomeScreen: steam-launch " + appid + " sent, but no stream target configured");
+        SteamLaunch.launchSteamGame(root, steamLaunchReq, appid);
+    }
+    function launchSteamBigPicture() {
+        SteamLaunch.launchSteamBigPicture(root, steamBigPictureReq);
+    }
+    function quitSteamGame(appid) {
+        SteamLaunch.quitSteamGame(root, steamQuitReq, appid);
     }
 
     // One-shot socket client for `steam-launch <appid>`. The reply (ok/error) is
-    // logged on failure; the stream start above doesn't gate on it (the navigate
-    // and the stream race, exactly like picking a game in old GameStream).
+    // logged on failure; the stream start doesn't gate on it (the navigate and the
+    // stream race, exactly like picking a game in old GameStream).
     SocketClient {
         id: steamLaunchReq
         onResponseReceived: line => {
@@ -308,40 +245,9 @@ FocusScope {
         onRequestFailed: console.log("HomeScreen: steam-launch request failed (daemon down?)")
     }
 
-    // === Open Steam Big Picture (home) choreography ===
-    // The "Open Steam" action chip in the library view →
-    //   1. `steam-bigpicture` (no appid) → the host RESETS Big Picture to its HOME
-    //      screen (fires `steam://open/bigpicture`; no game pre-selected).
-    //   2. If THIS client is NOT already viewing a stream (`shellState !==
-    //      "streaming"`) → start/resume one stream to the primary target
-    //      (targets[0]) — Moonlight resumes a resumable host, so this both opens a
-    //      fresh stream and reconnects to one already live elsewhere.
-    //   3. If this client IS already streaming → the host-side BPM-home reset alone
-    //      moved the live session; don't start a 2nd local Moonlight process.
-    // Mirrors launchSteamGame() exactly (same one-session guard / stream path) but
-    // sends the bare `steam-bigpicture` instead of `steam-launch <appid>`. The gate
-    // is THIS client's own shellState, NOT the host's session flag.
-    function launchSteamBigPicture() {
-        root.userActivity();
-        // Fire the host-side BPM-home reset (fire-and-forget; reply is just ok/error).
-        steamBigPictureReq.request("steam-bigpicture");
-        if (root.shellState === "streaming") {
-            // This client is already in the stream — the reset moved the live BPM.
-            // Don't start a 2nd local Moonlight process.
-            return;
-        }
-        // Not viewing a stream here → start/resume one to the primary target. With
-        // no target configured there's nothing to stream into; the reset still fired.
-        let ts = root.targets || [];
-        if (ts.length > 0)
-            root.streamRequested(ts[0]);
-        else
-            console.log("HomeScreen: steam-bigpicture sent, but no stream target configured");
-    }
-
     // One-shot socket client for `steam-bigpicture`. The reply (a status JSON) is
-    // logged on failure; the stream start above doesn't gate on it (the reset and
-    // the stream race, exactly like launchSteamGame).
+    // logged on failure; the stream start doesn't gate on it (the reset and the
+    // stream race, exactly like launchSteamGame).
     SocketClient {
         id: steamBigPictureReq
         onResponseReceived: line => {
@@ -351,31 +257,9 @@ FocusScope {
         onRequestFailed: console.log("HomeScreen: steam-bigpicture request failed (daemon down?)")
     }
 
-    // === Quit running Steam game choreography ===
-    // The active-game popover's "Quit" action →
-    //   1. `steam-quit <appid>` → the host gracefully terminates the running game
-    //      (SIGTERM to its process group — like Steam's Stop button). Fire-and-
-    //      forget; the reply is a status JSON (logged only on non-ok).
-    //   2. Close THIS client's Moonlight stream via the existing
-    //      streamQuitRequested(targets[0]) path (same teardown the Moonlight
-    //      "Quit Stream" action uses).
-    // The two race exactly like launchSteamGame's navigate+stream — the host kill
-    // and the local stream-close are independent.
-    function quitSteamGame(appid) {
-        root.userActivity();
-        // Fire the host-side graceful kill (fire-and-forget; reply is a status JSON).
-        steamQuitReq.request("steam-quit", appid);
-        // Close the local Moonlight stream to the primary target, if one is configured.
-        let ts = root.targets || [];
-        if (ts.length > 0)
-            root.streamQuitRequested(ts[0]);
-        else
-            console.log("HomeScreen: steam-quit " + appid + " sent, but no stream target configured");
-    }
-
     // One-shot socket client for `steam-quit <appid>`. The reply (a status JSON) is
-    // logged on a non-ok status; the stream close above doesn't gate on it (the
-    // host kill and the local stream-close race, like launchSteamGame).
+    // logged on a non-ok status; the stream close doesn't gate on it (the host kill
+    // and the local stream-close race, like launchSteamGame).
     SocketClient {
         id: steamQuitReq
         onResponseReceived: line => {
@@ -450,39 +334,30 @@ FocusScope {
         let recents = RecentsTracker.recentApps || [];
         let allApps = AppDiscoveryManager.applications || [];
 
-        function execBasename(exec) {
-            if (!exec)
-                return "";
-            let cmd = exec.split(/\s/)[0];
-            return cmd.split("/").pop().toLowerCase();
-        }
-        function normalize(s) {
-            return (s || "").toLowerCase().replace(/[-_.]/g, "");
-        }
         function runningMatchesRecent(win, recent) {
             let cls = (win.windowClass || "").toLowerCase();
-            let execBase = execBasename(recent.exec || "");
+            let execBase = WindowMatcher.execBasename(recent.exec || "");
             let appName = (recent.name || "").toLowerCase();
             let winName = (win.name || "").toLowerCase();
             if (winName !== "" && winName === appName)
                 return true;
             if (execBase !== "") {
-                if (cls === execBase || normalize(cls) === normalize(execBase))
+                if (cls === execBase || WindowMatcher.normalize(cls) === WindowMatcher.normalize(execBase))
                     return true;
                 if (cls !== "" && (execBase.indexOf(cls) >= 0 || cls.indexOf(execBase) >= 0))
                     return true;
             }
-            if (appName !== "" && (cls === appName || normalize(cls) === normalize(appName)))
+            if (appName !== "" && (cls === appName || WindowMatcher.normalize(cls) === WindowMatcher.normalize(appName)))
                 return true;
             return false;
         }
         function resolveRecentIcon(rec) {
-            let rexec = execBasename(rec.exec || "");
+            let rexec = WindowMatcher.execBasename(rec.exec || "");
             for (let i = 0; i < allApps.length; i++) {
                 let a = allApps[i];
                 if (a.name && rec.name && a.name === rec.name)
                     return a.icon || "";
-                if (rexec !== "" && execBasename(a.exec || "") === rexec)
+                if (rexec !== "" && WindowMatcher.execBasename(a.exec || "") === rexec)
                     return a.icon || "";
             }
             return rec.icon || "";
