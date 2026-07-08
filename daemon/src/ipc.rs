@@ -14,6 +14,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
+use serde::de::DeserializeOwned;
 use std::os::unix::fs::PermissionsExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -221,24 +222,21 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             let body = body.clone();
             Some(
                 spawn_blocking_string(move || {
-                    match serde_json::from_str::<notifications::Notification>(&body) {
-                        Ok(mut entry) => {
-                            // Honor a client-supplied creation time; fall back to
-                            // the daemon clock only when none was provided.
-                            if entry.time == 0.0 {
-                                entry.time = notifications::now_unix_secs();
-                            }
-                            match notifications::record_notification(
-                                &notifications::notifications_path(),
-                                entry,
-                            ) {
-                                Ok(()) => protocol::resp_ok(),
-                                Err(e) => protocol::resp_error(&format!(
-                                    "record-notification failed: {e}"
-                                )),
-                            }
-                        }
-                        Err(e) => protocol::resp_error(&format!("invalid JSON: {e}")),
+                    let mut entry: notifications::Notification = match parse_body(&body) {
+                        Ok(v) => v,
+                        Err(resp) => return resp,
+                    };
+                    // Honor a client-supplied creation time; fall back to
+                    // the daemon clock only when none was provided.
+                    if entry.time == 0.0 {
+                        entry.time = notifications::now_unix_secs();
+                    }
+                    match notifications::record_notification(
+                        &notifications::notifications_path(),
+                        entry,
+                    ) {
+                        Ok(()) => protocol::resp_ok(),
+                        Err(e) => protocol::resp_error(&format!("record-notification failed: {e}")),
                     }
                 })
                 .await,
@@ -249,19 +247,16 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             let body = body.clone();
             Some(
                 spawn_blocking_string(move || {
-                    match serde_json::from_str::<Vec<notifications::Notification>>(&body) {
-                        Ok(entries) => {
-                            match notifications::set_notifications(
-                                &notifications::notifications_path(),
-                                entries,
-                            ) {
-                                Ok(()) => protocol::resp_ok(),
-                                Err(e) => {
-                                    protocol::resp_error(&format!("set-notifications failed: {e}"))
-                                }
-                            }
-                        }
-                        Err(e) => protocol::resp_error(&format!("invalid JSON: {e}")),
+                    let entries: Vec<notifications::Notification> = match parse_body(&body) {
+                        Ok(v) => v,
+                        Err(resp) => return resp,
+                    };
+                    match notifications::set_notifications(
+                        &notifications::notifications_path(),
+                        entries,
+                    ) {
+                        Ok(()) => protocol::resp_ok(),
+                        Err(e) => protocol::resp_error(&format!("set-notifications failed: {e}")),
                     }
                 })
                 .await,
@@ -272,15 +267,16 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             let body = body.clone();
             Some(
                 spawn_blocking_string(move || {
-                    match serde_json::from_str::<serde_json::Value>(&body) {
-                        Ok(updates) if updates.is_object() => {
-                            match config::set_config(&config::settings_path(), &updates) {
-                                Ok(merged) => merged,
-                                Err(e) => protocol::resp_error(&format!("set-config failed: {e}")),
-                            }
-                        }
-                        Ok(_) => protocol::resp_error("set-config body must be a JSON object"),
-                        Err(e) => protocol::resp_error(&format!("invalid JSON: {e}")),
+                    let updates: serde_json::Value = match parse_body(&body) {
+                        Ok(v) => v,
+                        Err(resp) => return resp,
+                    };
+                    if !updates.is_object() {
+                        return protocol::resp_error("set-config body must be a JSON object");
+                    }
+                    match config::set_config(&config::settings_path(), &updates) {
+                        Ok(merged) => merged,
+                        Err(e) => protocol::resp_error(&format!("set-config failed: {e}")),
                     }
                 })
                 .await,
@@ -291,17 +287,14 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             let body = body.clone();
             Some(
                 spawn_blocking_string(move || {
-                    match serde_json::from_str::<recents::Recent>(&body) {
-                        Ok(mut entry) => {
-                            entry.time = recents::now_unix_secs();
-                            match recents::record_launch(&recents::recents_path(), entry) {
-                                Ok(()) => protocol::resp_ok(),
-                                Err(e) => {
-                                    protocol::resp_error(&format!("record-launch failed: {e}"))
-                                }
-                            }
-                        }
-                        Err(e) => protocol::resp_error(&format!("invalid JSON: {e}")),
+                    let mut entry: recents::Recent = match parse_body(&body) {
+                        Ok(v) => v,
+                        Err(resp) => return resp,
+                    };
+                    entry.time = recents::now_unix_secs();
+                    match recents::record_launch(&recents::recents_path(), entry) {
+                        Ok(()) => protocol::resp_ok(),
+                        Err(e) => protocol::resp_error(&format!("record-launch failed: {e}")),
                     }
                 })
                 .await,
@@ -370,13 +363,7 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             let state = db_state.read().await;
             // Build the status directly from stored state; avoids constructing a
             // proxy ControllerDb whose len() is always 0.
-            let status = controllerdb::DbStatus {
-                source: state.source.clone(),
-                entry_count: state.entry_count,
-                last_downloaded: state.last_downloaded,
-                upstream_url: controllerdb::UPSTREAM_URL.to_string(),
-                error: state.last_error.clone(),
-            };
+            let status = controllerdb::DbStatus::from_state(&state);
             Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
         }
         // ControllerDbRefresh is NOT stateless — it must send Control::ControllerDbRefreshed
@@ -398,6 +385,17 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
 
         _ => None,
     }
+}
+
+/// Parse a JSON request body into `T`, returning the parsed value or the
+/// already-formatted `error:invalid JSON: <e>` reply string on failure.
+///
+/// Call sites use
+/// `let x: T = match parse_body(&body) { Ok(v) => v, Err(resp) => return resp };`
+/// inside a `spawn_blocking_string` closure, so the `Err` arm short-circuits the
+/// closure with the exact wire text the shell expects.
+fn parse_body<T: DeserializeOwned>(body: &str) -> Result<T, String> {
+    serde_json::from_str::<T>(body).map_err(|e| protocol::resp_error(&format!("invalid JSON: {e}")))
 }
 
 /// Run a blocking closure that returns the response string on tokio's blocking
@@ -507,26 +505,14 @@ async fn dispatch(
                     // Notify the input runtime to hot-swap the DB without a restart.
                     let _ = request(control_tx, |reply| Control::ControllerDbRefreshed { reply }).await;
                     let state = db_state.read().await;
-                    let status = controllerdb::DbStatus {
-                        source: state.source.clone(),
-                        entry_count: state.entry_count,
-                        last_downloaded: state.last_downloaded,
-                        upstream_url: controllerdb::UPSTREAM_URL.to_string(),
-                        error: None,
-                    };
+                    let status = controllerdb::DbStatus::from_state(&state);
                     Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
                 }
                 Err(e) => {
                     tracing::warn!("controllerdb refresh failed: {e}");
                     let mut state = db_state.write().await;
-                    state.last_error = Some(e.clone());
-                    let status = controllerdb::DbStatus {
-                        source: state.source.clone(),
-                        entry_count: state.entry_count,
-                        last_downloaded: state.last_downloaded,
-                        upstream_url: controllerdb::UPSTREAM_URL.to_string(),
-                        error: Some(e),
-                    };
+                    state.last_error = Some(e);
+                    let status = controllerdb::DbStatus::from_state(&state);
                     Some(serde_json::to_string(&status).expect("controllerdb status serialize"))
                 }
             }
