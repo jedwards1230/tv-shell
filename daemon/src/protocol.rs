@@ -352,6 +352,13 @@ pub enum Command {
     /// `sys-metrics` — return live hardware telemetry as a compact JSON object
     /// `{cpuPct, memUsed, memTotal, memPct, load1, temps:[{label, celsius}]}` (#235).
     SysMetrics,
+    /// `build-info` — return the currently-deployed build identity as a compact
+    /// JSON object `{version, sha, branch}` (same live source as /metrics
+    /// build_info + the `X-TvShell-*` headers). Backs the System settings page's
+    /// version readout. Read live (async git at `install_root()`) so a
+    /// `/dev/deploy` HEAD swap under the running daemon is reflected without a
+    /// restart.
+    BuildInfo,
 
     /// Anything unrecognized -> the daemon replies `unknown`.
     Unknown,
@@ -504,6 +511,7 @@ impl Command {
             "sys-status" => Command::SysStatus,
             "storage-status" => Command::StorageStatus,
             "sys-metrics" => Command::SysMetrics,
+            "build-info" => Command::BuildInfo,
             _ => {
                 // `set-config <json>` / `record-launch <json>`: the rest of the
                 // line is a compact single-line JSON body. The command word must
