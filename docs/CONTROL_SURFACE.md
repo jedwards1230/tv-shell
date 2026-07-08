@@ -102,15 +102,17 @@ collection options — is in [`OBSERVABILITY.md`](OBSERVABILITY.md).
 
 ## MCP tools (`mcp.rs`)
 
-14 tools over streamable-HTTP at `/mcp`. The 3 dev tools are gated by
+16 tools over streamable-HTTP at `/mcp`. The 3 dev tools are gated by
 `[mcp] dev = true` in `config.toml` — when off they return a clear error
 instead of acting (registered unconditionally; rmcp can't yet register
-conditionally, `mcp.rs:413`).
+conditionally, `mcp.rs:669`).
 
 | Tool | Params | Annotation | Maps to |
 |------|--------|------------|---------|
 | `shell_action` | `name` (bare verb only) | write | bare intent from closed vocab |
+| `intent` | `name` (bare verb only) | write | **alias of `shell_action`** — same handler/schema; named to match the HTTP/IPC `intent` verb |
 | `navigate` | `key` (up/down/left/right/select/back) | write | `Control::Key` |
+| `key` | `key` (up/down/left/right/select/back) | write | **alias of `navigate`** — same handler/schema; named to match the HTTP/IPC `key` verb |
 | `open_settings` | `page` (`SettingsPage` enum) | write | `settings:<page>` |
 | `open_overlay` | `target` (volume/network/session) | write | `overlay:<target>` |
 | `launch_app` | `wm_class` (StartupWMClass) | write | `app:<wm_class>` |
@@ -151,10 +153,16 @@ URIs return a JSON-RPC `resource_not_found` (-32002).
   work. It's read live per capture (via `bridge_core::capture_meta`), because a
   `dev_deploy` mutates HEAD under the long-lived daemon without a restart.
 - `list_apps` makes `launch_app` discoverable without guessing `wm_class` values.
+- `intent` / `key` are **additive aliases** of `shell_action` / `navigate` (same
+  handlers, schemas, and annotations) so the MCP verb names match the `intent` /
+  `key` verbs the HTTP bridge and Unix-socket IPC already use. `shell_action` /
+  `navigate` are kept unchanged — they are federated to downstream MCP consumers
+  (as `game-shell-*`-prefixed tools), so renaming them would break saved
+  allowlists; the aliases are added alongside, never in place of them.
 
 `[mcp] allowed_hosts = ["host[:port]", …]` sets the rmcp Host
 allowlist (loopback always allowed; a concrete bind IP is auto-added; a wildcard
-bind with no override disables Host matching and relies on the token, `mcp.rs:625`).
+bind with no override disables Host matching and relies on the token, `mcp.rs:887`).
 
 ## Intent vocabulary
 
@@ -176,4 +184,4 @@ slugs are a graceful QML no-op).
 ## `StatusInfo` fields
 
 `sha`, `daemon_pid`, `version`, `shell_running` (`pgrep -x quickshell`),
-`wayland_display` (nullable), `hypr_sig_present` (`bridge_core.rs:122`).
+`wayland_display` (nullable), `hypr_sig_present` (`bridge_core.rs:256`).

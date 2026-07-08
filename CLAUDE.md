@@ -126,7 +126,7 @@ config/
   hyprland.conf               # Generic monitor default + `source` hook for a per-machine override
   hyprland.conf.example       # Machine-specific display example (LG C2/Denon HDR) → ~/.config/tv-shell/hyprland-local.conf
   palette.md                  # Color palette documentation
-  tv-shell.desktop          # Wayland session file (install.sh rewrites Exec to the prefix)
+  tv-shell.desktop          # Reference Wayland session file (install.sh does NOT read it — write_session_file() generates the installed session .desktop from a heredoc with the resolved Exec)
   tv-shell-input.service    # systemd --user unit for the daemon (install.sh rewrites ExecStart to the prefix; see docs/SYSTEMD_SETUP.md)
   targets.json.example        # Copy-runnable streaming targets → ~/.config/tv-shell/targets.json
   targets.yaml.example        # Annotated streaming-target field reference (docs only)
