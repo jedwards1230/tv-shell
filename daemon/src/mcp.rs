@@ -448,6 +448,21 @@ impl TvShellMcp {
     }
 
     #[tool(
+        description = "Alias of `shell_action` (identical behavior). Named `intent` \
+            to match the HTTP/IPC verb. Send a bare top-level action to the \
+            tv-shell UI. Valid actions: home, home-tap, home-hold, menu, settings, \
+            power. Deep-links (containing ':') are NOT accepted here — \
+            use open_settings / open_overlay / launch_app for those specific targets.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
+    async fn intent(
+        &self,
+        Parameters(ShellActionParams { name }): Parameters<ShellActionParams>,
+    ) -> CallToolResult {
+        self.do_shell_action(name).await
+    }
+
+    #[tool(
         description = "Synthesize a directional or action keypress on the \
             tv-shell virtual keyboard. Moves focus RELATIVE to the currently \
             focused element — observe first (take_screenshot or get_ui_state) \
@@ -460,6 +475,23 @@ impl TvShellMcp {
         annotations(read_only_hint = false, destructive_hint = false)
     )]
     async fn navigate(
+        &self,
+        Parameters(NavigateParams { key }): Parameters<NavigateParams>,
+    ) -> CallToolResult {
+        self.do_navigate(key.as_str().to_owned()).await
+    }
+
+    #[tool(
+        description = "Alias of `navigate` (identical behavior). Named `key` to \
+            match the HTTP/IPC verb. Synthesize a directional/action keypress on \
+            the tv-shell virtual keyboard. Moves focus RELATIVE to the currently \
+            focused element — observe first (take_screenshot or get_ui_state) \
+            to know what is focused before navigating. \
+            `select` = activate/confirm the focused element (A button / Enter); \
+            `back` = go up one level / dismiss (B button / Escape).",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
+    async fn key(
         &self,
         Parameters(NavigateParams { key }): Parameters<NavigateParams>,
     ) -> CallToolResult {
