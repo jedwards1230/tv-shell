@@ -51,6 +51,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::bridge_core;
+use crate::bridge_core::DispatchOutcome;
 use crate::protocol::Event;
 use crate::state::Control;
 
@@ -282,6 +283,50 @@ impl TvShellMcp {
             handles,
         }
     }
+
+    /// Translate a `dispatch_intent`/`dispatch_key` reply into a
+    /// `CallToolResult`. Shared by every intent-dispatching tool so the
+    /// unavailable/error/ok mapping stays consistent.
+    fn intent_result(reply: Option<String>) -> CallToolResult {
+        match bridge_core::interpret_reply(reply) {
+            DispatchOutcome::Unavailable => {
+                CallToolResult::error(vec![Content::text("daemon unavailable")])
+            }
+            DispatchOutcome::Err(msg) => {
+                CallToolResult::error(vec![Content::text(msg.trim().to_owned())])
+            }
+            DispatchOutcome::Ok => CallToolResult::success(vec![Content::text("ok")]),
+        }
+    }
+
+    /// Shared body for the `shell_action` tool and its `intent` alias: reject
+    /// deep-links, validate the action against the known vocabulary, then
+    /// dispatch it through the control channel.
+    async fn do_shell_action(&self, name: String) -> CallToolResult {
+        // Reject any deep-link (colon-delimited) at the MCP-tool layer.
+        // The underlying IPC/HTTP paths still accept them; this restriction
+        // is intentional for the MCP surface only (A1).
+        if name.contains(':') {
+            let valid = crate::protocol::INTENT_VOCAB.join(", ");
+            return CallToolResult::error(vec![Content::text(format!(
+                "deep-links are not accepted here; use open_settings / open_overlay / launch_app. \
+                 Valid actions: {valid}."
+            ))]);
+        }
+        if !bridge_core::is_valid_intent(&name) {
+            let valid = crate::protocol::INTENT_VOCAB.join(", ");
+            return CallToolResult::error(vec![Content::text(format!(
+                "unknown action '{name}'. Valid actions: {valid}."
+            ))]);
+        }
+        Self::intent_result(bridge_core::dispatch_intent(&self.handles.control_tx, name).await)
+    }
+
+    /// Shared body for the `navigate` tool and its `key` alias: synthesize a
+    /// directional/action keypress through the control channel.
+    async fn do_navigate(&self, key_str: String) -> CallToolResult {
+        Self::intent_result(bridge_core::dispatch_key(&self.handles.control_tx, key_str).await)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -399,30 +444,22 @@ impl TvShellMcp {
         &self,
         Parameters(ShellActionParams { name }): Parameters<ShellActionParams>,
     ) -> CallToolResult {
-        // Reject any deep-link (colon-delimited) at the MCP-tool layer.
-        // The underlying IPC/HTTP paths still accept them; this restriction
-        // is intentional for the MCP surface only (A1).
-        if name.contains(':') {
-            let valid = crate::protocol::INTENT_VOCAB.join(", ");
-            return CallToolResult::error(vec![Content::text(format!(
-                "deep-links are not accepted here; use open_settings / open_overlay / launch_app. \
-                 Valid actions: {valid}."
-            ))]);
-        }
-        if !bridge_core::is_valid_intent(&name) {
-            let valid = crate::protocol::INTENT_VOCAB.join(", ");
-            return CallToolResult::error(vec![Content::text(format!(
-                "unknown action '{name}'. Valid actions: {valid}."
-            ))]);
-        }
-        match bridge_core::dispatch_intent(&self.handles.control_tx, name).await {
-            None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
-            Some(r) if r.starts_with("error:") => {
-                let msg = r.trim_start_matches("error:").trim().to_owned();
-                CallToolResult::error(vec![Content::text(msg)])
-            }
-            Some(_) => CallToolResult::success(vec![Content::text("ok")]),
-        }
+        self.do_shell_action(name).await
+    }
+
+    #[tool(
+        description = "Alias of `shell_action` (identical behavior). Named `intent` \
+            to match the HTTP/IPC verb. Send a bare top-level action to the \
+            tv-shell UI. Valid actions: home, home-tap, home-hold, menu, settings, \
+            power. Deep-links (containing ':') are NOT accepted here — \
+            use open_settings / open_overlay / launch_app for those specific targets.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
+    async fn intent(
+        &self,
+        Parameters(ShellActionParams { name }): Parameters<ShellActionParams>,
+    ) -> CallToolResult {
+        self.do_shell_action(name).await
     }
 
     #[tool(
@@ -441,15 +478,24 @@ impl TvShellMcp {
         &self,
         Parameters(NavigateParams { key }): Parameters<NavigateParams>,
     ) -> CallToolResult {
-        let key_str = key.as_str().to_owned();
-        match bridge_core::dispatch_key(&self.handles.control_tx, key_str).await {
-            None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
-            Some(r) if r.starts_with("error:") => {
-                let msg = r.trim_start_matches("error:").trim().to_owned();
-                CallToolResult::error(vec![Content::text(msg)])
-            }
-            Some(_) => CallToolResult::success(vec![Content::text("ok")]),
-        }
+        self.do_navigate(key.as_str().to_owned()).await
+    }
+
+    #[tool(
+        description = "Alias of `navigate` (identical behavior). Named `key` to \
+            match the HTTP/IPC verb. Synthesize a directional/action keypress on \
+            the tv-shell virtual keyboard. Moves focus RELATIVE to the currently \
+            focused element — observe first (take_screenshot or get_ui_state) \
+            to know what is focused before navigating. \
+            `select` = activate/confirm the focused element (A button / Enter); \
+            `back` = go up one level / dismiss (B button / Escape).",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
+    async fn key(
+        &self,
+        Parameters(NavigateParams { key }): Parameters<NavigateParams>,
+    ) -> CallToolResult {
+        self.do_navigate(key.as_str().to_owned()).await
     }
 
     #[tool(
@@ -461,14 +507,9 @@ impl TvShellMcp {
         Parameters(OpenSettingsParams { page }): Parameters<OpenSettingsParams>,
     ) -> CallToolResult {
         let intent_name = bridge_core::settings_intent(page.as_str());
-        match bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await {
-            None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
-            Some(r) if r.starts_with("error:") => {
-                let msg = r.trim_start_matches("error:").trim().to_owned();
-                CallToolResult::error(vec![Content::text(msg)])
-            }
-            Some(_) => CallToolResult::success(vec![Content::text("ok")]),
-        }
+        Self::intent_result(
+            bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await,
+        )
     }
 
     #[tool(
@@ -490,14 +531,9 @@ impl TvShellMcp {
                 return CallToolResult::error(vec![Content::text(format!("internal error: {msg}"))])
             }
         };
-        match bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await {
-            None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
-            Some(r) if r.starts_with("error:") => {
-                let msg = r.trim_start_matches("error:").trim().to_owned();
-                CallToolResult::error(vec![Content::text(msg)])
-            }
-            Some(_) => CallToolResult::success(vec![Content::text("ok")]),
-        }
+        Self::intent_result(
+            bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await,
+        )
     }
 
     #[tool(
@@ -513,14 +549,9 @@ impl TvShellMcp {
         Parameters(LaunchAppParams { wm_class }): Parameters<LaunchAppParams>,
     ) -> CallToolResult {
         let intent_name = bridge_core::app_intent(&wm_class);
-        match bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await {
-            None => CallToolResult::error(vec![Content::text("daemon unavailable")]),
-            Some(r) if r.starts_with("error:") => {
-                let msg = r.trim_start_matches("error:").trim().to_owned();
-                CallToolResult::error(vec![Content::text(msg)])
-            }
-            Some(_) => CallToolResult::success(vec![Content::text("ok")]),
-        }
+        Self::intent_result(
+            bridge_core::dispatch_intent(&self.handles.control_tx, intent_name).await,
+        )
     }
 
     // ── App discovery ─────────────────────────────────────────────────────────

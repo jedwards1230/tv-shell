@@ -561,6 +561,31 @@ Example:
 {"version":"0.1.0","sha":"a1b2c3d","branch":"main"}
 ```
 
+### `sys-metrics`
+
+Return live hardware telemetry as a compact JSON object (#235). Backs the System
+settings page's live readout and is the same source as the `tv_shell_sys_*`
+Prometheus gauges. Stateless (reads procfs/sysfs at call time) and cross-platform
+(non-Linux hosts degrade to zeros / an empty `temps` array).
+
+**Request:** `sys-metrics` (bare, no body).
+
+**Response:** Compact single-line JSON object.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `cpuPct` | number | Aggregate CPU utilization 0–100 |
+| `memUsed` | number | Used memory, bytes |
+| `memTotal` | number | Total memory, bytes |
+| `memPct` | number | Memory usage percentage 0–100 |
+| `load1` | number | 1-minute load average |
+| `temps` | array | Temperature sensors: `[{label, celsius}, …]` (empty when none are readable) |
+
+Example:
+```json
+{"cpuPct":12.5,"memUsed":8123456789,"memTotal":33554432000,"memPct":24,"load1":0.42,"temps":[{"label":"Package id 0","celsius":41.0}]}
+```
+
 ---
 
 ## Phase 3 Commands (D-Bus backbone)
@@ -1162,6 +1187,56 @@ Reply (compact single-line JSON):
 | `onDeck` / `recentlyAdded` | up to 16 / 24 items; each `{title,subtitle,kind,art,progress}`. Empty unless `status` is `ok` |
 | `progress` | 0..1 resume position (On Deck partially-watched items); 0 otherwise |
 
+### Steam library / launch (home-screen Steam widget)
+
+These four commands back the home-screen Steam widget and the Steam-card launch
+choreography. All are **stateless and cross-platform** — the daemon is an HTTP
+**client** proxying to the `tv-shell-host` sidecar running on the gaming PC (see
+[HOST_SETUP.md](HOST_SETUP.md)); it never spawns or supervises Steam. Config
+comes from the **`[steam]` section** of `config.toml` (base URL + bearer token),
+also readable from the `TV_SHELL_STEAM_URL` / `TV_SHELL_STEAM_TOKEN` env vars. The
+daemon↔sidecar JSON contract is single-sourced in the `tv-shell-protocol` crate.
+
+#### `steam-library`
+
+Fetch the host's Steam library for the widget's poster grid. Bare command — no
+body. Proxies the sidecar's library endpoint.
+
+**Reply (compact single-line JSON):** `{"status":…,"recentlyPlayed":[…],"allGames":[…]}`.
+`status` uses the shared service-health vocabulary (see
+[Service health](#service-health)); an unconfigured `[steam]` returns
+`{"status":"disabled",…}` and the widget collapses. Each game entry carries its
+appid, title, and (tokenized) poster art URL.
+
+#### `steam-launch <appid>`
+
+Navigate the host's Steam Big Picture to a game's page (proxies `POST /launch` to
+the sidecar). The body is a **single numeric appid** token. Does **not** directly
+`rungameid`-launch — the shell pairs it with a Moonlight stream client-side.
+
+| Condition | Response |
+|-----------|----------|
+| Proxied OK | `ok\n` |
+| Sidecar unconfigured/unreachable/error | `error:<reason>\n` |
+| Missing / non-numeric `<appid>` body | `error:usage: steam-launch <appid>\n` |
+
+#### `steam-bigpicture`
+
+Reset the host's Steam Big Picture to its **home** screen (proxies `POST /open-bpm`
+to the sidecar — no body). Bare command, mirroring `steam-launch` but landing on
+the BPM home instead of a game page.
+
+**Reply (compact single-line JSON status):** `{"status":"ok"}` / `{"status":"error",…}`.
+
+#### `steam-quit <appid>`
+
+Gracefully terminate a running Steam game on the host (proxies `POST /quit` with
+`{appid}` to the sidecar). The body is a **single numeric appid** token, mirroring
+`steam-launch`.
+
+**Reply (compact single-line JSON status):** `{"status":"ok"}` / `{"status":"error",…}`.
+A missing / non-numeric `<appid>` body returns `error:usage: steam-quit <appid>\n`.
+
 ### Moonlight local-config "forget" (creds-free unpair)
 
 #### `moonlight-forget <host>`
@@ -1456,7 +1531,15 @@ token_file = "~/.config/tv-shell/http-token"
 | `POST` | `/key/<name>` | Forward `<name>` to the [`key <name>`](#key-name) surface (synthesize a keystroke). |
 | `GET` | `/screenshot` or `/screenshot.png` | Capture the current screen via `grim -` and return the PNG bytes with `Content-Type: image/png`. Auth applies (the screenshot exposes screen content). Returns 500 if `grim` fails or is not installed. |
 | Any other method | Any path | 405 |
-| POST | Any other path | 404 |
+| POST | Any other path (outside the documented set — see note) | 404 |
+
+> **Also registered when the bridge is bound** (documented in their own sections,
+> not repeated in this table): the dev-control routes `GET /dev/status`,
+> `GET /dev/logs`, and `POST /dev/{deploy,build,restart-shell,restart-daemon}`
+> (see [Dev-control surface](#dev-control-surface-dev-167)), plus the auth-exempt
+> `GET /metrics` (see [OBSERVABILITY.md](OBSERVABILITY.md)). The "any other path →
+> 404 / any other method → 405" fall-through applies only to requests **outside**
+> that full documented route set.
 
 `<target>` is the **same string** the Unix-socket `intent` command accepts,
 including deep-link namespaces (`settings:<page>`, `overlay:volume`,

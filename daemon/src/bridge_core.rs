@@ -31,15 +31,6 @@ pub fn is_valid_intent(name: &str) -> bool {
     crate::protocol::is_known_intent(name)
 }
 
-/// Build the `intent:<name>` string broadcast on the event bus from a
-/// validated `name` token (e.g. `"menu"` → `"intent:menu"`).
-///
-/// Called by both the IPC server and the HTTP/MCP bridges so the on-wire
-/// event payload is always consistent.
-pub fn intent_broadcast_name(name: &str) -> String {
-    format!("intent:{name}")
-}
-
 // ─── Intent dispatch ─────────────────────────────────────────────────────────
 
 /// Dispatch an intent through the control channel and return the daemon's
@@ -72,6 +63,39 @@ pub async fn dispatch_key(control_tx: &mpsc::Sender<Control>, name: String) -> O
         .await
         .ok()?;
     reply_rx.await.ok()
+}
+
+/// Three-way interpretation of a `dispatch_*` reply, shared by the transport
+/// adapters (HTTP bridge + MCP server).
+///
+/// Both transports call `dispatch_intent`/`dispatch_key` and then translate the
+/// `Option<String>` reply into a transport-specific result. This enum captures
+/// only the *interpretation* of that reply; the transport builds the final
+/// response (HTTP status code / `CallToolResult`) from the outcome.
+pub enum DispatchOutcome {
+    /// The control channel was closed — the input runtime is gone.
+    Unavailable,
+    /// The daemon replied `error:<message>`; carries the message with only the
+    /// `error:` prefix stripped (whitespace is left intact so each transport
+    /// can trim, or not, exactly as it did before).
+    Err(String),
+    /// The daemon replied `ok`.
+    Ok,
+}
+
+/// Interpret a `dispatch_*` reply into a [`DispatchOutcome`].
+///
+/// `None` → [`DispatchOutcome::Unavailable`]; `Some("error:…")` →
+/// [`DispatchOutcome::Err`] with the `error:` prefix stripped; any other
+/// `Some(_)` → [`DispatchOutcome::Ok`].
+pub fn interpret_reply(reply: Option<String>) -> DispatchOutcome {
+    match reply {
+        None => DispatchOutcome::Unavailable,
+        Some(r) if r.starts_with("error:") => {
+            DispatchOutcome::Err(r.trim_start_matches("error:").to_owned())
+        }
+        Some(_) => DispatchOutcome::Ok,
+    }
 }
 
 // ─── Screenshot ──────────────────────────────────────────────────────────────

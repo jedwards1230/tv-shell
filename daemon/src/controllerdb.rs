@@ -57,6 +57,22 @@ pub struct DbStatus {
     pub error: Option<String>,
 }
 
+impl DbStatus {
+    /// Build a status reply from the IPC layer's cached controller-DB state.
+    ///
+    /// `source`, `entry_count`, `last_downloaded`, and `error` are read straight
+    /// from `state`; `upstream_url` is always [`UPSTREAM_URL`].
+    pub fn from_state(state: &crate::ipc::ControllerDbState) -> Self {
+        DbStatus {
+            source: state.source.clone(),
+            entry_count: state.entry_count,
+            last_downloaded: state.last_downloaded,
+            upstream_url: UPSTREAM_URL.to_string(),
+            error: state.last_error.clone(),
+        }
+    }
+}
+
 /// Return the XDG data directory for tv-shell state files.
 ///
 /// `~/.local/share/tv-shell/` (legacy `~/.local/share/game-shell/` honored as a

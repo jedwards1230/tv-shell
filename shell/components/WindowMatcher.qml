@@ -13,17 +13,17 @@ Item {
         if (wmClass !== "") {
             if (cls === wmClass || initCls === wmClass)
                 return true;
-            let normWm = _normalize(wmClass);
-            if (_normalize(cls) === normWm || _normalize(initCls) === normWm)
+            let normWm = normalize(wmClass);
+            if (normalize(cls) === normWm || normalize(initCls) === normWm)
                 return true;
         }
 
         // 2. Exec basename match
-        let execBase = _execBasename(app.exec || "");
+        let execBase = execBasename(app.exec || "");
         if (execBase !== "") {
             if (cls === execBase || initCls === execBase)
                 return true;
-            if (_normalize(cls) === _normalize(execBase) || _normalize(initCls) === _normalize(execBase))
+            if (normalize(cls) === normalize(execBase) || normalize(initCls) === normalize(execBase))
                 return true;
         }
 
@@ -43,13 +43,17 @@ Item {
         return false;
     }
 
-    function _execBasename(exec) {
+    // Public helpers (also used by HomeScreen's recent-model matching). Null-guarded
+    // supersets of the former privates — behaviour-identical at every call site,
+    // which already passes guarded (`|| ""`) strings.
+    function execBasename(exec) {
+        if (!exec)
+            return "";
         let cmd = exec.split(/\s/)[0];
-        let base = cmd.split("/").pop();
-        return base.toLowerCase();
+        return cmd.split("/").pop().toLowerCase();
     }
 
-    function _normalize(s) {
-        return s.toLowerCase().replace(/[-_\.]/g, "");
+    function normalize(s) {
+        return (s || "").toLowerCase().replace(/[-_.]/g, "");
     }
 }

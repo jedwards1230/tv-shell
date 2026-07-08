@@ -316,6 +316,114 @@ SettingsPageBase {
             ]
         })
 
+    // Spatial 2D layout of the speaker-test grid, keyed by channel count. Distinct
+    // from channelLayouts above (which is the flat WAV/PipeWire render order): this
+    // is arranged in physical rows to mirror speaker positions, so the ordering
+    // differs (e.g. 5.1 top row is FL / Center / FR = idx 0,2,1). Each entry is a
+    // list of ROWS; each row is a list of CELLS, where a cell is either
+    // { label, idx } (a FocusButton) or { blank: true } (a non-focusable spacer —
+    // the 7.1 middle-row center, which has no speaker). `idx` is the PipeWire channel
+    // index and equals the cell's position in channelActive (channelLayouts is
+    // idx-ordered), so channelActive[idx] / toggleChannel(idx) address it directly.
+    // PipeWire index map: FL=0, FR=1, FC=2, LFE=3, RL=4, RR=5, SL=6, SR=7.
+    readonly property var speakerGrids: ({
+            "2": [[
+                    {
+                        "label": "L",
+                        "idx": 0
+                    },
+                    {
+                        "label": "R",
+                        "idx": 1
+                    }
+                ]],
+            "4": [[
+                    {
+                        "label": "Front L",
+                        "idx": 0
+                    },
+                    {
+                        "label": "Front R",
+                        "idx": 1
+                    }
+                ], [
+                    {
+                        "label": "Rear L",
+                        "idx": 2
+                    },
+                    {
+                        "label": "Rear R",
+                        "idx": 3
+                    }
+                ]],
+            "6": [[
+                    {
+                        "label": "Front L",
+                        "idx": 0
+                    },
+                    {
+                        "label": "Center",
+                        "idx": 2
+                    },
+                    {
+                        "label": "Front R",
+                        "idx": 1
+                    }
+                ], [
+                    {
+                        "label": "Rear L",
+                        "idx": 4
+                    },
+                    {
+                        "label": "LFE/Sub",
+                        "idx": 3
+                    },
+                    {
+                        "label": "Rear R",
+                        "idx": 5
+                    }
+                ]],
+            "8": [[
+                    {
+                        "label": "Front L",
+                        "idx": 0
+                    },
+                    {
+                        "label": "Center",
+                        "idx": 2
+                    },
+                    {
+                        "label": "Front R",
+                        "idx": 1
+                    }
+                ], [
+                    {
+                        "label": "Side L",
+                        "idx": 6
+                    },
+                    {
+                        "blank": true
+                    },
+                    {
+                        "label": "Side R",
+                        "idx": 7
+                    }
+                ], [
+                    {
+                        "label": "Rear L",
+                        "idx": 4
+                    },
+                    {
+                        "label": "LFE/Sub",
+                        "idx": 3
+                    },
+                    {
+                        "label": "Rear R",
+                        "idx": 5
+                    }
+                ]]
+        })
+
     // Negotiated channel count of the current default sink (from getFormat),
     // used as the fallback when no profile description can be parsed.
     property int sinkChannels: 2
@@ -559,7 +667,7 @@ SettingsPageBase {
             }
 
             KeyNavigation.up: sinkDropdownScope
-            KeyNavigation.down: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4FL : (root.channelCount === 8 ? btn8FL : btn6FL))
+            KeyNavigation.down: speakerGrid.firstCell
         }
 
         Text {
@@ -597,301 +705,171 @@ SettingsPageBase {
         }
 
         // Spatial speaker grid — laid out to mirror the physical speaker
-        // positions, reshaped per channel count (the charm from #234). Each cell
-        // is its own FocusButton (FocusScope) so SettingsApp's scroll-follow
-        // tracks it; the wide "All Channels" tile sits below every layout. Only
-        // the block matching the active channel count is visible — the rest
-        // collapse. The boundary chains (profile dropdown ↓, All ↑) select the
-        // visible block via channelCount. PipeWire index map: FL=0, FR=1, FC=2,
+        // positions, reshaped per channel count (the charm from #234). Data-driven
+        // (cleanup): a per-layout ROW model (speakerGrids, keyed by channel count)
+        // feeds a Repeater-of-rows → Repeater-of-cells, so only the ACTIVE layout is
+        // instantiated (no hidden blocks). Each non-blank cell is its own FocusButton
+        // (FocusScope) so SettingsApp's scroll-follow tracks it; the 7.1 middle-row
+        // center is a blank spacer (no speaker). The wide "All Channels" tile sits
+        // below. Focus neighbours are computed from grid position — up/down = nearest
+        // non-blank cell in the same column of the adjacent row (skipping the blank),
+        // left/right = nearest non-blank cell in the row (no wrap), top row ↑ =
+        // profile dropdown, bottom row ↓ = All Channels — reproducing the former
+        // hand-wired KeyNavigation exactly. PipeWire index map: FL=0, FR=1, FC=2,
         // LFE=3, RL=4, RR=5, SL=6, SR=7.
         ColumnLayout {
+            id: speakerGrid
             Layout.fillWidth: true
             spacing: 12
 
-            // ── Stereo (2.0):  L   R ──
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 16
-                visible: root.channelCount === 2
+            // Rows of the ACTIVE layout only (each row is an array of cells; a cell
+            // is { label, idx } or { blank: true } for the 7.1 middle-row center).
+            readonly property var gridRows: root.speakerGrids[String(root.channelCount)] || root.speakerGrids["2"]
 
-                FocusButton {
-                    id: btn2L
-                    Layout.fillWidth: true
-                    text: "L"
-                    fillActive: root.channelActive[0] === true
-                    fillColor: Theme.sidebarActive
-                    onActivated: root.toggleChannel(0)
-                    KeyNavigation.up: profileDropdownScope
-                    KeyNavigation.right: btn2R
-                    KeyNavigation.down: allChannelsBtn
+            // The two boundary targets: the top-left cell (profile-dropdown ↓) and the
+            // bottom-row-left cell (All-Channels ↑). Set by the matching cell's
+            // Component.onCompleted, so they resolve once the Repeaters build and
+            // re-resolve when the active layout changes.
+            property Item firstCell: null
+            property Item lastCell: null
+
+            function rowItem(r) {
+                return (r >= 0 && r < rowRepeater.count) ? rowRepeater.itemAt(r) : null;
+            }
+            // FocusButton at (r, c), or null for an out-of-range / blank cell.
+            function focusableAt(r, c) {
+                let row = rowItem(r);
+                return row ? row.focusableAt(c) : null;
+            }
+            // Nearest non-blank cell above in the same column; profile dropdown at top.
+            function upTarget(r, c) {
+                for (let rr = r - 1; rr >= 0; rr--) {
+                    let t = focusableAt(rr, c);
+                    if (t)
+                        return t;
                 }
-                FocusButton {
-                    id: btn2R
-                    Layout.fillWidth: true
-                    text: "R"
-                    fillActive: root.channelActive[1] === true
-                    fillColor: Theme.sidebarActive
-                    onActivated: root.toggleChannel(1)
-                    KeyNavigation.up: profileDropdownScope
-                    KeyNavigation.left: btn2L
-                    KeyNavigation.down: allChannelsBtn
+                return profileDropdownScope;
+            }
+            // Nearest non-blank cell below in the same column; All Channels at bottom.
+            function downTarget(r, c) {
+                for (let rr = r + 1; rr < rowRepeater.count; rr++) {
+                    let t = focusableAt(rr, c);
+                    if (t)
+                        return t;
                 }
+                return allChannelsBtn;
+            }
+            // Nearest non-blank cell to the left/right within the row (no wrap).
+            function leftTarget(r, c) {
+                for (let cc = c - 1; cc >= 0; cc--) {
+                    let t = focusableAt(r, cc);
+                    if (t)
+                        return t;
+                }
+                return null;
+            }
+            function rightTarget(r, c) {
+                let row = rowItem(r);
+                let n = row ? row.cellCount : 0;
+                for (let cc = c + 1; cc < n; cc++) {
+                    let t = focusableAt(r, cc);
+                    if (t)
+                        return t;
+                }
+                return null;
             }
 
-            // ── Quad (4.0):  FL FR / RL RR ──
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                visible: root.channelCount === 4
+            Repeater {
+                id: rowRepeater
+                model: speakerGrid.gridRows
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
-                    FocusButton {
-                        id: btn4FL
-                        Layout.fillWidth: true
-                        text: "Front L"
-                        fillActive: root.channelActive[0] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(0)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.right: btn4FR
-                        KeyNavigation.down: btn4RL
-                    }
-                    FocusButton {
-                        id: btn4FR
-                        Layout.fillWidth: true
-                        text: "Front R"
-                        fillActive: root.channelActive[1] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(1)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.left: btn4FL
-                        KeyNavigation.down: btn4RR
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
-                    FocusButton {
-                        id: btn4RL
-                        Layout.fillWidth: true
-                        text: "Rear L"
-                        fillActive: root.channelActive[2] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(2)
-                        KeyNavigation.up: btn4FL
-                        KeyNavigation.right: btn4RR
-                        KeyNavigation.down: allChannelsBtn
-                    }
-                    FocusButton {
-                        id: btn4RR
-                        Layout.fillWidth: true
-                        text: "Rear R"
-                        fillActive: root.channelActive[3] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(3)
-                        KeyNavigation.up: btn4FR
-                        KeyNavigation.left: btn4RL
-                        KeyNavigation.down: allChannelsBtn
-                    }
-                }
-            }
+                delegate: RowLayout {
+                    id: rowLayout
 
-            // ── 5.1:  FL  C  FR  /  RL  LFE  RR ──
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                visible: root.channelCount === 6
+                    required property int index
+                    required property var modelData
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
-                    FocusButton {
-                        id: btn6FL
-                        Layout.fillWidth: true
-                        text: "Front L"
-                        fillActive: root.channelActive[0] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(0)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.right: btn6C
-                        KeyNavigation.down: btn6RL
-                    }
-                    FocusButton {
-                        id: btn6C
-                        Layout.fillWidth: true
-                        text: "Center"
-                        fillActive: root.channelActive[2] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(2)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.left: btn6FL
-                        KeyNavigation.right: btn6FR
-                        KeyNavigation.down: btn6LFE
-                    }
-                    FocusButton {
-                        id: btn6FR
-                        Layout.fillWidth: true
-                        text: "Front R"
-                        fillActive: root.channelActive[1] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(1)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.left: btn6C
-                        KeyNavigation.down: btn6RR
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
-                    FocusButton {
-                        id: btn6RL
-                        Layout.fillWidth: true
-                        text: "Rear L"
-                        fillActive: root.channelActive[4] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(4)
-                        KeyNavigation.up: btn6FL
-                        KeyNavigation.right: btn6LFE
-                        KeyNavigation.down: allChannelsBtn
-                    }
-                    FocusButton {
-                        id: btn6LFE
-                        Layout.fillWidth: true
-                        text: "LFE/Sub"
-                        fillActive: root.channelActive[3] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(3)
-                        KeyNavigation.up: btn6C
-                        KeyNavigation.left: btn6RL
-                        KeyNavigation.right: btn6RR
-                        KeyNavigation.down: allChannelsBtn
-                    }
-                    FocusButton {
-                        id: btn6RR
-                        Layout.fillWidth: true
-                        text: "Rear R"
-                        fillActive: root.channelActive[5] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(5)
-                        KeyNavigation.up: btn6FR
-                        KeyNavigation.left: btn6LFE
-                        KeyNavigation.down: allChannelsBtn
-                    }
-                }
-            }
+                    readonly property int rowIndex: index
+                    readonly property int cellCount: cellRepeater.count
 
-            // ── 7.1:  FL C FR / SL ▢ SR / RL LFE RR  (center of mid row blank) ──
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                visible: root.channelCount === 8
+                    Layout.fillWidth: true
+                    spacing: 16
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
-                    FocusButton {
-                        id: btn8FL
-                        Layout.fillWidth: true
-                        text: "Front L"
-                        fillActive: root.channelActive[0] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(0)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.right: btn8C
-                        KeyNavigation.down: btn8SL
+                    function focusableAt(c) {
+                        let w = cellRepeater.itemAt(c);
+                        return w ? w.focusable : null;
                     }
-                    FocusButton {
-                        id: btn8C
-                        Layout.fillWidth: true
-                        text: "Center"
-                        fillActive: root.channelActive[2] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(2)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.left: btn8FL
-                        KeyNavigation.right: btn8FR
-                        KeyNavigation.down: btn8LFE
-                    }
-                    FocusButton {
-                        id: btn8FR
-                        Layout.fillWidth: true
-                        text: "Front R"
-                        fillActive: root.channelActive[1] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(1)
-                        KeyNavigation.up: profileDropdownScope
-                        KeyNavigation.left: btn8C
-                        KeyNavigation.down: btn8SR
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
-                    FocusButton {
-                        id: btn8SL
-                        Layout.fillWidth: true
-                        text: "Side L"
-                        fillActive: root.channelActive[6] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(6)
-                        KeyNavigation.up: btn8FL
-                        KeyNavigation.right: btn8SR
-                        KeyNavigation.down: btn8RL
-                    }
-                    // Center of the middle row is intentionally blank (no speaker).
-                    Item {
-                        Layout.fillWidth: true
-                    }
-                    FocusButton {
-                        id: btn8SR
-                        Layout.fillWidth: true
-                        text: "Side R"
-                        fillActive: root.channelActive[7] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(7)
-                        KeyNavigation.up: btn8FR
-                        KeyNavigation.left: btn8SL
-                        KeyNavigation.down: btn8RR
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
-                    FocusButton {
-                        id: btn8RL
-                        Layout.fillWidth: true
-                        text: "Rear L"
-                        fillActive: root.channelActive[4] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(4)
-                        KeyNavigation.up: btn8SL
-                        KeyNavigation.right: btn8LFE
-                        KeyNavigation.down: allChannelsBtn
-                    }
-                    FocusButton {
-                        id: btn8LFE
-                        Layout.fillWidth: true
-                        text: "LFE/Sub"
-                        fillActive: root.channelActive[3] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(3)
-                        KeyNavigation.up: btn8C
-                        KeyNavigation.left: btn8RL
-                        KeyNavigation.right: btn8RR
-                        KeyNavigation.down: allChannelsBtn
-                    }
-                    FocusButton {
-                        id: btn8RR
-                        Layout.fillWidth: true
-                        text: "Rear R"
-                        fillActive: root.channelActive[5] === true
-                        fillColor: Theme.sidebarActive
-                        onActivated: root.toggleChannel(5)
-                        KeyNavigation.up: btn8SR
-                        KeyNavigation.left: btn8LFE
-                        KeyNavigation.down: allChannelsBtn
+
+                    Repeater {
+                        id: cellRepeater
+                        model: rowLayout.modelData
+
+                        delegate: Item {
+                            id: cellWrap
+
+                            required property int index
+                            required property var modelData
+
+                            readonly property int colIndex: index
+                            readonly property int rowIndex: rowLayout.rowIndex
+                            // The FocusButton for a real cell; null for a blank spacer.
+                            // `var` (not Item): Loader.item is statically typed QObject.
+                            readonly property var focusable: btnLoader.item
+
+                            Layout.fillWidth: true
+                            implicitWidth: btnLoader.item ? btnLoader.item.implicitWidth : 0
+                            implicitHeight: btnLoader.item ? btnLoader.item.implicitHeight : 0
+
+                            Loader {
+                                id: btnLoader
+                                anchors.fill: parent
+                                active: cellWrap.modelData.blank !== true
+
+                                sourceComponent: FocusButton {
+                                    id: cellButton
+                                    text: cellWrap.modelData.label
+                                    fillActive: root.channelActive[cellWrap.modelData.idx] === true
+                                    fillColor: Theme.sidebarActive
+                                    onActivated: root.toggleChannel(cellWrap.modelData.idx)
+
+                                    Keys.onUpPressed: event => {
+                                        let t = speakerGrid.upTarget(cellWrap.rowIndex, cellWrap.colIndex);
+                                        if (t)
+                                            t.forceActiveFocus();
+                                        else
+                                            event.accepted = false;
+                                    }
+                                    Keys.onDownPressed: event => {
+                                        let t = speakerGrid.downTarget(cellWrap.rowIndex, cellWrap.colIndex);
+                                        if (t)
+                                            t.forceActiveFocus();
+                                        else
+                                            event.accepted = false;
+                                    }
+                                    Keys.onLeftPressed: event => {
+                                        let t = speakerGrid.leftTarget(cellWrap.rowIndex, cellWrap.colIndex);
+                                        if (t)
+                                            t.forceActiveFocus();
+                                        else
+                                            event.accepted = false;
+                                    }
+                                    Keys.onRightPressed: event => {
+                                        let t = speakerGrid.rightTarget(cellWrap.rowIndex, cellWrap.colIndex);
+                                        if (t)
+                                            t.forceActiveFocus();
+                                        else
+                                            event.accepted = false;
+                                    }
+
+                                    Component.onCompleted: {
+                                        if (cellWrap.rowIndex === 0 && cellWrap.colIndex === 0)
+                                            speakerGrid.firstCell = cellButton;
+                                        if (cellWrap.colIndex === 0 && cellWrap.rowIndex === speakerGrid.gridRows.length - 1)
+                                            speakerGrid.lastCell = cellButton;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -906,7 +884,7 @@ SettingsPageBase {
                 fillActive: root.anyChannelActive
                 fillColor: Theme.sidebarActive
                 onActivated: root.setAllChannels(!root.anyChannelActive)
-                KeyNavigation.up: root.channelCount === 2 ? btn2L : (root.channelCount === 4 ? btn4RL : (root.channelCount === 8 ? btn8RL : btn6RL))
+                KeyNavigation.up: speakerGrid.lastCell
             }
         }
     }

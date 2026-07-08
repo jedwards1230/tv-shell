@@ -6,7 +6,7 @@ talks to it over HTTP to list installed Steam games, show their art on the home
 screen, and launch a game into Big Picture before Moonlight streams it.
 
 ```
-game-client (TV)                          gaming PC (Steam host)
+tv-shell client (TV)                      gaming PC (Steam host)
   tv-shell-input daemon ──HTTP :47995──▶ tv-shell-host
     [steam] url   (config.toml)              TV_SHELL_HOST_TOKEN  (env)
     [steam] token (bearer, must match the host token)
@@ -159,7 +159,7 @@ firewall to port 47995. See the role for the full variable list.
 Point the daemon at the host and give it the **same token**:
 
 ```toml
-# ~/.config/tv-shell/config.toml on the game-client
+# ~/.config/tv-shell/config.toml on the tv-shell client
 [steam]
 url = "http://<host-ip>:47995"
 # Either inline …

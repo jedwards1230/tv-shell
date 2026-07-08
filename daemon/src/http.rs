@@ -283,6 +283,17 @@ fn parse_dev_route(
 
 // ─── HTTP response helpers ───────────────────────────────────────────────────
 
+/// Translate a `dispatch_intent`/`dispatch_key` reply into an HTTP response:
+/// `None` → 503 "daemon unavailable"; `error:<body>` → 400 with the body
+/// (prefix stripped, whitespace preserved as before); otherwise → 200 "ok".
+fn dispatch_http_response(reply: Option<String>) -> String {
+    match bridge_core::interpret_reply(reply) {
+        bridge_core::DispatchOutcome::Unavailable => http_response(503, "daemon unavailable"),
+        bridge_core::DispatchOutcome::Err(body) => http_response(400, &body),
+        bridge_core::DispatchOutcome::Ok => http_response(200, "ok"),
+    }
+}
+
 /// Render a minimal HTTP/1.1 response with the given status code and text body.
 /// The connection is always closed after the response.
 pub fn http_response(status: u16, body: &str) -> String {
@@ -489,26 +500,12 @@ async fn handle_connection(
     match action {
         HttpAction::Intent(name) => {
             let reply = bridge_core::dispatch_intent(control_tx, name).await;
-            let resp = match reply {
-                None => http_response(503, "daemon unavailable"),
-                Some(r) if r.starts_with("error:") => {
-                    let body = r.trim_start_matches("error:").to_owned();
-                    http_response(400, &body)
-                }
-                Some(_) => http_response(200, "ok"),
-            };
+            let resp = dispatch_http_response(reply);
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::Key(name) => {
             let reply = bridge_core::dispatch_key(control_tx, name).await;
-            let resp = match reply {
-                None => http_response(503, "daemon unavailable"),
-                Some(r) if r.starts_with("error:") => {
-                    let body = r.trim_start_matches("error:").to_owned();
-                    http_response(400, &body)
-                }
-                Some(_) => http_response(200, "ok"),
-            };
+            let resp = dispatch_http_response(reply);
             let _ = stream.write_all(resp.as_bytes()).await;
         }
         HttpAction::Screenshot { flash } => {
