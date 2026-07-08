@@ -47,6 +47,19 @@ fn main() -> anyhow::Result<()> {
 
     init_tracing(daemon_cfg.observability.log_journal);
 
+    // One-time, per-file backfill of real user state from a legacy
+    // ~/.config/game-shell into ~/.config/tv-shell (#rename bug): when Ansible
+    // pre-creates the new dir for deployment files, config_dir()'s dir-level
+    // legacy fallback stops firing, so settings.json / host-macs.json would be
+    // silently re-defaulted. Idempotent + never overwrites; run BEFORE any socket
+    // is opened or settings are read. Deployment-owned files (config.toml/
+    // targets.json/tokens) and data-dir files are deliberately NOT migrated.
+    for migrated in
+        tv_shell_protocol::brand::migrate_legacy_config_files(&["settings.json", "host-macs.json"])
+    {
+        tracing::info!("migrated legacy state file into the tv-shell config dir: {migrated}");
+    }
+
     tv_shell_input::daemon_config::init_global(daemon_cfg.clone());
 
     let uid = unsafe { libc::getuid() };

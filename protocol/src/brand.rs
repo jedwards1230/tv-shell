@@ -84,6 +84,79 @@ pub fn config_dir() -> PathBuf {
     resolve_config_dir(&config_base())
 }
 
+/// Per-file backfill core: copy each of `names` from `legacy` into `current`
+/// when it's missing there. Injectable (both dirs passed in) so it's
+/// deterministic and unit-testable with tempdirs — it does its own I/O but reads
+/// no env and logs nothing (the protocol crate has no tracing dep).
+///
+/// For each `name`: `dst = current.join(name)`, `src = legacy.join(name)`.
+/// - Skip if `dst` already exists (NEVER overwrite an existing target) or if
+///   `src` is not a regular file (nothing to migrate).
+/// - Ensure `current` exists (`create_dir_all`); on error, skip this name.
+/// - `std::fs::copy(src, dst)`. On Unix `std::fs::copy` also copies the source's
+///   permission bits to the destination, so the mode is preserved for free. On
+///   copy error, skip this name.
+///
+/// Returns the filenames actually copied, in `names` order.
+fn migrate_files_between(current: &Path, legacy: &Path, names: &[&str]) -> Vec<String> {
+    let mut migrated = Vec::new();
+    for name in names {
+        let dst = current.join(name);
+        let src = legacy.join(name);
+        // Never clobber an existing target; nothing to do if the source is absent.
+        if dst.exists() || !src.is_file() {
+            continue;
+        }
+        // The current dir may not exist yet (config_dir() returns a not-yet-
+        // created path when neither slug's dir is present — though the public
+        // wrapper short-circuits that case, this keeps the core self-contained).
+        if std::fs::create_dir_all(current).is_err() {
+            continue;
+        }
+        // std::fs::copy preserves the source's Unix permission bits on the
+        // destination, so no explicit set_permissions is needed.
+        if std::fs::copy(&src, &dst).is_ok() {
+            migrated.push(name.to_string());
+        }
+    }
+    migrated
+}
+
+/// One-time, per-file backfill of legacy `game-shell` state into the current
+/// `tv-shell` config dir. Returns the filenames actually copied so the caller
+/// can log each (the protocol crate itself logs nothing).
+///
+/// **Idempotent and non-destructive:** a file is copied only when it is MISSING
+/// in the current dir and PRESENT (as a regular file) in the legacy dir — an
+/// existing target is never overwritten, so re-running this is a no-op once the
+/// backfill has happened (or once the user has written fresh state).
+///
+/// **Why this exists on top of [`config_dir`]'s dir-level fallback:** that
+/// fallback only fires when the whole new `tv-shell` dir is ABSENT. When a
+/// deployment (Ansible) pre-creates `~/.config/tv-shell/` to drop in
+/// deployment-owned files (`config.toml`/`targets.json`/tokens), the dir-level
+/// fallback stops helping and the shell would write fresh defaults, silently
+/// discarding real user state (`settings.json`, `host-macs.json`) still living
+/// in `~/.config/game-shell/`. This copies those specific files across once.
+///
+/// **The `current == legacy` short-circuit:** [`config_dir`] returns the LEGACY
+/// dir (via its dir-level fallback) when the new dir doesn't exist yet — in that
+/// case we're already reading legacy directly, so there is nothing to migrate
+/// and we return empty. Only when the new dir actually exists does `config_dir`
+/// return it (differing from `legacy`), triggering the per-file backfill. The
+/// legacy dir is derived from [`LEGACY_SLUG`] (not a hardcoded path) so it stays
+/// in lockstep with [`config_dir`]'s own base + slug resolution.
+pub fn migrate_legacy_config_files(names: &[&str]) -> Vec<String> {
+    let current = config_dir();
+    let legacy = config_base().join(LEGACY_SLUG);
+    if current == legacy {
+        // config_dir() fell back to the legacy dir (new dir absent) — we're
+        // already reading legacy directly, so there is nothing to backfill.
+        return Vec::new();
+    }
+    migrate_files_between(&current, &legacy, names)
+}
+
 /// The base data directory (`$HOME/.local/share`).
 fn data_base() -> PathBuf {
     let home = std::env::var_os("HOME")
@@ -189,5 +262,102 @@ mod tests {
     #[test]
     fn install_root_default_is_tv_shell() {
         assert_eq!(install_root_default(), PathBuf::from("/opt/tv-shell"));
+    }
+
+    #[test]
+    fn migrate_backfills_legacy_only_file_preserving_mode() {
+        let base = unique_tmp("migrate-legacy-only");
+        let current = base.join(SLUG);
+        let legacy = base.join(LEGACY_SLUG);
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+        let src = legacy.join("settings.json");
+        std::fs::write(&src, r#"{"themeMode":"dark"}"#).unwrap();
+        // Set a non-default mode on the source so we can assert it survives the copy.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let migrated = migrate_files_between(&current, &legacy, &["settings.json"]);
+        assert_eq!(migrated, vec!["settings.json".to_string()]);
+
+        let dst = current.join("settings.json");
+        assert_eq!(
+            std::fs::read_to_string(&dst).unwrap(),
+            r#"{"themeMode":"dark"}"#
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let src_mode = std::fs::metadata(&src).unwrap().permissions().mode() & 0o777;
+            let dst_mode = std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                dst_mode, src_mode,
+                "std::fs::copy preserves the source mode"
+            );
+        }
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn migrate_never_overwrites_existing_target() {
+        let base = unique_tmp("migrate-both");
+        let current = base.join(SLUG);
+        let legacy = base.join(LEGACY_SLUG);
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+        // Both dirs have the file, with DIFFERENT contents.
+        std::fs::write(current.join("settings.json"), "current").unwrap();
+        std::fs::write(legacy.join("settings.json"), "legacy").unwrap();
+
+        let migrated = migrate_files_between(&current, &legacy, &["settings.json"]);
+        assert!(migrated.is_empty(), "existing target must not migrate");
+        assert_eq!(
+            std::fs::read_to_string(current.join("settings.json")).unwrap(),
+            "current",
+            "existing target must be left untouched"
+        );
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn migrate_noop_when_neither_has_the_file() {
+        let base = unique_tmp("migrate-neither");
+        let current = base.join(SLUG);
+        let legacy = base.join(LEGACY_SLUG);
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+
+        let migrated = migrate_files_between(&current, &legacy, &["settings.json"]);
+        assert!(migrated.is_empty());
+        assert!(
+            !current.join("settings.json").exists(),
+            "no file should be created when the source is absent"
+        );
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn migrate_multi_file_only_present_ones() {
+        let base = unique_tmp("migrate-multi");
+        let current = base.join(SLUG);
+        let legacy = base.join(LEGACY_SLUG);
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+        // Only host-macs.json exists in legacy; settings.json does not.
+        std::fs::write(legacy.join("host-macs.json"), "{}").unwrap();
+
+        let migrated =
+            migrate_files_between(&current, &legacy, &["settings.json", "host-macs.json"]);
+        assert_eq!(migrated, vec!["host-macs.json".to_string()]);
+        assert!(current.join("host-macs.json").exists());
+        assert!(!current.join("settings.json").exists());
+
+        std::fs::remove_dir_all(&base).ok();
     }
 }
