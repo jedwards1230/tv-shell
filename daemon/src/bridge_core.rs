@@ -184,6 +184,30 @@ pub async fn capture_meta() -> CaptureMeta {
     }
 }
 
+/// Compact build-identity reply for the `build-info` IPC command: the deployed
+/// version, short git SHA, and branch. Same live source as the `/metrics`
+/// `build_info` gauge and the `X-TvShell-*` response headers.
+#[derive(Debug, Serialize)]
+pub struct BuildInfoResponse {
+    pub version: &'static str,
+    pub sha: String,
+    pub branch: String,
+}
+
+/// Resolve the currently-deployed build identity as compact JSON for the
+/// `build-info` IPC command (same live source as /metrics build_info + the
+/// X-TvShell-* headers). Read live (async git) so a /dev/deploy HEAD swap under
+/// the running daemon is reflected without a restart.
+pub async fn build_info_json() -> String {
+    let meta = capture_meta().await;
+    serde_json::to_string(&BuildInfoResponse {
+        version: meta.version,
+        sha: meta.sha,
+        branch: meta.branch,
+    })
+    .unwrap_or_else(|e| crate::protocol::resp_error(&format!("build-info serialize failed: {e}")))
+}
+
 // ─── Status ──────────────────────────────────────────────────────────────────
 
 /// Serialisable status blob returned by `get_status` / `GET /dev/status`.
@@ -949,6 +973,22 @@ mod tests {
         assert!(json.contains("\"sha\":\"a1b2c3d\""));
         assert!(json.contains("\"branch\":\"feat/screenshot-metadata\""));
         assert!(json.contains("\"version\":\"0.1.0\""));
+    }
+
+    #[tokio::test]
+    async fn build_info_json_has_keys_and_pkg_version() {
+        // Resolved live: sha/branch depend on the cwd's git state ("unknown"
+        // off a repo, real values inside one), so assert only that the KEYS
+        // exist and version matches CARGO_PKG_VERSION — not the sha/branch value.
+        let json = build_info_json().await;
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("build-info should be valid JSON");
+        assert_eq!(
+            v.get("version").and_then(|x| x.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(v.get("sha").map(|x| x.is_string()).unwrap_or(false));
+        assert!(v.get("branch").map(|x| x.is_string()).unwrap_or(false));
     }
 
     #[test]

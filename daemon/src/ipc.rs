@@ -9,8 +9,8 @@
 use crate::protocol::{self, Command, Event};
 use crate::state::Control;
 use crate::{
-    apps, config, controllerdb, health, moonlight, netinfo, notifications, plex, recents, steam,
-    system, wol,
+    apps, bridge_core, config, controllerdb, health, moonlight, netinfo, notifications, plex,
+    recents, steam, system, wol,
 };
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
@@ -392,6 +392,9 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         Command::SysStatus => Some(spawn_blocking_string(system::sys_status_json).await),
         Command::StorageStatus => Some(spawn_blocking_string(system::storage_status_json).await),
         Command::SysMetrics => Some(spawn_blocking_string(system::sys_metrics_json).await),
+        // Build identity: resolved live (async git), so served directly rather
+        // than via the blocking pool.
+        Command::BuildInfo => Some(bridge_core::build_info_json().await),
 
         _ => None,
     }
@@ -591,7 +594,8 @@ async fn dispatch(
         // System/storage status commands are stateless (#164, #235).
         | Command::SysStatus
         | Command::StorageStatus
-        | Command::SysMetrics => return protocol::resp_unknown(),
+        | Command::SysMetrics
+        | Command::BuildInfo => return protocol::resp_unknown(),
         // Phase 3 D-Bus commands are consumed by `dispatch_dbus` above (which
         // returns early); they never reach this match. The MAC-usage variant is
         // a stateless error reply handled there too.
@@ -1068,6 +1072,19 @@ mod tests {
                 "error:unsupported on this platform"
             );
         }
+
+        // build-info dispatches statelessly and returns the {version,sha,branch}
+        // JSON object; version is compile-time, sha/branch depend on cwd git
+        // state — assert shape + version, not the sha/branch values.
+        let build_info = send_line(&mut s, "build-info").await;
+        let bi: serde_json::Value = serde_json::from_str(&build_info)
+            .unwrap_or_else(|_| panic!("build-info should be JSON, got: {build_info}"));
+        assert_eq!(
+            bi.get("version").and_then(|v| v.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(bi.get("sha").map(|v| v.is_string()).unwrap_or(false));
+        assert!(bi.get("branch").map(|v| v.is_string()).unwrap_or(false));
 
         // Intent control surface: a closed-vocabulary name is accepted; an
         // unknown name is rejected; a bare command is a usage error.

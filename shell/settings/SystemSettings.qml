@@ -33,6 +33,12 @@ SettingsPageBase {
     property var temps: []
     property bool metricsLoaded: false
 
+    // Deployed build identity — driven by the daemon `build-info` IPC.
+    // Read once per page open (see Component.onCompleted); the version doesn't
+    // change while the shell is running and the daemon shells out to git per call.
+    property string buildVersion: ""
+    property string buildSha: ""
+
     function focusFirst() {
         // No interactive controls — the page auto-refreshes. Focus the page root
         // so B/Back still returns to the sidebar.
@@ -98,12 +104,29 @@ SettingsPageBase {
         }
     }
 
+    // Daemon IPC — build-info. Returns the currently-deployed tv-shell build
+    // identity {version, sha, branch}; sha/branch may be "unknown" off a git
+    // checkout, so don't hard-fail on them. Fetched once per page open.
+    SocketClient {
+        id: getBuildInfo
+        onResponseReceived: line => {
+            try {
+                let obj = JSON.parse(line);
+                root.buildVersion = obj.version || "";
+                root.buildSha = obj.sha || "";
+            } catch (e) {
+                console.log("SystemSettings: failed to parse build-info:", e);
+            }
+        }
+    }
+
     Component.onCompleted: {
         root.loading = true;
         getSysStatus.request("sys-status");
         root.storageLoading = true;
         getStorageStatus.request("storage-status");
         getSysMetrics.request("sys-metrics");
+        getBuildInfo.request("build-info");
     }
 
     // Live refresh — re-poll every second while visible so uptime ticks and
@@ -167,6 +190,10 @@ SettingsPageBase {
                     {
                         label: "Uptime",
                         value: root.loading ? "Loading…" : (root.uptime || "Unknown")
+                    },
+                    {
+                        label: "tv-shell",
+                        value: root.buildVersion ? (root.buildVersion + " (" + root.buildSha + ")") : "Loading…"
                     }
                 ]
 

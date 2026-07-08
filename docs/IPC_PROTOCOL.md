@@ -538,6 +538,29 @@ Example:
 
 Empty array `[]` if no real filesystems are found (e.g. non-Linux host).
 
+### `build-info`
+
+Return the currently-deployed build identity as a compact JSON object. Backs the
+System settings page's version readout. Read **live** (async `git` at
+`install_root()`) so a `/dev/deploy` HEAD swap under the running daemon is
+reflected without a restart — the same source as the `/metrics` `build_info`
+gauge and the `X-TvShell-*` response headers.
+
+**Request:** `build-info` (bare, no body).
+
+**Response:** Compact single-line JSON object.
+
+| Field | Type | Source |
+|-------|------|--------|
+| `version` | string | `CARGO_PKG_VERSION` (compile-time) |
+| `sha` | string | short git SHA at `install_root()` (`"unknown"` off a repo) |
+| `branch` | string | branch name, or `"HEAD"` on a detached checkout (`"unknown"` off a repo) |
+
+Example:
+```json
+{"version":"0.1.0","sha":"a1b2c3d","branch":"main"}
+```
+
 ---
 
 ## Phase 3 Commands (D-Bus backbone)
