@@ -67,6 +67,7 @@ Item {
     property bool cecAutoSwitchOnPowerOn: false // switch TV/AVR input when a device powers on (default off, daemon wiring TBD)
     property int cecDefaultInput: -1            // logical address of the preferred default input (-1 = unset; persist-only in Phase 1)
     property var cecDeviceNames: ({})           // local label overrides keyed by logical address, e.g. {"0":"Living Room TV"}
+    property var prewarmApps: []                 // wmClass list of apps to silently prewarm at login (#238)
 
     // Web-app registry (#187) — DAEMON-OWNED, read-only mirror here. Each entry:
     // { id, name, url, wmClass }. The daemon writes .desktop launchers +
@@ -193,6 +194,10 @@ Item {
             key: "webApps",
             t: "object",
             noSave: true
+        },
+        {
+            key: "prewarmApps",
+            t: "object"
         },
         {
             key: "keyBindings",
@@ -467,6 +472,36 @@ Item {
             delete copy[key];
         cecDeviceNames = copy;
         store._saveKeys(["cecDeviceNames"]);
+    }
+
+    // Is wmClass marked for login prewarm? (#238) Exact string membership; an
+    // empty/undefined list or blank wmClass → false. Normalizes nothing.
+    function isPrewarm(wmClass) {
+        if (!wmClass || !store.prewarmApps)
+            return false;
+        return store.prewarmApps.indexOf(wmClass) >= 0;
+    }
+
+    // Add or remove a wmClass from the prewarm list, then persist. Builds a NEW
+    // array (copy-then-assign, mirroring setCecDeviceName above) so the
+    // reassignment fires prewarmAppsChanged — an in-place push would notify
+    // nothing. A blank wmClass is a no-op: an app with no StartupWMClass can't be
+    // targeted for prewarm.
+    function setPrewarm(wmClass, enabled) {
+        if (!wmClass || wmClass === "")
+            return;
+        var next = (store.prewarmApps || []).slice();
+        var idx = next.indexOf(wmClass);
+        if (enabled) {
+            if (idx < 0)
+                next.push(wmClass);
+        } else {
+            next = next.filter(function (c) {
+                return c !== wmClass;
+            });
+        }
+        store.prewarmApps = next;
+        store._saveKeys(["prewarmApps"]);
     }
 
     // === Binding IPC (respects TV_SHELL_SOCK; no hardcoded socket path) ===
