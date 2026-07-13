@@ -358,6 +358,12 @@ FocusScope {
         id: navDrawer
         z: 50
         visible: root.shellState === "idle"
+        runningWindows: root.runningWindows
+        pads: root.pads
+        onAppLaunchRequested: app => root.appLaunchRequested(app)
+        onAppResumeRequested: (app, address) => root.appResumeRequested(app, address)
+        onAppFocusRequested: address => root.appFocusRequested(address)
+        onAppCloseRequested: address => root.appCloseRequested(address)
         onSettingsRequested: {
             navDrawer.opened = false;
             screens.push("settings");
@@ -489,6 +495,12 @@ FocusScope {
             id: overlayNavDrawer
             overlayMode: true
             opened: root.overlayDrawerOpen
+            runningWindows: root.runningWindows
+            pads: root.pads
+            onAppLaunchRequested: app => root.appLaunchRequested(app)
+            onAppResumeRequested: (app, address) => root.appResumeRequested(app, address)
+            onAppFocusRequested: address => root.appFocusRequested(address)
+            onAppCloseRequested: address => root.appCloseRequested(address)
             onHomeSelected: {
                 root.returnToShellRequested();
             }
