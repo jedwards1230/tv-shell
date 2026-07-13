@@ -39,6 +39,7 @@ HyprctlClients 1.0 HyprctlClients.qml
 AVController 1.0 AVController.qml
 singleton AudioController 1.0 AudioController.qml
 AutoSuspendController 1.0 AutoSuspendController.qml
+IdleInhibitController 1.0 IdleInhibitController.qml
 SocketClient 1.0 SocketClient.qml
 InputManager 1.0 InputManager.qml
 AppLifecycleManager 1.0 AppLifecycleManager.qml
