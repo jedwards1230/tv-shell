@@ -100,14 +100,12 @@ SettingsPageBase {
                 Layout.fillWidth: true
             }
 
-            FocusButton {
+            SettingsToggle {
                 id: wakeOnControllerScope
                 KeyNavigation.up: sleepTimerScope
                 KeyNavigation.down: endSessionScope
-                text: SettingsStore.wakeOnController ? "On" : "Off"
-                fillActive: SettingsStore.wakeOnController
-                fillColor: Theme.sidebarActive
-                onActivated: SettingsStore.setWakeOnController(!SettingsStore.wakeOnController)
+                checked: SettingsStore.wakeOnController
+                onToggled: SettingsStore.setWakeOnController(!SettingsStore.wakeOnController)
             }
         }
 
@@ -230,7 +228,7 @@ SettingsPageBase {
                     root.canSuspend = true;
                 else if (t === "no")
                     root.canSuspend = false;
-                // "error" leaves the optimistic default untouched.
+            // "error" leaves the optimistic default untouched.
             }
         },
         ConfirmDialog {

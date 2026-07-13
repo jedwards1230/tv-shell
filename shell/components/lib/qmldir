@@ -21,6 +21,7 @@ SettingsPageBase 1.0 SettingsPageBase.qml
 SettingsButtonGroup 1.0 SettingsButtonGroup.qml
 SettingsListRow 1.0 SettingsListRow.qml
 SettingsDropdown 1.0 SettingsDropdown.qml
+SettingsToggle 1.0 SettingsToggle.qml
 StatCard 1.0 StatCard.qml
 StatusPill 1.0 StatusPill.qml
 VolumeBar 1.0 VolumeBar.qml

@@ -318,15 +318,13 @@ SettingsPageBase {
         PreferenceRow {
             label: "Bluetooth Power"
 
-            FocusButton {
+            SettingsToggle {
                 id: powerToggleScope
                 focus: true
                 KeyNavigation.down: scanScope
                 KeyNavigation.right: scanScope
-                text: root.powered ? "On" : "Off"
-                fillActive: root.powered
-                fillColor: Theme.sidebarActive
-                onActivated: {
+                checked: root.powered
+                onToggled: {
                     if (root.powered)
                         btPowerOff.request("bt-power-off");
                     else
