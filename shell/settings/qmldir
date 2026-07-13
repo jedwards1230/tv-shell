@@ -4,6 +4,7 @@ AudioSettings 1.0 AudioSettings.qml
 BluetoothSettings 1.0 BluetoothSettings.qml
 NetworkSettings 1.0 NetworkSettings.qml
 DisplaySettings 1.0 DisplaySettings.qml
+WallpaperSettings 1.0 WallpaperSettings.qml
 ControllerSettings 1.0 ControllerSettings.qml
 KeyBindingsSettings 1.0 KeyBindingsSettings.qml
 AVControlSettings 1.0 AVControlSettings.qml
