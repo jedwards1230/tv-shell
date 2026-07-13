@@ -67,6 +67,12 @@ Item {
     property int cecDefaultInput: -1            // logical address of the preferred default input (-1 = unset; persist-only in Phase 1)
     property var cecDeviceNames: ({})           // local label overrides keyed by logical address, e.g. {"0":"Living Room TV"}
 
+    // Web-app registry (#187) — DAEMON-OWNED, read-only mirror here. Each entry:
+    // { id, name, url, wmClass }. The daemon writes .desktop launchers +
+    // this registry key (P1 webapp-* IPC); QML only reads/lists it (P0). Hence
+    // noSave in the schema — never sent in a set-config payload.
+    property var webApps: []
+
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
 
@@ -177,6 +183,11 @@ Item {
         {
             key: "cecDeviceNames",
             t: "object"
+        },
+        {
+            key: "webApps",
+            t: "object",
+            noSave: true
         },
         {
             key: "keyBindings",

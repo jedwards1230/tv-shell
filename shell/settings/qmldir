@@ -7,6 +7,7 @@ DisplaySettings 1.0 DisplaySettings.qml
 ControllerSettings 1.0 ControllerSettings.qml
 KeyBindingsSettings 1.0 KeyBindingsSettings.qml
 AVControlSettings 1.0 AVControlSettings.qml
+WebAppsSettings 1.0 WebAppsSettings.qml
 AccessibilitySettings 1.0 AccessibilitySettings.qml
 PowerSettings 1.0 PowerSettings.qml
 SystemSettings 1.0 SystemSettings.qml
