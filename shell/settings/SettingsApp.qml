@@ -80,6 +80,11 @@ FocusScope {
     }
 
     Component {
+        id: wallpaperComp
+        WallpaperSettings {}
+    }
+
+    Component {
         id: controllerComp
         ControllerSettings {}
     }
@@ -146,6 +151,13 @@ FocusScope {
                 iconSource: "icons/display.svg",
                 fallback: "\u{1F5A5}",
                 component: displayComp
+            },
+            {
+                id: "wallpaper",
+                name: "Wallpaper",
+                iconSource: "icons/appearance.svg",
+                fallback: "\u{1F5BC}",
+                component: wallpaperComp
             },
             {
                 id: "controllers",
@@ -582,6 +594,19 @@ FocusScope {
     }
 
     Keys.onEscapePressed: root._back()
+
+    // Route a loaded page's backRequested() through the unified back handler.
+    // A page whose only focusable control SWALLOWS B/Escape (NavigableGrid
+    // accepts the event and merely emits `escaped`) re-emits backRequested so
+    // it isn't stranded. `target` re-binds when the Loader swaps pages;
+    // ignoreUnknownSignals keeps pages without the signal safe.
+    Connections {
+        target: contentLoader.item
+        ignoreUnknownSignals: true
+        function onBackRequested() {
+            root._back();
+        }
+    }
 
     function openSection(idx) {
         if (visible) {

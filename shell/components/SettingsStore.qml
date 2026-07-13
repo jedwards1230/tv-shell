@@ -30,7 +30,7 @@ import "settingsPayload.js" as SettingsPayload
 // QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan,
 //                         sleepTimerMinutes, wakeOnController, defaultSink,
 //                         cecFocusOnStartup, cecFocusOnWake, cecAutoSwitchOnPowerOn,
-//                         cecDefaultInput, cecDeviceNames
+//                         cecDefaultInput, cecDeviceNames, wallpaperPath
 Item {
     id: store
 
@@ -55,6 +55,7 @@ Item {
     property bool nightLightEnabled: false       // drives hyprsunset
     property int nightLightTemp: 4500            // color temperature in Kelvin
     property int overscan: 0                     // safe-area overscan percent (0-10)
+    property string wallpaperPath: ""             // absolute path to home-screen wallpaper ("" = solid color)
     property int sleepTimerMinutes: 0            // 0 = disabled; cycle: 0/5/10/15/30/60
     property bool wakeOnController: true         // declarative preference (no suspend wiring)
     property bool autoDimEnabled: false          // auto-dim OLED protection (#143)
@@ -139,6 +140,10 @@ Item {
         {
             key: "overscan",
             t: "number"
+        },
+        {
+            key: "wallpaperPath",
+            t: "string"
         },
         {
             key: "sleepTimerMinutes",
@@ -402,6 +407,10 @@ Item {
 
     function setOverscan(pct) {
         store._setKey("overscan", pct);
+    }
+
+    function setWallpaperPath(path) {
+        store._setKey("wallpaperPath", path);
     }
 
     function setSleepTimerMinutes(m) {

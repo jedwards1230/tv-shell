@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Effects
 import "lib"
 import "../widgets/lib"
 import "steamLaunch.js" as SteamLaunch
@@ -418,6 +419,48 @@ FocusScope {
             }
         }
         return result;
+    }
+
+    // === Wallpaper (#29) ===
+    // Optional background image behind the scrolling content, chosen on the
+    // Wallpaper settings page. Both layers are invisible when wallpaperPath is
+    // "" (the default) — the solid parent-painted background shows through
+    // unchanged, so this is a no-op regression-wise until a wallpaper is set.
+    Image {
+        id: wallpaperImage
+        anchors.fill: parent
+        source: SettingsStore.wallpaperPath !== "" ? "file://" + encodeURI(SettingsStore.wallpaperPath).replace(/#/g, "%23").replace(/\?/g, "%3F") : ""
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+        cache: true
+        visible: SettingsStore.wallpaperPath !== "" && status === Image.Ready
+
+        // Blur the wallpaper once the user scrolls past the hero row so the
+        // scrolling widget content stays readable over it (prior art from #29).
+        readonly property bool blurActive: visible && scrollView.contentY > 8
+        layer.enabled: blurActive
+        layer.effect: MultiEffect {
+            blurEnabled: true
+            blur: 1.0
+            blurMax: 32
+            autoPaddingEnabled: false
+        }
+    }
+
+    // Theme-tinted readability scrim — keeps foreground text/cards legible over
+    // the wallpaper in both light and dark mode while the wallpaper stays
+    // clearly visible. Invisible (opacity 0) whenever no wallpaper is set.
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.background
+        opacity: wallpaperImage.visible ? 0.4 : 0
+        visible: opacity > 0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.reduceMotion ? 0 : 200
+            }
+        }
     }
 
     Flickable {
