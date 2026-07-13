@@ -116,6 +116,15 @@ ShellRoot {
         shellState: root.state
     }
 
+    // #195 idle-inhibit policy — computes WHETHER to assert a Wayland
+    // idle-inhibitor (streaming, or appRunning while an MPRIS player is Playing).
+    // Drives the dedicated Background-layer inhibitor window near the bottom of
+    // this file. Pure/headless (see IdleInhibitController.qml).
+    Components.IdleInhibitController {
+        id: idleInhibit
+        shellState: root.state
+    }
+
     // Mute a backgrounded native stream app (Steam Remote Play) so its audio
     // doesn't play behind the shell; unmute on refocus / exit. Narrowly scoped
     // to the allowlisted stream classes inside the component. Bound to the same
@@ -689,6 +698,61 @@ ShellRoot {
                 anchors.fill: parent
                 appName: root._launchAppName
                 appIcon: root._launchAppIcon
+            }
+        }
+    }
+
+    // Idle-inhibitor window (#195). A dedicated per-screen layer-shell surface
+    // whose sole job is to host a Wayland IdleInhibitor while the shell KNOWS
+    // playback is active (streaming, or an app with an MPRIS player Playing —
+    // see IdleInhibitController). Three deliberate choices:
+    //
+    //   1. Dedicated window, NOT the main shell surface: the main shell
+    //      PanelWindow is UNMAPPED during streaming/appRunning (visible:false —
+    //      see its binding ~L498). A Wayland idle-inhibitor is only honored while
+    //      its surface is MAPPED, so an inhibitor parented to the main surface
+    //      would be inert in exactly the states we need it. This window maps
+    //      independently, keyed only on shouldInhibit.
+    //   2. Background layer, NOT Overlay: an Overlay-layer surface above a
+    //      fullscreen game/stream forces compositing and breaks Hyprland direct
+    //      scanout (hurts stream/game latency — see the flash-window warning
+    //      ~L616). A Background-layer surface sits BELOW the fullscreen app, is
+    //      fully occluded, yet is still a mapped surface the compositor honors
+    //      for idle-inhibit — so it preserves scanout.
+    //   3. Mapped only while inhibiting (visible: shouldInhibit): when not
+    //      inhibiting there is zero extra surface. Kept tiny + inert (a few px in
+    //      one corner, transparent, click-through, no keyboard focus) so it never
+    //      covers the screen or intercepts input.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            id: idleInhibitWindow
+            required property var modelData
+            screen: modelData
+            visible: idleInhibit.shouldInhibit
+
+            // Anchor to a single corner with a tiny explicit size — do NOT
+            // anchor all four edges (that would cover the screen).
+            anchors {
+                top: true
+                left: true
+            }
+            implicitWidth: 4
+            implicitHeight: 4
+
+            color: "transparent"
+            exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.layer: WlrLayer.Background
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            // Empty input mask -> fully click-through.
+            mask: Region {}
+
+            // Inhibitor tied to this window, active only while the window is
+            // mapped (which is only while shouldInhibit — the visible binding).
+            IdleInhibitor {
+                window: idleInhibitWindow
+                enabled: idleInhibitWindow.visible
             }
         }
     }

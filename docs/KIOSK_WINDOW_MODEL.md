@@ -111,6 +111,18 @@ frame ever shows two tiled app windows.
 | Compositor watchdog in the daemon | **Partial (Phase 1) / Phase 2** | The event-socket-dead case (incident 2) is now detected + escalated. The render-wedge (incident 4 — frozen frames while `hyprctl` still answers) is **not** IPC-observable from the daemon; detecting it needs a render-side heartbeat (Phase 2). Auto-heal (kill Hyprland → restart plasmalogin → restart daemon) is Phase 2. |
 | "Running apps" list in the NavigationDrawer | **Phase 2 (UI, not implemented)** | The daemon window model already exposes everything it needs — each running window's `address`, `class`, `workspace`, `focusHistoryId` via `hypr-clients`. So `A` → `focusByAddress` (today) or `dispatch workspace N` (under Phase-2 isolation) is a race-free switch. Phase 1 does not paint it into a corner. |
 
+**Shell-side selective idle-inhibitor (#195, implemented).** Instead of the
+rejected blanket `idleinhibit fullscreen` windowrule, the shell asserts a Wayland
+idle-inhibitor only when it *knows* video is playing: its own `streaming` state,
+or an `appRunning` app while an MPRIS player reports Playing (Plex/mpv) —
+`IdleInhibitController` computes the policy; a dedicated per-screen `IdleInhibitor`
+window in `shell.qml` asserts it. That window is **Background-layer + mapped only
+while inhibiting** so it sits below the fullscreen app and preserves Hyprland
+direct scanout (an Overlay-layer surface would force compositing). Static app
+screens and the idle home screen are deliberately left un-inhibited so a
+compositor-level idle daemon (hypridle/DPMS — a system concern outside this repo,
+which honors these inhibitors) can still blank them for OLED burn-in protection.
+
 ## Interaction with the Steam widget (PR #306)
 
 #306's resume path (`SteamCard`/`MoonlightWidget` → `focusByAddress` →
