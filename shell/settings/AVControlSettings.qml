@@ -508,16 +508,14 @@ SettingsPageBase {
                 label: "Focus TV on startup"
                 description: "Switch the TV/AVR to this input when the shell starts (off keeps your current input on restart)."
 
-                FocusButton {
+                SettingsToggle {
                     id: focusStartupScope
                     // Refresh is hidden when CEC is unavailable — wrap Up to the
                     // last (always-visible) toggle so focus can't vanish.
                     KeyNavigation.up: root.cecAvailable ? refreshScope : autoSwitchScope
                     KeyNavigation.down: focusWakeScope
-                    text: SettingsStore.cecFocusOnStartup ? "On" : "Off"
-                    fillActive: SettingsStore.cecFocusOnStartup
-                    fillColor: Theme.sidebarActive
-                    onActivated: SettingsStore.setCecFocusOnStartup(!SettingsStore.cecFocusOnStartup)
+                    checked: SettingsStore.cecFocusOnStartup
+                    onToggled: SettingsStore.setCecFocusOnStartup(!SettingsStore.cecFocusOnStartup)
                 }
             }
 
@@ -526,14 +524,12 @@ SettingsPageBase {
                 label: "Focus TV on wake from sleep"
                 description: "Switch to this input when the box wakes from sleep."
 
-                FocusButton {
+                SettingsToggle {
                     id: focusWakeScope
                     KeyNavigation.up: focusStartupScope
                     KeyNavigation.down: autoSwitchScope
-                    text: SettingsStore.cecFocusOnWake ? "On" : "Off"
-                    fillActive: SettingsStore.cecFocusOnWake
-                    fillColor: Theme.sidebarActive
-                    onActivated: SettingsStore.setCecFocusOnWake(!SettingsStore.cecFocusOnWake)
+                    checked: SettingsStore.cecFocusOnWake
+                    onToggled: SettingsStore.setCecFocusOnWake(!SettingsStore.cecFocusOnWake)
                 }
             }
 
@@ -543,17 +539,15 @@ SettingsPageBase {
                 label: "Auto-switch input on power-on"
                 description: "Switch the TV/AVR to this input automatically when a device powers on."
 
-                FocusButton {
+                SettingsToggle {
                     id: autoSwitchScope
                     KeyNavigation.up: focusWakeScope
                     // When CEC is unavailable the action row below is hidden —
                     // wrap Down back to the first toggle instead of self-looping
                     // (which would trap focus).
                     KeyNavigation.down: root.cecAvailable ? wakeScope : focusStartupScope
-                    text: SettingsStore.cecAutoSwitchOnPowerOn ? "On" : "Off"
-                    fillActive: SettingsStore.cecAutoSwitchOnPowerOn
-                    fillColor: Theme.sidebarActive
-                    onActivated: SettingsStore.setCecAutoSwitchOnPowerOn(!SettingsStore.cecAutoSwitchOnPowerOn)
+                    checked: SettingsStore.cecAutoSwitchOnPowerOn
+                    onToggled: SettingsStore.setCecAutoSwitchOnPowerOn(!SettingsStore.cecAutoSwitchOnPowerOn)
                 }
             }
         }

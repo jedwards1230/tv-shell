@@ -45,13 +45,13 @@ SettingsPageBase {
         label: "Suppress animations and scrolling text"
         description: "Focus ring, glow, and fill remain active — only scale/transition animations stop."
 
-        FocusButton {
+        SettingsToggle {
             id: reduceMotionScope
             KeyNavigation.down: textSizeScope
-            text: Theme.reduceMotion ? "Enabled" : "Disabled"
-            fillActive: Theme.reduceMotion
-            fillColor: Theme.sidebarActive
-            onActivated: SettingsStore.setReduceMotion(!SettingsStore.reduceMotion)
+            onLabel: "Enabled"
+            offLabel: "Disabled"
+            checked: Theme.reduceMotion
+            onToggled: SettingsStore.setReduceMotion(!SettingsStore.reduceMotion)
         }
     }
 
