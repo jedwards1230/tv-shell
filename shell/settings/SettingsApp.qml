@@ -95,6 +95,11 @@ FocusScope {
     }
 
     Component {
+        id: webAppsComp
+        WebAppsSettings {}
+    }
+
+    Component {
         id: accessibilityComp
         AccessibilitySettings {}
     }
@@ -168,6 +173,13 @@ FocusScope {
         // the nav drawer / the `widgets` deep-link (intercepted in
         // ShellLayout.openSettings) — it is no longer a Settings sidebar page. The
         // demoted "moonlight"/"streaming" deep-links also reroute there.
+        s.push({
+            id: "webapps",
+            name: "Web Apps",
+            iconSource: "icons/webapps.svg",
+            fallback: "\u{1F310}",
+            component: webAppsComp
+        });
         s.push({
             id: "accessibility",
             name: "Accessibility",
