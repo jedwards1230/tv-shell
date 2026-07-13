@@ -49,7 +49,8 @@ shell/                       # QML shell — Quickshell config root (-c tv-shell
     SettingsEmptyState.qml   # Reusable empty-state card
     MarqueeText.qml          # Scrolling text for long names
     Drawer.qml               # Reusable slide-in drawer (any edge)
-    NavigationDrawer.qml     # Left nav drawer (Home + QuickActions row; Widgets via the QuickAction)
+    NavigationDrawer.qml     # Left nav drawer: clock header, Resume hero (large running/recent tiles), Home + QuickActions row, Now-Playing mini-strip, bottom status glyph line
+    resumeModel.js           # Pure .pragma library: merge/dedup running windows + recent apps → the drawer's Resume list (headless-testable)
     StreamOverlay.qml        # Reconnecting/error overlay
     lib/                     # Shared reusable component library (own qmldir module)
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)
