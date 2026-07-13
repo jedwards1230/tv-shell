@@ -268,6 +268,11 @@ at relevant lifecycle points):
 | `defaultSink` | string | `""` | No |
 | `cecFocusOnStartup` | bool | `false` | At CEC startup (within `[cec] lifecycle`) |
 | `cecFocusOnWake` | bool | `true` | At CEC resume from sleep (within `[cec] lifecycle`) |
+| `prewarmApps` | array | `[]` | No |
+
+The `prewarmApps` key is an array of `StartupWMClass` strings — apps to silently
+prewarm (launch unfocused in the background) at shell login, keyed by
+StartupWMClass (#238). It is opaque to the daemon; the QML shell owns the launch.
 
 The `widgets` key is the **namespaced per-widget config** the home-widget
 framework owns (still opaque to the daemon). Shape:

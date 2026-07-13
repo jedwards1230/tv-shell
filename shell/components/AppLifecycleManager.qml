@@ -12,6 +12,16 @@ Item {
     property var applications: []
     property string shellState: ""
 
+    // wmClass list of apps to silently prewarm at login (#238), bound from
+    // SettingsStore in shell.qml.
+    property var prewarmApps: []
+    // One-shot guard for the login prewarm pass — set once the first idle poll
+    // after startup-adoption has run the prewarm launch (#238).
+    property bool _prewarmDone: false
+    // Staggered launch queue: apps resolved by _runPrewarm, dequeued one at a
+    // time by prewarmStagger to avoid a thundering herd of cold starts (#238).
+    property var _prewarmQueue: []
+
     // Last active-window class reported by the daemon's `hypr:activewindow`
     // subscribe event (empty when no window is focused). Mirrors the compositor's
     // focus state without an extra query.
@@ -267,6 +277,116 @@ Item {
     // that follows it owns the actual focus/appRunning transition).
     Process {
         id: redeliverProcess
+    }
+
+    // Fire-and-forget background prewarm launcher (#238). Uses the `[silent]`
+    // exec-rule prefix so Hyprland opens the window WITHOUT focusing it — the app
+    // starts in the background, never entering the foreground launch state machine
+    // (no launchStarted/overlay/appLaunched/recents). A non-zero exit is logged but
+    // does NOT fire the failure haptic (prewarm is silent by construction).
+    Process {
+        id: prewarmRunner
+        property string _appName: ""
+        command: ["echo"]
+        onExited: exitCode => {
+            if (exitCode !== 0)
+                ErrorLog.log("app", "Failed to prewarm " + (_appName || "application"), "Command: " + prewarmRunner.command.join(" ") + "\nExit code: " + exitCode, _appName);
+        }
+    }
+
+    // Launch `app` SILENTLY in the background (#238). The `[silent]` exec-rule
+    // prefix is the proven production-hack incantation: it opens the window
+    // UNFOCUSED so it never steals focus or enters the foreground path. This is a
+    // PURE background exec — it deliberately does NOT emit launchStarted/appLaunched,
+    // set _awaitingWindow/_pendingLaunchClass/runningAppClass, snapshot clients, or
+    // touch _launchedApps.
+    function prewarmApp(app) {
+        if (!app)
+            return;
+        prewarmRunner._appName = app.name || "";
+        prewarmRunner.command = ["hyprctl", "dispatch", "exec", "[silent] " + (app.exec || app.name)];
+        prewarmRunner.running = true;
+    }
+
+    // One-shot login prewarm trigger (#238), driven from the first idle poll AFTER
+    // the startup-adoption pass (see the windowPoller wiring for the ordering
+    // rationale). Resolves each configured wmClass to a discovered app, de-dups
+    // against already-running windows, and queues the survivors for a staggered
+    // silent launch. `clients` MUST be a real array — a poll error gives us no
+    // client list to de-dup against, so we wait for a good poll before firing.
+    function _runPrewarm(clients) {
+        if (root._prewarmDone)
+            return;
+        let apps = root.applications || [];
+        let list = root.prewarmApps || [];
+        if (apps.length === 0 || list.length === 0)
+            return;
+        if (!Array.isArray(clients))
+            return;
+        root._prewarmDone = true;
+
+        let toLaunch = [];
+        let seen = {};
+        for (let li = 0; li < list.length; li++) {
+            let wmClass = list[li];
+            // Skip blanks and in-list duplicates (a hand-edited/duplicated
+            // prewarmApps entry must not double-launch).
+            if (!wmClass || seen[wmClass])
+                continue;
+            seen[wmClass] = true;
+            // Resolve the configured wmClass to a discovered app.
+            let app = null;
+            for (let ai = 0; ai < apps.length; ai++) {
+                if (apps[ai].wmClass === wmClass) {
+                    app = apps[ai];
+                    break;
+                }
+            }
+            if (!app)
+                continue;  // unknown/removed app or a wmClass typo — silently skip
+            // De-dup: an already-running window is already instant-resume — skip.
+            let running = false;
+            for (let ci = 0; ci < clients.length; ci++) {
+                if (WindowMatcher.matchesApp(app, clients[ci])) {
+                    running = true;
+                    break;
+                }
+            }
+            if (running)
+                continue;
+            toLaunch.push(app);
+        }
+        if (toLaunch.length === 0)
+            return;
+        root._prewarmQueue = toLaunch;
+        prewarmStagger.start();
+    }
+
+    // Dequeues one prewarm app every 600ms (triggeredOnStart → the first fires
+    // immediately), stopping itself when the queue drains. The stagger avoids
+    // launching every prewarm app at once (a thundering herd of flatpak cold
+    // starts); it is NOT a blocking sleep (#238).
+    Timer {
+        id: prewarmStagger
+        interval: 600
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
+            // If the prior silent launch hasn't exited yet (plausible at login
+            // under contention), skip this tick WITHOUT shifting the queue —
+            // setting prewarmRunner.running = true on an already-true property is a
+            // no-op that would silently drop this entry's launch. Retry next tick.
+            if (prewarmRunner.running)
+                return;
+            let q = root._prewarmQueue || [];
+            if (q.length === 0) {
+                prewarmStagger.stop();
+                return;
+            }
+            let app = q.shift();
+            root._prewarmQueue = q;
+            root.prewarmApp(app);
+        }
     }
 
     Process {
@@ -547,6 +667,19 @@ Item {
                 if (fgClass !== "")
                     root._maybeAdoptIdleApp(fgClass);
             }
+
+            // Login prewarm (#238) — fire strictly AFTER the one-shot startup
+            // adoption above. RATIONALE: on the first idle poll, _startupAdoptionDone
+            // runs with NO prewarmed windows present (we haven't launched yet) → it
+            // adopts nothing → sets the one-shot done. Only THEN does prewarm launch.
+            // A later poll that sees a prewarmed (unfocused) window can't re-trigger
+            // adoption (it's one-shot), so a silently-prewarmed background app is
+            // never mis-adopted into appRunning. The poll succeeding IS the readiness
+            // signal (Hyprland answering + app list loaded) — replacing the deploy
+            // hack's crude fixed `sleep 10` — and hands _runPrewarm the live `clients`
+            // list for de-dup in one place.
+            if (root.shellState === "idle" && !root._prewarmDone && root.applications.length > 0 && root.prewarmApps.length > 0)
+                root._runPrewarm(clients);
 
             // Only fire appClosed when in appRunning state and foreground app is truly gone
             if (root.shellState === "appRunning" && root.runningAppClass !== "") {

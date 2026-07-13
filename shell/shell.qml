@@ -310,6 +310,7 @@ ShellRoot {
         id: appLifecycle
         shellState: root.state
         applications: root._applications
+        prewarmApps: Components.SettingsStore.prewarmApps
         onAppLaunched: {
             root.state = "appRunning";
             // #99: short haptic confirmation on a successful app launch.
