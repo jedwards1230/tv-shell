@@ -1,9 +1,12 @@
 # systemd --user integration
 
-tv-shell runs **both** its input/backend daemon (`tv-shell-input`) **and** the
-Quickshell UI (`quickshell -c tv-shell`) as **`systemd --user` services**. This
-is an operational wrapper around the same session boot — it does not change *what*
-runs, only *how* it's supervised and logged.
+tv-shell runs its input/backend daemon (`tv-shell-input`), the Quickshell UI
+(`quickshell -c tv-shell`), **and** the web control panel (`tv-shell-panel`) as
+**`systemd --user` services**. This is an operational wrapper around the same
+session boot — it does not change *what* runs, only *how* it's supervised and
+logged. The panel unit is documented in full in
+[`PANEL.md`](PANEL.md); this doc covers the daemon + Quickshell units it
+mirrors.
 
 ## Why
 
@@ -37,9 +40,10 @@ stdout/stderr are tee'd to both the journal (tagged `tv-shell-quickshell`) and
 |------|------|
 | `config/tv-shell-input.service` | Daemon user unit (template — `ExecStart` rewritten at install). |
 | `config/tv-shell-quickshell.service` | Quickshell UI user unit (installed verbatim; `quickshell` resolves from PATH). |
-| `scripts/tv-shell-session.sh` | `systemctl --user start`s the daemon unit (bare-process fallback); `reset-failed`s + `stop`s the Quickshell unit around the session. |
+| `config/tv-shell-panel.service` | Web control panel user unit (template — `ExecStart` rewritten at install, same treatment as the daemon unit). See [`PANEL.md`](PANEL.md). |
+| `scripts/tv-shell-session.sh` | `systemctl --user start`s the daemon unit (bare-process fallback); starts the panel unit (best-effort, non-fatal); `reset-failed`s + `stop`s the Quickshell unit around the session; `stop`s the panel unit on exit. |
 | `config/hyprland.conf` | `exec-once` imports the Wayland session env, then `systemctl --user start`s the Quickshell unit (direct-spawn fallback). |
-| `scripts/install.sh` | Installs both units to `~/.config/systemd/user/` + `daemon-reload`. |
+| `scripts/install.sh` | Installs all three units to `~/.config/systemd/user/` + `daemon-reload`. |
 
 ## The unit
 

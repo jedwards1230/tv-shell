@@ -34,6 +34,27 @@
 # Required when auth_enabled = true. ~ is expanded to $HOME.
 #token_file = "~/.config/tv-shell/http-token"
 
+# --- Web control panel (optional, separate `tv-shell-panel` binary) ----------
+# tv-shell-panel is a LAN-only web control panel that runs as its own systemd
+# --user unit (config/tv-shell-panel.service) beside the daemon. It is part of
+# the LAN control surface documented here, but the daemon does NOT read these
+# values itself — it only parses-and-ignores this section so a shared
+# config.toml doesn't fail the daemon's `deny_unknown_fields` validation. The
+# tv-shell-panel binary is the actual consumer; see docs/PANEL.md.
+[panel]
+# Whether the panel serves when its unit runs. Default true.
+#enabled = true
+
+# Bind address for the panel's own HTTP server (separate from [http] above).
+# Default 127.0.0.1:8091 (local-only). Use 0.0.0.0:8091 to expose it on the
+# LAN — the panel has NO auth in v1, so firewall it yourself if you widen the
+# bind.
+#bind = "127.0.0.1:8091"
+
+# Reserved for future panel auth (bearer token file, same convention as
+# [http].token_file). Unused in v1 — the panel is LAN-only/no-auth for now.
+#token_file = "~/.config/tv-shell/panel-token"
+
 # --- MCP server (optional, requires the daemon built with --features mcp) -----
 [mcp]
 # Streamable-HTTP MCP endpoint at /mcp exposing the daemon's control surface as

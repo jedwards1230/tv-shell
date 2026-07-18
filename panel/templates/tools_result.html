@@ -1,0 +1,4 @@
+<div class="result {% if ok %}result-ok{% else %}result-error{% endif %}">
+{% if !warning.is_empty() %}<p class="banner banner-warn">{{ warning }}</p>{% endif %}
+{{ body_html|safe }}
+</div>

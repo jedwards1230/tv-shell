@@ -20,6 +20,7 @@ SDDM → tv-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 
 - **shell.qml** — entry point: state machine (`idle` → `launching` → `streaming` → `reconnecting`) and process management. Quickshell runs as the `tv-shell-quickshell.service` `systemd --user` unit (started by Hyprland `exec-once`, direct-spawn fallback) — a single-instance guarantee + restart-on-crash that kills the "stacked duplicate Quickshell instances" bug class (#254). See [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md)
 - **tv-shell-input** (Rust daemon, `daemon/`) — the sole backend. It owns the **gamepad fleet only**: grabs every connected pad exclusively via evdev (`EVIOCGRAB`, tracked by fd with a DB-match-or-reject discovery gate), manages hot-join/leave with stable per-player slots, and re-presents each pad as a clean per-player virtual gamepad in the game presenter. It emits nav keys + a first-class **`intent` control surface** (`intent <name>` command → `intent:*` broadcast — the closed vocabulary keyboard-escape and automation also ride), plus fleet outputs (rumble/battery/LED), and serves the full Unix-socket IPC (settings, app discovery, Bluetooth/network/power, Hyprland reads, Sunshine). **It does NOT read the keyboard** — the keyboard (K400) belongs to the compositor + QML (Wayland focus / `Keys`); Hyprland binds inject intents via `scripts/super-intent.sh`: bare **`Super` → `intent menu`** (toggle the nav drawer), **`Super+Escape` → `intent home`** (return-to-shell escape), **`Super+Backspace` → `intent home-hold`** (reset), **`Super+Right` → `intent overlay:session`** (open Session QAM). Build with `scripts/build-daemon.sh` (canonical; uses `--features cec,mcp`) or `cargo build --release --features cec,mcp` and install to `$TV_SHELL_DIR/bin/tv-shell-input`; the session script starts it as the `tv-shell-input.service` `systemd --user` unit (bare-process fallback when no user manager / under a `TV_SHELL_INPUT_BIN` dev override) — see [docs/SYSTEMD_SETUP.md](docs/SYSTEMD_SETUP.md)
+- **tv-shell-panel** (Rust binary, `panel/`) — a LAN-only web control panel (axum + askama + htmx) that runs as its own `tv-shell-panel.service` `systemd --user` unit beside the daemon, giving an operator a browser-based recovery path (dashboard, processes, settings/widgets editors, IPC tools console, controllers/CEC, dev deploy/build/restart, system updates, logs) even when the daemon is wedged. It layers three data tiers — Unix-socket IPC, the daemon's HTTP bridge, and direct `systemctl`/`journalctl` exec — over the same control surface the daemon exposes. See [docs/PANEL.md](docs/PANEL.md).
 - **ShellLayout.qml** — hosts every top-level surface (Home, Library, Settings, overlays, drawers) and owns the **ScreenManager** router. shell.qml reaches the shell only through `ShellLayout`'s API (`openSettings`/`closeSettings`, `toggleMenu`, `focusHome`, …), never into a surface's internals.
 - **ScreenManager.qml** — minimal navigation model for the secondary-screen layer (Home is the base; Library/Settings open over it). `push("settings", {page})` / `push("library")` / `popToHome()` centralize the imperative show/hide + focus handoff. It does NOT own modal/overlay back-handling or the Settings-internal B-stack — it reacts to each surface's `closed` signal and never intercepts Escape. Visibility/focus **bindings** stay declarative on the surfaces.
 - **settings/SettingsApp.qml** — the Settings "app": its own `shell.settings` module (the 10 sidebar pages + sidebar). Public API `open()` / `openPage(id)` / `close()` + `closed` signal. The `widgets`/`moonlight`/`streaming` deep-links are intercepted earlier in `ShellLayout.openSettings` (they route to the Widgets app), so they never reach SettingsApp.
@@ -135,6 +136,12 @@ config/
 daemon/                      # Rust backend daemon (tv-shell-input) — sole backend
   src/                       # input/uinput, ipc, config, apps, bluetooth, network, power, hyprland, health
   README.md                  # daemon architecture + phase notes
+panel/                       # Rust web control panel (tv-shell-panel) — LAN-only, axum + askama + htmx
+  src/                       # pages/ (dashboard, processes, settings, widgets, tools, controllers, cec, dev, logs), ipc/bridge/exec clients, updates job
+  templates/                 # askama HTML templates (+ htmx partials)
+  assets/                    # vendored htmx.min.js + style.css (no CDN)
+host/                        # tv-shell-host sidecar (Steam library/launch backend, cross-platform)
+protocol/                    # tv-shell-protocol crate — shared daemon↔host wire types + brand module
 packaging/                   # PKGBUILD / install layout (see #147)
 scripts/
   install.sh                  # Standalone install: build daemon + lay tree + register session (see docs/INSTALL.md)
@@ -286,6 +293,12 @@ journald logs (stdout fallback, auto-detected via `JOURNAL_STREAM`, overridable 
 (`[observability].metrics_textfile`); full catalogue in
 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
 
+A third network-facing surface, **`tv-shell-panel`** (`panel/`), is a separate
+LAN-only web control panel binary/systemd unit that consumes the Unix-socket
+IPC, the HTTP bridge's `/dev/*` routes, and direct `systemctl`/`journalctl`
+exec as a recovery tier when the daemon itself is down. See
+[`docs/PANEL.md`](docs/PANEL.md).
+
 The table above reflects the deliberate split: the daemon owns all *reads* of
 system state (D-Bus, Hyprland IPC, Sunshine), while shell-outs remain only for
 write/action commands (`nmcli` join, `wpctl`, `hyprctl dispatch`, `systemctl`).
@@ -425,7 +438,7 @@ screenshot/deploy automation — no host-management tooling required.
 
 - **Orchestrator + single required check (`ci.yml`)**: there is ONE umbrella workflow, `ci.yml`, with no path filter — it runs on every PR (and push to main) so it always reports. A `changes` job (`dorny/paths-filter`) detects which areas changed; each area runs as a **reusable workflow** (`on: workflow_call`) invoked only when its area changed; a final **`ci-gate`** job aggregates results (skipped area = success). **Mark only `CI / ci-gate` as the required status check** — path-filtered workflows can't be required directly (a PR not touching their paths would leave the check "waiting" forever and be unmergeable). To add an area: add a `dorny` filter + a conditional `uses:` job in `ci.yml` and wire it into `ci-gate`'s `needs`.
 - **QML formatting** (`lint.yml`, reusable): `qmlformat` (Qt 6.8). On PRs, unformatted files are auto-fixed and pushed (needs `contents: write` + `secrets: inherit`, passed by `ci.yml`). On main, unformatted files fail the check.
-- **Rust CI** (`rust.yml` / `host.yml`, reusable): `rust.yml` builds/lints/tests the daemon (`tv-shell-input`) on Linux — a default leg plus a `--features cec` leg (static-libcec, on `rust:1-trixie`). `host.yml` builds/lints/tests the cross-platform host + protocol crates on Linux/macOS/Windows. Both stay `-p`-scoped so the daemon's Linux-only graph never leaks into the host's cross-platform build; `ci.yml`'s change detection (not per-workflow `paths:`) decides whether each runs, so a QML-only PR triggers neither.
+- **Rust CI** (`rust.yml` / `host.yml`, reusable): `rust.yml` runs three jobs — the daemon (`tv-shell-input`) build/lint/test on Linux, a `--features cec` leg (static-libcec, on `rust:1-trixie`), and a separate `panel` job that builds/lints/tests `tv-shell-panel` (pure-Rust, no system C deps). `host.yml` builds/lints/tests the cross-platform host + protocol crates on Linux/macOS/Windows. All stay `-p`-scoped so no crate's graph leaks into another's build; `ci.yml`'s `rust` change filter covers `daemon/`, `panel/`, and `protocol/`, so a QML-only PR triggers neither `rust.yml` nor `host.yml`.
 - **Headless QML tests** (`qml-test.yml`, reusable): `qmltestrunner` under `QT_QPA_PLATFORM=offscreen` runs the layout/navigation suite in `tests/qml/` (see `tests/qml/README.md`).
 - **Releases — three independent tag streams**: releases are triggered by pushing a version tag, not on merge-to-main. There are three independent streams:
   - `host-v<semver>` → `release-host.yml` builds `tv-shell-host` for linux-musl / macOS (arm64+x86_64) / windows and publishes one Release with all binaries + `checksums.txt`. Consumed by the homelab `desktop-common` Ansible role (`install_method: fetch`).

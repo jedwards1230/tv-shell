@@ -26,6 +26,7 @@ SDDM → tv-shell-session.sh → Hyprland (kiosk) → Quickshell (shell.qml)
 
 - **Quickshell** renders the UI via QML on Hyprland's Wayland compositor
 - **tv-shell-input** (Rust daemon, `daemon/`) grabs the gamepad exclusively, emits keyboard/mouse via uinput, and serves the backend IPC (settings, app discovery, Bluetooth/network/power, Hyprland, Sunshine). It is the sole input/backend daemon, supervised as a `systemd --user` unit (journald logging, with a bare-process fallback)
+- **tv-shell-panel** (Rust binary, `panel/`) — an optional LAN-only web control panel (axum + htmx), installed and enabled by default on `127.0.0.1:8091`. Gives a browser-based recovery path (dashboard, settings, tools, logs, dev deploy/restart, system updates) even when the daemon is wedged. See [docs/PANEL.md](docs/PANEL.md)
 - **Moonlight** streams games from a Sunshine host
 - **end-game-session** script handles session teardown (deployed separately via Ansible); HDMI-CEC is owned by the daemon's `cec-*` IPC (`--features cec`)
 
@@ -44,6 +45,7 @@ shell/                   # QML shell — Quickshell config root (-c tv-shell)
     Theme.qml            # Colors, fonts, layout constants
 daemon/                  # Rust backend daemon (tv-shell-input) — sole backend
   src/                   # input/uinput, IPC, config, apps, bluetooth, network, power, hyprland, health
+panel/                   # Rust web control panel (tv-shell-panel) — LAN-only, axum + htmx (see docs/PANEL.md)
 config/
   hyprland.conf          # Kiosk compositor config (sources hyprland-local.conf)
   tv-shell.desktop     # Wayland session entry (installer rewrites Exec to prefix)
@@ -64,9 +66,10 @@ Per-machine config lives under `~/.config/tv-shell/` and is seeded from the
 `config/*.example` files on install — see [docs/INSTALL.md](docs/INSTALL.md#3-configure).
 Streaming targets are stored in `targets.json` as single-line JSON (managed in-UI
 via MoonlightSettings; `config/targets.yaml.example` documents the fields). Daemon
-options (LAN bridge, CEC, Plex/Steam widgets) go in the optional typed
-`config.toml` (`config/config.toml.example`); the shared bearer token lives in a
-separate `0600` file referenced by `[http] token_file`.
+options (LAN bridge, CEC, Plex/Steam widgets) and the web panel's bind address go
+in the optional typed `config.toml` (`config/config.toml.example`, `[panel]`
+section); the shared bearer token lives in a separate `0600` file referenced by
+`[http] token_file`.
 
 ## Observability
 

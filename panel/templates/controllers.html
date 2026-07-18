@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Controllers — tv-shell panel{% endblock %}
+{% block content %}
+<h1>Controllers</h1>
+<p class="muted">The connected gamepad fleet, grab-state management, button bindings, and the controller database. Every action's response renders below.</p>
+
+<div id="controllers-result"></div>
+
+{{ fleet_section_html|safe }}
+
+<section class="controllers-section">
+  <h2>Grab management</h2>
+  <p class="muted">
+    <code>grab</code> acquires exclusive gamepad access (<code>EVIOCGRAB</code>) for the shell —
+    the normal resting state. <code>release</code> gives up the grab for the game presenter
+    (input still flows through a virtual twin). <code>handoff</code> drops the grab entirely so
+    a Moonlight stream reads the raw device directly — only use this if a stream is actually
+    active; the shell itself re-grabs automatically on every exit path.
+  </p>
+  <div class="button-row">
+    <form hx-post="/controllers/grab" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form">
+      <button type="submit">Grab</button>
+    </form>
+    <form hx-post="/controllers/release" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form"
+          hx-confirm="Release exclusive gamepad access? Input will route through the game presenter's virtual twin.">
+      <button class="warn-action" type="submit">Release</button>
+    </form>
+    <form hx-post="/controllers/handoff" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form"
+          hx-confirm="Hand the physical pads to a Moonlight stream and release EVIOCGRAB? Only do this if a stream is actually active.">
+      <button class="warn-action" type="submit">Handoff</button>
+    </form>
+  </div>
+</section>
+
+{{ bindings_section_html|safe }}
+
+<section class="controllers-section">
+  <h2>Per-game / per-player bindings <span class="muted">(read-only)</span></h2>
+  <p class="muted">
+    Additive override layers on top of the global bindings above (resolution order:
+    game → player → global → default). Editing is deferred to a future milestone — use the
+    <a href="/settings">Settings</a> raw JSON escape hatch to change them directly.
+  </p>
+  {% if config_error.is_empty() %}
+  <h3>Per-game <span class="muted">(<code>perGameBindings</code>)</span></h3>
+  <pre>{{ per_game_json }}</pre>
+  <h3>Per-player <span class="muted">(<code>perPlayerBindings</code>)</span></h3>
+  <pre>{{ per_player_json }}</pre>
+  {% else %}
+  <p class="banner banner-error">Unavailable: {{ config_error }}</p>
+  {% endif %}
+  <form hx-post="/controllers/active-game/set" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form">
+    <input type="text" name="id" placeholder="game id (e.g. steam_12345)" required>
+    <button type="submit">Set active game</button>
+  </form>
+  <form hx-post="/controllers/active-game/clear" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form">
+    <button type="submit">Clear active game</button>
+  </form>
+</section>
+
+<section class="controllers-section">
+  <h2>Controller database</h2>
+  <div class="button-row">
+    <form hx-post="/controllers/controllerdb/status" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form">
+      <button type="submit">Status</button>
+    </form>
+    <form hx-post="/controllers/controllerdb/refresh" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form"
+          hx-confirm="Fetch the upstream GameControllerDB now?">
+      <button class="warn-action" type="submit">Refresh DB</button>
+    </form>
+  </div>
+  <pre>{{ controllerdb_text }}</pre>
+</section>
+
+<section class="controllers-section">
+  <details>
+    <summary>Diagnostics: list all input devices</summary>
+    <p class="muted">Every controller-like device on the host, grabbed or not — distinct from the fleet above.</p>
+    <form hx-post="/controllers/input-devices" hx-disabled-elt="find button" hx-target="#controllers-result" hx-swap="innerHTML" class="inline-form">
+      <button type="submit">List input devices</button>
+    </form>
+  </details>
+</section>
+{% endblock %}

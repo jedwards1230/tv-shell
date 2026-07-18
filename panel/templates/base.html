@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}tv-shell panel{% endblock %}</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/htmx.min.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <span class="brand">tv-shell panel</span>
+  <a href="/" class="{% if active == "dashboard" %}active{% endif %}">Dashboard</a>
+  <a href="/processes" class="{% if active == "processes" %}active{% endif %}">Processes</a>
+  <a href="/settings" class="{% if active == "settings" %}active{% endif %}">Settings</a>
+  <a href="/widgets" class="{% if active == "widgets" %}active{% endif %}">Widgets</a>
+  <a href="/tools" class="{% if active == "tools" %}active{% endif %}">Tools</a>
+  <a href="/controllers" class="{% if active == "controllers" %}active{% endif %}">Controllers</a>
+  <a href="/cec" class="{% if active == "cec" %}active{% endif %}">CEC</a>
+  <a href="/dev" class="{% if active == "dev" %}active{% endif %}">Dev</a>
+  <a href="/logs" class="{% if active == "logs" %}active{% endif %}">Logs</a>
+  <span class="nav-spacer"></span>
+  <span class="nav-daemon-status" id="nav-daemon-status"
+        hx-get="/nav/daemon-status" hx-trigger="load, every 10s" hx-swap="innerHTML">
+    <span class="dot dot-neutral" title="checking…"></span>daemon
+  </span>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+<script>
+// Mobile nav affordance: the active page link may be scrolled out of view
+// in the horizontally-scrolling topnav (the right-edge fade gradient hints
+// there's more, but doesn't say where "here" is) — center it on load.
+document.querySelector('.topnav a.active')?.scrollIntoView({ inline: 'center' });
+</script>
+</body>
+</html>

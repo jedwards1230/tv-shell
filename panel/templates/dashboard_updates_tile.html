@@ -1,0 +1,15 @@
+<div class="tile-grid">
+  <a class="tile" href="/processes#updates">
+    <h3>Updates</h3>
+    {% if reboot_needed %}
+    <p><span class="dot dot-error"></span>{{ pending_count }} pending &middot; reboot needed</p>
+    {% else if pending_count > 0 %}
+    <p><span class="dot dot-warn"></span>{{ pending_count }} pending</p>
+    {% else %}
+    <p><span class="dot dot-ok"></span>up to date</p>
+    {% endif %}
+    {% if !error.is_empty() %}
+    <p class="muted">{{ error }}</p>
+    {% endif %}
+  </a>
+</div>
