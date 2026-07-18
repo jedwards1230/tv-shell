@@ -39,7 +39,7 @@ config management.
 |---|---|
 | Dashboard | unit status, build info, system/storage tiles, pad fleet, quick actions |
 | Processes | systemd user units, Hyprland clients, top processes |
-| Settings | typed forms over `settings.json` via `set-config`; raw JSON escape hatch; `config.toml` editor with restart prompt |
+| Settings | grouped typed forms over `settings.json` via `get-config`/`set-config` (shallow merge — unmentioned keys, notably the daemon-owned `keyBindings`/`perGameBindings`/`perPlayerBindings`, are left untouched); those daemon-owned binding keys are shown read-only pending a Controllers page; read-only `config.toml` view (the edit path is deferred — editing still requires a manual edit + daemon/panel restart via the Dev page); raw JSON escape hatch with an explicit shallow-merge/`null`-deletes warning for keys not modeled as typed fields (e.g. `widgets`, `cecDeviceNames`) |
 | Widgets | per-widget enabled/order/size/prefs editors (`widgets.<id>` subtree) |
 | Tools | full IPC/intent console grouped by domain |
 | Controllers | pads, battery, rumble test, bindings editor, capture, controller DB, grab/release/handoff |
@@ -59,5 +59,7 @@ or `cargo run -p tv-shell-panel` for a dev loop. It reads `[panel]` from
 
 - [x] M1 — crate scaffold, IPC client, app shell/nav, Dashboard, Logs, Dev page
 - [ ] M2 — Settings + Widgets editors
+  - [x] Settings editor
+  - [x] Widgets editor
 - [ ] M3 — Tools console, Processes, screenshot viewer
 - [ ] M4 — Controllers + CEC (switching, grab handling, wedge recovery)

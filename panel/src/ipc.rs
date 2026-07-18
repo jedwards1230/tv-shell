@@ -111,12 +111,42 @@ impl IpcClient {
         let reply = self.command(line).await?;
         serde_json::from_str(&reply).map_err(|e| IpcError::Parse(e.to_string()))
     }
+
+    /// Fetch the full settings document (`~/.config/tv-shell/settings.json`)
+    /// via `get-config`. Stateless on the daemon side: a missing or
+    /// unparseable file yields `{}` rather than an error (see
+    /// `docs/IPC_PROTOCOL.md` § `get-config`).
+    pub async fn get_config(&self) -> Result<serde_json::Value, IpcError> {
+        self.command_json("get-config").await
+    }
+
+    /// Shallow-merge `patch` into `settings.json` via `set-config
+    /// <json-object>` (read-modify-write; a top-level key with a JSON `null`
+    /// value deletes that key; foreign keys the caller omits — notably the
+    /// daemon-owned `keyBindings` — are preserved untouched).
+    ///
+    /// Confirmed against `daemon/src/ipc.rs`'s `Command::SetConfig` handler
+    /// (`dispatch_stateless`): on success the daemon replies with the **full
+    /// merged document** as compact JSON (`config::set_config`'s `Ok(merged)`
+    /// returned verbatim) — NOT a bare `ok`. On failure it replies
+    /// `error:<msg>` (missing body, invalid JSON, non-object body, or a
+    /// write failure), which `command()` already maps to
+    /// `IpcError::Command`. This method treats any non-error reply as
+    /// success and discards the echoed document — callers that need the
+    /// post-merge state should call [`Self::get_config`] again.
+    pub async fn set_config(&self, patch: &serde_json::Value) -> Result<(), IpcError> {
+        let body = serde_json::to_string(patch)
+            .map_err(|e| IpcError::Parse(format!("failed to serialize set-config patch: {e}")))?;
+        self.command(&format!("set-config {body}")).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde::Deserialize;
+    use std::sync::{Arc, Mutex};
     use tokio::net::UnixListener;
 
     #[derive(Debug, Deserialize, PartialEq)]
@@ -164,6 +194,37 @@ mod tests {
             }
         });
         sock
+    }
+
+    /// Like [`spawn_fake_daemon`], but also captures the exact request line
+    /// it received into the returned `Arc<Mutex<Option<String>>>` so a test
+    /// can assert on it (e.g. `set_config`'s serialized JSON body).
+    fn spawn_fake_daemon_capture(
+        name: &str,
+        response: &'static str,
+    ) -> (PathBuf, Arc<Mutex<Option<String>>>) {
+        let sock = PathBuf::from(format!(
+            "/tmp/tvshp-{name}-{}-{}.sock",
+            std::process::id(),
+            uniquifier()
+        ));
+        let _ = std::fs::remove_file(&sock);
+        let listener = UnixListener::bind(&sock).expect("bind fake daemon socket");
+        let captured = Arc::new(Mutex::new(None));
+        let captured_clone = Arc::clone(&captured);
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                let (read_half, mut write_half) = stream.into_split();
+                let mut reader = BufReader::new(read_half);
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line).await;
+                *captured_clone.lock().unwrap() = Some(line.trim_end().to_string());
+                let _ = write_half
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await;
+            }
+        });
+        (sock, captured)
     }
 
     /// Tiny non-cryptographic uniquifier so parallel tests don't collide on
@@ -233,6 +294,45 @@ mod tests {
         let err = client.command("status").await.unwrap_err();
         match err {
             IpcError::Command(msg) => assert_eq!(msg, "input-runtime-down"),
+            other => panic!("expected Command error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_config_happy_path() {
+        let sock = spawn_fake_daemon("get-config", r#"{"themeMode":"dark","rumbleEnabled":true}"#);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let client = IpcClient::new(sock);
+        let cfg = client.get_config().await.unwrap();
+        assert_eq!(cfg["themeMode"], "dark");
+        assert_eq!(cfg["rumbleEnabled"], true);
+    }
+
+    #[tokio::test]
+    async fn set_config_happy_path_sends_expected_request_line() {
+        // The real daemon echoes the merged document on success, not a bare
+        // `ok` — set_config() must treat any non-error reply as success, so
+        // exercise that with a realistic echoed-document reply.
+        let (sock, captured) = spawn_fake_daemon_capture("set-config", r#"{"themeMode":"light"}"#);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let client = IpcClient::new(sock);
+        let patch = serde_json::json!({"themeMode": "light"});
+        client.set_config(&patch).await.unwrap();
+        let sent = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(sent, r#"set-config {"themeMode":"light"}"#);
+    }
+
+    #[tokio::test]
+    async fn set_config_error_reply_maps_to_command_error() {
+        let sock = spawn_fake_daemon(
+            "set-config-err",
+            "error:set-config body must be a JSON object",
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let client = IpcClient::new(sock);
+        let err = client.set_config(&serde_json::json!({})).await.unwrap_err();
+        match err {
+            IpcError::Command(msg) => assert_eq!(msg, "set-config body must be a JSON object"),
             other => panic!("expected Command error, got {other:?}"),
         }
     }

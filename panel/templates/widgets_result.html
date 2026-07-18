@@ -1,0 +1,4 @@
+<div class="result {% if ok %}result-ok{% else %}result-error{% endif %}">
+  <p><strong>{{ tier }}</strong> — widgets: {% if ok %}ok{% else %}failed{% endif %}</p>
+  <pre>{{ message }}</pre>
+</div>

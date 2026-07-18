@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Widgets — tv-shell panel{% endblock %}
+{% block content %}
+<h1>Widgets</h1>
+<p class="banner {% if daemon_up %}banner-ok{% else %}banner-error{% endif %}">
+  {% if daemon_up %}
+    Daemon: up — widget config can be read and written
+  {% else %}
+    Daemon unreachable — widget config cannot be read or written
+  {% endif %}
+</p>
+
+<div id="widgets-result"></div>
+
+{% if daemon_up %}
+
+<p class="muted">
+  Saving writes the complete <code>widgets</code> subtree for every widget in
+  one call — the daemon's <code>set-config</code> only merges at the top
+  level, so a partial <code>widgets</code> object would silently drop the
+  others. Every card below is pre-filled with its current value, so the
+  button always sends the full state plus whatever you changed.
+</p>
+
+<form hx-post="/widgets/save" hx-target="#widgets-result" hx-swap="innerHTML">
+  <div class="widget-grid">
+  {% for card in cards %}
+  <section class="widget-card">
+    <h3>{{ card.name }} <span class="tier">IPC</span></h3>
+    <div class="field-row">
+      <label for="w_{{ card.id }}_enabled">Enabled</label>
+      <input type="checkbox" id="w_{{ card.id }}_enabled" name="w_{{ card.id }}_enabled"{% if card.enabled %} checked{% endif %}>
+    </div>
+    <div class="field-row">
+      <label for="w_{{ card.id }}_order">Order</label>
+      <input type="number" id="w_{{ card.id }}_order" name="w_{{ card.id }}_order" value="{{ card.order }}">
+    </div>
+    <div class="field-row">
+      <label for="w_{{ card.id }}_size">Size</label>
+      {{ card.size_select_html|safe }}
+    </div>
+    {% for pref in card.prefs %}
+    <div class="field-row">
+      <label for="w_{{ card.id }}_pref_{{ pref.key }}">{{ pref.label }}</label>
+      <input type="checkbox" id="w_{{ card.id }}_pref_{{ pref.key }}" name="w_{{ card.id }}_pref_{{ pref.key }}"{% if pref.checked %} checked{% endif %}>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  </div>
+  <button type="submit">Save widgets</button>
+</form>
+
+{% else %}
+
+<p class="muted">Widget editors are unavailable while the daemon is unreachable.</p>
+
+{% endif %}
+{% endblock %}
