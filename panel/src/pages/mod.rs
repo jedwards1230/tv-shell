@@ -1,6 +1,6 @@
-//! Page handlers. Three pages are fully implemented (`dashboard`, `logs`,
-//! `dev`); the other six render an honest stub via [`render_stub`] until
-//! their milestone lands.
+//! Page handlers. `dashboard`, `logs`, `dev`, `settings`, `widgets`, `tools`,
+//! and `processes` are fully implemented; `controllers` and `cec` render an
+//! honest stub via [`render_stub`] until M4 lands.
 
 pub mod cec;
 pub mod controllers;

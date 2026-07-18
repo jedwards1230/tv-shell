@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Tools — tv-shell panel{% endblock %}
+{% block content %}
+<h1>Tools</h1>
+<p class="muted">A console over the daemon's IPC command surface, grouped by domain. Every action's response renders below.</p>
+
+<div id="tools-result"></div>
+
+<section class="tools-section">
+  <h2>Navigation</h2>
+  <h3>Intent</h3>
+  <form hx-post="/tools/intent" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+    <input type="text" name="name" placeholder="intent name (e.g. home, settings:audio, overlay:volume, app:firefox)" required>
+    <button type="submit">Send intent</button>
+  </form>
+  <div class="button-row">
+    {% for n in intent_quick %}
+    <form hx-post="/tools/intent" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+      <input type="hidden" name="name" value="{{ n }}">
+      <button type="submit">{{ n }}</button>
+    </form>
+    {% endfor %}
+    {% for n in overlay_quick %}
+    <form hx-post="/tools/intent" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+      <input type="hidden" name="name" value="{{ n }}">
+      <button type="submit">{{ n }}</button>
+    </form>
+    {% endfor %}
+  </div>
+  <form hx-post="/tools/intent" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+    <label for="settings-slug">Open settings page</label>
+    <select id="settings-slug" name="name">
+      {% for slug in settings_slugs %}
+      <option value="settings:{{ slug }}">{{ slug }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Open</button>
+  </form>
+
+  <h3>Key</h3>
+  <div class="button-row">
+    {% for n in key_quick %}
+    <form hx-post="/tools/key" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+      <input type="hidden" name="name" value="{{ n }}">
+      <button type="submit">{{ n }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="tools-section">
+  <h2>Apps</h2>
+  <div class="button-row">
+    <form hx-post="/tools/apps/list" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+      <button type="submit">List apps</button>
+    </form>
+    <form hx-post="/tools/apps/recents" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+      <button type="submit">Recents</button>
+    </form>
+  </div>
+</section>
+
+<section class="tools-section">
+  <h2>Bluetooth</h2>
+  <div class="button-row">
+    <form hx-post="/tools/bt/power-status" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Power status</button></form>
+    <form hx-post="/tools/bt/power-on" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Power on</button></form>
+    <form hx-post="/tools/bt/power-off" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Power off</button></form>
+    <form hx-post="/tools/bt/scan-on" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Scan on</button></form>
+    <form hx-post="/tools/bt/scan-off" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Scan off</button></form>
+    <form hx-post="/tools/bt/list" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">List devices</button></form>
+  </div>
+</section>
+
+<section class="tools-section">
+  <h2>Network</h2>
+  <div class="button-row">
+    <form hx-post="/tools/net/status" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Status</button></form>
+    <form hx-post="/tools/net/wifi-list" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Wi-Fi list</button></form>
+    <form hx-post="/tools/net/wifi-rescan" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Wi-Fi rescan</button></form>
+  </div>
+  <form hx-post="/tools/net/throughput" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+    <input type="text" name="iface" placeholder="interface (e.g. eth0)" required>
+    <button type="submit">Throughput</button>
+  </form>
+  <form hx-post="/tools/net/ping" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+    <input type="text" name="host" placeholder="host (e.g. 1.1.1.1)" required>
+    <input type="number" name="count" placeholder="count (1-10)" min="1" max="10">
+    <button type="submit">Ping</button>
+  </form>
+</section>
+
+<section class="tools-section">
+  <h2>Power</h2>
+  <p class="muted">Suspend lives on the <a href="/dev">Dev</a> page.</p>
+  <div class="button-row">
+    <form hx-post="/tools/power/can-suspend" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Can suspend?</button></form>
+    <form hx-post="/tools/power/battery" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">Battery</button></form>
+  </div>
+</section>
+
+<section class="tools-section">
+  <h2>System</h2>
+  <div class="button-row">
+    <form hx-post="/tools/sys/status" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">sys-status</button></form>
+    <form hx-post="/tools/sys/metrics" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">sys-metrics</button></form>
+    <form hx-post="/tools/sys/storage" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">storage-status</button></form>
+    <form hx-post="/tools/sys/build-info" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">build-info</button></form>
+    <form hx-post="/tools/sys/controllerdb-status" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"><button type="submit">controllerdb status</button></form>
+    <form hx-post="/tools/sys/controllerdb-refresh" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"
+          hx-confirm="Fetch the upstream GameControllerDB now?"><button type="submit">controllerdb refresh</button></form>
+  </div>
+</section>
+
+<section class="tools-section">
+  <h2>Raw console</h2>
+  <p class="muted">
+    Escape hatch: sends any single IPC line and shows the raw reply.
+    <code>set-config</code>, <code>set-binding</code>, <code>grab</code>,
+    <code>release</code>, and <code>handoff</code> belong to other pages'
+    guarded flows — sending them here still works, with a warning.
+  </p>
+  <form hx-post="/tools/raw" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form"
+        hx-confirm="Send this raw IPC command to the daemon? It may mutate state.">
+    <input type="text" name="cmd" placeholder="e.g. sys-status" required>
+    <button type="submit">Send</button>
+  </form>
+</section>
+{% endblock %}

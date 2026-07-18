@@ -142,6 +142,47 @@ fn config_daemon_uniquifier() -> u32 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Like [`spawn_config_daemon`], but answers an arbitrary map of exact
+/// request-line → reply-line pairs instead of only understanding
+/// `get-config`/`set-config`. Used by the Tools console's round-trip tests,
+/// which exercise many distinct IPC commands against one fake daemon.
+/// Requests not present in `replies` get `error:unknown command`.
+pub fn spawn_canned_daemon(
+    name: &str,
+    replies: std::collections::HashMap<&'static str, &'static str>,
+) -> std::path::PathBuf {
+    let sock = std::path::PathBuf::from(format!(
+        "/tmp/tvshp-canned-{name}-{}-{}.sock",
+        std::process::id(),
+        config_daemon_uniquifier()
+    ));
+    let _ = std::fs::remove_file(&sock);
+    let listener = UnixListener::bind(&sock).expect("bind fake canned daemon socket");
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            let replies = replies.clone();
+            tokio::spawn(async move {
+                let (read_half, mut write_half) = stream.into_split();
+                let mut reader = BufReader::new(read_half);
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    return;
+                }
+                let line = line.trim_end();
+                let reply = replies
+                    .get(line)
+                    .copied()
+                    .unwrap_or("error:unknown command");
+                let _ = write_half.write_all(format!("{reply}\n").as_bytes()).await;
+            });
+        }
+    });
+    sock
+}
+
 fn state_for_socket(sock: std::path::PathBuf) -> Arc<AppState> {
     Arc::new(AppState {
         cfg: AppConfig::default(),
@@ -357,5 +398,197 @@ async fn widgets_save_rejects_invalid_size_for_widget() {
     assert!(
         html.to_lowercase().contains("invalid"),
         "expected a validation error for an out-of-enum size: {html}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M3: Tools console
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tools_intent_rejects_whitespace_without_ipc() {
+    // Validation must fail before any IPC call — no daemon needed.
+    let state = hermetic_state();
+    let html = pages::tools::render_intent(&state, "settings audio").await;
+    assert!(
+        html.to_lowercase().contains("whitespace"),
+        "expected a whitespace validation error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_intent_degrades_when_daemon_unreachable() {
+    let state = hermetic_state();
+    let html = pages::tools::render_intent(&state, "home").await;
+    assert!(
+        html.to_lowercase().contains("unreachable"),
+        "expected a daemon-unreachable marker: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_key_rejects_unknown_key_without_ipc() {
+    let state = hermetic_state();
+    let html = pages::tools::render_key(&state, "north").await;
+    assert!(
+        html.to_lowercase().contains("unknown key"),
+        "expected an unknown-key error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_net_ping_rejects_whitespace_in_host() {
+    let state = hermetic_state();
+    let html = pages::tools::render_net_ping(&state, "1.1.1.1 extra", None).await;
+    assert!(
+        html.to_lowercase().contains("whitespace"),
+        "expected a whitespace validation error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_net_ping_rejects_out_of_range_count() {
+    let state = hermetic_state();
+    let html = pages::tools::render_net_ping(&state, "1.1.1.1", Some("99")).await;
+    assert!(
+        html.contains("1 and 10"),
+        "expected a count-range validation error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_net_throughput_rejects_path_separator_in_iface() {
+    let state = hermetic_state();
+    let html = pages::tools::render_net_throughput(&state, "../etc").await;
+    assert!(
+        html.to_lowercase().contains("invalid interface"),
+        "expected an invalid-interface error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_bt_action_rejects_unknown_action() {
+    let state = hermetic_state();
+    let html = pages::tools::render_bt_action(&state, "AA:BB:CC:DD:EE:FF", "reboot").await;
+    assert!(
+        html.to_lowercase().contains("unknown bluetooth action"),
+        "expected an unknown-action error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_sys_status_json_roundtrip() {
+    let mut replies = HashMap::new();
+    replies.insert(
+        "sys-status",
+        r#"{"os":"Test OS","kernel":"1.2.3","hostname":"h","uptime":"1h"}"#,
+    );
+    let sock = spawn_canned_daemon("tools-sys-status", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::tools::run_line(&state, "sys-status").await;
+    assert!(
+        html.contains("Test OS"),
+        "expected the pretty-printed sys-status JSON: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_bt_power_status_bare_text_roundtrip() {
+    let mut replies = HashMap::new();
+    replies.insert("bt-power-status", "bt:on");
+    let sock = spawn_canned_daemon("tools-bt-power", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::tools::run_line(&state, "bt-power-status").await;
+    assert!(
+        html.contains("bt:on"),
+        "expected the bare-text reply: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_raw_error_reply_roundtrip() {
+    let mut replies = HashMap::new();
+    replies.insert("sys-metrics", "error:input-runtime-down");
+    let sock = spawn_canned_daemon("tools-raw-error", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::tools::render_raw(&state, "sys-metrics").await;
+    assert!(
+        html.to_lowercase().contains("input-runtime-down"),
+        "expected the daemon's error message: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_raw_warns_on_guarded_command() {
+    let mut replies = HashMap::new();
+    replies.insert("grab", "ok");
+    let sock = spawn_canned_daemon("tools-raw-warn", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::tools::render_raw(&state, "grab").await;
+    assert!(
+        html.to_lowercase().contains("guarded"),
+        "expected a warning banner for a guarded command: {html}"
+    );
+}
+
+#[tokio::test]
+async fn tools_raw_rejects_empty_command() {
+    let state = hermetic_state();
+    let html = pages::tools::render_raw(&state, "   ").await;
+    assert!(
+        html.to_lowercase().contains("empty"),
+        "expected an empty-command validation error: {html}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M3: Processes page
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn processes_page_renders_when_daemon_unreachable() {
+    let state = hermetic_state();
+    let html = pages::processes::render_page(&state).await;
+    assert!(!html.is_empty());
+    assert!(
+        html.to_lowercase().contains("hyprland"),
+        "expected the Hyprland section to render: {html}"
+    );
+    assert!(
+        html.to_lowercase().contains("unavailable"),
+        "expected a Hyprland-unavailable note when the daemon is down: {html}"
+    );
+}
+
+#[tokio::test]
+async fn processes_restart_rejects_unknown_unit_key() {
+    let state = hermetic_state();
+    let html = pages::processes::render_restart(&state, "bogus").await;
+    assert!(
+        html.to_lowercase().contains("unknown"),
+        "expected an unknown-unit-key error: {html}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M3: Dev screenshot viewer
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn dev_screenshot_capture_degrades_when_bridge_not_configured() {
+    let state = hermetic_state();
+    let html = pages::dev::render_screenshot_capture(&state).await;
+    assert!(!html.is_empty());
+    assert!(
+        html.to_lowercase().contains("not configured"),
+        "expected a bridge-not-configured message: {html}"
+    );
+    assert!(
+        !html.contains("<img"),
+        "must never emit an <img> tag when the capture itself failed: {html}"
     );
 }
