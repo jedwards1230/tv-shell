@@ -25,7 +25,7 @@ tv-shell-protocol = { workspace = true }
 askama = { workspace = true }
 # Typed config parsing (~/.config/tv-shell/config.toml), matching how the
 # daemon declares it directly rather than via a workspace dep.
-toml = "0.8"
+toml = "1.1"
 
 # uid lookup for the $XDG_RUNTIME_DIR-unset socket-path fallback (matches how
 # the host crate uses libc on Linux for its own OS-level needs).

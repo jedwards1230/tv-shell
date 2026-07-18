@@ -32,7 +32,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 axum = "0.8"
 subtle = "2"
 keyvalues-parser = "0.2"
-askama = "0.12"
+askama = "0.16"
 tv-shell-protocol = { path = "protocol" }
 
 # Applies to every workspace binary (daemon/host/panel) — a virtual workspace
