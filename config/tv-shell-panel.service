@@ -1,0 +1,38 @@
+[Unit]
+# systemd --user unit for the tv-shell web control panel (tv-shell-panel).
+#
+# The session wrapper (scripts/tv-shell-session.sh) starts this explicitly with
+# `systemctl --user start tv-shell-panel.service` alongside the daemon, so there
+# is no [Install] WantedBy= here — it is NOT enabled into a user target and is
+# not auto-started on login by systemd. The session script is the single owner
+# of the panel lifecycle; running it as a unit just buys journald capture,
+# cgroup accounting, and single-instance + restart semantics for free.
+#
+# scripts/install.sh installs a copy to ~/.config/systemd/user/ with the ExecStart
+# path rewritten to the resolved --prefix (mirroring how it rewrites the
+# tv-shell-input.service ExecStart and the session .desktop Exec=). This
+# committed copy uses the installer's default prefix (/opt/tv-shell); edit
+# ExecStart to match if you wire the unit up by hand.
+Description=tv-shell web control panel
+# Rate-limit restarts (these are [Unit]-level directives in modern systemd): at
+# most 5 starts per 60s, after which systemd stops retrying. Without this,
+# Restart=on-failure + RestartSec=2 would restart every 2s indefinitely on a hard
+# failure (e.g. the configured [panel] bind address is already in use).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Rewritten by scripts/install.sh to <prefix>/bin/tv-shell-panel. The panel
+# self-discovers its install root from this binary path the same way the daemon
+# does, and reads its typed per-machine config (the [panel] section: enabled,
+# bind, token_file) from ~/.config/tv-shell/config.toml itself — so no extra
+# Environment=/EnvironmentFile= wiring is required here.
+ExecStart=/opt/tv-shell/bin/tv-shell-panel
+Restart=on-failure
+RestartSec=2
+
+# No [Install] section by design: the session script `systemctl --user start`s
+# this unit on every session, so it must NOT also be enabled into default.target
+# (that would start a second, env-less copy at user-manager boot before the rest
+# of the session exists). Single owner = the session script.

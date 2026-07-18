@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Widgets — tv-shell panel{% endblock %}
+{% block content %}
+<h1>Widgets</h1>
+<p class="banner {% if daemon_up %}banner-ok{% else %}banner-error{% endif %}">
+  {% if daemon_up %}
+    Daemon: up — widget config can be read and written
+  {% else %}
+    Daemon unreachable — widget config cannot be read or written
+  {% endif %}
+</p>
+
+<div id="widgets-result"></div>
+
+{% if daemon_up %}
+
+<p class="muted">
+  Saving writes the complete <code>widgets</code> subtree for every widget in
+  one call — the daemon's <code>set-config</code> only merges at the top
+  level, so a partial <code>widgets</code> object would silently drop the
+  others. Every card below is pre-filled with its current value, so the
+  button always sends the full state plus whatever you changed.
+</p>
+<p class="muted">
+  The &#9650;/&#9660; reorder buttons save immediately (their own
+  <code>set-config</code> call) — cards are always shown in their persisted
+  order. Unsaved changes to Enabled/Size/prefs on OTHER cards are reset to
+  their last-saved value when you reorder; use <strong>Save widgets</strong>
+  for those first if you don't want to lose them.
+</p>
+
+<form hx-post="/widgets/save" hx-disabled-elt="find button" hx-target="#widgets-result" hx-swap="innerHTML">
+  {% include "widgets_grid.html" %}
+  <button type="submit">Save widgets</button>
+</form>
+
+{% else %}
+
+<p class="muted">Widget editors are unavailable while the daemon is unreachable.</p>
+
+{% endif %}
+{% endblock %}

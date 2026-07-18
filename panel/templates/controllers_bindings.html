@@ -1,0 +1,37 @@
+<section class="controllers-section" id="controllers-bindings">
+  <h2>Bindings</h2>
+  {% if !msg.is_empty() %}
+  <p class="banner {% if msg_ok %}banner-ok{% else %}banner-error{% endif %}">{{ msg }}</p>
+  {% endif %}
+  {% if bindings_error.is_empty() %}
+  <table>
+    <thead><tr><th>Action</th><th>Current</th><th>Set</th><th>Capture</th></tr></thead>
+    <tbody>
+    {% for b in bindings %}
+    <tr>
+      <td data-label="Action">{{ b.action }}</td>
+      <td data-label="Current"><code>{{ b.current }}</code></td>
+      <td data-label="Set">
+        <form hx-post="/controllers/bindings/set" hx-disabled-elt="find button" hx-target="#controllers-bindings" hx-swap="outerHTML" class="inline-form">
+          <input type="hidden" name="action" value="{{ b.action }}">
+          <select name="button">{{ b.select_html|safe }}</select>
+          <button type="submit">Set</button>
+        </form>
+      </td>
+      <td data-label="Capture">
+        <form hx-post="/controllers/bindings/capture" hx-disabled-elt="find button" hx-target="#controllers-bindings" hx-swap="outerHTML" class="inline-form">
+          <input type="hidden" name="action" value="{{ b.action }}">
+          <button type="submit">Capture next press (10s)</button>
+        </form>
+        <form hx-post="/controllers/bindings/capture-cancel" hx-disabled-elt="find button" hx-target="#controllers-bindings" hx-swap="outerHTML" class="inline-form">
+          <button type="submit">Cancel capture</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="banner banner-error">Bindings unavailable: {{ bindings_error }}</p>
+  {% endif %}
+</section>

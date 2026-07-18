@@ -9,6 +9,10 @@
 //! ## Layout
 //!
 //! ```toml
+//! [panel]                     # tv-shell-panel web control panel (its own binary)
+//! enabled = true              #   the panel serves when its systemd unit runs
+//! bind = "127.0.0.1:8091"     #   panel listen address (LAN-only, no auth in v1)
+//!
 //! [http]                      # LAN HTTP control bridge (opt-in)
 //! bind = "127.0.0.1:8089"     #   absent ⇒ bridge off
 //! auth_enabled = true         #   default true; only disable on a trusted LAN
@@ -80,6 +84,11 @@ pub fn global() -> &'static DaemonConfig {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DaemonConfig {
+    /// `[panel]` — the tv-shell-panel web control panel. The daemon does NOT use
+    /// these values (the separate `tv-shell-panel` binary reads them); the field
+    /// exists only so the shared `config.toml`'s `[panel]` section parses under
+    /// this struct's `deny_unknown_fields` instead of aborting daemon startup.
+    pub panel: PanelConfig,
     pub http: HttpConfig,
     pub mcp: McpConfig,
     pub cec: CecConfig,
@@ -88,6 +97,34 @@ pub struct DaemonConfig {
     pub observability: ObservabilityConfig,
     pub input: InputConfig,
     pub dev: DevConfig,
+}
+
+/// `[panel]` — the tv-shell-panel web control panel (a separate binary from the
+/// daemon). The daemon parses-and-ignores this section; the `tv-shell-panel`
+/// binary is the real owner of these fields. Intentionally does NOT set
+/// `deny_unknown_fields` (unlike the daemon's own sections) so the panel can add
+/// its own keys later without forcing a matching daemon-struct change — the
+/// daemon only needs the `[panel]` table to not abort its `deny_unknown_fields`
+/// top-level parse.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PanelConfig {
+    /// Whether the panel serves when its unit runs. Default true.
+    pub enabled: bool,
+    /// Panel listen address, e.g. `127.0.0.1:8091`. LAN-only, no auth in v1.
+    pub bind: Option<String>,
+    /// Reserved for future panel auth; unused in v1 (LAN-only).
+    pub token_file: Option<String>,
+}
+
+impl Default for PanelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bind: None,
+            token_file: None,
+        }
+    }
 }
 
 /// `[http]` — the LAN HTTP control bridge.
@@ -855,6 +892,36 @@ mod tests {
         // an operator can't paste a raw secret into config.toml.
         assert!(DaemonConfig::parse("[plex]\ntoken = \"x\"\n").is_err());
         assert!(DaemonConfig::parse("[steam]\ntoken = \"x\"\n").is_err());
+    }
+
+    #[test]
+    fn panel_section_parses_and_is_ignored_by_daemon() {
+        // The shared config.toml carries a [panel] section for the tv-shell-panel
+        // binary. The daemon's top-level deny_unknown_fields must NOT reject it —
+        // otherwise adding [panel] would abort daemon startup. The daemon parses
+        // and ignores it; the panel binary is the real consumer.
+        let c = DaemonConfig::parse(
+            r#"
+            [panel]
+            enabled = true
+            bind = "127.0.0.1:8091"
+
+            [http]
+            bind = "127.0.0.1:8089"
+        "#,
+        )
+        .unwrap();
+        assert!(c.panel.enabled);
+        assert_eq!(c.panel.bind.as_deref(), Some("127.0.0.1:8091"));
+        // The daemon's own sections still parse alongside it.
+        assert_eq!(c.http.bind.as_deref(), Some("127.0.0.1:8089"));
+        // An absent [panel] defaults to enabled = true (panel serves by default).
+        let d = DaemonConfig::parse("").unwrap();
+        assert!(d.panel.enabled);
+        // A panel-only key the daemon doesn't model is tolerated (no
+        // deny_unknown_fields on PanelConfig), so the panel can grow its config
+        // without a matching daemon change.
+        assert!(DaemonConfig::parse("[panel]\nfuture_panel_key = 42\n").is_ok());
     }
 
     #[test]

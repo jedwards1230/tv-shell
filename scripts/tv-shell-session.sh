@@ -68,18 +68,33 @@ if [ -z "$INPUT_UNIT" ]; then
     INPUT_PID=$!
 fi
 
-# Quickshell runs as its own `systemd --user` unit (tv-shell-quickshell.service),
-# started by Hyprland's exec-once once the compositor is up (see config/
-# hyprland.conf). Its lifecycle is independent of the input daemon's dev-override
-# path, so gate purely on user-systemd availability. Clear any stale failed state
-# from a previous (crashed/un-cleaned) session so this session's exec-once `start`
-# isn't refused by a lingering StartLimit failure.
+# Shared user-systemd-availability gate for the units below (Quickshell is
+# started by Hyprland's exec-once, so its lifecycle is independent of the input
+# daemon's dev-override path — gate purely on user-systemd availability). Clear
+# any stale failed state from a previous (crashed/un-cleaned) session so this
+# session's `start` isn't refused by a lingering StartLimit failure.
 HAVE_USER_SYSTEMD=""
 if command -v systemctl >/dev/null 2>&1 \
     && systemctl --user show-environment >/dev/null 2>&1; then
     HAVE_USER_SYSTEMD="1"
     systemctl --user reset-failed tv-shell-quickshell.service >/dev/null 2>&1 || true
 fi
+
+# The web control panel (tv-shell-panel) runs as its own `systemd --user` unit,
+# started here right after the daemon — it is NOT compositor-dependent (unlike
+# Quickshell below), so it doesn't need to wait for Hyprland. Best-effort and
+# strictly non-fatal: the panel is a convenience surface, and the session must
+# never be bricked by it failing to start (a missing binary, a bad [panel] bind
+# in config.toml, port already in use, etc). No bare-process fallback — if user
+# systemd isn't available the panel simply doesn't run this session.
+if [ -n "$HAVE_USER_SYSTEMD" ]; then
+    systemctl --user reset-failed tv-shell-panel.service >/dev/null 2>&1 || true
+    systemctl --user start tv-shell-panel.service >/dev/null 2>&1 || true
+fi
+
+# Quickshell runs as its own `systemd --user` unit (tv-shell-quickshell.service),
+# started by Hyprland's exec-once once the compositor is up (see config/
+# hyprland.conf).
 
 cleanup() {
     if [ -n "$INPUT_UNIT" ]; then
@@ -88,11 +103,13 @@ cleanup() {
         kill "$INPUT_PID" 2>/dev/null
         wait "$INPUT_PID" 2>/dev/null
     fi
-    # Quickshell is started by the compositor's exec-once, not here, but it runs
-    # under the user manager and would outlive Hyprland — stop it on session exit
-    # so it can't survive into (and race) the next session.
+    # Quickshell and the panel are both started outside this trap (Quickshell by
+    # the compositor's exec-once, the panel above), but run under the user
+    # manager and would outlive Hyprland — stop both on session exit so neither
+    # can survive into (and race) the next session.
     if [ -n "$HAVE_USER_SYSTEMD" ]; then
         systemctl --user stop tv-shell-quickshell.service >/dev/null 2>&1 || true
+        systemctl --user stop tv-shell-panel.service >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT

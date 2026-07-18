@@ -8,9 +8,10 @@ section in [CLAUDE.md](../CLAUDE.md).
 ## What gets installed
 
 - The Rust input daemon (`tv-shell-input`) → `<prefix>/bin/`
+- The web control panel (`tv-shell-panel`) → `<prefix>/bin/` (see [PANEL.md](PANEL.md))
 - The QML shell + Hyprland config + scripts → `<prefix>/` (default prefix `/opt/tv-shell`)
 - A Wayland session entry → `/usr/share/wayland-sessions/tv-shell-wayland.desktop`
-- A `systemd --user` unit for the daemon → `~/.config/systemd/user/tv-shell-input.service` (see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md))
+- `systemd --user` units for the daemon and panel → `~/.config/systemd/user/tv-shell-input.service` + `tv-shell-panel.service` (see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md))
 - A Quickshell config symlink → `~/.config/quickshell/tv-shell`
 - A per-user config dir seeded from examples → `~/.config/tv-shell/`
 
@@ -47,7 +48,7 @@ sudo ./scripts/install.sh                 # default prefix /opt/tv-shell
 sudo ./scripts/install.sh --prefix ~/.local/share/tv-shell --user "$USER"
 ```
 
-Re-runnable: it rebuilds the daemon, refreshes the tree and session file, and
+Re-runnable: it rebuilds the daemon and panel, refreshes the tree and session file, and
 never overwrites your existing `~/.config/tv-shell` files. Useful flags:
 `--no-build` (reuse an existing binary), `--features` (daemon Cargo features,
 default `cec,mcp`), `--session-dir`, `--user`. See `./scripts/install.sh --help`.
@@ -139,7 +140,11 @@ specific (SDDM `autologin`, plasmalogin, GDM) and intentionally left to you.
 
 Setting `[http] bind` / `[mcp] bind` in `config.toml` exposes the daemon's control
 surface (screenshots, intents, MCP tools) over the network. See
-[CONTROL_SURFACE.md](CONTROL_SURFACE.md). Firewall those ports yourself.
+[CONTROL_SURFACE.md](CONTROL_SURFACE.md). The web control panel (`tv-shell-panel`,
+[PANEL.md](PANEL.md)) is separate — it's installed and enabled by default,
+listening on `127.0.0.1:8091` (loopback-only, no auth in v1); widen `[panel]
+bind` in `config.toml` only on a trusted LAN. Firewall any of these ports you
+expose beyond loopback yourself.
 
 ## Verify
 

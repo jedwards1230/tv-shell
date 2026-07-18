@@ -55,6 +55,7 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'daemon/**'
+              - 'panel/**'
               - 'protocol/**'
               - '.github/workflows/rust.yml'
               - '.github/workflows/ci.yml'

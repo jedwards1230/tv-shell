@@ -1,9 +1,10 @@
 # Virtual workspace manifest for tv-shell's Rust crates.
 #
-# Three crates, one lockfile, shared dependency versions:
+# Four crates, one lockfile, shared dependency versions:
 #   - daemon/    tv-shell-input    — Linux/cec/mcp input daemon (UNTOUCHED machinery)
 #   - host/      tv-shell-host     — cross-platform Steam-library sidecar (axum)
 #   - protocol/  tv-shell-protocol — shared /library wire types (serde only)
+#   - panel/     tv-shell-panel    — LAN web control panel (axum + askama)
 #
 # Why a workspace (not two independent crates, not one crate w/ two bins): one
 # lockfile + shared dep versions; the `protocol` crate is the single source of
@@ -13,7 +14,7 @@
 # `-p`-scoped so neither binary compiles the other.
 [workspace]
 resolver = "2"
-members = ["daemon", "host", "protocol"]
+members = ["daemon", "host", "protocol", "panel"]
 
 [workspace.package]
 edition = "2021"
@@ -31,4 +32,16 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 axum = "0.8"
 subtle = "2"
 keyvalues-parser = "0.2"
+askama = "0.12"
 tv-shell-protocol = { path = "protocol" }
+
+# Applies to every workspace binary (daemon/host/panel) — a virtual workspace
+# manifest is the only place a [profile] table can live, so this isn't
+# panel-only despite landing alongside the panel's UI-polish pass. Keeps
+# symbol names (no `strip = "symbols"`) so backtraces stay readable; only
+# debug info is dropped. `lto = "thin"` trims binary size for a modest,
+# incremental-build-friendly compile-time cost (full LTO wasn't worth the
+# tradeoff here).
+[profile.release]
+strip = "debuginfo"
+lto = "thin"

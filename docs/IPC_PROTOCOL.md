@@ -1,6 +1,6 @@
 # IPC Protocol Specification
 
-The input/backend daemon (`tv-shell-input`, Rust source in `daemon/`) communicates with QML components over a Unix domain socket using a newline-delimited text protocol.
+The input/backend daemon (`tv-shell-input`, Rust source in `daemon/`) communicates with clients over a Unix domain socket using a newline-delimited text protocol. The primary client is the QML shell; the `tv-shell-panel` web control panel (`panel/`, see [PANEL.md](PANEL.md)) is a second client, speaking the same protocol over the same socket.
 
 ## Socket Connection
 
