@@ -10,6 +10,8 @@ token**, and are thin adapters over the same action logic in
 | HTTP/1.1 bridge | `daemon/src/http.rs` | `[http] bind = "host:port"` | `http://<bind>/...` |
 | MCP server (rmcp 1.7.0, streamable-HTTP) | `daemon/src/mcp.rs` | `[mcp] bind = "host:port"` | `http://<bind>/mcp` |
 
+> The web control panel that consumes this surface is documented in [`PANEL.md`](PANEL.md).
+
 Relationship to the Unix-socket IPC ([IPC_PROTOCOL.md](IPC_PROTOCOL.md)): the IPC
 socket (`0o600`, owner-only) is the shell↔daemon contract. This control surface is
 its **network-facing sibling** — same `Control::Intent` / `Control::Key` paths and

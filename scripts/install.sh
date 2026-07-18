@@ -105,6 +105,16 @@ if [ "$DO_BUILD" -eq 1 ]; then
     log "daemon build succeeded"
 fi
 
+# 1b. Build the web control panel (canonical script: scripts/build-panel.sh).
+#     Pure Rust, no feature flags — see that script for why.
+PANEL_BIN="$REPO_ROOT/target/release/tv-shell-panel"
+if [ "$DO_BUILD" -eq 1 ]; then
+    log "building tv-shell-panel ..."
+    "$REPO_ROOT/scripts/build-panel.sh" || die "panel build failed"
+    [ -f "$PANEL_BIN" ] || die "build finished but $PANEL_BIN is missing"
+    log "panel build succeeded"
+fi
+
 # 2. Lay down the install tree under $PREFIX. When the repo already lives at the
 #    prefix (the in-place / dev-bridge layout), skip copying source over itself.
 install -d -m755 "$PREFIX/bin"
@@ -126,6 +136,15 @@ elif [ -x "$PREFIX/bin/tv-shell-input" ]; then
     log "no build artifact at $DAEMON_BIN — keeping the installed daemon binary"
 else
     log "WARNING: no daemon binary built or installed (continuing — shell will use any fallback)"
+fi
+# Install the freshly built panel binary, with the same no-build/no-artifact
+# tolerance as the daemon binary above.
+if [ -f "$PANEL_BIN" ]; then
+    install -m755 "$PANEL_BIN" "$PREFIX/bin/tv-shell-panel"
+elif [ -x "$PREFIX/bin/tv-shell-panel" ]; then
+    log "no build artifact at $PANEL_BIN — keeping the installed panel binary"
+else
+    log "WARNING: no panel binary built or installed (continuing — panel unit will fail to start until built)"
 fi
 
 # 2b. Back-compat: a $LEGACY_PREFIX symlink -> the new default prefix so any
@@ -164,15 +183,18 @@ write_session_file "$SESSION_DIR/tv-shell-wayland.desktop"
 write_session_file "$SESSION_DIR/game-shell-wayland.desktop"
 
 # 3b. Install the systemd --user units, rewriting ExecStart to the resolved prefix
-#     where needed (mirrors the session .desktop Exec rewrite above). Two units:
+#     where needed (mirrors the session .desktop Exec rewrite above). Three units:
 #       - tv-shell-input.service   (daemon) — ExecStart rewritten to the prefix.
 #       - tv-shell-quickshell.service (UI)  — installed verbatim; `quickshell`
 #         resolves from PATH, so no prefix rewrite. It enforces a single Quickshell
 #         instance (#254) and is started by Hyprland's exec-once.
-#     Neither unit is enabled (no [Install]) — the session/compositor start them —
+#       - tv-shell-panel.service (web control panel) — ExecStart rewritten to the
+#         prefix, same treatment as the daemon unit. Started by the session script.
+#     No unit is enabled (no [Install]) — the session/compositor start them —
 #     so installing is just file placement + a daemon-reload.
 UNIT_SRC="$REPO_ROOT/config/tv-shell-input.service"
 QS_UNIT_SRC="$REPO_ROOT/config/tv-shell-quickshell.service"
+PANEL_UNIT_SRC="$REPO_ROOT/config/tv-shell-panel.service"
 if [ -f "$UNIT_SRC" ]; then
     UNIT_DIR="$TARGET_HOME/.config/systemd/user"
     UNIT_FILE="$UNIT_DIR/tv-shell-input.service"
@@ -193,6 +215,16 @@ if [ -f "$UNIT_SRC" ]; then
             || die "failed to write $UNIT_DIR/tv-shell-quickshell.service"
     else
         log "WARNING: $QS_UNIT_SRC missing — Quickshell will run via the exec-once fallback (bare process)"
+    fi
+    # Panel unit — same ExecStart-rewrite treatment as the daemon unit above.
+    if [ -f "$PANEL_UNIT_SRC" ]; then
+        log "installing systemd --user unit -> $UNIT_DIR/tv-shell-panel.service"
+        awk -v prefix="$PREFIX" \
+            '/^ExecStart=/ { print "ExecStart=" prefix "/bin/tv-shell-panel"; next } { print }' \
+            "$PANEL_UNIT_SRC" > "$UNIT_DIR/tv-shell-panel.service" \
+            || die "failed to write $UNIT_DIR/tv-shell-panel.service"
+    else
+        log "WARNING: $PANEL_UNIT_SRC missing — the web control panel will not be available"
     fi
     chown -R "$TARGET_USER" "$TARGET_HOME/.config/systemd" \
         || die "failed to chown $TARGET_HOME/.config/systemd to $TARGET_USER"
