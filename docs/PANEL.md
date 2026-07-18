@@ -47,9 +47,17 @@ config management.
 | Dev | deploy/build/restart daemon/restart shell/reboot with tier labels + confirms; screenshot viewer with provenance |
 | Logs | shell + daemon log tails with filters |
 
+## Running locally
+
+Build with `scripts/build-panel.sh` (outputs to `target/release/tv-shell-panel`)
+or `cargo run -p tv-shell-panel` for a dev loop. It reads `[panel]` from
+`~/.config/tv-shell/config.toml` and serves on `127.0.0.1:8091` by default (see
+`config/config.toml.example`). Installed systems run it as
+`tv-shell-panel.service`, started by `scripts/tv-shell-session.sh`.
+
 ## Milestones
 
-- [ ] M1 — crate scaffold, IPC client, app shell/nav, Dashboard, Logs, Dev page
+- [x] M1 — crate scaffold, IPC client, app shell/nav, Dashboard, Logs, Dev page
 - [ ] M2 — Settings + Widgets editors
 - [ ] M3 — Tools console, Processes, screenshot viewer
 - [ ] M4 — Controllers + CEC (switching, grab handling, wedge recovery)

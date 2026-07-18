@@ -81,6 +81,61 @@ jobs:
             echo "| Test | ${{ steps.test.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # tv-shell-panel (panel/) is a separate workspace member: a pure-Rust web
+  # control panel (axum/askama/reqwest-rustls) with NO system C libs (no libdbus,
+  # no libudev, no pkg-config) and no cec/mcp-style Cargo features. It does NOT
+  # use the file-level `defaults.run.working-directory: daemon` above — this job
+  # overrides that to the repo root so `-p tv-shell-panel` (which resolves from
+  # anywhere in the workspace) and the release binary path line up without the
+  # daemon-relative default getting in the way.
+  panel:
+    runs-on: ubuntu-latest
+    container: rust:1-bookworm
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Add rustfmt + clippy
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: panel
+
+      - name: Format check
+        id: fmt
+        run: cargo fmt --check -p tv-shell-panel
+
+      - name: Clippy
+        id: clippy
+        run: cargo clippy -p tv-shell-panel --all-targets -- -D warnings
+
+      - name: Build
+        id: build
+        run: cargo build --release -p tv-shell-panel
+
+      - name: Test
+        id: test
+        run: cargo test -p tv-shell-panel
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Rust CI — \`panel/\`"
+            echo ""
+            echo "| Step | Result |"
+            echo "|------|--------|"
+            echo "| Format | ${{ steps.fmt.outcome }} |"
+            echo "| Clippy | ${{ steps.clippy.outcome }} |"
+            echo "| Build (release) | ${{ steps.build.outcome }} |"
+            echo "| Test | ${{ steps.test.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Separate leg for the OPTIONAL `cec` feature (#94). The default `build` job
   # above stays C-free; this job exercises the libcec link. The `cec` feature
   # forwards `libcec-sys/static` (#179), so libcec-sys STATIC-links a prebuilt

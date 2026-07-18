@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Logs — tv-shell panel{% endblock %}
+{% block content %}
+<h1>Logs</h1>
+<form class="log-controls" hx-get="/logs/view" hx-target="#log-panels" hx-swap="innerHTML">
+  <label>Lines
+    <input type="number" name="lines" value="200" min="1" max="1000">
+  </label>
+  <label>Filter
+    <input type="text" name="filter" placeholder="substring…">
+  </label>
+  <button type="submit">Refresh</button>
+</form>
+<div id="log-panels" hx-get="/logs/view" hx-trigger="load" hx-swap="innerHTML">
+  <p class="muted">Loading…</p>
+</div>
+{% endblock %}
