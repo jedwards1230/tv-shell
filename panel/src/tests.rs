@@ -33,6 +33,7 @@ fn hermetic_state() -> Arc<AppState> {
         ipc: IpcClient::new(sock),
         bridge: BridgeClient::new(None, None),
         recovery: Recovery::new(),
+        updates: crate::updates::UpdatesState::default(),
     })
 }
 
@@ -287,6 +288,7 @@ fn state_for_socket(sock: std::path::PathBuf) -> Arc<AppState> {
         ipc: IpcClient::new(sock),
         bridge: BridgeClient::new(None, None),
         recovery: Recovery::new(),
+        updates: crate::updates::UpdatesState::default(),
     })
 }
 
@@ -769,6 +771,24 @@ async fn processes_restart_rejects_unknown_unit_key() {
     assert!(
         html.to_lowercase().contains("unknown"),
         "expected an unknown-unit-key error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn processes_page_renders_system_updates_section() {
+    let state = hermetic_state();
+    let html = pages::processes::render_page(&state).await;
+    assert!(
+        html.contains("System Updates"),
+        "expected the System Updates section heading: {html}"
+    );
+    assert!(
+        html.contains(r#"id="updates-check""#),
+        "expected the updates-check partial: {html}"
+    );
+    assert!(
+        html.contains(r#"id="update-job-status""#),
+        "expected the self-polling job-status partial: {html}"
     );
 }
 

@@ -119,6 +119,8 @@ struct ProcessesTemplate {
     hypr_monitors: String,
     top_rows: Vec<ProcRow>,
     top_error: String,
+    updates_check_html: String,
+    update_job_html: String,
 }
 
 /// `GET /processes` — gathers all three sections synchronously (mirrors
@@ -169,6 +171,9 @@ pub async fn render_page(state: &AppState) -> String {
         Err(e) => (Vec::new(), format!("ps failed: {e}")),
     };
 
+    let updates_check_html = render_updates_check(state, false).await;
+    let update_job_html = render_update_job(state).await;
+
     let tmpl = ProcessesTemplate {
         active: "processes",
         units,
@@ -179,9 +184,122 @@ pub async fn render_page(state: &AppState) -> String {
         hypr_monitors: pretty_or_raw(monitors_res),
         top_rows,
         top_error,
+        updates_check_html,
+        update_job_html,
     };
     tmpl.render()
         .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
+// ---------------------------------------------------------------------------
+// System Updates section (#1)
+// ---------------------------------------------------------------------------
+
+struct PendingUpdateView {
+    name: String,
+    old_version: String,
+    new_version: String,
+}
+
+#[derive(Template)]
+#[template(path = "processes_updates_check.html")]
+struct UpdatesCheckTemplate {
+    pending: Vec<PendingUpdateView>,
+    reboot_needed: bool,
+    reboot_unknown: bool,
+    error: String,
+    checked_ago: String,
+}
+
+async fn render_updates_check(state: &AppState, force: bool) -> String {
+    let snap = crate::updates::snapshot(&state.updates, force).await;
+    let tmpl = UpdatesCheckTemplate {
+        pending: snap
+            .pending
+            .into_iter()
+            .map(|p| PendingUpdateView {
+                name: p.name,
+                old_version: p.old_version,
+                new_version: p.new_version,
+            })
+            .collect(),
+        reboot_needed: matches!(snap.reboot, crate::updates::RebootStatus::Needed),
+        reboot_unknown: matches!(snap.reboot, crate::updates::RebootStatus::Unknown),
+        error: snap.error.unwrap_or_default(),
+        checked_ago: format!("{}s ago", snap.checked_at_secs_ago),
+    };
+    tmpl.render()
+        .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
+/// `POST /processes/updates/refresh` — forces a fresh `checkupdates` +
+/// reboot-needed probe (bypassing the 5-minute cache TTL) and re-renders the
+/// whole `#updates-check` section.
+pub async fn updates_refresh(State(state): State<SharedState>) -> impl IntoResponse {
+    Html(render_updates_check(&state, true).await)
+}
+
+#[derive(Template)]
+#[template(path = "processes_update_job.html")]
+struct UpdateJobTemplate {
+    running: bool,
+    done: bool,
+    success: bool,
+    elapsed: u64,
+    log_tail_text: String,
+    reboot_needed: bool,
+}
+
+async fn render_update_job(state: &AppState) -> String {
+    let job = crate::updates::job_snapshot(&state.updates).await;
+    let (running, done, success, elapsed, log_tail) = match job {
+        crate::updates::JobSnapshot::Idle => (false, false, false, 0, Vec::new()),
+        crate::updates::JobSnapshot::Running {
+            elapsed_secs,
+            log_tail,
+        } => (true, false, false, elapsed_secs, log_tail),
+        crate::updates::JobSnapshot::Done {
+            success,
+            elapsed_secs,
+            log_tail,
+        } => (false, true, success, elapsed_secs, log_tail),
+    };
+    // Only re-probe reboot-needed status right when a job just finished (the
+    // job itself invalidates the cache on completion, so this reflects
+    // post-update state) — not on every poll, since `data-running` stops
+    // further polling once `done` is true (see processes_update_job.html).
+    let reboot_needed = if done {
+        let snap = crate::updates::snapshot(&state.updates, false).await;
+        matches!(snap.reboot, crate::updates::RebootStatus::Needed)
+    } else {
+        false
+    };
+    let tmpl = UpdateJobTemplate {
+        running,
+        done,
+        success,
+        elapsed,
+        log_tail_text: log_tail.join("\n"),
+        reboot_needed,
+    };
+    tmpl.render()
+        .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
+/// `GET /processes/updates/job` — the self-polling job-status partial
+/// (`hx-trigger="load, every 2s [this.dataset.running=='1']"` — polls only
+/// while `Running`, per `processes_update_job.html`).
+pub async fn updates_job(State(state): State<SharedState>) -> impl IntoResponse {
+    Html(render_update_job(&state).await)
+}
+
+/// `POST /processes/updates/apply` — starts the background `sudo -n pacman
+/// -Syu --noconfirm` job (single-flighted — a second click while one is
+/// already running is a no-op, not an error) and immediately renders the
+/// job-status partial, which starts polling itself every 2s.
+pub async fn updates_apply(State(state): State<SharedState>) -> impl IntoResponse {
+    let _ = crate::updates::start_apply(&state).await;
+    Html(render_update_job(&state).await)
 }
 
 async fn unit_view(

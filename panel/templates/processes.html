@@ -26,6 +26,12 @@
   </table>
 </section>
 
+<section class="processes-section" id="updates">
+  <h2>System Updates</h2>
+  {{ updates_check_html|safe }}
+  {{ update_job_html|safe }}
+</section>
+
 <section class="processes-section">
   <h2>Hyprland</h2>
   {% if !hypr_available %}

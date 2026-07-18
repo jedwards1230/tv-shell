@@ -348,6 +348,7 @@ mod tests {
             ipc: IpcClient::new(sock),
             bridge: BridgeClient::new(None, None),
             recovery: Recovery::new(),
+            updates: crate::updates::UpdatesState::default(),
         })
     }
 

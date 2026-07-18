@@ -29,6 +29,34 @@ pub async fn tiles(State(state): State<SharedState>) -> impl IntoResponse {
     Html(render_tiles(&state).await)
 }
 
+/// `GET /dashboard/updates-tile` — the Updates tile's own, much slower poll
+/// (`every 300s` — see `dashboard.html`), kept separate from the main
+/// `#tiles` 5s poll specifically so `checkupdates` never runs on that fast
+/// cadence. Uses the cached (≤5 min old) snapshot; a manual Refresh lives on
+/// the Processes page's System Updates section, not here.
+pub async fn updates_tile(State(state): State<SharedState>) -> impl IntoResponse {
+    Html(render_updates_tile(&state).await)
+}
+
+#[derive(Template)]
+#[template(path = "dashboard_updates_tile.html")]
+struct DashboardUpdatesTileTemplate {
+    pending_count: usize,
+    reboot_needed: bool,
+    error: String,
+}
+
+async fn render_updates_tile(state: &AppState) -> String {
+    let snap = crate::updates::snapshot(&state.updates, false).await;
+    let tmpl = DashboardUpdatesTileTemplate {
+        pending_count: snap.pending.len(),
+        reboot_needed: matches!(snap.reboot, crate::updates::RebootStatus::Needed),
+        error: snap.error.unwrap_or_default(),
+    };
+    tmpl.render()
+        .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
 #[derive(Deserialize)]
 struct BuildInfo {
     version: String,
