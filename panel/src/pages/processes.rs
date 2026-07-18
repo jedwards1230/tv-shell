@@ -239,6 +239,26 @@ pub async fn updates_refresh(State(state): State<SharedState>) -> impl IntoRespo
     Html(render_updates_check(&state, true).await)
 }
 
+/// The last non-empty line of a finished, failed job's log tail — e.g.
+/// `sudo: a password is required` when the panel's run user lacks the
+/// NOPASSWD sudo rule `sudo -n pacman -Syu --noconfirm` needs (see
+/// `docs/PANEL.md` § System updates). Shown inline in the failure banner
+/// (#1) so the operator sees the actual cause immediately rather than a
+/// bare "Update failed" with the real reason hidden behind a click into the
+/// log-tail `<details>`. Empty for a successful/still-running/never-run job,
+/// or a failed one with no captured output.
+fn last_error_line(done: bool, success: bool, log_tail: &[String]) -> String {
+    if !done || success {
+        return String::new();
+    }
+    log_tail
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .cloned()
+        .unwrap_or_default()
+}
+
 #[derive(Template)]
 #[template(path = "processes_update_job.html")]
 struct UpdateJobTemplate {
@@ -247,6 +267,12 @@ struct UpdateJobTemplate {
     success: bool,
     elapsed: u64,
     log_tail_text: String,
+    /// The last non-empty log line, shown inline on a failed run (e.g.
+    /// `sudo: a password is required`) so the operator sees the actual
+    /// cause immediately rather than a bare "Update failed" — never a
+    /// generic failure with the real reason hidden behind a click. Empty
+    /// when there's nothing useful to show (success, or no output captured).
+    last_error_line: String,
     reboot_needed: bool,
 }
 
@@ -274,12 +300,14 @@ async fn render_update_job(state: &AppState) -> String {
     } else {
         false
     };
+    let last_error_line = last_error_line(done, success, &log_tail);
     let tmpl = UpdateJobTemplate {
         running,
         done,
         success,
         elapsed,
         log_tail_text: log_tail.join("\n"),
+        last_error_line,
         reboot_needed,
     };
     tmpl.render()
@@ -382,6 +410,36 @@ pub async fn render_restart(state: &AppState, key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn last_error_line_surfaces_the_real_sudo_failure() {
+        let tail = vec!["sudo: a password is required".to_string(), "".to_string()];
+        assert_eq!(
+            last_error_line(true, false, &tail),
+            "sudo: a password is required",
+            "must surface the actual sudo error, not a generic failure"
+        );
+    }
+
+    #[test]
+    fn last_error_line_skips_trailing_blank_lines() {
+        let tail = vec![
+            "error: target not found: bogus-pkg".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+        ];
+        assert_eq!(
+            last_error_line(true, false, &tail),
+            "error: target not found: bogus-pkg"
+        );
+    }
+
+    #[test]
+    fn last_error_line_empty_when_not_a_failed_done_job() {
+        assert_eq!(last_error_line(false, false, &["boom".to_string()]), "");
+        assert_eq!(last_error_line(true, true, &["ok".to_string()]), "");
+        assert_eq!(last_error_line(true, false, &[]), "");
+    }
 
     #[test]
     fn parse_top_processes_skips_header_and_splits_columns() {

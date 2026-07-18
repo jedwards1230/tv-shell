@@ -75,9 +75,7 @@ Updates" section both read it.
   (e.g. `linux` + `linux-lts`), matching the flavor suffix against the
   `uname -r` release string. An ambiguous or unparseable result degrades to
   `RebootStatus::Unknown` rather than guessing.
-- **Apply** (privileged): `sudo -n pacman -Syu --noconfirm` — the panel's
-  unprivileged systemd-unit user has NOPASSWD sudo on the deploy host
-  (htpc-1), so `-n` (never prompt) succeeds without a password. Runs as a
+- **Apply** (privileged): `sudo -n pacman -Syu --noconfirm`. Runs as a
   single-flighted `tokio::spawn` background task tracked in `AppState`
   (`Idle` → `Running{started, log_tail}` → `Done{success, finished,
   log_tail}`) — the pacman process outlives any one HTTP request. Combined
@@ -92,6 +90,33 @@ Updates" section both read it.
   linking to Dev → Reboot.
 - No new `config.toml` keys — every threshold (cache TTL, apply timeout, log
   tail length) is a hardcoded constant in `updates.rs`.
+
+### Deployment prerequisite: passwordless sudo for the apply path
+
+**The panel's systemd-unit user needs a NOPASSWD sudoers rule scoped to
+`pacman -Syu`** — `-n` ("never prompt") is what makes `sudo -n pacman -Syu
+--noconfirm` safe to shell out to from an unattended background task in the
+first place; without a real terminal to prompt at, a plain `sudo pacman -Syu`
+would otherwise just hang until the 30-minute timeout killed it. htpc-1 (the
+reference deploy host) grants this today; a fresh deploy host needs the
+equivalent, e.g. a drop-in under `/etc/sudoers.d/`:
+
+```
+tv-shell ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm
+```
+
+(substitute the actual unit user and `pacman` path for the target host).
+
+**Failure mode when the rule is absent or wrong**: `sudo -n` fails
+immediately — no hang, no password prompt — printing something like `sudo: a
+password is required` to stderr and exiting non-zero. The apply job captures
+that exact line into its log tail, and the UI surfaces it directly: the
+Processes page's failure banner shows the last non-empty log line inline
+(`last_error_line` in `pages::processes`) rather than a bare "Update failed",
+and the log-tail `<details>` auto-expands on a failed run instead of staying
+collapsed — so the real cause is visible without an extra click. The
+Dashboard Updates tile is unaffected either way, since it only reflects the
+unprivileged `checkupdates` read.
 
 ## Danger tiers
 
@@ -146,7 +171,9 @@ or `cargo run -p tv-shell-panel` for a dev loop. It reads `[panel]` from
         the workspace root — trims every workspace binary, daemon/host included
 - [x] Final-polish pass (post-UI-polish; branch `panel-staging-final-polish`)
   - [x] System updates (pacman): Dashboard tile + Processes page section,
-        async background apply job, reboot-needed detection (see
+        async background apply job, reboot-needed detection, and a
+        NOPASSWD-sudo deployment prerequisite with an honest (not generic)
+        failure banner when it's missing (see
         [System updates](#system-updates-pacman) above)
   - [x] Log pane focus/expand toggle on `/logs`
   - [x] `strip_ansi` also strips bare (ESC-dropped) CSI residue
