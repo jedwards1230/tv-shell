@@ -197,7 +197,8 @@ Item {
         },
         {
             key: "prewarmApps",
-            t: "object"
+            t: "object",
+            validate: v => Array.isArray(v)
         },
         {
             key: "keyBindings",
