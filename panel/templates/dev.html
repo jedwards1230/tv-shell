@@ -6,6 +6,10 @@
   Daemon: {% if daemon_up %}up{% else %}down{% endif %}
   · Bridge: {% if bridge_configured %}configured{% else %}not configured{% endif %}
 </p>
+<p class="muted">
+  Unit state (systemd, refreshes after every action below): daemon
+  {{ daemon_chip_html|safe }} · shell {{ shell_chip_html|safe }}
+</p>
 
 <div id="dev-result"></div>
 
