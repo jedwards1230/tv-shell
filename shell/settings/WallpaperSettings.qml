@@ -138,6 +138,11 @@ SettingsPageBase {
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
+                    // Bound the decode to card size — without a sourceSize every
+                    // 4K wallpaper in the folder is decoded at full resolution
+                    // (~33 MB RGBA each) just to paint a thumbnail.
+                    sourceSize.width: grid.cellWidth
+                    sourceSize.height: grid.cellHeight
                 }
 
                 Text {

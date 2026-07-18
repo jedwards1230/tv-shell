@@ -341,7 +341,11 @@ Drawer {
         Item {
             Layout.fillWidth: true
             Layout.topMargin: Units.spacingSM
-            Layout.preferredHeight: drawerActions.implicitHeight
+            // Reserve full label height plus a safe-margin so the floating
+            // focus label never bleeds into the row below (#142) — now the
+            // Now-Playing strip rather than the viewport bottom.
+            Layout.preferredHeight: drawerActions.implicitHeight + Units.spacingLG
+            Layout.bottomMargin: Units.spacingLG
 
             QuickActions {
                 id: drawerActions

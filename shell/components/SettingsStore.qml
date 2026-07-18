@@ -193,7 +193,8 @@ Item {
         {
             key: "webApps",
             t: "object",
-            noSave: true
+            noSave: true,
+            validate: v => Array.isArray(v)
         },
         {
             key: "prewarmApps",

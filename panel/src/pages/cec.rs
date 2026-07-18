@@ -725,27 +725,43 @@ fn validate_osd_name(input: &str) -> Result<Option<String>, String> {
 /// Apply an OSD-name override to a config.toml document, preserving all other
 /// content: `Some(name)` sets `[cec].osd_name`, `None` removes the key (and a
 /// then-empty `[cec]` table stays — harmless and less surprising than deleting
-/// a section the operator may have commented around).
+/// a section the operator may have commented around). Uses `as_table_like_mut`
+/// so a hand-written inline table (`cec = { lifecycle = true }`) is edited the
+/// same as a standard `[cec]` section instead of silently no-opping.
 fn apply_osd_name(doc_text: &str, name: Option<&str>) -> Result<String, String> {
     let mut doc = doc_text
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("config.toml parse failed: {e}"))?;
     match name {
         Some(n) => {
-            doc.entry("cec")
-                .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-            let table = doc["cec"]
-                .as_table_mut()
+            let table = doc
+                .entry("cec")
+                .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+                .as_table_like_mut()
                 .ok_or_else(|| "[cec] exists but is not a table".to_string())?;
-            table["osd_name"] = toml_edit::value(n);
+            table.insert("osd_name", toml_edit::value(n));
         }
         None => {
-            if let Some(table) = doc.get_mut("cec").and_then(|i| i.as_table_mut()) {
+            if let Some(table) = doc.get_mut("cec").and_then(|i| i.as_table_like_mut()) {
                 table.remove("osd_name");
             }
         }
     }
     Ok(doc.to_string())
+}
+
+/// Write `contents` to `path` atomically: a same-directory tempfile + rename,
+/// carrying over the existing file's permissions when it exists. The daemon
+/// refuses to start on an unparseable config.toml, so a torn in-place write
+/// here (crash/power-loss between truncate and write) could brick the next
+/// boot — the rename makes that window disappear.
+fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("toml.panel-tmp");
+    std::fs::write(&tmp, contents)?;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    }
+    std::fs::rename(&tmp, path)
 }
 
 #[derive(Deserialize)]
@@ -767,27 +783,49 @@ pub async fn save_osd_name(
 pub fn render_save_osd_name(input: &str) -> String {
     let name = match validate_osd_name(input) {
         Ok(n) => n,
-        Err(msg) => return result_html(false, &format!("Not saved: {msg}")),
+        Err(msg) => return result_html(false, &format!("Not saved: {}", esc(&msg))),
     };
     let path = crate::config::config_toml_path();
     let current = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        // A missing config.toml is only workable when SETTING a name (we
-        // create the file); clearing on a missing file is a no-op success.
-        Err(_) if name.is_none() => {
+        // Only a genuinely ABSENT file may start from an empty document —
+        // any other read failure (EACCES, non-UTF-8 bytes, I/O error) must
+        // abort, or we'd "save" a fresh config.toml over an existing one and
+        // destroy every other section the operator has configured.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if name.is_none() {
+                // Clearing with no file present is already the default state.
+                return result_html(
+                    true,
+                    "No override set — the hostname default already applies.",
+                );
+            }
+            String::new()
+        }
+        Err(e) => {
             return result_html(
-                true,
-                "No override set — the hostname default already applies.",
+                false,
+                &format!(
+                    "Not saved: could not read {}: {}",
+                    path.display(),
+                    esc(&e.to_string())
+                ),
             )
         }
-        Err(_) => String::new(),
+        Ok(t) => t,
     };
     let updated = match apply_osd_name(&current, name.as_deref()) {
         Ok(u) => u,
-        Err(msg) => return result_html(false, &format!("Not saved: {msg}")),
+        Err(msg) => return result_html(false, &format!("Not saved: {}", esc(&msg))),
     };
-    if let Err(e) = std::fs::write(&path, updated) {
-        return result_html(false, &format!("Write failed for {}: {e}", path.display()));
+    if let Err(e) = write_atomic(&path, &updated) {
+        return result_html(
+            false,
+            &format!(
+                "Write failed for {}: {}",
+                path.display(),
+                esc(&e.to_string())
+            ),
+        );
     }
     let effective = name.unwrap_or_else(default_osd_name);
     result_html(
@@ -800,12 +838,24 @@ pub fn render_save_osd_name(input: &str) -> String {
     )
 }
 
-/// The name the daemon falls back to without an override: hostname truncated
-/// to [`OSD_NAME_MAX`] (mirroring the daemon's `resolve_osd_name`), else the
-/// historical `"tv-shell"`.
+/// Reduce a candidate name exactly like the daemon's `resolve_osd_name` does:
+/// printable-ASCII only, then truncated to [`OSD_NAME_MAX`]. Keeping the
+/// filter identical matters — the panel displays the "effective" name, and it
+/// must match what the daemon actually announces on the bus.
+fn sanitize_osd_name(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .take(OSD_NAME_MAX)
+        .collect()
+}
+
+/// The name the daemon falls back to without an override: the sanitized
+/// hostname (mirroring the daemon's `resolve_osd_name`), else the historical
+/// `"tv-shell"`.
 fn default_osd_name() -> String {
     hostname()
-        .map(|h| h.chars().take(OSD_NAME_MAX).collect())
+        .map(|h| sanitize_osd_name(&h))
+        .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "tv-shell".to_string())
 }
 
@@ -837,7 +887,7 @@ pub async fn render_page(state: &AppState) -> String {
         Some(name) => (name.clone(), "config.toml [cec].osd_name override"),
         None => match hostname() {
             Some(h) => (
-                h.chars().take(OSD_NAME_MAX).collect(),
+                sanitize_osd_name(&h),
                 "hostname default (no [cec].osd_name override)",
             ),
             None => ("tv-shell".to_string(), "built-in fallback"),
@@ -892,5 +942,33 @@ mod tests {
         assert!(out.contains("osd_name = \"htpc-1\""));
         // Clearing on a doc with no [cec] table is a clean no-op.
         assert_eq!(apply_osd_name("", None).unwrap(), "");
+    }
+
+    #[test]
+    fn apply_osd_name_handles_inline_cec_table() {
+        // A hand-written inline table must be edited, not silently no-opped.
+        let doc = "cec = { lifecycle = true }\n";
+        let set = apply_osd_name(doc, Some("htpc-1")).unwrap();
+        assert!(set.contains("lifecycle = true"));
+        assert!(
+            set.contains("osd_name = \"htpc-1\""),
+            "set must land: {set}"
+        );
+        let cleared = apply_osd_name(&set, None).unwrap();
+        assert!(
+            !cleared.contains("osd_name"),
+            "clear must remove: {cleared}"
+        );
+        assert!(cleared.contains("lifecycle = true"));
+    }
+
+    #[test]
+    fn sanitize_matches_daemon_resolution() {
+        // Mirrors daemon resolve_osd_name: ASCII filter BEFORE the 13-char cut.
+        assert_eq!(sanitize_osd_name("héllo tv"), "hllo tv");
+        assert_eq!(
+            sanitize_osd_name("a-very-long-device-name"),
+            "a-very-long-d"
+        );
     }
 }

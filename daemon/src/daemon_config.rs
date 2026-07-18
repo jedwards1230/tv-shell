@@ -163,8 +163,14 @@ pub struct McpConfig {
 }
 
 /// `[cec]` — HDMI-CEC lifecycle.
+///
+/// Deliberately does NOT set `deny_unknown_fields` (same rationale as
+/// [`PanelConfig`]): the tv-shell-panel binary writes `[cec].osd_name` into
+/// the shared config.toml, and panel and daemon are released independently
+/// (`input-v*` tags) — a daemon predating a panel-written key must ignore it
+/// and keep starting, not abort the whole shell backend on "unknown field".
 #[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct CecConfig {
     /// Wake the AV chain on start/resume and standby on suspend. Default `false`.
     pub lifecycle: bool,
