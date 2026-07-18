@@ -190,7 +190,7 @@ async fn handle_client(
                 return stream_events(framed, events_tx).await;
             }
             cmd => {
-                let response = dispatch(&control_tx, &dbus, &db_state, cmd).await;
+                let response = dispatch(&control_tx, &events_tx, &dbus, &db_state, cmd).await;
                 framed.send(response).await?;
             }
         }
@@ -422,6 +422,7 @@ where
 /// Resolve a non-subscribe command to its response line.
 async fn dispatch(
     control_tx: &mpsc::Sender<Control>,
+    events_tx: &broadcast::Sender<Event>,
     dbus: &DbusSenders,
     db_state: &SharedControllerDbState,
     cmd: Command,
@@ -433,6 +434,18 @@ async fn dispatch(
         // on the input runtime. Only on success (the reply isn't an error line).
         if matches!(cmd, Command::SetConfig(_)) && !resp.starts_with("error:") {
             let _ = control_tx.send(Control::ConfigChanged).await;
+        }
+        // A successful steam-set-host changed which sidecar is active. Re-probe it
+        // NOW and broadcast a `health:steam` event so subscribed widgets (the
+        // home Steam view's ServiceMonitor) re-fetch `steam-library` immediately
+        // — the newly-selected host's library + reported IP appear at once rather
+        // than after the next 10s/30s poll. Fire-and-forget: the set reply is
+        // already resolved and must not block on the probe.
+        if matches!(cmd, Command::SteamSetHost(_)) && !resp.starts_with("error:") {
+            let status = crate::service_health::probe_steam().await;
+            let _ = events_tx.send(Event::ServiceHealth(crate::service_health::health_json(
+                "steam", status,
+            )));
         }
         return resp;
     }
@@ -1202,10 +1215,12 @@ mod tests {
     async fn input_runtime_down_maps_to_error() {
         let (control_tx, control_rx) = mpsc::channel::<Control>(1);
         drop(control_rx); // no runtime listening — every send fails
+        let (events_tx, _events_rx) = broadcast::channel(16);
         let db_state = std::sync::Arc::new(tokio::sync::RwLock::new(ControllerDbState::initial()));
 
         let down = dispatch(
             &control_tx,
+            &events_tx,
             &DbusSenders::default(),
             &db_state,
             Command::Grab,
@@ -1215,6 +1230,7 @@ mod tests {
 
         let unknown = dispatch(
             &control_tx,
+            &events_tx,
             &DbusSenders::default(),
             &db_state,
             Command::Unknown,
