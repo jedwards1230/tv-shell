@@ -35,9 +35,10 @@
   {{ complex_notes_html|safe }}.
 </p>
 
-<h2>Persisted binding overrides <span class="muted">(empty = built-in defaults)</span></h2>
+<h2>Daemon-owned keys <span class="muted">(read-only; empty = built-in defaults)</span></h2>
 <p class="muted">
-  Raw subtrees as stored in settings.json, managed by the input daemon — often empty if nothing
+  Raw subtrees as stored in settings.json, managed by the input daemon — binding
+  overrides plus the web-app registry (<code>webApps</code>) — often empty if nothing
   has been customized. See the <a href="/controllers">Controllers</a> page for the resolved,
   currently-active bindings.
 </p>

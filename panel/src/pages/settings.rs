@@ -41,6 +41,10 @@ pub enum FieldKind {
     },
     Float,
     Str,
+    /// A JSON array of strings, rendered as a textarea with one entry per
+    /// line. Saving parses trimmed non-empty lines back into the array, so an
+    /// emptied textarea clears the list to `[]`.
+    StrList,
     /// An object-valued key that doesn't fit a simple form field (e.g. a
     /// nested map). Never rendered as a typed input and never emitted in the
     /// typed save patch — editable only via the raw JSON escape hatch.
@@ -55,9 +59,9 @@ pub struct SettingField {
     pub default: &'static str,
 }
 
-/// QML-owned settings keys (23 of them, matching `SettingsStore.qml`'s
-/// `_schema`, minus the daemon-owned `keyBindings` mirror it also carries —
-/// see [`DAEMON_OWNED_KEYS`] for that and its siblings).
+/// QML-owned settings keys (25 of them, matching `SettingsStore.qml`'s
+/// `_schema`, minus the daemon-owned `keyBindings` and `webApps` mirrors it
+/// also carries — see [`DAEMON_OWNED_KEYS`] for those and their siblings).
 pub const SCHEMA: &[SettingField] = &[
     SettingField {
         key: "themeMode",
@@ -156,6 +160,13 @@ pub const SCHEMA: &[SettingField] = &[
         default: "2",
     },
     SettingField {
+        key: "wallpaperPath",
+        label: "Wallpaper image path (empty = none)",
+        group: "Display",
+        kind: FieldKind::Str,
+        default: "",
+    },
+    SettingField {
         key: "nightLightEnabled",
         label: "Night light enabled",
         group: "Night Light",
@@ -241,16 +252,30 @@ pub const SCHEMA: &[SettingField] = &[
         kind: FieldKind::Complex,
         default: "{}",
     },
+    SettingField {
+        key: "prewarmApps",
+        label: "Prewarm apps at login (StartupWMClass, one per line)",
+        group: "Apps",
+        kind: FieldKind::StrList,
+        default: "",
+    },
 ];
 
-/// Daemon-owned binding keys: `keyBindings` is written solely by the daemon;
+/// Daemon-owned keys: `keyBindings` is written solely by the daemon;
 /// `perGameBindings`/`perPlayerBindings` are the per-game/per-player override
-/// layers documented in `docs/IPC_PROTOCOL.md` (`daemon/src/config.rs`).
-/// Rendered read-only here — a future Controllers page owns editing them —
-/// and NEVER emitted in a typed or raw save patch this page constructs
-/// itself (the raw JSON escape hatch can still touch them if an operator
-/// explicitly types them in, same as any other key).
-const DAEMON_OWNED_KEYS: &[&str] = &["keyBindings", "perGameBindings", "perPlayerBindings"];
+/// layers documented in `docs/IPC_PROTOCOL.md` (`daemon/src/config.rs`); and
+/// `webApps` is the web-app registry (`docs/WEB_APPS.md`) — daemon-owned from
+/// P0, with the registry IPC arriving in P1. Rendered read-only here — the
+/// Controllers page owns resolved bindings, and web-app management follows the
+/// registry IPC — and NEVER emitted in a typed or raw save patch this page
+/// constructs itself (the raw JSON escape hatch can still touch them if an
+/// operator explicitly types them in, same as any other key).
+const DAEMON_OWNED_KEYS: &[&str] = &[
+    "keyBindings",
+    "perGameBindings",
+    "perPlayerBindings",
+    "webApps",
+];
 
 // ---------------------------------------------------------------------------
 // View models
@@ -447,6 +472,24 @@ fn render_input(f: &SettingField, cfg: &Value) -> String {
                 v = escape_attr(&current)
             )
         }
+        FieldKind::StrList => {
+            let current = cfg
+                .get(f.key)
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            format!(
+                r#"<textarea id="{k}" name="{k}" rows="3">{v}</textarea>"#,
+                k = f.key,
+                v = escape_attr(&current)
+            )
+        }
         FieldKind::Complex => String::new(),
     }
 }
@@ -582,6 +625,17 @@ fn build_patch(form: &HashMap<String, String>) -> Result<Value, String> {
             FieldKind::Str => {
                 if let Some(v) = form.get(f.key) {
                     patch.insert(f.key.to_string(), Value::String(v.clone()));
+                }
+            }
+            FieldKind::StrList => {
+                if let Some(v) = form.get(f.key) {
+                    let items: Vec<Value> = v
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .map(|l| Value::String(l.to_string()))
+                        .collect();
+                    patch.insert(f.key.to_string(), Value::Array(items));
                 }
             }
         }

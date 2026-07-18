@@ -317,8 +317,14 @@ async fn settings_save_sends_expected_patch() {
     let mut form: HashMap<String, String> = HashMap::new();
     form.insert("themeMode".to_string(), "light".to_string());
     form.insert("rumbleEnabled".to_string(), "on".to_string()); // checked
-                                                                // controllerDebug intentionally absent from the form -> must become
-                                                                // explicit `false`, not be omitted.
+    form.insert("wallpaperPath".to_string(), "/home/u/wall.png".to_string());
+    // StrList textarea: blank + padded lines must be dropped, order kept.
+    form.insert(
+        "prewarmApps".to_string(),
+        "tv.plex.PlexHTPC\r\n\r\n  com.spotify.Client  \n".to_string(),
+    );
+    // controllerDebug intentionally absent from the form -> must become
+    // explicit `false`, not be omitted.
 
     let html = pages::settings::render_save(&state, &form).await;
     assert!(
@@ -336,6 +342,15 @@ async fn settings_save_sends_expected_patch() {
     assert_eq!(patch["themeMode"], "light");
     assert_eq!(patch["rumbleEnabled"], true);
     assert_eq!(patch["controllerDebug"], false);
+    assert_eq!(patch["wallpaperPath"], "/home/u/wall.png");
+    assert_eq!(
+        patch["prewarmApps"],
+        serde_json::json!(["tv.plex.PlexHTPC", "com.spotify.Client"])
+    );
+    assert!(
+        patch.get("webApps").is_none(),
+        "webApps is daemon-owned and must never appear in a Settings save patch: {patch}"
+    );
     assert!(
         patch.get("keyBindings").is_none(),
         "keyBindings must never appear in a Settings save patch: {patch}"
