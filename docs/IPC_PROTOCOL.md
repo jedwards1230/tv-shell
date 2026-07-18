@@ -14,7 +14,7 @@ The input/backend daemon (`tv-shell-input`, Rust source in `daemon/`) communicat
 
 The daemon removes any existing socket file on startup and creates a new one. Clients connect, send one command per line, and read the response. The `subscribe` command is the exception — it holds the connection open and streams events.
 
-Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, `get-notifications`, `record-notification`, `set-notifications`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, `net-throughput`, `net-ping`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query replies `cec-scan`, `cec-health`, and `cec-test`. JSON only ever appears as such a body — never as the framing itself.
+Commands and responses are **bare newline-delimited text**. A few commands carry a compact single-line JSON *body* (as a request argument and/or response): `get-bindings`, `get-pads`, `list-input-devices`, `list-apps`, `get-config`, `set-config`, `record-launch`, `get-recents`, `webapp-list`, `webapp-add`, `get-notifications`, `record-notification`, `set-notifications`, the Phase 3 query replies `bt-list`, `net-status`, `net-wifi-list`, `net-throughput`, `net-ping`, and `power-battery`, the Phase 4 query replies `hypr-active`, `hypr-clients`, `hypr-monitors`, and `sunshine-status`, and the CEC query replies `cec-scan`, `cec-health`, and `cec-test`. JSON only ever appears as such a body — never as the framing itself.
 
 ## Client-to-Daemon Commands
 
@@ -208,6 +208,57 @@ and is trimmed.
 
 Each object has `name`, `exec`, `icon`, `comment`, `wmClass` (all strings;
 missing optional fields are `""`). An empty result is `[]`.
+
+### `webapp-list`
+
+Return the web-app registry (#187). Stateless. Web apps are Chromium `--app`
+launchers the daemon generates as XDG desktop entries — see
+[WEB_APPS.md](WEB_APPS.md).
+
+**Response:** A compact single-line JSON **array**:
+
+```json
+[{"id":"youtube","name":"YouTube","url":"https://youtube.com/tv","wmClass":"tvshell-youtube"}]
+```
+
+An empty or unreadable registry is `[]`.
+
+### `webapp-add <json-object>`
+
+Register a web app and generate its launcher. Body is a compact JSON object with
+`name` and `url`; the daemon allocates `id` (a slug of the name, de-duplicated)
+and `wmClass` (`tvshell-<id>`) — clients never choose them.
+
+The daemon writes `~/.local/share/applications/tv-shell-webapp-<id>.desktop`
+with a Chromium `--app=<url>` `Exec`, a matching `--class`/`StartupWMClass`, a
+per-app `--user-data-dir`, `--ozone-platform=wayland`, and the ownership marker
+`X-TvShell-WebApp=true`. The entry therefore appears in `list-apps`, on the home
+Applications row, and via `intent app:<wmClass>` with no extra plumbing. It then
+persists the registry into the `webApps` key of settings.json (the daemon
+remains the sole settings writer).
+
+**Validation** (all rejected with `error:webapp-add failed: …`): a URL that
+isn't `http`/`https`, an empty name, control characters/newlines in either
+field, and URLs containing whitespace, quotes, backslashes, backticks, `$` or
+`;`. A `.desktop` file that exists but lacks our ownership marker is never
+overwritten. If no Chromium-family browser is found on `PATH`, the add fails
+rather than writing a launcher that can't run.
+
+**Response:** the created entry as a compact JSON object, e.g.
+`{"id":"youtube","name":"YouTube","url":"https://youtube.com/tv","wmClass":"tvshell-youtube"}`
+
+**Usage error:** `error:usage: webapp-add <json-object with name+url>`
+
+### `webapp-remove <id>`
+
+Remove a web app from the registry and delete its generated `.desktop`. A file
+lacking our ownership marker is refused rather than deleted; an already-missing
+file is not an error. The app's Chromium profile directory is deliberately
+**kept**, so re-adding the same app restores its logins.
+
+**Response:** `ok\n`, or `error:webapp-remove failed: no web app with id "…"`.
+
+**Usage error:** `error:usage: webapp-remove <id>`
 
 ### `get-config`
 
