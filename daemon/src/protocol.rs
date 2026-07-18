@@ -87,6 +87,18 @@ pub enum Command {
     SetConfig(String),
     /// `set-config` with a missing/empty body.
     SetConfigUsage,
+    /// List the web-app registry; reply is a compact JSON array of
+    /// `{id,name,url,wmClass}` objects (#187).
+    WebappList,
+    /// Register a web app. Body is a compact-JSON `{"name":…,"url":…}` object;
+    /// the daemon allocates the id/wmClass and generates the `.desktop`.
+    WebappAdd(String),
+    /// `webapp-add` with a missing/empty body.
+    WebappAddUsage,
+    /// Remove a web app by id, deleting its generated `.desktop`.
+    WebappRemove(String),
+    /// `webapp-remove` with a missing/empty id.
+    WebappRemoveUsage,
     /// Record an app launch into recents.json. The body is the raw JSON text
     /// (a `{name,exec,comment}` object) after the command word.
     RecordLaunch(String),
@@ -494,6 +506,7 @@ impl Command {
             "get-pads" => Command::GetPads,
             "list-input-devices" => Command::ListInputDevices,
             "list-apps" => Command::ListApps,
+            "webapp-list" => Command::WebappList,
             "get-config" => Command::GetConfig,
             "get-recents" => Command::GetRecents,
             "get-notifications" => Command::GetNotifications,
@@ -540,6 +553,20 @@ impl Command {
                         Command::SetConfigUsage
                     } else {
                         Command::SetConfig(body.to_string())
+                    };
+                }
+                if let Some(body) = command_body(cmd, "webapp-add") {
+                    return if body.is_empty() {
+                        Command::WebappAddUsage
+                    } else {
+                        Command::WebappAdd(body.to_string())
+                    };
+                }
+                if let Some(body) = command_body(cmd, "webapp-remove") {
+                    return if body.is_empty() {
+                        Command::WebappRemoveUsage
+                    } else {
+                        Command::WebappRemove(body.to_string())
                     };
                 }
                 if let Some(body) = command_body(cmd, "record-launch") {
@@ -1046,6 +1073,14 @@ pub fn resp_set_config_usage() -> String {
 
 pub fn resp_record_launch_usage() -> String {
     "error:usage: record-launch <json-object>".to_string()
+}
+
+pub fn resp_webapp_add_usage() -> String {
+    "error:usage: webapp-add <json-object with name+url>".to_string()
+}
+
+pub fn resp_webapp_remove_usage() -> String {
+    "error:usage: webapp-remove <id>".to_string()
 }
 
 pub fn resp_record_notification_usage() -> String {
