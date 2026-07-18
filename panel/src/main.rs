@@ -71,7 +71,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/dashboard/tiles", get(pages::dashboard::tiles)) // htmx poll partial
         .route("/processes", get(pages::processes::page))
         .route("/settings", get(pages::settings::page))
+        .route("/settings/save", post(pages::settings::save))
+        .route("/settings/raw", post(pages::settings::save_raw))
         .route("/widgets", get(pages::widgets::page))
+        .route("/widgets/save", post(pages::widgets::save))
         .route("/tools", get(pages::tools::page))
         .route("/controllers", get(pages::controllers::page))
         .route("/cec", get(pages::cec::page))
