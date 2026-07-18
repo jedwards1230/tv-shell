@@ -526,10 +526,6 @@ button.htmx-request::after {
   border-color: var(--error);
 }
 
-.stub-msg {
-  color: var(--text-muted);
-}
-
 /* ── Settings page ───────────────────────────────────────────────────── */
 
 .settings-group {
