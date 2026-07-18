@@ -118,6 +118,15 @@ fn config_path() -> PathBuf {
     tv_shell_protocol::brand::config_dir().join("config.toml")
 }
 
+/// Public counterpart of [`config_path`] for pages that need to read (but
+/// never write) `config.toml` directly — e.g. the Settings page's read-only
+/// config.toml viewer. Kept as a separate function (rather than making
+/// `config_path` `pub`) so it's obvious at a glance that this is a
+/// deliberately-exposed read path, not the loader's internals.
+pub fn config_toml_path() -> PathBuf {
+    tv_shell_protocol::brand::config_dir().join("config.toml")
+}
+
 /// Load and resolve the panel configuration. Never panics: a missing file
 /// yields all defaults; a malformed file logs a warning and falls back to
 /// defaults so the panel can still boot (and an operator can reach the Dev
