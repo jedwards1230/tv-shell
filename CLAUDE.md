@@ -326,7 +326,10 @@ restarted Hyprland doesn't leave it silently deaf.
 with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtime).
 CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
 `cecFocusOnWake` (default `true`), both within the `[cec].lifecycle` master gate
-(in `config.toml`).
+(in `config.toml`). The OSD device name the daemon announces (the input label
+TVs/AVRs display) is `[cec].osd_name`, defaulting to the machine hostname —
+editable from the panel's CEC page. Keep CEC disabled in other CEC-capable apps
+(e.g. Plex HTPC) so the daemon stays the box's single CEC owner.
 
 ### Widget sidecars (remote HTTP backends)
 
