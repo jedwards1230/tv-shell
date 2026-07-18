@@ -81,10 +81,12 @@ FocusScope {
             return;
         }
         // Last control: drop into the widget's inlined server surface when
-        // present (Moonlight's target manager / Steam's server picker).
+        // present (Moonlight's target manager / Steam's server picker). The
+        // Steam picker is always shown but only focusable when it has hosts to
+        // pick (an empty state has nothing to land on).
         if (root._isMoonlight && moonlightServersLoader.item)
             moonlightServersLoader.item.forceActiveFocus();
-        else if (root._isSteam && steamServersLoader.item && steamServersLoader.item.visible)
+        else if (root._isSteam && steamServersLoader.item && steamServersLoader.item.available)
             steamServersLoader.item.forceActiveFocus();
     }
 
@@ -262,15 +264,16 @@ FocusScope {
                 }
             }
 
-            // Steam special-case: inline the server picker below the manifest
+            // Steam special-case: inline the server surface below the manifest
             // controls — selects which configured tv-shell-host sidecar the
             // daemon actively checks (`steam-hosts` / `steam-set-host` IPC).
-            // Collapses itself when the daemon reports no hosts.
+            // Always shown on the Steam config (mirrors Moonlight); it renders
+            // its own empty state when no host is configured.
             Loader {
                 id: steamServersLoader
                 Layout.fillWidth: true
                 active: root._isSteam
-                visible: active && item !== null && item.visible
+                visible: active
                 sourceComponent: steamServersComp
                 onLoaded: {
                     if (item)
