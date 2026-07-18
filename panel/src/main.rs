@@ -5,9 +5,9 @@
 //! primary Unix-socket IPC tier, `bridge` — the daemon's opt-in HTTP dev-ops
 //! bridge, `exec` — a direct-exec recovery tier for when both of the above
 //! are down), the app shell with nav for all nine pages, and three fully
-//! implemented pages (Dashboard, Logs, Dev). The other six pages
-//! (Processes, Settings, Widgets, Tools, Controllers, CEC) render an honest
-//! stub until their milestone lands.
+//! implemented pages (Dashboard, Logs, Dev). M2 added Settings and Widgets;
+//! M3 added the Tools console, Processes page, and the Dev-page screenshot
+//! viewer. Controllers and CEC still render an honest stub until M4 lands.
 //!
 //! Auth: none in v1 (LAN-only deployment; `[panel].token_file` is parsed but
 //! unused for the panel's own auth surface — reserved for a later milestone).
@@ -70,12 +70,54 @@ async fn main() -> anyhow::Result<()> {
         .route("/dashboard", get(pages::dashboard::page))
         .route("/dashboard/tiles", get(pages::dashboard::tiles)) // htmx poll partial
         .route("/processes", get(pages::processes::page))
+        .route("/processes/restart/{key}", post(pages::processes::restart))
         .route("/settings", get(pages::settings::page))
         .route("/settings/save", post(pages::settings::save))
         .route("/settings/raw", post(pages::settings::save_raw))
         .route("/widgets", get(pages::widgets::page))
         .route("/widgets/save", post(pages::widgets::save))
         .route("/tools", get(pages::tools::page))
+        .route("/tools/intent", post(pages::tools::intent))
+        .route("/tools/key", post(pages::tools::key))
+        .route("/tools/apps/list", post(pages::tools::list_apps))
+        .route("/tools/apps/launch", post(pages::tools::launch_app))
+        .route("/tools/apps/recents", post(pages::tools::get_recents))
+        .route(
+            "/tools/bt/power-status",
+            post(pages::tools::bt_power_status),
+        )
+        .route("/tools/bt/power-on", post(pages::tools::bt_power_on))
+        .route("/tools/bt/power-off", post(pages::tools::bt_power_off))
+        .route("/tools/bt/scan-on", post(pages::tools::bt_scan_on))
+        .route("/tools/bt/scan-off", post(pages::tools::bt_scan_off))
+        .route("/tools/bt/list", post(pages::tools::bt_list))
+        .route("/tools/bt/action", post(pages::tools::bt_action))
+        .route("/tools/net/status", post(pages::tools::net_status))
+        .route("/tools/net/wifi-list", post(pages::tools::net_wifi_list))
+        .route(
+            "/tools/net/wifi-rescan",
+            post(pages::tools::net_wifi_rescan),
+        )
+        .route("/tools/net/throughput", post(pages::tools::net_throughput))
+        .route("/tools/net/ping", post(pages::tools::net_ping))
+        .route(
+            "/tools/power/can-suspend",
+            post(pages::tools::power_can_suspend),
+        )
+        .route("/tools/power/battery", post(pages::tools::power_battery))
+        .route("/tools/sys/status", post(pages::tools::sys_status))
+        .route("/tools/sys/metrics", post(pages::tools::sys_metrics))
+        .route("/tools/sys/storage", post(pages::tools::sys_storage))
+        .route("/tools/sys/build-info", post(pages::tools::sys_build_info))
+        .route(
+            "/tools/sys/controllerdb-status",
+            post(pages::tools::controllerdb_status),
+        )
+        .route(
+            "/tools/sys/controllerdb-refresh",
+            post(pages::tools::controllerdb_refresh),
+        )
+        .route("/tools/raw", post(pages::tools::raw))
         .route("/controllers", get(pages::controllers::page))
         .route("/cec", get(pages::cec::page))
         .route("/logs", get(pages::logs::page))
@@ -87,6 +129,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/dev/restart-shell", post(pages::dev::restart_shell))
         .route("/dev/reboot", post(pages::dev::reboot))
         .route("/dev/suspend", post(pages::dev::suspend))
+        .route("/dev/screenshot", get(pages::dev::screenshot_png))
+        .route(
+            "/dev/screenshot/capture",
+            post(pages::dev::screenshot_capture),
+        )
         .route("/assets/htmx.min.js", get(assets::htmx_js))
         .route("/assets/style.css", get(assets::style_css))
         .with_state(state);

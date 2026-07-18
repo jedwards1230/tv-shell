@@ -113,6 +113,19 @@ impl Recovery {
         run("systemctl", &["suspend"], SYSTEMCTL_TIMEOUT).await
     }
 
+    /// `systemctl --user restart <unit>` for an arbitrary unit name — a
+    /// generic counterpart to [`Self::restart_daemon`]/[`Self::restart_shell`]
+    /// used by the Processes page, which restarts all three tv-shell units
+    /// (daemon/shell/panel) from one code path rather than three near-
+    /// identical named wrappers. The caller is responsible for only passing a
+    /// known-good unit name (see `pages::processes::render_restart`, which
+    /// maps a fixed key to a unit name rather than accepting one from the
+    /// client directly).
+    pub async fn restart_unit(&self, unit: &str) -> Result<String, ExecError> {
+        let _guard = self.lock.lock().await;
+        run("systemctl", &["--user", "restart", unit], SYSTEMCTL_TIMEOUT).await
+    }
+
     // ── Non-destructive (no lock) ────────────────────────────────────────
 
     /// `journalctl --user -u <unit> -n <lines> --no-pager`, then post-filter
@@ -182,6 +195,20 @@ impl Recovery {
             }
             Err(_) => "unknown".to_string(),
         }
+    }
+
+    /// Top ~15 processes by CPU: `ps axo pid,pcpu,pmem,comm --sort=-pcpu`
+    /// (GNU `ps`), truncated to a header line + 15 rows. Read-only — no kill
+    /// action in v1 (deferred; see `docs/PANEL.md`). Non-destructive — no
+    /// lock.
+    pub async fn top_processes(&self) -> Result<String, ExecError> {
+        let out = run(
+            "ps",
+            &["axo", "pid,pcpu,pmem,comm", "--sort=-pcpu"],
+            READ_TIMEOUT,
+        )
+        .await?;
+        Ok(out.lines().take(16).collect::<Vec<_>>().join("\n"))
     }
 }
 

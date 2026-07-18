@@ -11,6 +11,7 @@
   --error: #e5534b;
   --danger: #c0392b;
   --danger-hover: #e14b3a;
+  --warn: #e5b34b;
   --radius: 6px;
 }
 
@@ -377,4 +378,55 @@ textarea {
   letter-spacing: normal;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+/* ── Tools page ──────────────────────────────────────────────────────── */
+
+.tools-section {
+  margin-bottom: 1.5rem;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.inline-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.tools-table td form.inline-form,
+.tools-table td .inline-form {
+  margin-bottom: 0;
+  margin-right: 0.35rem;
+}
+
+.banner-warn {
+  background: rgba(229, 179, 75, 0.15);
+  color: var(--warn);
+}
+
+/* ── Processes page ──────────────────────────────────────────────────── */
+
+.processes-section {
+  margin-bottom: 1.5rem;
+}
+
+/* ── Dev page screenshot ─────────────────────────────────────────────── */
+
+.dev-screenshot {
+  margin-top: 1.5rem;
+}
+
+.screenshot {
+  max-width: 100%;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-top: 0.5rem;
 }

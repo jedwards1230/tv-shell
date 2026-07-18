@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Processes — tv-shell panel{% endblock %}
+{% block content %}
+<h1>Processes</h1>
+
+<div id="processes-result"></div>
+
+<section class="processes-section">
+  <h2>systemd units</h2>
+  <table>
+    <thead><tr><th>Unit</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {% for u in units %}
+    <tr>
+      <td>{{ u.label }} <span class="muted">({{ u.unit }})</span></td>
+      <td>{{ u.state }}</td>
+      <td>
+        <form hx-post="/processes/restart/{{ u.key }}" hx-target="#processes-result" hx-swap="innerHTML"
+              hx-confirm="Restart {{ u.unit }} now?" class="inline-form">
+          <button class="danger" type="submit">Restart</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="processes-section">
+  <h2>Hyprland</h2>
+  {% if !hypr_available %}
+  <p class="banner banner-error">Hyprland data unavailable — daemon unreachable or the Hyprland actor is down.</p>
+  {% endif %}
+  <h3>Active window</h3>
+  <pre>{{ hypr_active }}</pre>
+  <h3>Clients</h3>
+  <pre>{{ hypr_clients }}</pre>
+  <details>
+    <summary>Monitors</summary>
+    <pre>{{ hypr_monitors }}</pre>
+  </details>
+</section>
+
+<section class="processes-section">
+  <h2>Top processes</h2>
+  <p class="muted">Read-only snapshot, CPU-sorted, top ~15. No kill action in v1 — deferred.</p>
+  <pre>{{ top_processes }}</pre>
+</section>
+{% endblock %}

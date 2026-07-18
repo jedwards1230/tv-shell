@@ -47,4 +47,10 @@
     <button class="danger" type="submit">Suspend</button>
   </form>
 </div>
+
+<div class="dev-screenshot">
+  <h3>Screenshot <span class="tier">Bridge</span></h3>
+  <button hx-post="/dev/screenshot/capture" hx-target="#dev-screenshot-result" hx-swap="innerHTML">Load screenshot</button>
+  <div id="dev-screenshot-result"></div>
+</div>
 {% endblock %}
