@@ -14,6 +14,7 @@ use axum::Form;
 use serde::Deserialize;
 
 use crate::bridge::BridgeError;
+use crate::config;
 use crate::state::{AppState, SharedState};
 
 #[derive(Template)]
@@ -22,6 +23,8 @@ struct DevTemplate {
     active: &'static str,
     daemon_up: bool,
     bridge_configured: bool,
+    daemon_chip_html: String,
+    shell_chip_html: String,
 }
 
 /// `GET /dev` — probes daemon reachability (bridge `dev_status`, else IPC
@@ -32,13 +35,60 @@ pub async fn page(State(state): State<SharedState>) -> impl IntoResponse {
 
 pub async fn render_page(state: &AppState) -> String {
     let daemon_up = probe_daemon_up(state).await;
+    let daemon_chip_html = render_unit_chip(state, "daemon", config::daemon_unit(), false).await;
+    let shell_chip_html = render_unit_chip(state, "shell", config::shell_unit(), false).await;
     let tmpl = DevTemplate {
         active: "dev",
         daemon_up,
         bridge_configured: state.cfg.http_bridge_base.is_some(),
+        daemon_chip_html,
+        shell_chip_html,
     };
     tmpl.render()
         .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
+/// Map a raw `systemctl is-active` string to a colored dot class + a short
+/// status word — color always paired with explicit text (#6), same mapping
+/// as `pages::dashboard`/`pages::processes` (each page keeps its own copy —
+/// see `pages::controllers`'s doc comment for why).
+fn unit_dot(state: &str) -> (&'static str, &'static str) {
+    match state {
+        "active" => ("dot-ok", "active"),
+        "failed" => ("dot-error", "failed"),
+        "activating" => ("dot-warn", "activating"),
+        "deactivating" => ("dot-warn", "deactivating"),
+        "inactive" => ("dot-neutral", "inactive"),
+        _ => ("dot-neutral", "unknown"),
+    }
+}
+
+/// Render a `<span id="dev-{id}-chip">` dot+word status chip for `unit`.
+/// `oob` adds `hx-swap-oob="true"` so this can be bolted onto another
+/// action's response (#7 — post-action verification: after
+/// restart/build/deploy, the operator sees the unit actually came back
+/// without a manual page reload) as well as rendered inline on normal page
+/// load (`oob = false`).
+async fn render_unit_chip(state: &AppState, id: &str, unit: String, oob: bool) -> String {
+    let raw = state.recovery.unit_active(&unit).await;
+    let (dot_class, word) = unit_dot(&raw);
+    let oob_attr = if oob { " hx-swap-oob=\"true\"" } else { "" };
+    format!(
+        r#"<span class="dot {dot_class}" id="dev-{id}-chip"{oob_attr} title="{unit}: {raw}">{word}</span>"#
+    )
+}
+
+/// Post-action verification (#7): a fresh daemon + shell unit-state chip
+/// pair plus a nav-dot refresh, all as htmx out-of-band swaps, appended to
+/// every deploy/build/restart-daemon/restart-shell response — so the
+/// operator sees the unit(s) actually came back (or didn't) right in the
+/// response, instead of waiting on the nav dot's own next ~10s poll or
+/// reloading the page.
+async fn oob_verification(state: &AppState) -> String {
+    let daemon_chip = render_unit_chip(state, "daemon", config::daemon_unit(), true).await;
+    let shell_chip = render_unit_chip(state, "shell", config::shell_unit(), true).await;
+    let nav_dot = super::nav::render_oob(state).await;
+    format!("{daemon_chip}{shell_chip}{nav_dot}")
 }
 
 async fn probe_daemon_up(state: &AppState) -> bool {
@@ -90,7 +140,7 @@ pub async fn deploy(
 }
 
 async fn render_deploy(state: &AppState, git_ref: Option<&str>) -> String {
-    match state.bridge.deploy(git_ref).await {
+    let result = match state.bridge.deploy(git_ref).await {
         Ok(body) => result_html("Bridge", "deploy", true, &body),
         Err(e) => result_html(
             "Bridge",
@@ -101,7 +151,8 @@ async fn render_deploy(state: &AppState, git_ref: Option<&str>) -> String {
                  try Restart daemon or Build instead"
             ),
         ),
-    }
+    };
+    format!("{result}{}", oob_verification(state).await)
 }
 
 /// `POST /dev/build` — bridge if the daemon is up, else direct exec.
@@ -110,14 +161,15 @@ pub async fn build(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 async fn render_build(state: &AppState) -> String {
-    match state.bridge.build().await {
+    let result = match state.bridge.build().await {
         Ok(body) => result_html("Bridge", "build", true, &body),
         Err(e) if bridge_unavailable(&e) => match state.recovery.build_daemon().await {
             Ok(body) => result_html("Direct exec", "build", true, &body),
             Err(e2) => result_html("Direct exec", "build", false, &e2.to_string()),
         },
         Err(e) => result_html("Bridge", "build", false, &e.to_string()),
-    }
+    };
+    format!("{result}{}", oob_verification(state).await)
 }
 
 /// `POST /dev/restart-daemon` — bridge if the daemon is up, else direct exec.
@@ -126,14 +178,15 @@ pub async fn restart_daemon(State(state): State<SharedState>) -> impl IntoRespon
 }
 
 async fn render_restart_daemon(state: &AppState) -> String {
-    match state.bridge.restart_daemon().await {
+    let result = match state.bridge.restart_daemon().await {
         Ok(body) => result_html("Bridge", "restart-daemon", true, &body),
         Err(e) if bridge_unavailable(&e) => match state.recovery.restart_daemon().await {
             Ok(body) => result_html("Direct exec", "restart-daemon", true, &body),
             Err(e2) => result_html("Direct exec", "restart-daemon", false, &e2.to_string()),
         },
         Err(e) => result_html("Bridge", "restart-daemon", false, &e.to_string()),
-    }
+    };
+    format!("{result}{}", oob_verification(state).await)
 }
 
 /// `POST /dev/restart-shell` — bridge if the daemon is up, else direct exec.
@@ -142,14 +195,15 @@ pub async fn restart_shell(State(state): State<SharedState>) -> impl IntoRespons
 }
 
 async fn render_restart_shell(state: &AppState) -> String {
-    match state.bridge.restart_shell().await {
+    let result = match state.bridge.restart_shell().await {
         Ok(body) => result_html("Bridge", "restart-shell", true, &body),
         Err(e) if bridge_unavailable(&e) => match state.recovery.restart_shell().await {
             Ok(body) => result_html("Direct exec", "restart-shell", true, &body),
             Err(e2) => result_html("Direct exec", "restart-shell", false, &e2.to_string()),
         },
         Err(e) => result_html("Bridge", "restart-shell", false, &e.to_string()),
-    }
+    };
+    format!("{result}{}", oob_verification(state).await)
 }
 
 /// `POST /dev/reboot` — always direct exec.
@@ -267,5 +321,84 @@ pub async fn screenshot_png(State(state): State<SharedState>) -> Response {
             format!("screenshot unavailable: {e}"),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bridge::BridgeClient;
+    use crate::config::AppConfig;
+    use crate::exec::Recovery;
+    use crate::ipc::IpcClient;
+    use std::sync::Arc;
+
+    /// Hermetic `AppState` (unreachable IPC socket, no HTTP bridge) — mirrors
+    /// `crate::tests::hermetic_state`, duplicated here since that helper lives
+    /// in a sibling test module and these `render_*` functions are private to
+    /// this page.
+    fn hermetic_state() -> Arc<AppState> {
+        let sock = std::path::PathBuf::from(format!(
+            "/tmp/tvshp-dev-hermetic-{}-{:?}.sock",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        Arc::new(AppState {
+            cfg: AppConfig::default(),
+            ipc: IpcClient::new(sock),
+            bridge: BridgeClient::new(None, None),
+            recovery: Recovery::new(),
+            updates: crate::updates::UpdatesState::default(),
+        })
+    }
+
+    #[test]
+    fn unit_dot_maps_active_and_failed_to_distinct_colors() {
+        assert_eq!(unit_dot("active"), ("dot-ok", "active"));
+        assert_eq!(unit_dot("failed"), ("dot-error", "failed"));
+        assert_eq!(unit_dot("something-unexpected"), ("dot-neutral", "unknown"));
+    }
+
+    #[tokio::test]
+    async fn restart_daemon_response_includes_oob_verification() {
+        let state = hermetic_state();
+        let html = render_restart_daemon(&state).await;
+        assert!(
+            html.contains(r#"id="dev-daemon-chip""#) && html.contains(r#"hx-swap-oob="true""#),
+            "expected an OOB daemon unit chip refresh: {html}"
+        );
+        assert!(
+            html.contains(r#"id="dev-shell-chip""#),
+            "expected an OOB shell unit chip refresh: {html}"
+        );
+        assert!(
+            html.contains(r#"id="nav-daemon-status""#),
+            "expected an OOB nav-dot refresh: {html}"
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_shell_build_and_deploy_responses_include_oob_verification() {
+        let state = hermetic_state();
+        for html in [
+            render_restart_shell(&state).await,
+            render_build(&state).await,
+            render_deploy(&state, None).await,
+        ] {
+            assert!(
+                html.contains(r#"id="dev-daemon-chip""#) && html.contains(r#"id="dev-shell-chip""#),
+                "expected both OOB unit chips on every dev action response: {html}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dev_page_renders_inline_unit_chips() {
+        let state = hermetic_state();
+        let html = render_page(&state).await;
+        assert!(
+            html.contains(r#"id="dev-daemon-chip""#) && html.contains(r#"id="dev-shell-chip""#),
+            "expected the inline unit chips on normal page load: {html}"
+        );
     }
 }

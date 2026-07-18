@@ -37,3 +37,20 @@ pub async fn render_dot(state: &AppState) -> String {
     };
     format!(r#"<span class="dot {dot_class}" title="{title}"></span>daemon"#)
 }
+
+/// [`render_dot`]'s content wrapped as an htmx out-of-band swap fragment,
+/// targeting the topnav's `#nav-daemon-status` span directly (rather than
+/// waiting up to the normal 10s poll interval) — used by
+/// `pages::dev`'s post-action verification (#7) so a restart/build/deploy
+/// response updates the nav dot immediately instead of leaving it stale
+/// until its own next poll. An OOB swap replaces the WHOLE matched element
+/// (outerHTML), so this fragment re-declares the same `hx-get`/`hx-trigger`/
+/// `hx-swap` attributes `base.html` gives the span — otherwise the
+/// replacement would carry the fresh dot but silently drop the polling loop
+/// that keeps it current afterward.
+pub async fn render_oob(state: &AppState) -> String {
+    let inner = render_dot(state).await;
+    format!(
+        r#"<span class="nav-daemon-status" id="nav-daemon-status" hx-swap-oob="true" hx-get="/nav/daemon-status" hx-trigger="load, every 10s" hx-swap="innerHTML">{inner}</span>"#
+    )
+}

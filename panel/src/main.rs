@@ -21,6 +21,7 @@ mod ipc;
 mod pages;
 mod state;
 mod text;
+mod updates;
 
 #[cfg(test)]
 mod tests;
@@ -57,12 +58,14 @@ async fn main() -> anyhow::Result<()> {
     let ipc = ipc::IpcClient::new(sock);
     let bridge = bridge::BridgeClient::new(cfg.http_bridge_base.clone(), cfg.http_token.clone());
     let recovery = exec::Recovery::new();
+    let updates = updates::UpdatesState::default();
 
     let state: SharedState = Arc::new(AppState {
         cfg,
         ipc,
         bridge,
         recovery,
+        updates,
     });
 
     // Route registration is one line per page so later milestones can add
@@ -71,13 +74,31 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(pages::dashboard::page))
         .route("/dashboard", get(pages::dashboard::page))
         .route("/dashboard/tiles", get(pages::dashboard::tiles)) // htmx poll partial
+        .route(
+            "/dashboard/updates-tile",
+            get(pages::dashboard::updates_tile),
+        ) // htmx poll partial, own slower interval
         .route("/processes", get(pages::processes::page))
         .route("/processes/restart/{key}", post(pages::processes::restart))
+        .route(
+            "/processes/updates/refresh",
+            post(pages::processes::updates_refresh),
+        )
+        .route(
+            "/processes/updates/apply",
+            post(pages::processes::updates_apply),
+        )
+        .route("/processes/updates/job", get(pages::processes::updates_job))
         .route("/settings", get(pages::settings::page))
         .route("/settings/save", post(pages::settings::save))
         .route("/settings/raw", post(pages::settings::save_raw))
         .route("/widgets", get(pages::widgets::page))
         .route("/widgets/save", post(pages::widgets::save))
+        .route("/widgets/reorder/{id}/up", post(pages::widgets::reorder_up))
+        .route(
+            "/widgets/reorder/{id}/down",
+            post(pages::widgets::reorder_down),
+        )
         .route("/tools", get(pages::tools::page))
         .route("/tools/intent", post(pages::tools::intent))
         .route("/tools/key", post(pages::tools::key))

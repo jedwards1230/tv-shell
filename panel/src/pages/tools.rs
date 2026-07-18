@@ -220,9 +220,9 @@ async fn render_list_apps(state: &AppState) -> String {
             for a in &apps {
                 html.push_str(&format!(
                     r##"<tr><td>{name}</td><td class="muted">{comment}</td><td>
-                       <form hx-post="/tools/apps/launch" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+                       <form hx-post="/tools/apps/launch" hx-disabled-elt="find button" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
                          <input type="hidden" name="wm_class" value="{wm}">
-                         <button type="submit">Launch</button>
+                         <button class="btn-mutate" type="submit">Launch</button>
                        </form></td></tr>"##,
                     name = esc(&a.name),
                     comment = esc(&a.comment),
@@ -335,10 +335,10 @@ async fn render_bt_list(state: &AppState) -> String {
                 ));
                 for action in BT_ACTIONS {
                     html.push_str(&format!(
-                        r##"<form hx-post="/tools/bt/action" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
+                        r##"<form hx-post="/tools/bt/action" hx-disabled-elt="find button" hx-target="#tools-result" hx-swap="innerHTML" class="inline-form">
                              <input type="hidden" name="mac" value="{mac}">
                              <input type="hidden" name="action" value="{action}">
-                             <button type="submit">{action}</button>
+                             <button class="btn-mutate" type="submit">{action}</button>
                            </form>"##,
                         mac = esc(&d.mac),
                         action = action,

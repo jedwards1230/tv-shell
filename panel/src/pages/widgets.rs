@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 
 use askama::Template;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::response::{Html, IntoResponse};
 use axum::Form;
 use serde_json::Value;
@@ -131,6 +131,29 @@ struct CurrentWidget {
     prefs: Vec<(&'static str, bool)>,
 }
 
+/// Resolve every [`MANIFESTS`] entry's current state against `cfg`'s
+/// `widgets` subtree, in [`MANIFESTS`] declaration order (NOT yet sorted by
+/// `order` — callers that need display/reorder order call
+/// [`sort_by_order`] on the result).
+fn resolve_current(cfg: &Value) -> Vec<(&'static WidgetManifest, CurrentWidget)> {
+    let widgets_obj = cfg.get("widgets").and_then(Value::as_object);
+    MANIFESTS
+        .iter()
+        .map(|m| {
+            let existing = widgets_obj.and_then(|o| o.get(m.id));
+            (m, current_widget(m, existing))
+        })
+        .collect()
+}
+
+/// Sort a resolved widget list by its persisted `order` field. A stable sort
+/// (Rust's `sort_by_key` is stable) so widgets that tie on `order` keep
+/// their [`MANIFESTS`] declaration order rather than shuffling
+/// nondeterministically.
+fn sort_by_order(current: &mut [(&'static WidgetManifest, CurrentWidget)]) {
+    current.sort_by_key(|(_, cur)| cur.order);
+}
+
 fn current_widget(m: &'static WidgetManifest, existing: Option<&Value>) -> CurrentWidget {
     let mut enabled = m.default_enabled;
     let mut order = m.default_order;
@@ -230,31 +253,35 @@ pub async fn render_page(state: &AppState) -> String {
     }
 }
 
+/// Build a card's view model from its manifest + resolved current state.
+/// Shared by the initial page render and the reorder partial (#9) so both
+/// stay pixel-identical.
+fn build_card_view(m: &'static WidgetManifest, cur: &CurrentWidget) -> WidgetCardView {
+    WidgetCardView {
+        id: m.id,
+        name: m.name,
+        enabled: cur.enabled,
+        order: cur.order,
+        size_select_html: render_size_select(m, &cur.size),
+        prefs: cur
+            .prefs
+            .iter()
+            .zip(m.prefs)
+            .map(|((key, checked), pf)| PrefView {
+                key,
+                label: pf.label,
+                checked: *checked,
+            })
+            .collect(),
+    }
+}
+
 fn render_ok(cfg: &Value) -> String {
-    let widgets_obj = cfg.get("widgets").and_then(Value::as_object);
-    let cards = MANIFESTS
+    let mut current = resolve_current(cfg);
+    sort_by_order(&mut current);
+    let cards = current
         .iter()
-        .map(|m| {
-            let existing = widgets_obj.and_then(|o| o.get(m.id));
-            let cur = current_widget(m, existing);
-            WidgetCardView {
-                id: m.id,
-                name: m.name,
-                enabled: cur.enabled,
-                order: cur.order,
-                size_select_html: render_size_select(m, &cur.size),
-                prefs: cur
-                    .prefs
-                    .iter()
-                    .zip(m.prefs)
-                    .map(|((key, checked), pf)| PrefView {
-                        key,
-                        label: pf.label,
-                        checked: *checked,
-                    })
-                    .collect(),
-            }
-        })
+        .map(|(m, cur)| build_card_view(m, cur))
         .collect();
 
     let tmpl = WidgetsTemplate {
@@ -289,6 +316,124 @@ fn render_size_select(m: &WidgetManifest, current: &str) -> String {
         id = m.id,
         opts = opts
     )
+}
+
+// ---------------------------------------------------------------------------
+// POST /widgets/reorder/:id/up|down (#9)
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "widgets_grid.html")]
+struct WidgetsGridTemplate {
+    cards: Vec<WidgetCardView>,
+}
+
+fn render_grid(cards: Vec<WidgetCardView>) -> String {
+    let tmpl = WidgetsGridTemplate { cards };
+    tmpl.render()
+        .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
+/// `POST /widgets/reorder/:id/up` — swap `id` with its predecessor in the
+/// current display order.
+pub async fn reorder_up(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    Html(render_reorder(&state, &id, "up").await)
+}
+
+/// `POST /widgets/reorder/:id/down` — swap `id` with its successor in the
+/// current display order.
+pub async fn reorder_down(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    Html(render_reorder(&state, &id, "down").await)
+}
+
+/// Swap widget `id` with its `up`/`down` neighbor in the current order,
+/// renumber ALL five widgets' `order` fields to a clean sequential 0..N
+/// (self-healing any pre-existing gaps/ties), and `set-config` the COMPLETE
+/// `widgets` object in one call — the same shallow-merge requirement
+/// [`build_widgets_patch`] documents for the form-driven Save button.
+/// Returns just the refreshed `#widget-grid` partial (`hx-swap="outerHTML"`
+/// on the caller side), so this is an immediately-persisted, standalone
+/// action: any unsaved edits to OTHER cards' enabled/size/prefs fields are
+/// reset to their last-persisted value when the grid re-renders, rather than
+/// deferred to the page's "Save widgets" button.
+pub async fn render_reorder(state: &AppState, id: &str, dir: &str) -> String {
+    let cfg = match state.ipc.get_config().await {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return format!(
+                "<p class=\"banner banner-error\">Reorder failed: {e}</p>{}",
+                render_grid(Vec::new())
+            )
+        }
+    };
+
+    let mut current = resolve_current(&cfg);
+    sort_by_order(&mut current);
+
+    if let Some(pos) = current.iter().position(|(m, _)| m.id == id) {
+        let swap_with = match dir {
+            "up" if pos > 0 => Some(pos - 1),
+            "down" if pos + 1 < current.len() => Some(pos + 1),
+            // Already at the boundary (or an unrecognized `dir`, unreachable
+            // via the two fixed routes) — no swap, but still fall through to
+            // the renumber+persist below so a stale/duplicate order in
+            // settings.json gets self-healed either way.
+            _ => None,
+        };
+        if let Some(other) = swap_with {
+            current.swap(pos, other);
+        }
+    }
+    // An unknown `id` (stale card, race with a manifest change) leaves
+    // `current` unswapped — still renumbered/re-rendered below rather than
+    // erroring, since the grid must always reflect *some* valid state.
+
+    for (i, (_, cur)) in current.iter_mut().enumerate() {
+        cur.order = i as i64;
+    }
+
+    let patch = widgets_patch_from(&current);
+    let cards: Vec<WidgetCardView> = current
+        .iter()
+        .map(|(m, cur)| build_card_view(m, cur))
+        .collect();
+
+    match state.ipc.set_config(&patch).await {
+        Ok(()) => render_grid(cards),
+        Err(e) => format!(
+            "<p class=\"banner banner-error\">Reorder failed to save: {e}</p>{}",
+            render_grid(cards)
+        ),
+    }
+}
+
+/// Build a complete `{"widgets": {...}}` `set-config` patch from an already
+/// resolved+ordered widget list — the reorder-path counterpart of
+/// [`build_widgets_patch`] (which builds the same shape from a raw HTML
+/// form instead of typed [`CurrentWidget`]s).
+fn widgets_patch_from(current: &[(&'static WidgetManifest, CurrentWidget)]) -> Value {
+    let mut widgets = serde_json::Map::new();
+    for (m, cur) in current {
+        let mut prefs = serde_json::Map::new();
+        for (key, val) in &cur.prefs {
+            prefs.insert((*key).to_string(), Value::Bool(*val));
+        }
+        let mut widget = serde_json::Map::new();
+        widget.insert("enabled".to_string(), Value::Bool(cur.enabled));
+        widget.insert("order".to_string(), Value::Number(cur.order.into()));
+        widget.insert("size".to_string(), Value::String(cur.size.clone()));
+        widget.insert("prefs".to_string(), Value::Object(prefs));
+        widgets.insert(m.id.to_string(), Value::Object(widget));
+    }
+    let mut patch = serde_json::Map::new();
+    patch.insert("widgets".to_string(), Value::Object(widgets));
+    Value::Object(patch)
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,32 @@
+<div id="updates-check">
+  {% if !error.is_empty() %}
+  <p class="banner banner-error">{{ error }}</p>
+  {% endif %}
+  {% if reboot_needed %}
+  <p class="banner banner-error"><strong>Reboot needed</strong> — the installed kernel differs from the running one. <a href="/dev">Go to Dev &rarr; Reboot</a>.</p>
+  {% else if reboot_unknown %}
+  <p class="muted">Reboot-needed status: unknown (couldn't determine the kernel package unambiguously).</p>
+  {% endif %}
+  <p class="muted">Checked {{ checked_ago }}.</p>
+  {% if pending.is_empty() %}
+  <p class="degraded-msg">No pending updates.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Package</th><th>Current</th><th>New</th></tr></thead>
+    <tbody>
+    {% for p in pending %}
+    <tr><td>{{ p.name }}</td><td class="muted">{{ p.old_version }}</td><td>{{ p.new_version }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <div class="button-row">
+    <form hx-post="/processes/updates/refresh" hx-disabled-elt="find button" hx-target="#updates-check" hx-swap="outerHTML" class="inline-form">
+      <button class="btn-probe" type="submit">Refresh</button>
+    </form>
+    <form hx-post="/processes/updates/apply" hx-disabled-elt="find button" hx-target="#update-job-status" hx-swap="outerHTML" class="inline-form"
+          hx-confirm="Run a full system update (sudo pacman -Syu --noconfirm) now? This installs every pending package immediately.">
+      <button class="danger-severe" type="submit">Run full update</button>
+    </form>
+  </div>
+</div>

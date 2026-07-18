@@ -28,5 +28,11 @@
 <main>
 {% block content %}{% endblock %}
 </main>
+<script>
+// Mobile nav affordance: the active page link may be scrolled out of view
+// in the horizontally-scrolling topnav (the right-edge fade gradient hints
+// there's more, but doesn't say where "here" is) — center it on load.
+document.querySelector('.topnav a.active')?.scrollIntoView({ inline: 'center' });
+</script>
 </body>
 </html>

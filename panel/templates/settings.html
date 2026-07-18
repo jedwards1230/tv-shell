@@ -14,7 +14,7 @@
 
 {% if daemon_up %}
 
-<form hx-post="/settings/save" hx-target="#settings-result" hx-swap="innerHTML">
+<form hx-post="/settings/save" hx-disabled-elt="find button" hx-target="#settings-result" hx-swap="innerHTML">
   {% for group in groups %}
   <section class="settings-group">
     <h3>{{ group.name }}</h3>
@@ -58,7 +58,7 @@
   write any key, including ones not shown above (e.g. <code>widgets</code>,
   <code>cecDeviceNames</code>, or the daemon-owned binding keys).
 </p>
-<form id="raw-form" hx-post="/settings/raw" hx-target="#settings-result" hx-swap="innerHTML"
+<form id="raw-form" hx-post="/settings/raw" hx-disabled-elt="find button" hx-target="#settings-result" hx-swap="innerHTML"
       onsubmit="return tvShellValidateRawSettings(event)">
   <textarea id="raw_json" name="raw_json" rows="15" style="width:100%;">{{ raw_json }}</textarea>
   <p class="muted">Formatted for editing; sent compact.</p>

@@ -13,17 +13,23 @@
     {% for u in units %}
     <tr>
       <td>{{ u.label }} <span class="muted">({{ u.unit }})</span></td>
-      <td>{{ u.state }}</td>
+      <td><span class="dot {{ u.dot_class }}"></span>{{ u.state_word }} <span class="muted">({{ u.state }})</span></td>
       <td>
-        <form hx-post="/processes/restart/{{ u.key }}" hx-target="#processes-result" hx-swap="innerHTML"
-              hx-confirm="Restart {{ u.unit }} now?" class="inline-form">
-          <button class="danger" type="submit">Restart</button>
+        <form hx-post="/processes/restart/{{ u.key }}" hx-disabled-elt="find button" hx-target="#processes-result" hx-swap="innerHTML"
+              hx-confirm="{{ u.confirm }}" class="inline-form">
+          <button class="warn-action" type="submit">Restart</button>
         </form>
       </td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
+</section>
+
+<section class="processes-section" id="updates">
+  <h2>System Updates</h2>
+  {{ updates_check_html|safe }}
+  {{ update_job_html|safe }}
 </section>
 
 <section class="processes-section">
@@ -34,7 +40,22 @@
   <h3>Active window</h3>
   <pre>{{ hypr_active }}</pre>
   <h3>Clients</h3>
-  <pre>{{ hypr_clients }}</pre>
+  {% if hypr_clients_error.is_empty() %}
+    {% if hypr_clients_rows.is_empty() %}
+    <p class="degraded-msg">No Hyprland clients reported.</p>
+    {% else %}
+    <table>
+      <thead><tr><th>Class</th><th>Title</th><th>Workspace</th><th>Address</th></tr></thead>
+      <tbody>
+      {% for c in hypr_clients_rows %}
+      <tr><td>{{ c.class }}</td><td>{{ c.title }}</td><td>{{ c.workspace }}</td><td class="muted">{{ c.address }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  {% else %}
+  <p class="degraded-msg">{{ hypr_clients_error }}</p>
+  {% endif %}
   <details>
     <summary>Monitors</summary>
     <pre>{{ hypr_monitors }}</pre>
@@ -44,6 +65,21 @@
 <section class="processes-section">
   <h2>Top processes</h2>
   <p class="muted">Read-only snapshot, CPU-sorted, top ~15. No kill action in v1 — deferred.</p>
-  <pre>{{ top_processes }}</pre>
+  {% if top_error.is_empty() %}
+    {% if top_rows.is_empty() %}
+    <p class="degraded-msg">No process data.</p>
+    {% else %}
+    <table>
+      <thead><tr><th>PID</th><th>%CPU</th><th>%MEM</th><th>Command</th></tr></thead>
+      <tbody>
+      {% for r in top_rows %}
+      <tr><td>{{ r.pid }}</td><td>{{ r.pcpu }}</td><td>{{ r.pmem }}</td><td>{{ r.comm }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  {% else %}
+  <p class="degraded-msg">{{ top_error }}</p>
+  {% endif %}
 </section>
 {% endblock %}
