@@ -130,7 +130,9 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
         return Some("image/webp");
     }
-    if bytes.starts_with(b"BM") {
+    // A BMP file header is 14 bytes, so require at least that much before
+    // trusting the two-byte "BM" signature — otherwise "BM" + garbage passes.
+    if bytes.len() >= 14 && bytes.starts_with(b"BM") {
         return Some("image/bmp");
     }
     None
@@ -652,7 +654,9 @@ mod tests {
         webp.extend_from_slice(&[0, 0, 0, 0]);
         webp.extend_from_slice(b"WEBP");
         assert_eq!(sniff_image(&webp), Some("image/webp"));
-        assert_eq!(sniff_image(b"BM123456"), Some("image/bmp"));
+        assert_eq!(sniff_image(b"BM123456789012"), Some("image/bmp"));
+        // "BM" + too few bytes to be a real BMP header is not an image.
+        assert_eq!(sniff_image(b"BM123456"), None);
         // Not images: a script, an ELF, empty, and a truncated RIFF.
         assert_eq!(sniff_image(b"#!/bin/sh\nrm -rf /"), None);
         assert_eq!(sniff_image(&[0x7f, b'E', b'L', b'F']), None);
