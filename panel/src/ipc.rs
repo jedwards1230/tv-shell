@@ -1,0 +1,251 @@
+//! Async Unix-socket IPC client — the PRIMARY data tier for the panel.
+//!
+//! Wire protocol (authoritative: `daemon/src/ipc.rs`): the client writes ONE
+//! command line terminated by `\n` (e.g. `sys-status\n`); the daemon replies
+//! with ONE `\n`-terminated line. The reply is either a JSON payload on a
+//! single line, or a short text token (`ok`, `connected:grabbed` /
+//! `disconnected:released` for `status`, `unknown`, or `error:<message>`).
+//! Requests are capped at 4096 bytes by the daemon; replies can be large, so
+//! this client reads until the first `\n` rather than using a fixed buffer.
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
+
+/// Default per-request timeout (connect + write + read-one-line).
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Errors a single IPC command can produce.
+#[derive(Debug)]
+pub enum IpcError {
+    /// The socket could not be reached (connect refused, socket file
+    /// missing, or the request/read timed out).
+    Unreachable,
+    /// The request timed out.
+    Timeout,
+    /// The daemon replied `error:<message>` — `<message>` is carried here
+    /// (the `error:` prefix is stripped).
+    Command(String),
+    /// The reply could not be parsed as the expected type.
+    Parse(String),
+}
+
+impl IpcError {
+    /// `true` for the two "daemon is not there" variants (`Unreachable` and
+    /// `Timeout`), letting callers render a single degraded state for both.
+    pub fn is_unreachable(&self) -> bool {
+        matches!(self, IpcError::Unreachable | IpcError::Timeout)
+    }
+}
+
+impl std::fmt::Display for IpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IpcError::Unreachable => write!(f, "daemon unreachable"),
+            IpcError::Timeout => write!(f, "daemon request timed out"),
+            IpcError::Command(msg) => write!(f, "{msg}"),
+            IpcError::Parse(msg) => write!(f, "failed to parse daemon reply: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for IpcError {}
+
+/// A client for the daemon's Unix-socket IPC protocol.
+pub struct IpcClient {
+    sock: PathBuf,
+    timeout: Duration,
+}
+
+impl IpcClient {
+    /// Build a client for the socket at `sock`, using [`DEFAULT_TIMEOUT`].
+    pub fn new(sock: PathBuf) -> Self {
+        Self {
+            sock,
+            timeout: DEFAULT_TIMEOUT,
+        }
+    }
+
+    /// Send `line` (without a trailing `\n` — one is appended) and return the
+    /// daemon's reply line, with the `error:` prefix translated to
+    /// `Err(IpcError::Command(_))`.
+    pub async fn command(&self, line: &str) -> Result<String, IpcError> {
+        tokio::time::timeout(self.timeout, self.command_inner(line))
+            .await
+            .unwrap_or(Err(IpcError::Timeout))
+    }
+
+    async fn command_inner(&self, line: &str) -> Result<String, IpcError> {
+        let mut stream = UnixStream::connect(&self.sock)
+            .await
+            .map_err(|_| IpcError::Unreachable)?;
+        stream
+            .write_all(format!("{line}\n").as_bytes())
+            .await
+            .map_err(|_| IpcError::Unreachable)?;
+
+        let mut reader = BufReader::new(stream);
+        let mut reply = String::new();
+        let n = reader
+            .read_line(&mut reply)
+            .await
+            .map_err(|_| IpcError::Unreachable)?;
+        if n == 0 {
+            // EOF before any data — the daemon closed the connection.
+            return Err(IpcError::Unreachable);
+        }
+        let reply = reply.trim_end().to_string();
+        if let Some(msg) = reply.strip_prefix("error:") {
+            return Err(IpcError::Command(msg.to_string()));
+        }
+        Ok(reply)
+    }
+
+    /// Like [`command`](Self::command), but parse the reply as JSON into `T`.
+    pub async fn command_json<T: serde::de::DeserializeOwned>(
+        &self,
+        line: &str,
+    ) -> Result<T, IpcError> {
+        let reply = self.command(line).await?;
+        serde_json::from_str(&reply).map_err(|e| IpcError::Parse(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+    use tokio::net::UnixListener;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct SysStatus {
+        os: String,
+        kernel: String,
+        hostname: String,
+        uptime: String,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Pad {
+        id: String,
+        index: u32,
+        name: String,
+        grabbed: bool,
+    }
+
+    /// Spawn a one-shot fake daemon: accept a single connection, read one
+    /// request line, reply with `response` (a trailing `\n` is appended),
+    /// then close.
+    ///
+    /// Uses `/tmp` directly (short and stable) rather than
+    /// `std::env::temp_dir()` — on macOS that resolves to a deep
+    /// per-process `/var/folders/...` path that, combined with a
+    /// descriptive test-socket name, can exceed `sockaddr_un`'s ~104-byte
+    /// `SUN_LEN` limit.
+    fn spawn_fake_daemon(name: &str, response: &'static str) -> PathBuf {
+        let sock = PathBuf::from(format!(
+            "/tmp/tvshp-{name}-{}-{}.sock",
+            std::process::id(),
+            uniquifier()
+        ));
+        let _ = std::fs::remove_file(&sock);
+        let listener = UnixListener::bind(&sock).expect("bind fake daemon socket");
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                let (read_half, mut write_half) = stream.into_split();
+                let mut reader = BufReader::new(read_half);
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line).await;
+                let _ = write_half
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await;
+            }
+        });
+        sock
+    }
+
+    /// Tiny non-cryptographic uniquifier so parallel tests don't collide on
+    /// the same socket path (no extra dependency needed). Kept short (a
+    /// small hex counter) to leave room under the `SUN_LEN` path limit.
+    fn uniquifier() -> u32 {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    #[tokio::test]
+    async fn status_happy_path_text() {
+        let sock = spawn_fake_daemon("status", "connected:grabbed");
+        // Give the listener a moment to be ready to accept.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let client = IpcClient::new(sock);
+        let reply = client.command("status").await.unwrap();
+        assert_eq!(reply, "connected:grabbed");
+    }
+
+    #[tokio::test]
+    async fn sys_status_happy_path_json() {
+        let sock = spawn_fake_daemon(
+            "sys-status",
+            r#"{"os":"x","kernel":"y","hostname":"z","uptime":"1h"}"#,
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let client = IpcClient::new(sock);
+        let status: SysStatus = client.command_json("sys-status").await.unwrap();
+        assert_eq!(
+            status,
+            SysStatus {
+                os: "x".into(),
+                kernel: "y".into(),
+                hostname: "z".into(),
+                uptime: "1h".into(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn get_pads_json_array() {
+        let sock = spawn_fake_daemon(
+            "get-pads",
+            r#"[{"id":"uniq:a","index":0,"name":"Pad","grabbed":true}]"#,
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let client = IpcClient::new(sock);
+        let pads: Vec<Pad> = client.command_json("get-pads").await.unwrap();
+        assert_eq!(
+            pads,
+            vec![Pad {
+                id: "uniq:a".into(),
+                index: 0,
+                name: "Pad".into(),
+                grabbed: true,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn error_line_maps_to_command_error() {
+        let sock = spawn_fake_daemon("error", "error:input-runtime-down");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let client = IpcClient::new(sock);
+        let err = client.command("status").await.unwrap_err();
+        match err {
+            IpcError::Command(msg) => assert_eq!(msg, "input-runtime-down"),
+            other => panic!("expected Command error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn daemon_down_is_unreachable() {
+        let sock = PathBuf::from(format!(
+            "/tmp/tvshp-nonexistent-{}-{}.sock",
+            std::process::id(),
+            uniquifier()
+        ));
+        let client = IpcClient::new(sock);
+        let err = client.command("status").await.unwrap_err();
+        assert!(err.is_unreachable(), "expected unreachable, got {err:?}");
+    }
+}
