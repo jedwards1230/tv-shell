@@ -348,6 +348,16 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
         // steam-launch. Unconfigured/unreachable degrades to a JSON error status.
         Command::SteamQuit(appid) => Some(steam::handle_steam_quit(*appid).await),
         Command::SteamQuitUsage => Some(protocol::resp_steam_quit_usage()),
+        // Steam sidecar roster + active-host selection (the widget's server
+        // picker). `steam-hosts` is a cheap config read; `steam-set-host`
+        // persists to settings.json, so its blocking file I/O runs off the
+        // reactor via spawn_blocking (mirroring set-config).
+        Command::SteamHosts => Some(steam::handle_steam_hosts()),
+        Command::SteamSetHost(name) => {
+            let name = name.clone();
+            Some(spawn_blocking_string(move || steam::handle_steam_set_host(&name)).await)
+        }
+        Command::SteamSetHostUsage => Some(protocol::resp_steam_set_host_usage()),
         // Moonlight local-config "forget" — creds-free client-side unpair.
         // Stateless and cross-platform (just edits Moonlight.conf). Missing host
         // routes to `MoonlightForgetUsage`. Runs the blocking file edit off the
@@ -571,6 +581,9 @@ async fn dispatch(
         | Command::SteamBigPicture
         | Command::SteamQuit(_)
         | Command::SteamQuitUsage
+        | Command::SteamHosts
+        | Command::SteamSetHost(_)
+        | Command::SteamSetHostUsage
         // Moonlight forget is stateless (consumed by `dispatch_stateless`).
         | Command::MoonlightForget(_)
         | Command::MoonlightForgetUsage

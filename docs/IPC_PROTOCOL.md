@@ -1189,24 +1189,56 @@ Reply (compact single-line JSON):
 
 ### Steam library / launch (home-screen Steam widget)
 
-These four commands back the home-screen Steam widget and the Steam-card launch
+These commands back the home-screen Steam widget and the Steam-card launch
 choreography. All are **stateless and cross-platform** — the daemon is an HTTP
 **client** proxying to the `tv-shell-host` sidecar running on the gaming PC (see
 [HOST_SETUP.md](HOST_SETUP.md)); it never spawns or supervises Steam. Config
-comes from the **`[steam]` section** of `config.toml` (base URL + bearer token),
-also readable from the `TV_SHELL_STEAM_URL` / `TV_SHELL_STEAM_TOKEN` env vars. The
-daemon↔sidecar JSON contract is single-sourced in the `tv-shell-protocol` crate.
+comes from the **`[steam]` section** of `config.toml` — either a single sidecar
+(`url` + `token_file`) or several named **`[[steam.hosts]]`** entries, of which
+exactly one is **active** at a time (selected via `steam-set-host`, persisted as
+the daemon-owned `steamServer` key in settings.json, default = the first entry).
+The daemon↔sidecar JSON contract is single-sourced in the `tv-shell-protocol`
+crate.
 
 #### `steam-library`
 
-Fetch the host's Steam library for the widget's poster grid. Bare command — no
-body. Proxies the sidecar's library endpoint.
+Fetch the ACTIVE host's Steam library for the widget's poster grid. Bare
+command — no body. Proxies the sidecar's library endpoint.
 
-**Reply (compact single-line JSON):** `{"status":…,"recentlyPlayed":[…],"allGames":[…]}`.
+**Reply (compact single-line JSON):**
+`{"status":…,"recentlyPlayed":[…],"allGames":[…],"host":…}`.
 `status` uses the shared service-health vocabulary (see
 [Service health](#service-health)); an unconfigured `[steam]` returns
 `{"status":"disabled",…}` and the widget collapses. Each game entry carries its
-appid, title, and (tokenized) poster art URL.
+appid, title, and (tokenized) poster art URL. `host` is the active sidecar's
+URL name-part (IP/hostname, or null when unconfigured) — present on down/empty
+replies too, so the widget's Wake card targets the server actually being
+checked rather than a separately-configured streaming target.
+
+#### `steam-hosts`
+
+List the configured sidecars and which one is active. Bare command — no body;
+a cheap config read (no network).
+
+**Reply (compact single-line JSON):**
+`{"status":"ok","active":<name>,"hosts":[{"name":…,"host":…}]}`, or
+`{"status":"disabled","active":null,"hosts":[]}` when none are configured.
+Each entry's `host` is the URL's name-part only — the full URL and token never
+leave the daemon.
+
+#### `steam-set-host <name>`
+
+Select which configured sidecar the daemon actively checks. The body is the
+host's configured name, **verbatim** (names may contain spaces). Persists to
+settings.json (`steamServer`); the next `steam-library` poll and health probe
+use the new host.
+
+| Condition | Response |
+|-----------|----------|
+| Selection persisted | `ok\n` |
+| `<name>` not a configured host | `error:unknown steam host "<name>"\n` |
+| settings.json write failed | `error:steam-set-host failed: <reason>\n` |
+| Missing / empty `<name>` body | `error:usage: steam-set-host <name>\n` |
 
 #### `steam-launch <appid>`
 

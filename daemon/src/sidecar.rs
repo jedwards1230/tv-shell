@@ -95,6 +95,11 @@ impl Sidecar {
         &self.base
     }
 
+    /// The host part of this sidecar's base URL (see [`url_host`]).
+    pub fn host(&self) -> Option<String> {
+        url_host(&self.base)
+    }
+
     /// `Authorization` header value for every request.
     fn bearer(&self) -> String {
         format!("Bearer {}", self.token)
@@ -227,6 +232,35 @@ impl Sidecar {
     }
 }
 
+/// The host part (IP or hostname, no port/path) of an `http(s)://` base URL —
+/// e.g. `"http://192.0.2.1:47995"` → `"192.0.2.1"`. This is what the shell shows
+/// in a server picker and passes to `wol <host>`; the full URL (and token) never
+/// leave the daemon. `None` for an empty/degenerate URL. Hand-rolled (scheme →
+/// authority → strip port) so we don't pull in a URL crate for one field; an
+/// IPv6 literal's brackets are stripped but its inner colons are preserved.
+pub fn url_host(url: &str) -> Option<String> {
+    let rest = url
+        .trim()
+        .split_once("://")
+        .map_or(url.trim(), |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Userinfo (rare, but legal) ends at '@'.
+    let hostport = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if let Some(v6) = hostport.strip_prefix('[') {
+        // Bracketed IPv6 literal: host is everything inside the brackets.
+        v6.split(']').next().unwrap_or("")
+    } else {
+        // Only the LAST colon can start a port; an unbracketed name has at most
+        // one (`host:port`).
+        hostport.rsplit_once(':').map_or(hostport, |(h, _)| h)
+    };
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
 /// Stream a response body into memory under a hard `max_bytes` cap.
 ///
 /// `Content-Length` is optional — and forgeable — in HTTP, so the only sound
@@ -280,6 +314,27 @@ mod tests {
     #[test]
     fn from_parts_none_when_token_empty() {
         assert!(Sidecar::from_parts("http://h", "").is_none());
+    }
+
+    #[test]
+    fn url_host_extracts_host_from_common_shapes() {
+        assert_eq!(url_host("http://192.0.2.1:47995"), Some("192.0.2.1".into()));
+        assert_eq!(
+            url_host("http://gaming-pc:47995/"),
+            Some("gaming-pc".into())
+        );
+        assert_eq!(url_host("https://host"), Some("host".into()));
+        assert_eq!(url_host("host:47995"), Some("host".into()));
+        assert_eq!(url_host("http://u:p@host:1/x?q#f"), Some("host".into()));
+        assert_eq!(url_host("http://[fe80::1]:47995"), Some("fe80::1".into()));
+        assert_eq!(url_host(""), None);
+        assert_eq!(url_host("http://"), None);
+    }
+
+    #[test]
+    fn sidecar_host_matches_url_host() {
+        let sc = Sidecar::from_parts("http://192.0.2.1:47995/", "tok").unwrap();
+        assert_eq!(sc.host(), Some("192.0.2.1".into()));
     }
 
     // Build a `reqwest::Response` from an in-memory body with NO `Content-Length`
