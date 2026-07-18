@@ -95,6 +95,35 @@ struct PadView {
     grabbed: bool,
 }
 
+/// A systemd unit's state paired with a colored dot class + a short status
+/// word (#6 — color must always pair with explicit text, never a bare dot).
+/// `active` is the healthy state; `failed` is the one state that reads as
+/// an outright problem (red); everything else (`inactive`, `activating`,
+/// `deactivating`, `unknown`, ...) is a neutral "not running" state rather
+/// than an alarm — a stopped-but-not-failed unit isn't necessarily wrong
+/// (e.g. between restarts).
+struct UnitStateView {
+    raw: String,
+    dot_class: &'static str,
+    word: &'static str,
+}
+
+fn unit_state_view(raw: String) -> UnitStateView {
+    let (dot_class, word) = match raw.as_str() {
+        "active" => ("dot-ok", "active"),
+        "failed" => ("dot-error", "failed"),
+        "activating" => ("dot-warn", "activating"),
+        "deactivating" => ("dot-warn", "deactivating"),
+        "inactive" => ("dot-neutral", "inactive"),
+        _ => ("dot-neutral", "unknown"),
+    };
+    UnitStateView {
+        raw,
+        dot_class,
+        word,
+    }
+}
+
 #[derive(Template)]
 #[template(path = "dashboard_tiles.html")]
 struct DashboardTilesTemplate {
@@ -118,9 +147,9 @@ struct DashboardTilesTemplate {
     temps: Vec<TempView>,
     mounts: Vec<MountView>,
     pads: Vec<PadView>,
-    daemon_unit_state: String,
-    shell_unit_state: String,
-    panel_unit_state: String,
+    daemon_unit: UnitStateView,
+    shell_unit: UnitStateView,
+    panel_unit: UnitStateView,
 }
 
 /// Build the dashboard tiles partial HTML. Queries the IPC socket for
@@ -130,9 +159,9 @@ struct DashboardTilesTemplate {
 /// [`crate::ipc::IpcError::is_unreachable`]), renders a degraded view that
 /// still shows unit states and a link to `/dev` — never a 500.
 pub async fn render_tiles(state: &AppState) -> String {
-    let daemon_unit_state = state.recovery.unit_active(&config::daemon_unit()).await;
-    let shell_unit_state = state.recovery.unit_active(&config::shell_unit()).await;
-    let panel_unit_state = state.recovery.unit_active(&config::panel_unit()).await;
+    let daemon_unit = unit_state_view(state.recovery.unit_active(&config::daemon_unit()).await);
+    let shell_unit = unit_state_view(state.recovery.unit_active(&config::shell_unit()).await);
+    let panel_unit = unit_state_view(state.recovery.unit_active(&config::panel_unit()).await);
 
     let status = state.ipc.command("status").await;
     let reachable = match &status {
@@ -167,9 +196,9 @@ pub async fn render_tiles(state: &AppState) -> String {
             temps: Vec::new(),
             mounts: Vec::new(),
             pads: Vec::new(),
-            daemon_unit_state,
-            shell_unit_state,
-            panel_unit_state,
+            daemon_unit,
+            shell_unit,
+            panel_unit,
         }
     } else {
         let build: BuildInfo = state
@@ -270,9 +299,9 @@ pub async fn render_tiles(state: &AppState) -> String {
             temps,
             mounts,
             pads,
-            daemon_unit_state,
-            shell_unit_state,
-            panel_unit_state,
+            daemon_unit,
+            shell_unit,
+            panel_unit,
         }
     };
 

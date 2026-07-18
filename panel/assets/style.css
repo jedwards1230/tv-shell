@@ -107,6 +107,22 @@ a:hover {
   white-space: nowrap;
 }
 
+/* Mobile nav affordance (#8): a right-edge fade gradient hints there are
+   more links to scroll to when the nav overflows its width — `.topnav`'s
+   own `position: sticky` already establishes the positioning context this
+   overlay pins to. `pointer-events: none` so it never blocks a tap on the
+   link underneath it. */
+.topnav::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2.5rem;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--bg-alt));
+}
+
 .topnav .brand {
   font-weight: 700;
   margin-right: 0.5rem;
