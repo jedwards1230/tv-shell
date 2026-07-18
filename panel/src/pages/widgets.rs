@@ -147,10 +147,11 @@ fn resolve_current(cfg: &Value) -> Vec<(&'static WidgetManifest, CurrentWidget)>
 }
 
 /// Sort a resolved widget list by its persisted `order` field. A stable sort
-/// (Rust's `sort_by` is stable) so widgets that tie on `order` keep their
-/// [`MANIFESTS`] declaration order rather than shuffling nondeterministically.
+/// (Rust's `sort_by_key` is stable) so widgets that tie on `order` keep
+/// their [`MANIFESTS`] declaration order rather than shuffling
+/// nondeterministically.
 fn sort_by_order(current: &mut [(&'static WidgetManifest, CurrentWidget)]) {
-    current.sort_by(|a, b| a.1.order.cmp(&b.1.order));
+    current.sort_by_key(|(_, cur)| cur.order);
 }
 
 fn current_widget(m: &'static WidgetManifest, existing: Option<&Value>) -> CurrentWidget {
