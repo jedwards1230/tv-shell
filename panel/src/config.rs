@@ -211,6 +211,9 @@ pub fn socket_path() -> PathBuf {
             return PathBuf::from(runtime_dir).join(name);
         }
     }
+    // SAFETY: libc::getuid() is always safe to call — POSIX defines it as
+    // infallible (no error return, no invalid states), it takes no arguments,
+    // and it only reads the caller's real UID.
     let uid = unsafe { libc::getuid() };
     PathBuf::from(format!("/run/user/{uid}/{name}"))
 }

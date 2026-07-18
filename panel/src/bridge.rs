@@ -65,10 +65,21 @@ impl BridgeClient {
     /// `[http].bind` is configured; `token` is the bearer token to attach
     /// (when the daemon has auth enabled).
     pub fn new(base: Option<String>, token: Option<String>) -> Self {
+        // A builder failure (bad system CA store, OOM) is rare but real. Fall
+        // back to a default client so the panel still starts — the bridge is an
+        // optional, opt-in surface and must not brick the panel — but log loudly:
+        // the default client has NO request timeout, so the CLIENT_TIMEOUT ceiling
+        // on dev ops is lost until the process is restarted.
         let http = reqwest::Client::builder()
             .timeout(CLIENT_TIMEOUT)
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "bridge: reqwest client build failed ({e}); falling back to a \
+                     default client WITHOUT the {CLIENT_TIMEOUT:?} request timeout"
+                );
+                reqwest::Client::new()
+            });
         Self { base, token, http }
     }
 
