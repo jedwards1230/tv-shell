@@ -54,7 +54,7 @@ async fn dashboard_tiles_degrades_when_daemon_unreachable() {
 #[tokio::test]
 async fn logs_view_degrades_when_bridge_and_daemon_absent() {
     let state = hermetic_state();
-    let html = pages::logs::render_view(&state, 50, None).await;
+    let html = pages::logs::render_view(&state, 50, None, false).await;
     assert!(!html.is_empty());
     assert!(
         html.to_lowercase().contains("bridge"),
@@ -70,6 +70,104 @@ async fn dev_page_renders_with_daemon_down_banner() {
     assert!(
         html.contains("down"),
         "dev page must show the daemon as down when unreachable: {html}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// UI-polish pass: status humanizer, nav daemon dot, OOB refreshes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn dashboard_tiles_humanizes_status_token() {
+    let mut replies = HashMap::new();
+    replies.insert("status", "connected:grabbed");
+    let sock = spawn_canned_daemon("dashboard-status-humanize", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::dashboard::render_tiles(&state).await;
+    assert!(
+        html.contains("Connected · grabbed"),
+        "expected the humanized status label: {html}"
+    );
+    assert!(
+        html.contains("connected:grabbed"),
+        "expected the raw token to remain visible for debugging: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_fleet_humanizes_status_token() {
+    let mut replies = HashMap::new();
+    replies.insert("status", "disconnected:grabbed");
+    replies.insert("get-pads", "[]");
+    replies.insert("get-bindings", "{}");
+    replies.insert("get-config", "{}");
+    replies.insert("controllerdb-status", "{}");
+    let sock = spawn_canned_daemon("controllers-fleet-humanize", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::controllers::render_page(&state).await;
+    assert!(
+        html.contains("No controllers connected · grab armed"),
+        "expected the humanized fleet status label: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_grab_includes_oob_fleet_refresh() {
+    let mut replies = HashMap::new();
+    replies.insert("grab", "ok");
+    replies.insert("status", "connected:grabbed");
+    replies.insert("get-pads", "[]");
+    let sock = spawn_canned_daemon("controllers-grab-oob", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::controllers::render_grab(&state).await;
+    assert!(
+        html.contains(r#"id="controllers-fleet""#) && html.contains(r#"hx-swap-oob="true""#),
+        "expected an out-of-band fleet refresh bolted onto the grab response: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_active_source_includes_oob_health_refresh() {
+    let mut replies = HashMap::new();
+    replies.insert("cec-active-source", "ok");
+    replies.insert(
+        "cec-health",
+        r#"{"transmit":"ok","reason":null,"since":1719500000000,"lastError":null}"#,
+    );
+    let sock = spawn_canned_daemon("cec-active-source-oob", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::cec::render_active_source(&state).await;
+    assert!(
+        html.contains(r#"id="cec-health""#) && html.contains(r#"hx-swap-oob="true""#),
+        "expected an out-of-band health refresh bolted onto the active-source response: {html}"
+    );
+}
+
+#[tokio::test]
+async fn nav_dot_shows_ok_when_daemon_reachable() {
+    let mut replies = HashMap::new();
+    replies.insert("status", "connected:grabbed");
+    let sock = spawn_canned_daemon("nav-dot-ok", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::nav::render_dot(&state).await;
+    assert!(
+        html.contains("dot-ok"),
+        "expected a green dot when the daemon answers: {html}"
+    );
+}
+
+#[tokio::test]
+async fn nav_dot_shows_error_when_daemon_unreachable() {
+    let state = hermetic_state();
+    let html = pages::nav::render_dot(&state).await;
+    assert!(
+        html.contains("dot-error"),
+        "expected a red dot when the daemon is unreachable: {html}"
     );
 }
 
@@ -251,6 +349,46 @@ async fn settings_save_sends_expected_patch() {
     assert!(
         patch.get("widgets").is_none(),
         "widgets must never appear in a Settings save patch: {patch}"
+    );
+}
+
+#[tokio::test]
+async fn settings_page_renders_pretty_printed_raw_json() {
+    let (sock, _received) = spawn_config_daemon(
+        "settings-raw-pretty-render",
+        r#"{"themeMode":"dark","rumbleEnabled":true}"#,
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let html = pages::settings::render_page(&state).await;
+    assert!(
+        html.contains("{\n"),
+        "expected the raw JSON escape hatch to be pretty-printed (multi-line): {html}"
+    );
+}
+
+#[tokio::test]
+async fn settings_raw_pretty_input_is_sent_compact() {
+    // The textarea round-trips a pretty-printed, multi-line document — the
+    // set-config call it triggers must still be a single compact line.
+    let (sock, received) = spawn_config_daemon("settings-raw-compact", "{}");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let pretty = "{\n  \"themeMode\": \"light\"\n}";
+    let html = pages::settings::render_save_raw(&state, pretty).await;
+    assert!(
+        html.to_lowercase().contains("merged"),
+        "expected an ok result: {html}"
+    );
+    let sent = received.lock().unwrap().clone();
+    assert_eq!(
+        sent.len(),
+        1,
+        "expected exactly one set-config call: {sent:?}"
+    );
+    assert_eq!(
+        sent[0], r#"{"themeMode":"light"}"#,
+        "raw JSON must be compacted to a single line before set-config: {sent:?}"
     );
 }
 

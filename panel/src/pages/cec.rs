@@ -91,8 +91,11 @@ fn cec_unavailable_reason(msg: &str) -> Option<&'static str> {
 
 /// Send a `cec-*` command and render the reply, mapping the two "CEC isn't
 /// there" errors to an honest info banner instead of a failure banner.
+/// Bolts on an out-of-band `#cec-health` refresh (see
+/// [`oob_health_refresh`]) so the health panel stays current after any bus
+/// action, not just the two ladder steps that already target it directly.
 async fn run_cec(state: &AppState, line: &str) -> String {
-    match state.ipc.command(line).await {
+    let result = match state.ipc.command(line).await {
         Ok(reply) => result_html(true, &pretty_block(&reply)),
         Err(e) => {
             let msg = e.to_string();
@@ -104,7 +107,8 @@ async fn run_cec(state: &AppState, line: &str) -> String {
                 None => error_result(&msg),
             }
         }
-    }
+    };
+    format!("{result}{}", oob_health_refresh(state).await)
 }
 
 /// `<addr>` must be a decimal logical address in `0..=15`
@@ -192,19 +196,59 @@ fn since_ago(ms: i64) -> String {
     format!(" (since {ago})")
 }
 
+/// The single next recovery step the health panel should highlight —
+/// [`recommended_step`] chooses at most one, never more.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RecommendedStep {
+    Test,
+    RestartDaemon,
+    Reboot,
+}
+
+/// Choose the one recommended next step for a `(transmit, reason)` pair
+/// (mirrors the state table in `docs/IPC_PROTOCOL.md` § `cec-health`).
+/// Extracted as its own pure function — separate from
+/// [`classify_health`]'s banner/headline text — so the mapping itself can be
+/// unit-tested directly.
+fn recommended_step(transmit: &str, reason: Option<&str>) -> Option<RecommendedStep> {
+    match (transmit, reason) {
+        ("ok", _) => None,
+        // "transmit wedge": the adapter answers but every send fails —
+        // restarting the daemon re-initializes libcec's connection, which is
+        // what actually clears this state.
+        ("failing", _) => Some(RecommendedStep::RestartDaemon),
+        // Build/platform gap, not a runtime fault — no step can fix it.
+        ("unavailable", Some("no_libcec")) => None,
+        // No adapter found at all: a daemon restart re-opens the same
+        // (absent) hardware, so it won't help — a full reboot re-inits the
+        // USB/HDMI stack from scratch.
+        ("unavailable", Some("no_adapter")) => Some(RecommendedStep::Reboot),
+        // Adapter present but the open handshake failed — a daemon restart
+        // is the direct fix.
+        ("unavailable", Some("adapter_open_failed")) => Some(RecommendedStep::RestartDaemon),
+        // Any other/unknown reason, or no transmit attempted yet: probe
+        // first before escalating.
+        ("unavailable", _) | (_, _) => Some(RecommendedStep::Test),
+    }
+}
+
 /// Classify a `cec-health`/`cec-test` reply into a display-ready view.
 /// Mirrors the `transmit`/`reason` state table in `docs/IPC_PROTOCOL.md`
 /// § `cec-health`.
 fn classify_health(h: &CecHealthJson) -> HealthView {
     let since_txt = since_ago(h.since);
+    let step = recommended_step(&h.transmit, h.reason.as_deref());
+    let recommend_test = step == Some(RecommendedStep::Test);
+    let recommend_restart = step == Some(RecommendedStep::RestartDaemon);
+    let recommend_reboot = step == Some(RecommendedStep::Reboot);
     match (h.transmit.as_str(), h.reason.as_deref()) {
         ("ok", _) => HealthView {
             banner_class: "banner-ok",
             headline: "CEC: healthy".to_string(),
             detail: format!("Last transmit succeeded{since_txt}."),
-            recommend_test: false,
-            recommend_restart: false,
-            recommend_reboot: false,
+            recommend_test,
+            recommend_restart,
+            recommend_reboot,
             cec_available: true,
         },
         ("failing", _) => HealthView {
@@ -217,18 +261,18 @@ fn classify_health(h: &CecHealthJson) -> HealthView {
                     .map(|e| format!(" Last error: {e}"))
                     .unwrap_or_default()
             ),
-            recommend_test: true,
-            recommend_restart: true,
-            recommend_reboot: false,
+            recommend_test,
+            recommend_restart,
+            recommend_reboot,
             cec_available: true,
         },
         ("unavailable", Some("no_libcec")) => HealthView {
             banner_class: "banner-warn",
             headline: "CEC not available in this daemon build".to_string(),
             detail: "Built without --features cec, or running on a non-Linux host.".to_string(),
-            recommend_test: false,
-            recommend_restart: false,
-            recommend_reboot: false,
+            recommend_test,
+            recommend_restart,
+            recommend_reboot,
             cec_available: false,
         },
         ("unavailable", Some("no_adapter")) => HealthView {
@@ -237,9 +281,9 @@ fn classify_health(h: &CecHealthJson) -> HealthView {
             detail: "libcec found zero adapters — check the physical HDMI-CEC adapter and cable, \
                       then re-test."
                 .to_string(),
-            recommend_test: true,
-            recommend_restart: false,
-            recommend_reboot: true,
+            recommend_test,
+            recommend_restart,
+            recommend_reboot,
             cec_available: true,
         },
         ("unavailable", Some("adapter_open_failed")) => HealthView {
@@ -248,18 +292,18 @@ fn classify_health(h: &CecHealthJson) -> HealthView {
             detail: "An adapter is present but the libcec open handshake failed. Re-seat the \
                       adapter, then restart the daemon."
                 .to_string(),
-            recommend_test: true,
-            recommend_restart: true,
-            recommend_reboot: true,
+            recommend_test,
+            recommend_restart,
+            recommend_reboot,
             cec_available: true,
         },
         ("unavailable", reason) => HealthView {
             banner_class: "banner-error",
             headline: "CEC unavailable".to_string(),
             detail: format!("reason: {}", reason.unwrap_or("unknown")),
-            recommend_test: true,
-            recommend_restart: true,
-            recommend_reboot: true,
+            recommend_test,
+            recommend_restart,
+            recommend_reboot,
             cec_available: true,
         },
         (other, _) => HealthView {
@@ -268,11 +312,99 @@ fn classify_health(h: &CecHealthJson) -> HealthView {
             detail: format!(
                 "No transmit has been attempted yet{since_txt}. Run Test CEC to probe the bus."
             ),
-            recommend_test: true,
-            recommend_restart: false,
-            recommend_reboot: false,
+            recommend_test,
+            recommend_restart,
+            recommend_reboot,
             cec_available: true,
         },
+    }
+}
+
+#[cfg(test)]
+mod recommendation_tests {
+    use super::*;
+
+    #[test]
+    fn ok_recommends_nothing() {
+        assert_eq!(recommended_step("ok", None), None);
+    }
+
+    #[test]
+    fn failing_recommends_restart_daemon_only() {
+        assert_eq!(
+            recommended_step("failing", None),
+            Some(RecommendedStep::RestartDaemon)
+        );
+    }
+
+    #[test]
+    fn no_libcec_recommends_nothing() {
+        assert_eq!(recommended_step("unavailable", Some("no_libcec")), None);
+    }
+
+    #[test]
+    fn no_adapter_recommends_reboot() {
+        assert_eq!(
+            recommended_step("unavailable", Some("no_adapter")),
+            Some(RecommendedStep::Reboot)
+        );
+    }
+
+    #[test]
+    fn adapter_open_failed_recommends_restart_daemon() {
+        assert_eq!(
+            recommended_step("unavailable", Some("adapter_open_failed")),
+            Some(RecommendedStep::RestartDaemon)
+        );
+    }
+
+    #[test]
+    fn unknown_unavailable_reason_recommends_test() {
+        assert_eq!(
+            recommended_step("unavailable", Some("something_else")),
+            Some(RecommendedStep::Test)
+        );
+    }
+
+    #[test]
+    fn never_attempted_recommends_test() {
+        assert_eq!(
+            recommended_step("unknown", None),
+            Some(RecommendedStep::Test)
+        );
+    }
+
+    #[test]
+    fn classify_health_marks_exactly_one_step_recommended() {
+        for (transmit, reason) in [
+            ("ok", None),
+            ("failing", None),
+            ("unavailable", Some("no_libcec")),
+            ("unavailable", Some("no_adapter")),
+            ("unavailable", Some("adapter_open_failed")),
+            ("unavailable", Some("bogus")),
+            ("unknown", None),
+        ] {
+            let h = CecHealthJson {
+                transmit: transmit.to_string(),
+                reason: reason.map(str::to_string),
+                since: 0,
+                last_error: None,
+            };
+            let view = classify_health(&h);
+            let recommended_count = [
+                view.recommend_test,
+                view.recommend_restart,
+                view.recommend_reboot,
+            ]
+            .into_iter()
+            .filter(|&b| b)
+            .count();
+            assert!(
+                recommended_count <= 1,
+                "expected at most one recommended step for ({transmit:?}, {reason:?}), got {recommended_count}"
+            );
+        }
     }
 }
 
@@ -282,12 +414,23 @@ struct CecHealthTemplate {
     view: HealthView,
     action_ok: bool,
     action_msg: String,
+    /// `true` only when this render is an out-of-band refresh bolted onto
+    /// another action's response (see [`oob_health_refresh`]) — adds
+    /// `hx-swap-oob="true"` to the section tag. `false` for every render
+    /// that IS the primary swap target (page load, Test CEC, restart-daemon)
+    /// since those already point `hx-target="#cec-health"` directly.
+    oob: bool,
 }
 
 /// Run `cmd` (`cec-health` or `cec-test`, same reply shape), classify it, and
 /// render the health section, optionally with an `action_msg` banner from
 /// whatever triggered the re-render (e.g. a restart-daemon attempt).
-async fn render_health_view(state: &AppState, cmd: &str, action: Option<(bool, String)>) -> String {
+async fn render_health_view(
+    state: &AppState,
+    cmd: &str,
+    action: Option<(bool, String)>,
+    oob: bool,
+) -> String {
     let view = match state.ipc.command_json::<CecHealthJson>(cmd).await {
         Ok(h) => classify_health(&h),
         Err(e) => HealthView {
@@ -305,13 +448,24 @@ async fn render_health_view(state: &AppState, cmd: &str, action: Option<(bool, S
         view,
         action_ok,
         action_msg,
+        oob,
     };
     tmpl.render()
         .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
 }
 
 async fn render_health_section(state: &AppState) -> String {
-    render_health_view(state, "cec-health", None).await
+    render_health_view(state, "cec-health", None, false).await
+}
+
+/// A fresh `#cec-health` render as an htmx out-of-band swap fragment, meant
+/// to be appended after another action's own response body. Every CEC action
+/// below (scan/device/switching/power) bolts this on so the health panel
+/// always reflects post-action state without a manual reload — the same
+/// effect Test CEC/restart-daemon already get "for free" by targeting
+/// `#cec-health` directly.
+async fn oob_health_refresh(state: &AppState) -> String {
+    render_health_view(state, "cec-health", None, true).await
 }
 
 /// `POST /cec/test` — step 1 of the recovery ladder: `cec-test`, a
@@ -321,7 +475,7 @@ pub async fn test(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 pub async fn render_test(state: &AppState) -> String {
-    render_health_view(state, "cec-test", None).await
+    render_health_view(state, "cec-test", None, false).await
 }
 
 /// `true` only when the bridge has no base URL / can't be reached at all —
@@ -356,7 +510,7 @@ pub async fn render_recover_restart_daemon(state: &AppState) -> String {
     } else {
         text
     };
-    render_health_view(state, "cec-health", Some((ok, msg))).await
+    render_health_view(state, "cec-health", Some((ok, msg)), false).await
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +542,11 @@ pub async fn scan(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 pub async fn render_scan(state: &AppState) -> String {
+    let result = render_scan_result(state).await;
+    format!("{result}{}", oob_health_refresh(state).await)
+}
+
+async fn render_scan_result(state: &AppState) -> String {
     let names = state
         .ipc
         .get_config()

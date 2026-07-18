@@ -35,8 +35,12 @@
   {{ complex_notes_html|safe }}.
 </p>
 
-<h2>Daemon-owned bindings <span class="muted">(read-only)</span></h2>
-<p class="muted">Managed by the input daemon — a Controllers page will edit these in a later milestone.</p>
+<h2>Persisted binding overrides <span class="muted">(empty = built-in defaults)</span></h2>
+<p class="muted">
+  Raw subtrees as stored in settings.json, managed by the input daemon — often empty if nothing
+  has been customized. See the <a href="/controllers">Controllers</a> page for the resolved,
+  currently-active bindings.
+</p>
 <pre>{{ daemon_owned_json }}</pre>
 
 <h2>config.toml <span class="muted">(read-only)</span></h2>
@@ -56,7 +60,8 @@
 </p>
 <form id="raw-form" hx-post="/settings/raw" hx-target="#settings-result" hx-swap="innerHTML"
       onsubmit="return tvShellValidateRawSettings(event)">
-  <textarea id="raw_json" name="raw_json" rows="6" style="width:100%;">{{ raw_json }}</textarea>
+  <textarea id="raw_json" name="raw_json" rows="15" style="width:100%;">{{ raw_json }}</textarea>
+  <p class="muted">Formatted for editing; sent compact.</p>
   <div id="raw-json-warning" class="muted" style="display:none;color:var(--error);"></div>
   <button type="submit">Save raw JSON</button>
 </form>

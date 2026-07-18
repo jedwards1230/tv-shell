@@ -8,6 +8,7 @@ pub mod controllers;
 pub mod dashboard;
 pub mod dev;
 pub mod logs;
+pub mod nav;
 pub mod processes;
 pub mod settings;
 pub mod tools;

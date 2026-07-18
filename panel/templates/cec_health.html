@@ -1,4 +1,4 @@
-<section class="controllers-section" id="cec-health">
+<section class="controllers-section" id="cec-health"{% if oob %} hx-swap-oob="true"{% endif %}>
   <h2>Health &amp; wedge recovery</h2>
   {% if !action_msg.is_empty() %}
   <div class="banner {% if action_ok %}banner-ok{% else %}banner-error{% endif %}" style="white-space:pre-wrap;">{{ action_msg }}</div>

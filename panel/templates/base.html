@@ -19,6 +19,11 @@
   <a href="/cec" class="{% if active == "cec" %}active{% endif %}">CEC</a>
   <a href="/dev" class="{% if active == "dev" %}active{% endif %}">Dev</a>
   <a href="/logs" class="{% if active == "logs" %}active{% endif %}">Logs</a>
+  <span class="nav-spacer"></span>
+  <span class="nav-daemon-status" id="nav-daemon-status"
+        hx-get="/nav/daemon-status" hx-trigger="load, every 10s" hx-swap="innerHTML">
+    <span class="dot dot-neutral" title="checking…"></span>daemon
+  </span>
 </nav>
 <main>
 {% block content %}{% endblock %}

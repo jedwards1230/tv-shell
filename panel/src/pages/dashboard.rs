@@ -100,6 +100,9 @@ struct PadView {
 struct DashboardTilesTemplate {
     reachable: bool,
     status_text: String,
+    status_label: String,
+    status_dot_class: &'static str,
+    status_raw: String,
     version: String,
     sha: String,
     branch: String,
@@ -146,6 +149,9 @@ pub async fn render_tiles(state: &AppState) -> String {
         DashboardTilesTemplate {
             reachable: false,
             status_text,
+            status_label: String::new(),
+            status_dot_class: "dot-neutral",
+            status_raw: String::new(),
             version: String::new(),
             sha: String::new(),
             branch: String::new(),
@@ -197,6 +203,15 @@ pub async fn render_tiles(state: &AppState) -> String {
             .unwrap_or_default();
         let pads: Vec<Pad> = state.ipc.command_json("get-pads").await.unwrap_or_default();
 
+        // `reachable` is only true when `status` itself returned Ok, so
+        // `status_text` here is always the raw `<connection>:<grab>` token,
+        // not an error message — safe to humanize.
+        let (status_label, status_dot_class, status_raw) =
+            match crate::humanize::humanize_status(&status_text) {
+                Some(h) => (h.label, h.dot_class, h.raw),
+                None => (status_text.clone(), "dot-warn", status_text.clone()),
+            };
+
         let temps = metrics
             .temps
             .iter()
@@ -237,6 +252,9 @@ pub async fn render_tiles(state: &AppState) -> String {
         DashboardTilesTemplate {
             reachable: true,
             status_text,
+            status_label,
+            status_dot_class,
+            status_raw,
             version: build.version,
             sha: build.sha,
             branch: build.branch,

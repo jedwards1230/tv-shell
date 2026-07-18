@@ -1,36 +1,37 @@
 {% if reachable %}
 <div class="tile-grid">
-  <div class="tile">
+  <a class="tile" href="/controllers">
     <h3>Input daemon</h3>
-    <p class="big">{{ status_text }}</p>
-  </div>
-  <div class="tile">
+    <p class="big"><span class="dot {{ status_dot_class }}"></span>{{ status_label }}</p>
+    <p class="muted" title="raw: {{ status_raw }}">{{ status_raw }}</p>
+  </a>
+  <a class="tile" href="/dev">
     <h3>Build</h3>
     <p>{{ version }}</p>
     <p class="muted">{{ sha }} · {{ branch }}</p>
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/processes">
     <h3>System</h3>
     <p>{{ os }}</p>
     <p class="muted">kernel {{ kernel }}</p>
     <p class="muted">host {{ hostname }}</p>
     <p class="muted">up {{ uptime }}</p>
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/processes">
     <h3>Resources</h3>
     <p>CPU {{ cpu_pct }}%</p>
     <p>Mem {{ mem_used }} / {{ mem_total }} ({{ mem_pct }}%)</p>
     <p>Load1 {{ load1 }}</p>
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/processes">
     <h3>Temperatures</h3>
     {% if temps.is_empty() %}
     <p class="muted">none reported</p>
     {% else %}
     {% for t in temps %}<p>{{ t.label }}: {{ t.celsius }}&deg;C</p>{% endfor %}
     {% endif %}
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/processes">
     <h3>Storage</h3>
     {% if mounts.is_empty() %}
     <p class="muted">no mounts reported</p>
@@ -42,8 +43,8 @@
       {% endfor %}
     </table>
     {% endif %}
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/controllers">
     <h3>Controllers</h3>
     {% if pads.is_empty() %}
     <p class="muted">none connected</p>
@@ -52,13 +53,13 @@
     <p>#{{ p.index }} {{ p.name }} — {% if p.grabbed %}grabbed{% else %}released{% endif %}</p>
     {% endfor %}
     {% endif %}
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/processes">
     <h3>Units</h3>
     <p>daemon: {{ daemon_unit_state }}</p>
     <p>shell: {{ shell_unit_state }}</p>
     <p>panel: {{ panel_unit_state }}</p>
-  </div>
+  </a>
 </div>
 {% else %}
 <div class="degraded">

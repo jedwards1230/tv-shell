@@ -34,3 +34,14 @@ subtle = "2"
 keyvalues-parser = "0.2"
 askama = "0.12"
 tv-shell-protocol = { path = "protocol" }
+
+# Applies to every workspace binary (daemon/host/panel) — a virtual workspace
+# manifest is the only place a [profile] table can live, so this isn't
+# panel-only despite landing alongside the panel's UI-polish pass. Keeps
+# symbol names (no `strip = "symbols"`) so backtraces stay readable; only
+# debug info is dropped. `lto = "thin"` trims binary size for a modest,
+# incremental-build-friendly compile-time cost (full LTO wasn't worth the
+# tradeoff here).
+[profile.release]
+strip = "debuginfo"
+lto = "thin"
