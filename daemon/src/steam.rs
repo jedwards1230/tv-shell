@@ -31,8 +31,9 @@
 //! ([`normalize_library`]) is a pure function, unit-tested on every platform; only
 //! the live fetch needs a reachable host.
 
+use crate::daemon_config::SteamHostConfig;
 use crate::service_health::ServiceStatus;
-use crate::sidecar::Sidecar;
+use crate::sidecar::{url_host, Sidecar};
 use serde_json::{json, Value};
 use tv_shell_protocol::{LibraryEntry, LibraryResponse, StatusResponse};
 
@@ -48,18 +49,39 @@ const MAX_STATUS_BODY: u64 = 64 * 1024;
 /// games while still refusing a rogue host's unbounded body.
 const MAX_LIBRARY_BODY: u64 = 10 * 1024 * 1024;
 
-/// Resolve the Steam sidecar (base URL + bearer token) from `[steam]` in
-/// `config.toml`, or `None` when the widget is unconfigured.
+/// The ACTIVE Steam host: the configured host whose name matches the persisted
+/// `steamServer` selection (settings.json, written by `steam-set-host`), else
+/// the first configured host. `None` when no hosts are configured.
+pub(crate) fn active_host() -> Option<SteamHostConfig> {
+    let hosts = crate::daemon_config::global().steam_hosts();
+    let selected = crate::config::steam_server(&crate::config::settings_path());
+    pick_host(hosts, selected.as_deref())
+}
+
+/// Pure selection rule for [`active_host`]: the host named `selected` when it
+/// exists, else the first. A stale/unknown selection (host removed from
+/// config.toml) degrades to the first host rather than breaking the widget.
+fn pick_host(hosts: Vec<SteamHostConfig>, selected: Option<&str>) -> Option<SteamHostConfig> {
+    if let Some(name) = selected {
+        if let Some(h) = hosts.iter().find(|h| h.name == name) {
+            return Some(h.clone());
+        }
+    }
+    hosts.into_iter().next()
+}
+
+/// Resolve the Steam sidecar (base URL + bearer token) for the ACTIVE host, or
+/// `None` when the widget is unconfigured (no hosts, or no resolvable token).
 ///
 /// `pub(crate)` so [`crate::service_health`] can reuse the same resolution for the
 /// reachability probe — one source of truth for "is Steam configured?".
 pub(crate) fn sidecar() -> Option<Sidecar> {
     let cfg = crate::daemon_config::global();
-    let base = cfg.steam.url.as_deref()?;
-    // steam_token() is Result; startup validate() already vetted token files, so a
-    // hard error or missing token here just means "widget not configured".
-    let token = cfg.steam_token().ok().flatten()?;
-    Sidecar::from_parts(base, &token)
+    let host = active_host()?;
+    // steam_token_for() is Result; a hard error or missing token here just means
+    // "widget not configured".
+    let token = cfg.steam_token_for(&host).ok().flatten()?;
+    Sidecar::from_parts(&host.url, &token)
 }
 
 /// IPC entry point for `steam-library`. Returns
@@ -70,8 +92,13 @@ pub(crate) fn sidecar() -> Option<Sidecar> {
 /// library fetched, so a down host yields empty rails *with a status the widget
 /// can render*. Unconfigured ⇒ `disabled` (widget collapses).
 pub async fn handle_steam_library() -> String {
+    // The active host's name-part rides every reply (`"host"`) so the widget
+    // knows WHOM it is checking — and whom the Wake card should target — without
+    // a config of its own. Resolved before the sidecar so even a token-less
+    // (⇒ disabled) but host-selected config still reports the host.
+    let host = active_host().as_ref().and_then(|h| url_host(&h.url));
     let Some(sc) = sidecar() else {
-        return empty_library(ServiceStatus::Disabled);
+        return empty_library(ServiceStatus::Disabled, host);
     };
 
     // Reachability gate — `GET /status` is small and authenticated, so its HTTP
@@ -82,7 +109,7 @@ pub async fn handle_steam_library() -> String {
     // request.
     let (probe, running_appid, streaming) = fetch_status(&sc).await;
     if probe != ServiceStatus::Ok {
-        return empty_library(probe);
+        return empty_library(probe, host);
     }
 
     match sc
@@ -92,21 +119,24 @@ pub async fn handle_steam_library() -> String {
         Ok(resp) => normalize_library(&resp, sc.base(), running_appid, streaming),
         Err(e) => {
             tracing::debug!("steam-library fetch failed: {e}");
-            empty_library(ServiceStatus::Unreachable)
+            empty_library(ServiceStatus::Unreachable, host)
         }
     }
 }
 
 /// Empty-rails reply for a non-`Ok` library state (`disabled`/`unreachable`/
 /// `error`): no running game, not streaming. The shape matches the populated
-/// reply so the widget binds the same fields either way.
-fn empty_library(status: ServiceStatus) -> String {
+/// reply so the widget binds the same fields either way — including `host`
+/// (the active host's name-part, or null), which the Wake card needs precisely
+/// when the host is down.
+fn empty_library(status: ServiceStatus, host: Option<String>) -> String {
     json!({
         "status": status.as_str(),
         "recentlyPlayed": [],
         "allGames": [],
         "runningAppid": Value::Null,
         "streaming": false,
+        "host": host,
     })
     .to_string()
 }
@@ -198,6 +228,61 @@ pub async fn handle_steam_quit(appid: u32) -> String {
     }
 }
 
+/// IPC entry point for `steam-hosts`. Lists the configured tv-shell-host
+/// sidecars and which one is active:
+/// `{"status":"ok","active":<name>,"hosts":[{"name":…,"host":…}]}`, or
+/// `{"status":"disabled","active":null,"hosts":[]}` when none are configured.
+/// Each entry's `host` is the URL's name-part (IP/hostname) — for display and
+/// as the widget's WoL target; the full URL (and token) never leave the daemon.
+pub fn handle_steam_hosts() -> String {
+    let hosts = crate::daemon_config::global().steam_hosts();
+    let selected = crate::config::steam_server(&crate::config::settings_path());
+    hosts_reply(hosts, selected.as_deref())
+}
+
+/// Pure reply builder for [`handle_steam_hosts`] — unit-tests on any host.
+fn hosts_reply(hosts: Vec<SteamHostConfig>, selected: Option<&str>) -> String {
+    let active = pick_host(hosts.clone(), selected).map(|h| h.name);
+    let entries: Vec<Value> = hosts
+        .iter()
+        .map(|h| {
+            json!({
+                "name": h.name,
+                "host": url_host(&h.url),
+            })
+        })
+        .collect();
+    let status = if entries.is_empty() {
+        ServiceStatus::Disabled
+    } else {
+        ServiceStatus::Ok
+    };
+    json!({
+        "status": status.as_str(),
+        "active": active,
+        "hosts": entries,
+    })
+    .to_string()
+}
+
+/// IPC entry point for `steam-set-host <name>`. Persists the sidecar selection
+/// (settings.json `steamServer`) after validating it names a configured host;
+/// the next `steam-library` poll and health probe use the new host. Blocking
+/// file I/O — dispatch via `spawn_blocking` (see `ipc.rs`).
+pub fn handle_steam_set_host(name: &str) -> String {
+    let hosts = crate::daemon_config::global().steam_hosts();
+    if !hosts.iter().any(|h| h.name == name) {
+        return crate::protocol::resp_error(&format!("unknown steam host {name:?}"));
+    }
+    match crate::config::set_config(
+        &crate::config::settings_path(),
+        &json!({ "steamServer": name }),
+    ) {
+        Ok(_) => crate::protocol::resp_ok(),
+        Err(e) => crate::protocol::resp_error(&format!("steam-set-host failed: {e}")),
+    }
+}
+
 /// The `{appid}` POST body for `/launch` and `/quit`, built from the shared
 /// [`tv_shell_protocol::LaunchRequest`] so the request shape is single-sourced
 /// with the host (which deserializes the same type). Serializes to `{"appid":N}`.
@@ -261,6 +346,9 @@ pub fn normalize_library(
         "allGames": all_games,
         "runningAppid": running,
         "streaming": streaming,
+        // The host's name-part (from the base URL) — whom this library belongs
+        // to. The widget shows/wakes THIS host, never a separately-configured one.
+        "host": url_host(base),
     })
     .to_string()
 }
@@ -330,6 +418,66 @@ mod tests {
 
     fn parse(out: &str) -> Value {
         serde_json::from_str(out).unwrap()
+    }
+
+    fn host_cfg(name: &str, url: &str) -> SteamHostConfig {
+        SteamHostConfig {
+            name: name.to_string(),
+            url: url.to_string(),
+            token_file: None,
+        }
+    }
+
+    #[test]
+    fn pick_host_prefers_selected_name() {
+        let hosts = vec![host_cfg("a", "http://a:1"), host_cfg("b", "http://b:1")];
+        assert_eq!(pick_host(hosts.clone(), Some("b")).unwrap().name, "b");
+        // Unknown/stale selection degrades to the first host.
+        assert_eq!(pick_host(hosts.clone(), Some("gone")).unwrap().name, "a");
+        assert_eq!(pick_host(hosts, None).unwrap().name, "a");
+        assert!(pick_host(vec![], Some("a")).is_none());
+    }
+
+    #[test]
+    fn hosts_reply_lists_names_and_active() {
+        let hosts = vec![
+            host_cfg("desktop-1", "http://192.0.2.1:47995"),
+            host_cfg("desktop-2", "http://192.0.2.2:47995"),
+        ];
+        let out = parse(&hosts_reply(hosts, Some("desktop-2")));
+        assert_eq!(out["status"], "ok");
+        assert_eq!(out["active"], "desktop-2");
+        let entries = out["hosts"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["name"], "desktop-1");
+        assert_eq!(entries[0]["host"], "192.0.2.1");
+        // URLs and tokens never leave the daemon.
+        assert!(entries[0].get("url").is_none());
+        assert!(entries[0].get("token_file").is_none());
+    }
+
+    #[test]
+    fn hosts_reply_disabled_when_unconfigured() {
+        let out = parse(&hosts_reply(vec![], None));
+        assert_eq!(out["status"], "disabled");
+        assert!(out["active"].is_null());
+        assert_eq!(out["hosts"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn library_replies_carry_host() {
+        // Populated reply: host = the base URL's name-part.
+        let out = parse(&normalize_library(&resp(vec![]), BASE, None, false));
+        assert_eq!(out["host"], "host");
+        // Empty (down/disabled) reply: host passes through — the Wake card needs
+        // it exactly when the host is unreachable.
+        let down = parse(&empty_library(
+            ServiceStatus::Unreachable,
+            Some("192.0.2.7".into()),
+        ));
+        assert_eq!(down["host"], "192.0.2.7");
+        let disabled = parse(&empty_library(ServiceStatus::Disabled, None));
+        assert!(disabled["host"].is_null());
     }
 
     #[test]

@@ -248,6 +248,22 @@ pub enum Command {
     /// `steam-quit` with a missing/non-numeric `<appid>` body.
     SteamQuitUsage,
 
+    /// `steam-hosts` -> compact JSON `{status,active,hosts:[{name,host}]}`
+    /// listing the configured tv-shell-host sidecars (`[[steam.hosts]]` in
+    /// config.toml, or the legacy single `[steam].url`) and which one is
+    /// active. Bare command (no body). Stateless + cross-platform. Unconfigured
+    /// ⇒ `{"status":"disabled","active":null,"hosts":[]}`.
+    SteamHosts,
+
+    /// `steam-set-host <name>` -> select which configured Steam sidecar the
+    /// daemon actively checks (persisted as `steamServer` in settings.json; the
+    /// next `steam-library` poll / health probe uses it). The body is the host's
+    /// configured name, verbatim (names may contain spaces). Replies `ok` /
+    /// `error:*` (unknown names are rejected). Stateless + cross-platform.
+    SteamSetHost(String),
+    /// `steam-set-host` with a missing/empty `<name>` body.
+    SteamSetHostUsage,
+
     // --- Moonlight local-config "forget" (creds-free unpair) ---
     /// `moonlight-forget <host>` -> remove a host from Moonlight's local config
     /// (`Moonlight.conf`) so this client is no longer paired with it. `host` is
@@ -497,6 +513,7 @@ impl Command {
             "plex-hubs" => Command::PlexHubs,
             "steam-library" => Command::SteamLibrary,
             "steam-bigpicture" => Command::SteamBigPicture,
+            "steam-hosts" => Command::SteamHosts,
             // Phase 4 bare commands (no body).
             "hypr-active" => Command::HyprActive,
             "hypr-clients" => Command::HyprClients,
@@ -672,6 +689,18 @@ impl Command {
                     {
                         Some(appid) => Command::SteamLaunch(appid),
                         None => Command::SteamLaunchUsage,
+                    };
+                }
+                // `steam-set-host <name>`: the body is the configured host name,
+                // verbatim (names may contain spaces). Missing/empty ⇒ usage
+                // error. `command_body` enforces the word boundary. Checked
+                // before `steam-quit`/`steam-launch` order-independently — the
+                // words don't prefix each other.
+                if let Some(body) = command_body(cmd, "steam-set-host") {
+                    return if body.is_empty() {
+                        Command::SteamSetHostUsage
+                    } else {
+                        Command::SteamSetHost(body.to_string())
                     };
                 }
                 // `steam-quit <appid>`: same shape as `steam-launch` — a single
@@ -1356,6 +1385,11 @@ pub fn resp_steam_launch_usage() -> String {
 /// Usage line for `steam-quit` issued without a numeric `<appid>` body.
 pub fn resp_steam_quit_usage() -> String {
     "error:usage: steam-quit <appid>".to_string()
+}
+
+/// Usage line for `steam-set-host` issued without a `<name>` body.
+pub fn resp_steam_set_host_usage() -> String {
+    "error:usage: steam-set-host <name>".to_string()
 }
 
 /// Usage line for `moonlight-forget` issued without a `<host>` body.
@@ -2161,6 +2195,43 @@ mod tests {
         );
         // Word boundary: `steam-bigpictureX` is NOT steam-bigpicture.
         assert_eq!(Command::parse("steam-bigpictureX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_steam_hosts_bare() {
+        assert_eq!(Command::parse("steam-hosts"), Command::SteamHosts);
+        assert_eq!(Command::parse("  steam-hosts  "), Command::SteamHosts);
+        // Word boundary: `steam-hostsX` is NOT steam-hosts.
+        assert_eq!(Command::parse("steam-hostsX"), Command::Unknown);
+    }
+
+    #[test]
+    fn parses_steam_set_host_body() {
+        assert_eq!(
+            Command::parse("steam-set-host desktop-2"),
+            Command::SteamSetHost("desktop-2".into())
+        );
+        // The name is taken verbatim (names may contain spaces).
+        assert_eq!(
+            Command::parse("steam-set-host Living Room PC"),
+            Command::SteamSetHost("Living Room PC".into())
+        );
+        // Missing name -> usage.
+        assert_eq!(Command::parse("steam-set-host"), Command::SteamSetHostUsage);
+        assert_eq!(
+            Command::parse("steam-set-host   "),
+            Command::SteamSetHostUsage
+        );
+        // Word boundary: `steam-set-hostX` is NOT steam-set-host.
+        assert_eq!(Command::parse("steam-set-hostX abc"), Command::Unknown);
+    }
+
+    #[test]
+    fn steam_set_host_usage_string() {
+        assert_eq!(
+            resp_steam_set_host_usage(),
+            "error:usage: steam-set-host <name>"
+        );
     }
 
     #[test]

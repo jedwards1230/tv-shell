@@ -144,13 +144,35 @@ pub struct PlexConfig {
     pub token_file: Option<String>,
 }
 
-/// `[steam]` — Steam library row, pointing at a `tv-shell-host` sidecar.
+/// `[steam]` — Steam library row, pointing at one or more `tv-shell-host`
+/// sidecars. Either the legacy single `url` (+ `token_file`) or a list of named
+/// `[[steam.hosts]]` entries; [`Config::steam_hosts`] normalizes both forms.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SteamConfig {
     pub url: Option<String>,
     /// Path to a `0600` file holding the Steam/host token. Inline tokens are NOT
-    /// supported (same rationale as Plex / the HTTP bearer token).
+    /// supported (same rationale as Plex / the HTTP bearer token). With
+    /// `[[steam.hosts]]` entries this is the shared fallback token for hosts
+    /// that don't set their own `token_file`.
+    pub token_file: Option<String>,
+    /// Named sidecar entries (`[[steam.hosts]]`). When non-empty these REPLACE
+    /// the legacy single `url`; the active one is selected at runtime via the
+    /// `steam-set-host` IPC (persisted as `steamServer` in settings.json).
+    pub hosts: Vec<SteamHostConfig>,
+}
+
+/// One named `[[steam.hosts]]` sidecar entry.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteamHostConfig {
+    /// Stable selector name, shown in the widget's server picker and used by
+    /// `steam-set-host <name>` (e.g. "desktop-1"). Must be unique + non-empty
+    /// (checked by [`Config::validate`]).
+    pub name: String,
+    /// tv-shell-host base URL, e.g. `http://192.0.2.1:47995`.
+    pub url: String,
+    /// Per-host token file; absent ⇒ the shared `[steam].token_file` applies.
     pub token_file: Option<String>,
 }
 
@@ -456,9 +478,32 @@ impl DaemonConfig {
         }
     }
 
-    /// Resolve the Steam token from `[steam].token_file` (token-file only).
-    pub fn steam_token(&self) -> anyhow::Result<Option<String>> {
-        match self.steam.token_file.as_deref() {
+    /// The configured Steam sidecar hosts, normalized to the named-host form:
+    /// explicit `[[steam.hosts]]` entries when present (the legacy single
+    /// `[steam].url` is then ignored), else the legacy `url` as one host named
+    /// by the URL's host part. Empty ⇒ the Steam widget is unconfigured.
+    pub fn steam_hosts(&self) -> Vec<SteamHostConfig> {
+        if !self.steam.hosts.is_empty() {
+            return self.steam.hosts.clone();
+        }
+        match self.steam.url.as_deref() {
+            Some(url) => vec![SteamHostConfig {
+                name: crate::sidecar::url_host(url).unwrap_or_else(|| "default".to_string()),
+                url: url.to_string(),
+                token_file: None,
+            }],
+            None => Vec::new(),
+        }
+    }
+
+    /// Resolve the bearer token for one Steam host: its own `token_file` when
+    /// set, else the shared `[steam].token_file` (token-file only, like Plex).
+    pub fn steam_token_for(&self, host: &SteamHostConfig) -> anyhow::Result<Option<String>> {
+        match host
+            .token_file
+            .as_deref()
+            .or(self.steam.token_file.as_deref())
+        {
             Some(p) => read_token_file(
                 &resolve_token_path(p, "steam.token_file")?,
                 "steam.token_file",
@@ -502,6 +547,21 @@ impl DaemonConfig {
         // file aborts startup here (fail-closed), not silently as "no token".
         let token = self.http_token()?;
         let auth_effectively_disabled = !self.http.auth_enabled || token.is_none();
+
+        // `[[steam.hosts]]` names are the `steam-set-host` selectors — an empty
+        // or duplicate name would make selection ambiguous, so refuse at startup.
+        let mut steam_names = std::collections::HashSet::new();
+        for h in &self.steam.hosts {
+            if h.name.trim().is_empty() {
+                anyhow::bail!(
+                    "config: [[steam.hosts]] entry with an empty name (url = {:?})",
+                    h.url
+                );
+            }
+            if !steam_names.insert(h.name.as_str()) {
+                anyhow::bail!("config: duplicate [[steam.hosts]] name {:?}", h.name);
+            }
+        }
 
         // The HTTP bridge always exposes its /dev/* tools, so a non-loopback
         // bridge with no auth is an unauthenticated RCE surface regardless of MCP.

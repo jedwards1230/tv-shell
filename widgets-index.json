@@ -4,7 +4,7 @@
     {
       "id": "moonlight",
       "name": "Moonlight",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "minFrameworkVersion": "1.0.0",
       "requires": ["moonlight-backend"]
     },
@@ -32,7 +32,7 @@
     {
       "id": "steam",
       "name": "Steam",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "minFrameworkVersion": "1.0.0",
       "requires": []
     }
