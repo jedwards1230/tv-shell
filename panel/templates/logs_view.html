@@ -1,5 +1,5 @@
 <div class="log-columns">
-  <section class="log-panel">
+  <section class="log-panel log-panel-shell">
     <h2>Shell (via HTTP bridge)</h2>
     {% if shell_available %}
     <pre class="log-pre">{{ shell_log }}</pre>
@@ -7,7 +7,7 @@
     <p class="degraded-msg">{{ shell_message }}</p>
     {% endif %}
   </section>
-  <section class="log-panel">
+  <section class="log-panel log-panel-daemon">
     <h2>Daemon (journal)</h2>
     <pre class="log-pre">{{ daemon_log }}</pre>
   </section>

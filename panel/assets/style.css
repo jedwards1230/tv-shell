@@ -292,6 +292,12 @@ th {
   margin-bottom: 1rem;
 }
 
+.log-focus-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .log-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -310,6 +316,19 @@ th {
   border-radius: var(--radius);
   padding: 0.75rem;
   min-width: 0;
+}
+
+/* Log pane focus/expand (#2) — the focus class lives on #log-panels itself
+   (set by the control strip's inline JS, outside the htmx swap target), so
+   it survives every innerHTML refresh of the panes below it. */
+#log-panels.focus-shell .log-panel-daemon,
+#log-panels.focus-daemon .log-panel-shell {
+  display: none;
+}
+
+#log-panels.focus-shell .log-panel-shell,
+#log-panels.focus-daemon .log-panel-daemon {
+  grid-column: 1 / -1;
 }
 
 /* ── Responsive tables (#13) — Controllers bindings table ───────────────
