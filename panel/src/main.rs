@@ -78,6 +78,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/settings/raw", post(pages::settings::save_raw))
         .route("/widgets", get(pages::widgets::page))
         .route("/widgets/save", post(pages::widgets::save))
+        .route("/widgets/reorder/{id}/up", post(pages::widgets::reorder_up))
+        .route(
+            "/widgets/reorder/{id}/down",
+            post(pages::widgets::reorder_down),
+        )
         .route("/tools", get(pages::tools::page))
         .route("/tools/intent", post(pages::tools::intent))
         .route("/tools/key", post(pages::tools::key))

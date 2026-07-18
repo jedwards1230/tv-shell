@@ -1,0 +1,29 @@
+<div class="widget-grid" id="widget-grid">
+{% for card in cards %}
+<section class="widget-card">
+  <h3>{{ card.name }} <span class="tier">IPC</span></h3>
+  <div class="field-row">
+    <label>Order</label>
+    <div class="reorder-buttons">
+      <button type="button" class="btn-mutate" hx-post="/widgets/reorder/{{ card.id }}/up" hx-target="#widget-grid" hx-swap="outerHTML" hx-disabled-elt="this"{% if loop.first %} disabled{% endif %} aria-label="Move {{ card.name }} up">&#9650;</button>
+      <button type="button" class="btn-mutate" hx-post="/widgets/reorder/{{ card.id }}/down" hx-target="#widget-grid" hx-swap="outerHTML" hx-disabled-elt="this"{% if loop.last %} disabled{% endif %} aria-label="Move {{ card.name }} down">&#9660;</button>
+    </div>
+    <input type="hidden" name="w_{{ card.id }}_order" value="{{ card.order }}">
+  </div>
+  <div class="field-row">
+    <label for="w_{{ card.id }}_enabled">Enabled</label>
+    <input type="checkbox" id="w_{{ card.id }}_enabled" name="w_{{ card.id }}_enabled"{% if card.enabled %} checked{% endif %}>
+  </div>
+  <div class="field-row">
+    <label for="w_{{ card.id }}_size">Size</label>
+    {{ card.size_select_html|safe }}
+  </div>
+  {% for pref in card.prefs %}
+  <div class="field-row">
+    <label for="w_{{ card.id }}_pref_{{ pref.key }}">{{ pref.label }}</label>
+    <input type="checkbox" id="w_{{ card.id }}_pref_{{ pref.key }}" name="w_{{ card.id }}_pref_{{ pref.key }}"{% if pref.checked %} checked{% endif %}>
+  </div>
+  {% endfor %}
+</section>
+{% endfor %}
+</div>

@@ -606,6 +606,18 @@ textarea {
   color: var(--text-muted);
 }
 
+/* Widgets reorder (#9): compact ▲/▼ pair replacing the old numeric Order
+   input. */
+.reorder-buttons {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.reorder-buttons button {
+  padding: 0.2rem 0.5rem;
+  line-height: 1;
+}
+
 /* ── Tools page ──────────────────────────────────────────────────────── */
 
 .tools-section {

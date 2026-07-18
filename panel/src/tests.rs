@@ -539,6 +539,66 @@ async fn widgets_save_rejects_invalid_size_for_widget() {
     );
 }
 
+#[tokio::test]
+async fn widgets_reorder_up_swaps_with_predecessor_and_renumbers() {
+    // Default (empty) config: declaration order is moonlight(0), nowplaying(1),
+    // plex(2), recent(3), steam(4) — moving plex up should swap it with
+    // nowplaying and renumber both.
+    let (sock, received) = spawn_config_daemon("widgets-reorder-up", "{}");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::widgets::render_reorder(&state, "plex", "up").await;
+    assert!(
+        html.contains("Plex") && html.contains("Now Playing"),
+        "expected the refreshed grid to still show all cards: {html}"
+    );
+
+    let sent = received.lock().unwrap().clone();
+    assert_eq!(
+        sent.len(),
+        1,
+        "expected exactly one set-config call: {sent:?}"
+    );
+    let patch: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+    let widgets = patch["widgets"]
+        .as_object()
+        .expect("set-config body must contain a widgets object");
+    for id in ["moonlight", "nowplaying", "plex", "recent", "steam"] {
+        assert!(
+            widgets.contains_key(id),
+            "set-config body must include widget {id} (shallow merge would wipe \
+             siblings if omitted): {patch}"
+        );
+    }
+    assert_eq!(widgets["plex"]["order"], 1);
+    assert_eq!(widgets["nowplaying"]["order"], 2);
+    assert_eq!(
+        widgets["moonlight"]["order"], 0,
+        "a widget not involved in the swap keeps its position"
+    );
+}
+
+#[tokio::test]
+async fn widgets_reorder_at_the_boundary_is_a_position_noop_but_still_renumbers() {
+    // moonlight is already first — "up" has no predecessor to swap with, but
+    // the order fields still get renumbered to a clean 0..N sequence.
+    let (sock, received) = spawn_config_daemon("widgets-reorder-boundary", "{}");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::widgets::render_reorder(&state, "moonlight", "up").await;
+    assert!(!html.is_empty());
+
+    let sent = received.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    let patch: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+    let widgets = patch["widgets"].as_object().unwrap();
+    assert_eq!(widgets["moonlight"]["order"], 0);
+    assert_eq!(widgets["nowplaying"]["order"], 1);
+    assert_eq!(widgets["steam"]["order"], 4);
+}
+
 // ---------------------------------------------------------------------------
 // M3: Tools console
 // ---------------------------------------------------------------------------
