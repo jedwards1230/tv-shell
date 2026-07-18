@@ -4,9 +4,9 @@ tv-shell is a Quickshell (QML) + Rust couch-gaming shell for Moonlight streaming
 
 ## Prerequisites
 
-- **Rust** (stable toolchain — see `host/` and `daemon/` for minimum versions; daemon requires ≥1.75 MSRV, host crate needs Cargo ≥1.85)
+- **Rust** (stable toolchain — see `host/`, `daemon/`, and `panel/` for minimum versions; daemon requires ≥1.75 MSRV, host and panel crates need Cargo ≥1.85)
 - **Qt 6.8** (for `qmlformat` and `qmltestrunner`)
-- **Linux** with evdev/uinput access (daemon only; `host/` and `protocol/` build on Linux, macOS, and Windows)
+- **Linux** with evdev/uinput access (daemon only; `host/` and `protocol/` build on Linux, macOS, and Windows; `panel/` builds on Linux/macOS — it dials the daemon's Unix-socket IPC unconditionally, so it does not build on Windows)
 
 ## Build, test & lint
 
@@ -36,6 +36,15 @@ cargo fmt --check -p tv-shell-host -p tv-shell-protocol
 cargo clippy -p tv-shell-host -p tv-shell-protocol --all-targets -- -D warnings
 cargo build -p tv-shell-host -p tv-shell-protocol
 cargo test -p tv-shell-host -p tv-shell-protocol
+```
+
+### Panel (`panel/` — LAN web control panel, Linux/macOS)
+
+```bash
+cargo fmt --check -p tv-shell-panel
+cargo clippy -p tv-shell-panel --all-targets -- -D warnings
+cargo build --release -p tv-shell-panel   # equivalent: ./scripts/build-panel.sh
+cargo test -p tv-shell-panel
 ```
 
 ### QML shell (`shell/` — no build step; formatting and headless tests)
