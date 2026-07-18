@@ -22,7 +22,7 @@
   button always sends the full state plus whatever you changed.
 </p>
 
-<form hx-post="/widgets/save" hx-target="#widgets-result" hx-swap="innerHTML">
+<form hx-post="/widgets/save" hx-disabled-elt="find button" hx-target="#widgets-result" hx-swap="innerHTML">
   <div class="widget-grid">
   {% for card in cards %}
   <section class="widget-card">

@@ -13,11 +13,11 @@
     {% for u in units %}
     <tr>
       <td>{{ u.label }} <span class="muted">({{ u.unit }})</span></td>
-      <td>{{ u.state }}</td>
+      <td><span class="dot {{ u.dot_class }}"></span>{{ u.state_word }} <span class="muted">({{ u.state }})</span></td>
       <td>
-        <form hx-post="/processes/restart/{{ u.key }}" hx-target="#processes-result" hx-swap="innerHTML"
-              hx-confirm="Restart {{ u.unit }} now?" class="inline-form">
-          <button class="danger" type="submit">Restart</button>
+        <form hx-post="/processes/restart/{{ u.key }}" hx-disabled-elt="find button" hx-target="#processes-result" hx-swap="innerHTML"
+              hx-confirm="{{ u.confirm }}" class="inline-form">
+          <button class="warn-action" type="submit">Restart</button>
         </form>
       </td>
     </tr>

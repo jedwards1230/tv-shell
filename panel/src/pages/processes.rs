@@ -22,6 +22,34 @@ struct UnitView {
     label: &'static str,
     unit: String,
     state: String,
+    /// A dedicated dot/word status pair (color always paired with explicit
+    /// text — #6) — `dot_class`/`state_word` mirror
+    /// `pages::dashboard`'s tile treatment for the same unit-state strings.
+    dot_class: &'static str,
+    state_word: &'static str,
+    /// Confirm-dialog text for this unit's Restart button. The panel's own
+    /// unit gets a distinct message (#5): restarting it drops the very page
+    /// the operator is looking at, so the confirm says so explicitly rather
+    /// than reusing the generic "Restart X now?" wording.
+    confirm: String,
+}
+
+/// Map a raw `systemctl is-active` string to a colored dot class + a short
+/// status word — color is always paired with explicit text (#6), never the
+/// dot alone. `active` is the healthy state; `failed` is the one state that
+/// reads as an outright problem; everything else (`inactive`, `activating`,
+/// `deactivating`, `unknown`, ...) is a neutral "not running" state rather
+/// than an alarm, since a stopped-but-not-failed unit isn't necessarily
+/// wrong (e.g. between restarts).
+fn unit_dot(state: &str) -> (&'static str, &'static str) {
+    match state {
+        "active" => ("dot-ok", "active"),
+        "failed" => ("dot-error", "failed"),
+        "activating" => ("dot-warn", "activating"),
+        "deactivating" => ("dot-warn", "deactivating"),
+        "inactive" => ("dot-neutral", "inactive"),
+        _ => ("dot-neutral", "unknown"),
+    }
 }
 
 #[derive(Template)]
@@ -83,11 +111,23 @@ async fn unit_view(
     unit: String,
 ) -> UnitView {
     let unit_state = state.recovery.unit_active(&unit).await;
+    let (dot_class, state_word) = unit_dot(&unit_state);
+    let confirm = if key == "panel" {
+        format!(
+            "Restart {unit} now? This is the panel serving THIS page — it will disconnect \
+             immediately. Reload the page after a few seconds to reconnect."
+        )
+    } else {
+        format!("Restart {unit} now?")
+    };
     UnitView {
         key,
         label,
         unit,
         state: unit_state,
+        dot_class,
+        state_word,
+        confirm,
     }
 }
 
