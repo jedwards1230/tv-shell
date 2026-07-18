@@ -28,6 +28,7 @@ mod tests;
 
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 
@@ -195,6 +196,19 @@ async fn main() -> anyhow::Result<()> {
         .route("/cec/active-source", post(pages::cec::active_source))
         .route("/cec/power-on", post(pages::cec::power_on))
         .route("/cec/power-off", post(pages::cec::power_off))
+        // Media: wallpapers (file uploads) + web-app registry. The upload route
+        // raises the body limit past axum's 2 MB default; `MAX_UPLOAD_BYTES` is
+        // still enforced per-file in the handler.
+        .route("/media", get(pages::media::page))
+        .route(
+            "/media/wallpaper/upload",
+            post(pages::media::upload).layer(DefaultBodyLimit::max(pages::media::MAX_UPLOAD_BYTES)),
+        )
+        .route("/media/wallpaper/select", post(pages::media::select))
+        .route("/media/wallpaper/delete", post(pages::media::delete))
+        .route("/media/wallpaper/file", get(pages::media::file))
+        .route("/media/webapp/add", post(pages::media::webapp_add))
+        .route("/media/webapp/remove", post(pages::media::webapp_remove))
         .route("/cec/test", post(pages::cec::test))
         .route("/cec/osd-name", post(pages::cec::save_osd_name))
         .route(

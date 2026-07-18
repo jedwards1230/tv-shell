@@ -10,7 +10,7 @@ use crate::protocol::{self, Command, Event};
 use crate::state::Control;
 use crate::{
     apps, bridge_core, config, controllerdb, health, moonlight, netinfo, notifications, plex,
-    recents, steam, system, wol,
+    recents, steam, system, webapps, wol,
 };
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
@@ -283,6 +283,54 @@ async fn dispatch_stateless(cmd: &Command, db_state: &SharedControllerDbState) -
             )
         }
         Command::SetConfigUsage => Some(protocol::resp_set_config_usage()),
+        // Web-app registry (#187 P1/P3). All three are stateless + filesystem
+        // bound, so they run on the blocking pool like set-config rather than
+        // through an actor. The daemon is the sole writer of both the registry
+        // and the generated .desktop files.
+        Command::WebappList => Some(
+            spawn_blocking_string(move || {
+                let apps = webapps::list(&config::settings_path());
+                serde_json::to_string(&webapps::registry_json(&apps))
+                    .unwrap_or_else(|_| "[]".to_string())
+            })
+            .await,
+        ),
+        Command::WebappAdd(body) => {
+            let body = body.clone();
+            Some(
+                spawn_blocking_string(move || {
+                    #[derive(serde::Deserialize)]
+                    struct AddReq {
+                        name: String,
+                        url: String,
+                    }
+                    let req: AddReq = match parse_body(&body) {
+                        Ok(v) => v,
+                        Err(resp) => return resp,
+                    };
+                    match webapps::add(&config::settings_path(), &req.name, &req.url) {
+                        Ok(app) => serde_json::to_string(&app)
+                            .unwrap_or_else(|_| protocol::resp_error("serialize failed")),
+                        Err(e) => protocol::resp_error(&format!("webapp-add failed: {e}")),
+                    }
+                })
+                .await,
+            )
+        }
+        Command::WebappAddUsage => Some(protocol::resp_webapp_add_usage()),
+        Command::WebappRemove(id) => {
+            let id = id.clone();
+            Some(
+                spawn_blocking_string(move || {
+                    match webapps::remove(&config::settings_path(), id.trim()) {
+                        Ok(()) => protocol::resp_ok(),
+                        Err(e) => protocol::resp_error(&format!("webapp-remove failed: {e}")),
+                    }
+                })
+                .await,
+            )
+        }
+        Command::WebappRemoveUsage => Some(protocol::resp_webapp_remove_usage()),
         Command::RecordLaunch(body) => {
             let body = body.clone();
             Some(
@@ -568,6 +616,12 @@ async fn dispatch(
         | Command::RecordLaunch(_)
         | Command::RecordLaunchUsage
         | Command::GetRecents
+        // Web-app registry commands are stateless (consumed by `dispatch_stateless`).
+        | Command::WebappList
+        | Command::WebappAdd(_)
+        | Command::WebappAddUsage
+        | Command::WebappRemove(_)
+        | Command::WebappRemoveUsage
         // Notification commands are stateless (consumed by `dispatch_stateless`).
         | Command::GetNotifications
         | Command::RecordNotification(_)
