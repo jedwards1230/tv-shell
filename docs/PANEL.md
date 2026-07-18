@@ -6,9 +6,10 @@ HTML + HTMX over the daemon's existing control surface. It runs as its own
 restart a wedged daemon — the recovery path that previously required remote
 config management.
 
-> Status: all four milestones (M1-M4) have landed on the `panel-staging` branch —
-> every page is fully implemented. This document is the panel's living doc; a
-> final promotion sweep (merging `panel-staging` into `main`) is still pending.
+> Status: all four milestones (M1-M4) plus a final-polish pass have landed on
+> the `panel-staging` branch — every page is fully implemented. This document
+> is the panel's living doc; a final promotion sweep (merging `panel-staging`
+> into `main`) is still pending.
 
 ## Architecture
 
@@ -38,20 +39,71 @@ config management.
 
 | Page | Contents |
 |---|---|
-| Dashboard | unit status, build info, system/storage tiles, pad fleet, quick actions |
-| Processes | tv-shell systemd user units (daemon/shell/panel) with per-unit restart; Hyprland active window/clients/monitors via IPC; read-only top-processes snapshot (`ps`, CPU-sorted, no kill action in v1) |
+| Dashboard | unit status, build info, system/storage tiles, pad fleet, quick actions, an Updates tile (own slow poll — see [System updates](#system-updates-pacman) below) |
+| Processes | tv-shell systemd user units (daemon/shell/panel) with per-unit restart (color-coded dot + status word, not just text); Hyprland active window/clients (styled table)/monitors via IPC; a read-only top-processes table (`ps`, CPU-sorted, no kill action in v1); a System Updates section (see below) |
 | Settings | grouped typed forms over `settings.json` via `get-config`/`set-config` (shallow merge — unmentioned keys, notably the daemon-owned `keyBindings`/`perGameBindings`/`perPlayerBindings`, are left untouched); those daemon-owned binding keys are shown read-only here (`keyBindings` is also editable via the Controllers page's bindings editor; the per-game/per-player layers are read-only there too — full editors are deferred); read-only `config.toml` view (the edit path is deferred — editing still requires a manual edit + daemon/panel restart via the Dev page); raw JSON escape hatch with an explicit shallow-merge/`null`-deletes warning for keys not modeled as typed fields (e.g. `widgets`, `cecDeviceNames`) |
 | Widgets | per-widget enabled/order/size/prefs editors (`widgets.<id>` subtree) |
 | Tools | IPC console grouped by domain — Navigation (intent/key), Apps (list/launch/recents), Bluetooth (power/scan/list/connect-disconnect-pair-trust), Network (status/wifi/throughput/ping), Power (can-suspend/battery), System (sys-status/sys-metrics/storage-status/build-info/controllerdb); plus a raw-line escape hatch with a warning on commands owned by another page's guarded flow. CEC and controller/pads/bindings commands live on their own Controllers/CEC pages (below) instead. |
 | Controllers | Fleet table (`get-pads`, per-pad battery/rumble-status/bounded rumble test) with a lazy `list-input-devices` diagnostics panel; grab-management (`grab`/`release`/`handoff`) with explanations and confirms on the two that affect the live input path; a bindings editor (`get-bindings`/`set-binding` against the fixed action/button vocabulary, plus a `capture-next`/`capture-cancel` capture-and-apply flow); read-only per-game/per-player binding layers with a `set-active-game`/clear form (editing deferred — use the Settings raw JSON hatch); controller-DB status/refresh |
 | CEC | Topology (`cec-scan`/`cec-device`, merged with the `cecDeviceNames` friendly-name overrides from Settings); switching (`cec-active-source` as the "switch input" primitive, per-device `cec-power-on`/`-off`, all confirmed); a health panel (`cec-health`/`cec-test`) classifying the daemon's transmit-wedge state, with an escalating "Recover CEC" ladder (test → restart daemon, reusing the Dev page's bridge-then-exec tier logic → link to a full reboot on Dev) that flags the recommended step for the current state; a build/platform-gated daemon renders as an honest "not available" note, never a failure banner |
 | Dev | deploy/build/restart daemon/restart shell/reboot with tier labels + confirms; screenshot viewer (provenance sha/branch/version/captured-at, proxied via `/dev/screenshot`) |
-| Logs | shell + daemon log tails (ANSI-stripped, wrapped rather than clipped), free-text filter plus one-click "Errors only"/"Hide icon noise" presets |
+| Logs | shell + daemon log tails (ANSI-stripped — including "bare" ESC-dropped residue like `[33m`/`[0m` — and wrapped rather than clipped), free-text filter plus one-click "Errors only"/"Hide icon noise" presets, and a Focus Shell/Focus Daemon toggle to expand one pane to full width (state lives on `#log-panels` itself, so it survives every htmx refresh of the panes inside it) |
 
 A small daemon-reachability dot lives in the topnav on every page (`base.html`
 + `pages::nav`), polling a cheap, short-timeout `status` probe every ~10s —
 green when the daemon answers, red when it doesn't, neutral until the first
 poll lands.
+
+## System updates (pacman)
+
+`panel/src/updates.rs` owns pacman system-update state independently of the
+daemon — the Dashboard Updates tile and the Processes page's "System
+Updates" section both read it.
+
+- **Read** (unprivileged): `checkupdates` (pacman-contrib) parsed into
+  `{name, old_version, new_version}` rows. Exit code `2` ("no updates
+  available") is an OK-empty result, not an error; exit `1` (or a spawn
+  failure/timeout) surfaces as an honest error banner. Cached in `AppState`
+  (`UpdatesState`) with a 5-minute TTL — `checkupdates` never runs on the
+  Dashboard's fast 5s tile poll (the Updates tile polls on its own, much
+  slower 300s interval instead); the Processes page's Refresh button
+  bypasses the cache.
+- **Reboot-needed detection**: compares `uname -r` against the installed
+  kernel package's version. The kernel package is found by filtering
+  `pacman -Qq` for `linux`/`linux-<flavor>` names (excluding
+  headers/docs/firmware/tools suffixes) and, when several are installed
+  (e.g. `linux` + `linux-lts`), matching the flavor suffix against the
+  `uname -r` release string. An ambiguous or unparseable result degrades to
+  `RebootStatus::Unknown` rather than guessing.
+- **Apply** (privileged): `sudo -n pacman -Syu --noconfirm` — the panel's
+  unprivileged systemd-unit user has NOPASSWD sudo on the deploy host
+  (htpc-1), so `-n` (never prompt) succeeds without a password. Runs as a
+  single-flighted `tokio::spawn` background task tracked in `AppState`
+  (`Idle` → `Running{started, log_tail}` → `Done{success, finished,
+  log_tail}`) — the pacman process outlives any one HTTP request. Combined
+  stdout+stderr streams into a live ~200-line tail as the process runs;
+  `kill_on_drop` enforces a 30-minute timeout. A second "Run full update"
+  click while one is already running is a no-op (the existing job's status
+  is shown, not a new one started).
+- The Processes page's job-status view polls itself
+  (`hx-trigger="every 2s [this.dataset.running=='1']"`) only while
+  `Running`; on `Done` it shows success/failure and, if the kernel package
+  version no longer matches the running kernel, a reboot-needed banner
+  linking to Dev → Reboot.
+- No new `config.toml` keys — every threshold (cache TTL, apply timeout, log
+  tail length) is a hardcoded constant in `updates.rs`.
+
+## Danger tiers
+
+Mutating buttons across the panel use one of two tiers, distinct from
+`--error` (reserved for banners): `.warn-action` (amber-red) for
+recoverable-but-disruptive actions — unit restarts, Controllers'
+release/handoff, controllerdb refresh — and `.danger-severe` (deep red,
+bold border) for actions that take the whole box down or overwrite the
+running build — Dev's Reboot/Suspend/Deploy/Build, and the Updates
+section's "Run full update". The Processes page's own-unit (panel) Restart
+button carries a distinct confirm message noting the click will disconnect
+the very page the operator is looking at.
 
 ## Running locally
 
@@ -92,3 +144,31 @@ or `cargo run -p tv-shell-panel` for a dev loop. It reads `[panel]` from
   - [x] Global daemon-reachability dot in the topnav (`pages::nav`)
   - [x] `[profile.release]` (`strip = "debuginfo"`, `lto = "thin"`) added to
         the workspace root — trims every workspace binary, daemon/host included
+- [x] Final-polish pass (post-UI-polish; branch `panel-staging-final-polish`)
+  - [x] System updates (pacman): Dashboard tile + Processes page section,
+        async background apply job, reboot-needed detection (see
+        [System updates](#system-updates-pacman) above)
+  - [x] Log pane focus/expand toggle on `/logs`
+  - [x] `strip_ansi` also strips bare (ESC-dropped) CSI residue
+  - [x] Loading feedback (`.htmx-request` opacity/spinner) and
+        `hx-disabled-elt` double-fire protection on every mutating
+        form/button
+  - [x] Two-tier danger button styling + a distinct panel-restart confirm
+        (see [Danger tiers](#danger-tiers) above)
+  - [x] Dashboard/Processes unit tiles pair color with an explicit status
+        word, never a bare dot
+  - [x] Post-action verification on `/dev` — unit-state chips + nav dot
+        refresh via htmx OOB swaps after deploy/build/restart
+  - [x] Mobile nav affordance: topnav right-edge fade + active-link
+        scroll-into-view
+  - [x] Widgets reorder via ▲/▼ buttons instead of a free-text order input
+  - [x] Tools page: outline vs filled buttons for read-only vs mutating
+        commands, a bordered raw-console panel with a stronger confirm for
+        guarded verbs
+  - [x] CEC recovery ladder wrapped in its own alert-bordered panel
+  - [x] Input-truncation fixes (flex `min-width:0`, wider free-text fields)
+  - [x] Controllers bindings table reflows to stacked cards below 800px
+  - [x] `--danger`/`--error` hue split, checkbox `accent-color`, global
+        `:focus-visible` ring
+  - [x] Processes page: Top Processes + Hyprland Clients as styled tables;
+        `.degraded-msg`/`.stub-msg` collapsed into one class
