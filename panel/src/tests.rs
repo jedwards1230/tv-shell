@@ -592,3 +592,289 @@ async fn dev_screenshot_capture_degrades_when_bridge_not_configured() {
         "must never emit an <img> tag when the capture itself failed: {html}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// M4: Controllers page
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn controllers_page_degrades_when_daemon_unreachable() {
+    let state = hermetic_state();
+    let html = pages::controllers::render_page(&state).await;
+    assert!(!html.is_empty());
+    assert!(
+        html.to_lowercase().contains("unreachable"),
+        "expected a daemon-unreachable marker somewhere on the page: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_page_renders_pads_bindings_and_controllerdb() {
+    let mut replies = HashMap::new();
+    replies.insert("status", "connected:grabbed");
+    replies.insert(
+        "get-pads",
+        r#"[{"id":"uniq:a","index":0,"name":"Test Pad","grabbed":true}]"#,
+    );
+    replies.insert(
+        "get-bindings",
+        r#"{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}"#,
+    );
+    replies.insert(
+        "get-config",
+        r#"{"perGameBindings":{"steam_1":{"select":"BTN_SOUTH"}}}"#,
+    );
+    replies.insert(
+        "controllerdb-status",
+        r#"{"source":"bundled_baseline","entryCount":100,"lastDownloaded":0,"upstreamUrl":"https://example.test"}"#,
+    );
+    let sock = spawn_canned_daemon("controllers-page", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::controllers::render_page(&state).await;
+    assert!(
+        html.contains("Test Pad"),
+        "expected the fleet table to render the pad: {html}"
+    );
+    assert!(
+        html.contains("BTN_SOUTH"),
+        "expected the bindings table to render the current button: {html}"
+    );
+    assert!(
+        html.contains("steam_1"),
+        "expected the per-game bindings JSON to render: {html}"
+    );
+    assert!(
+        html.contains("bundled_baseline"),
+        "expected the controllerdb status JSON to render: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_bindings_set_rejects_unknown_action_without_ipc() {
+    // Validation must fail before any IPC call — no daemon needed.
+    let state = hermetic_state();
+    let html = pages::controllers::render_set_binding(&state, "bogus", "BTN_SOUTH").await;
+    assert!(
+        html.to_lowercase().contains("unknown action"),
+        "expected an unknown-action error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_bindings_set_rejects_unknown_button_without_ipc() {
+    let state = hermetic_state();
+    let html = pages::controllers::render_set_binding(&state, "select", "BTN_BOGUS").await;
+    assert!(
+        html.to_lowercase().contains("unknown button"),
+        "expected an unknown-button error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_capture_rejects_unknown_action_without_ipc() {
+    let state = hermetic_state();
+    let html = pages::controllers::render_capture(&state, "bogus").await;
+    assert!(
+        html.to_lowercase().contains("unknown action"),
+        "expected an unknown-action error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_capture_applies_captured_button_to_binding() {
+    let mut replies = HashMap::new();
+    replies.insert("capture-next", "captured:BTN_NORTH");
+    replies.insert("set-binding select BTN_NORTH", "ok");
+    replies.insert("get-bindings", r#"{"select":"BTN_NORTH"}"#);
+    let sock = spawn_canned_daemon("controllers-capture", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::controllers::render_capture(&state, "select").await;
+    assert!(
+        html.contains("BTN_NORTH") && html.to_lowercase().contains("captured"),
+        "expected the captured button to be reported and applied: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_capture_reports_timeout() {
+    let mut replies = HashMap::new();
+    replies.insert("capture-next", "timeout");
+    replies.insert("get-bindings", "{}");
+    let sock = spawn_canned_daemon("controllers-capture-timeout", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::controllers::render_capture(&state, "select").await;
+    assert!(
+        html.to_lowercase().contains("timed out"),
+        "expected a timeout message: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_pad_rumble_rejects_out_of_range_ms() {
+    let state = hermetic_state();
+    let html = pages::controllers::render_pad_rumble(&state, "uniq:a", "99999").await;
+    assert!(
+        html.to_lowercase().contains("between"),
+        "expected an out-of-range ms error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_pad_battery_rejects_whitespace_id() {
+    let state = hermetic_state();
+    let html = pages::controllers::render_pad_battery(&state, "bad id").await;
+    assert!(
+        html.to_lowercase().contains("whitespace"),
+        "expected a whitespace validation error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn controllers_active_game_set_rejects_whitespace_id() {
+    let state = hermetic_state();
+    let html = pages::controllers::render_active_game_set(&state, "bad id").await;
+    assert!(
+        html.to_lowercase().contains("whitespace"),
+        "expected a whitespace validation error: {html}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// M4: CEC page
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cec_page_degrades_when_daemon_unreachable() {
+    let state = hermetic_state();
+    let html = pages::cec::render_page(&state).await;
+    assert!(!html.is_empty());
+    assert!(
+        html.to_lowercase().contains("unreachable"),
+        "expected a daemon-unreachable marker in the health panel: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_health_ok_round_trip() {
+    let mut replies = HashMap::new();
+    replies.insert(
+        "cec-health",
+        r#"{"transmit":"ok","reason":null,"since":1719500000000,"lastError":null}"#,
+    );
+    let sock = spawn_canned_daemon("cec-health-ok", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::cec::render_page(&state).await;
+    assert!(
+        html.to_lowercase().contains("healthy"),
+        "expected a healthy marker: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_test_wedge_recommends_restart() {
+    let mut replies = HashMap::new();
+    replies.insert(
+        "cec-test",
+        r#"{"transmit":"failing","reason":null,"since":1719500000000,"lastError":"TransmitFailed"}"#,
+    );
+    let sock = spawn_canned_daemon("cec-test-wedge", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::cec::render_test(&state).await;
+    assert!(
+        html.to_lowercase().contains("wedge"),
+        "expected a transmit-wedge marker: {html}"
+    );
+    assert!(
+        html.contains("Restart daemon (recommended)"),
+        "expected the restart step to be flagged recommended: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_scan_merges_device_names_and_falls_back_to_default() {
+    let mut replies = HashMap::new();
+    replies.insert(
+        "cec-scan",
+        r#"[{"logicalAddress":0,"powerStatus":"on"},{"logicalAddress":5,"powerStatus":"standby"}]"#,
+    );
+    replies.insert("get-config", r#"{"cecDeviceNames":{"0":"Living Room TV"}}"#);
+    let sock = spawn_canned_daemon("cec-scan", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::cec::render_scan(&state).await;
+    assert!(
+        html.contains("Living Room TV"),
+        "expected the cecDeviceNames override to render: {html}"
+    );
+    assert!(
+        html.contains("Audio System"),
+        "expected the default name for addr 5 (no override) to render: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_scan_disabled_build_renders_honest_state_not_a_failure() {
+    let mut replies = HashMap::new();
+    replies.insert("cec-scan", "error:unsupported on this platform");
+    replies.insert("get-config", "{}");
+    let sock = spawn_canned_daemon("cec-scan-disabled", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+
+    let html = pages::cec::render_scan(&state).await;
+    assert!(
+        html.contains("not available in this daemon build"),
+        "expected the honest not-available message: {html}"
+    );
+    assert!(
+        !html.contains("result-error"),
+        "a disabled build must not render as a failure: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_device_rejects_out_of_range_addr_without_ipc() {
+    let state = hermetic_state();
+    let html = pages::cec::render_device(&state, "99").await;
+    assert!(
+        html.contains("between 0 and 15"),
+        "expected an out-of-range addr error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_power_on_rejects_non_integer_addr_without_ipc() {
+    let state = hermetic_state();
+    let html = pages::cec::render_power_on(&state, "not-a-number").await;
+    assert!(
+        html.to_lowercase().contains("integer"),
+        "expected an invalid-addr error: {html}"
+    );
+}
+
+#[tokio::test]
+async fn cec_recover_restart_daemon_falls_back_to_exec_and_reports_health() {
+    // Hermetic: no bridge configured and no real daemon — exercises the
+    // bridge-unavailable -> direct-exec fallback path end to end (the exec
+    // call itself will fail too, since `systemctl` isn't a real unit here /
+    // may not exist on the test host, but the response must still degrade
+    // gracefully rather than panicking).
+    let state = hermetic_state();
+    let html = pages::cec::render_recover_restart_daemon(&state).await;
+    assert!(!html.is_empty());
+    assert!(
+        html.to_lowercase().contains("restart-daemon"),
+        "expected the restart-daemon action to be reported: {html}"
+    );
+}

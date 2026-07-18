@@ -119,7 +119,64 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/tools/raw", post(pages::tools::raw))
         .route("/controllers", get(pages::controllers::page))
+        .route("/controllers/grab", post(pages::controllers::grab))
+        .route("/controllers/release", post(pages::controllers::release))
+        .route("/controllers/handoff", post(pages::controllers::handoff))
+        .route(
+            "/controllers/pad/battery",
+            post(pages::controllers::pad_battery),
+        )
+        .route(
+            "/controllers/pad/rumble-status",
+            post(pages::controllers::pad_rumble_status),
+        )
+        .route(
+            "/controllers/pad/rumble",
+            post(pages::controllers::pad_rumble),
+        )
+        .route(
+            "/controllers/input-devices",
+            post(pages::controllers::input_devices),
+        )
+        .route(
+            "/controllers/bindings/set",
+            post(pages::controllers::bindings_set),
+        )
+        .route(
+            "/controllers/bindings/capture",
+            post(pages::controllers::bindings_capture),
+        )
+        .route(
+            "/controllers/bindings/capture-cancel",
+            post(pages::controllers::bindings_capture_cancel),
+        )
+        .route(
+            "/controllers/active-game/set",
+            post(pages::controllers::active_game_set),
+        )
+        .route(
+            "/controllers/active-game/clear",
+            post(pages::controllers::active_game_clear),
+        )
+        .route(
+            "/controllers/controllerdb/status",
+            post(pages::controllers::controllerdb_status),
+        )
+        .route(
+            "/controllers/controllerdb/refresh",
+            post(pages::controllers::controllerdb_refresh),
+        )
         .route("/cec", get(pages::cec::page))
+        .route("/cec/scan", post(pages::cec::scan))
+        .route("/cec/device", post(pages::cec::device))
+        .route("/cec/active-source", post(pages::cec::active_source))
+        .route("/cec/power-on", post(pages::cec::power_on))
+        .route("/cec/power-off", post(pages::cec::power_off))
+        .route("/cec/test", post(pages::cec::test))
+        .route(
+            "/cec/recover/restart-daemon",
+            post(pages::cec::recover_restart_daemon),
+        )
         .route("/logs", get(pages::logs::page))
         .route("/logs/view", get(pages::logs::view)) // htmx refresh partial
         .route("/dev", get(pages::dev::page))
