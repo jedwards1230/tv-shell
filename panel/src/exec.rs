@@ -245,9 +245,15 @@ fn resolve_build_script() -> String {
 
 /// Spawn `program args...`, wait up to `timeout`, and return combined
 /// stdout+stderr on success or the appropriate [`ExecError`] otherwise.
+///
+/// `kill_on_drop` guarantees a timed-out child is SIGKILLed when the
+/// `output()` future is dropped — without it the child would keep running
+/// as an orphan past the timeout, letting a second invocation race it even
+/// though the caller-side single-flight mutex has been released.
 async fn run(program: &str, args: &[&str], timeout: Duration) -> Result<String, ExecError> {
-    let child = Command::new(program).args(args).output();
-    let output = match tokio::time::timeout(timeout, child).await {
+    let mut cmd = Command::new(program);
+    cmd.args(args).kill_on_drop(true);
+    let output = match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => return Err(ExecError::Spawn(e.to_string())),
         Err(_) => return Err(ExecError::Timeout),
@@ -297,5 +303,30 @@ mod tests {
     fn apply_filter_passthrough_when_none() {
         let out = "alpha\nbeta\n".to_string();
         assert_eq!(apply_filter(out.clone(), None), out);
+    }
+
+    #[tokio::test]
+    async fn run_kills_child_on_timeout() {
+        // Unique sleep duration so pgrep -f can find exactly this child.
+        let marker = format!("4.{}9317", std::process::id() % 1000);
+        let result = run("sleep", &[&marker], Duration::from_millis(100)).await;
+        assert!(matches!(result, Err(ExecError::Timeout)));
+
+        // kill_on_drop delivers SIGKILL when the output() future drops; give
+        // the kernel a beat, then verify no orphan survived. Skip the
+        // assertion if pgrep itself is unavailable on this system.
+        let pattern = format!("sleep {marker}");
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            match std::process::Command::new("pgrep")
+                .args(["-f", &pattern])
+                .output()
+            {
+                Ok(out) if !out.status.success() => return, // no match: child is dead
+                Ok(_) => continue,                          // still alive, keep polling
+                Err(_) => return,                           // no pgrep — skip
+            }
+        }
+        panic!("timed-out child was still alive 2s after the timeout");
     }
 }
