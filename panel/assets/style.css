@@ -111,6 +111,45 @@ a:hover {
   background: rgba(79, 140, 255, 0.15);
 }
 
+.nav-spacer {
+  flex: 1 1 auto;
+}
+
+.nav-daemon-status {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* ── State dots ──────────────────────────────────────────────────────── */
+
+.dot {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  margin-right: 0.4em;
+  vertical-align: middle;
+}
+
+.dot-ok {
+  background: var(--ok);
+}
+
+.dot-warn {
+  background: var(--warn);
+}
+
+.dot-error {
+  background: var(--error);
+}
+
+.dot-neutral {
+  background: var(--text-muted);
+}
+
 /* ── Tiles ───────────────────────────────────────────────────────────── */
 
 .tile-grid {
@@ -120,11 +159,25 @@ a:hover {
   margin: 1rem 0;
 }
 
-.tile {
+.tile,
+a.tile {
+  display: block;
   background: var(--bg-alt);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.9rem 1rem;
+}
+
+a.tile {
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+a.tile:hover {
+  border-color: var(--accent);
+  background: rgba(79, 140, 255, 0.08);
+  text-decoration: none;
 }
 
 .tile p {
@@ -192,6 +245,18 @@ th {
   color: var(--text-muted);
 }
 
+.log-controls .log-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.log-presets {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
 .log-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -215,6 +280,12 @@ th {
 .degraded-msg {
   color: var(--text-muted);
   font-style: italic;
+}
+
+.log-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 pre {

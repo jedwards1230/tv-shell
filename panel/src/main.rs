@@ -16,9 +16,11 @@ mod assets;
 mod bridge;
 mod config;
 mod exec;
+mod humanize;
 mod ipc;
 mod pages;
 mod state;
+mod text;
 
 #[cfg(test)]
 mod tests;
@@ -191,6 +193,7 @@ async fn main() -> anyhow::Result<()> {
             "/dev/screenshot/capture",
             post(pages::dev::screenshot_capture),
         )
+        .route("/nav/daemon-status", get(pages::nav::daemon_status_dot))
         .route("/assets/htmx.min.js", get(assets::htmx_js))
         .route("/assets/style.css", get(assets::style_css))
         .with_state(state);

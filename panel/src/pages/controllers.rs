@@ -132,6 +132,15 @@ async fn run_line(state: &AppState, line: &str) -> String {
     }
 }
 
+/// Like [`run_line`], but bolts on an out-of-band `#controllers-fleet`
+/// refresh (see [`render_fleet_section`]) — used by grab/release/handoff,
+/// whose whole point is changing the fleet's grab state, so the Fleet
+/// section should never need a manual reload to reflect it.
+async fn run_line_refresh_fleet(state: &AppState, line: &str) -> String {
+    let result = run_line(state, line).await;
+    format!("{result}{}", render_fleet_section(state, true).await)
+}
+
 // ---------------------------------------------------------------------------
 // Bindings section — its own `#controllers-bindings` partial, re-rendered
 // after every bindings-affecting action so the table always reflects the
@@ -352,33 +361,37 @@ struct PadView {
     grabbed: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Fleet section — its own `#controllers-fleet` partial (mirrors the bindings
+// section above) so grab/release/handoff can refresh it out-of-band without
+// touching the rest of the page.
+// ---------------------------------------------------------------------------
+
 #[derive(Template)]
-#[template(path = "controllers.html")]
-struct ControllersTemplate {
-    active: &'static str,
-    fleet_status: String,
+#[template(path = "controllers_fleet.html")]
+struct FleetTemplate {
+    oob: bool,
+    status_label: String,
+    status_dot_class: &'static str,
+    status_raw: String,
     pads: Vec<PadView>,
     pads_error: String,
-    bindings_section_html: String,
-    per_game_json: String,
-    per_player_json: String,
-    config_error: String,
-    controllerdb_text: String,
 }
 
-pub async fn page(State(state): State<SharedState>) -> impl IntoResponse {
-    Html(render_page(&state).await)
-}
-
-pub async fn render_page(state: &AppState) -> String {
+/// Fetch fresh `status`/`get-pads` and render the Fleet section. `oob` adds
+/// `hx-swap-oob="true"` to the section tag for bolting this onto another
+/// action's response (see [`run_line_refresh_fleet`]); `false` for the
+/// section's own place in the normal page render.
+async fn render_fleet_section(state: &AppState, oob: bool) -> String {
     let status_res = state.ipc.command("status").await;
     let pads_res = state.ipc.command_json::<Vec<Pad>>("get-pads").await;
-    let config_res = state.ipc.get_config().await;
-    let controllerdb_res = state.ipc.command("controllerdb-status").await;
 
-    let fleet_status = match status_res {
-        Ok(s) => s,
-        Err(e) => e.to_string(),
+    let (status_label, status_dot_class, status_raw) = match &status_res {
+        Ok(s) => match crate::humanize::humanize_status(s) {
+            Some(h) => (h.label, h.dot_class, h.raw),
+            None => (s.clone(), "dot-warn", s.clone()),
+        },
+        Err(e) => (e.to_string(), "dot-error", String::new()),
     };
 
     let (pads, pads_error) = match pads_res {
@@ -396,6 +409,38 @@ pub async fn render_page(state: &AppState) -> String {
         Err(e) => (Vec::new(), e.to_string()),
     };
 
+    let tmpl = FleetTemplate {
+        oob,
+        status_label,
+        status_dot_class,
+        status_raw,
+        pads,
+        pads_error,
+    };
+    tmpl.render()
+        .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
+#[derive(Template)]
+#[template(path = "controllers.html")]
+struct ControllersTemplate {
+    active: &'static str,
+    fleet_section_html: String,
+    bindings_section_html: String,
+    per_game_json: String,
+    per_player_json: String,
+    config_error: String,
+    controllerdb_text: String,
+}
+
+pub async fn page(State(state): State<SharedState>) -> impl IntoResponse {
+    Html(render_page(&state).await)
+}
+
+pub async fn render_page(state: &AppState) -> String {
+    let config_res = state.ipc.get_config().await;
+    let controllerdb_res = state.ipc.command("controllerdb-status").await;
+
     let (per_game_json, per_player_json, config_error) = match &config_res {
         Ok(cfg) => (
             pretty_json_or_empty(cfg.get("perGameBindings")),
@@ -410,13 +455,12 @@ pub async fn render_page(state: &AppState) -> String {
         Err(e) => e.to_string(),
     };
 
+    let fleet_section_html = render_fleet_section(state, false).await;
     let bindings_section_html = render_bindings_section(state, None).await;
 
     let tmpl = ControllersTemplate {
         active: "controllers",
-        fleet_status,
-        pads,
-        pads_error,
+        fleet_section_html,
         bindings_section_html,
         per_game_json,
         per_player_json,
@@ -436,7 +480,7 @@ pub async fn grab(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 pub async fn render_grab(state: &AppState) -> String {
-    run_line(state, "grab").await
+    run_line_refresh_fleet(state, "grab").await
 }
 
 pub async fn release(State(state): State<SharedState>) -> impl IntoResponse {
@@ -444,7 +488,7 @@ pub async fn release(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 pub async fn render_release(state: &AppState) -> String {
-    run_line(state, "release").await
+    run_line_refresh_fleet(state, "release").await
 }
 
 pub async fn handoff(State(state): State<SharedState>) -> impl IntoResponse {
@@ -452,7 +496,7 @@ pub async fn handoff(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 pub async fn render_handoff(state: &AppState) -> String {
-    run_line(state, "handoff").await
+    run_line_refresh_fleet(state, "handoff").await
 }
 
 // ---------------------------------------------------------------------------

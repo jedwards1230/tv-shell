@@ -46,7 +46,12 @@ config management.
 | Controllers | Fleet table (`get-pads`, per-pad battery/rumble-status/bounded rumble test) with a lazy `list-input-devices` diagnostics panel; grab-management (`grab`/`release`/`handoff`) with explanations and confirms on the two that affect the live input path; a bindings editor (`get-bindings`/`set-binding` against the fixed action/button vocabulary, plus a `capture-next`/`capture-cancel` capture-and-apply flow); read-only per-game/per-player binding layers with a `set-active-game`/clear form (editing deferred — use the Settings raw JSON hatch); controller-DB status/refresh |
 | CEC | Topology (`cec-scan`/`cec-device`, merged with the `cecDeviceNames` friendly-name overrides from Settings); switching (`cec-active-source` as the "switch input" primitive, per-device `cec-power-on`/`-off`, all confirmed); a health panel (`cec-health`/`cec-test`) classifying the daemon's transmit-wedge state, with an escalating "Recover CEC" ladder (test → restart daemon, reusing the Dev page's bridge-then-exec tier logic → link to a full reboot on Dev) that flags the recommended step for the current state; a build/platform-gated daemon renders as an honest "not available" note, never a failure banner |
 | Dev | deploy/build/restart daemon/restart shell/reboot with tier labels + confirms; screenshot viewer (provenance sha/branch/version/captured-at, proxied via `/dev/screenshot`) |
-| Logs | shell + daemon log tails with filters |
+| Logs | shell + daemon log tails (ANSI-stripped, wrapped rather than clipped), free-text filter plus one-click "Errors only"/"Hide icon noise" presets |
+
+A small daemon-reachability dot lives in the topnav on every page (`base.html`
++ `pages::nav`), polling a cheap, short-timeout `status` probe every ~10s —
+green when the daemon answers, red when it doesn't, neutral until the first
+poll lands.
 
 ## Running locally
 
@@ -69,3 +74,21 @@ or `cargo run -p tv-shell-panel` for a dev loop. It reads `[panel]` from
 - [x] M4 — Controllers + CEC (switching, grab handling, wedge recovery)
   - [x] Controllers page (fleet/battery/rumble, grab management, bindings editor + capture, per-game/per-player read-only, controller DB)
   - [x] CEC page (topology, switching, health + escalating wedge recovery)
+- [x] UI-polish pass (post-M4, live-audit fixups; branch `panel-staging-ui-polish`)
+  - [x] Raw `<connection>:<grab>` IPC tokens humanized into plain language + a
+        colored state dot (Dashboard tile, Controllers fleet), raw token kept
+        as a muted suffix (`panel/src/humanize.rs`)
+  - [x] Log panes ANSI-stripped server-side (`panel/src/text.rs`), wrapped
+        instead of clipped, plus "Errors only"/"Hide icon noise" preset filters
+  - [x] CEC recovery ladder recommends exactly one step, chosen from the
+        health classification, instead of flagging every step
+  - [x] CEC health panel and Controllers fleet section auto-refresh via htmx
+        out-of-band swaps after any CEC action / grab / release / handoff
+  - [x] Settings raw-JSON escape hatch pretty-prints on render (15-row
+        textarea) and is compacted server-side before `set-config`
+  - [x] Settings' persisted binding-override block relabeled to point at
+        Controllers for the resolved view
+  - [x] Dashboard tiles are whole-tile links to their natural page
+  - [x] Global daemon-reachability dot in the topnav (`pages::nav`)
+  - [x] `[profile.release]` (`strip = "debuginfo"`, `lto = "thin"`) added to
+        the workspace root — trims every workspace binary, daemon/host included

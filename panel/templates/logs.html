@@ -9,8 +9,16 @@
   <label>Filter
     <input type="text" name="filter" placeholder="substring…">
   </label>
+  <label class="log-checkbox">
+    <input type="checkbox" name="hide_icons">
+    Hide icon noise
+  </label>
   <button type="submit">Refresh</button>
 </form>
+<div class="log-presets">
+  <button type="button" hx-get="/logs/view?filter=error" hx-target="#log-panels" hx-swap="innerHTML">Errors only</button>
+  <button type="button" hx-get="/logs/view?hide_icons=on" hx-target="#log-panels" hx-swap="innerHTML">Hide icon noise</button>
+</div>
 <div id="log-panels" hx-get="/logs/view" hx-trigger="load" hx-swap="innerHTML">
   <p class="muted">Loading…</p>
 </div>

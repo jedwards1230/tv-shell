@@ -324,7 +324,11 @@ fn render_ok(cfg: &Value) -> String {
         daemon_owned_json: daemon_owned_json(cfg),
         config_toml,
         config_toml_path,
-        raw_json: serde_json::to_string(cfg).unwrap_or_else(|_| "{}".to_string()),
+        // Pretty-printed for editing; `render_save_raw` accepts this
+        // unchanged (`serde_json::from_str` tolerates whitespace) and
+        // `IpcClient::set_config` already compacts it back to a single line
+        // before it ever reaches the daemon.
+        raw_json: serde_json::to_string_pretty(cfg).unwrap_or_else(|_| "{}".to_string()),
     };
     tmpl.render()
         .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
