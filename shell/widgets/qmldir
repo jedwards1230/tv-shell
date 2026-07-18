@@ -2,3 +2,4 @@ module shell.widgets
 WidgetsApp 1.0 WidgetsApp.qml
 WidgetList 1.0 WidgetList.qml
 WidgetConfig 1.0 WidgetConfig.qml
+SteamServerSettings 1.0 SteamServerSettings.qml

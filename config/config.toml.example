@@ -67,6 +67,21 @@
 #url = "http://gaming-pc:47995"
 # Token by reference only (0600 file under ~/.config/tv-shell/); inline tokens
 # are not supported. The token must match the host's TV_SHELL_HOST_TOKEN.
+#
+# MULTIPLE sidecars (e.g. a dual-boot gaming PC with one identity per OS, or
+# several gaming PCs): declare named [[steam.hosts]] entries INSTEAD of `url`
+# (when any entry is present, `url` is ignored). The active one is selected
+# from the couch — Widgets ▸ Steam ▸ Server — via the `steam-set-host` IPC
+# (persisted as `steamServer` in settings.json; default = the first entry).
+# Names must be unique and non-empty; a per-entry token_file overrides the
+# shared [steam].token_file above.
+#[[steam.hosts]]
+#name = "desktop-1"
+#url = "http://192.0.2.1:47995"
+#[[steam.hosts]]
+#name = "desktop-2"
+#url = "http://192.0.2.2:47995"
+#token_file = "~/.config/tv-shell/steam-token-desktop-2"
 #token_file = "~/.config/tv-shell/steam-token"
 
 # --- Observability: logs + metrics (optional) --------------------------------

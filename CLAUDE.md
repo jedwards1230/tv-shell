@@ -362,10 +362,13 @@ WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 grim /tmp/screenshot.pn
 
 ### Rust Input Daemon
 
-Install the built daemon binary to its resolved location:
+Install the built daemon binary to its resolved location. `build-daemon.sh`
+builds `-p tv-shell-input` from the workspace root, so the binary lands at the
+**workspace-root** `target/release/` (one shared target dir) — NOT
+`daemon/target/release/`:
 
 ```bash
-install -m755 daemon/target/release/tv-shell-input "$TV_SHELL_DIR/bin/tv-shell-input"
+install -m755 target/release/tv-shell-input "$TV_SHELL_DIR/bin/tv-shell-input"
 ```
 
 **HDMI-CEC (`--features cec`) and the MCP server (`--features mcp`) are opt-in features.** A plain `cargo build` is C-free; the `cec` feature pulls in `cec-rs`/`libcec-sys` and **static-links a bundled libcec** — a prebuilt static libcec + p8-platform is fetched from ssalonen/libcec-static-builds and linked into the binary, so the daemon needs **no system `libcec`/`libcec-dev`** at build or runtime. The static path needs no bindgen/cmake/clang — only `libudev-dev` + `pkg-config` and network at build time to fetch the archive.

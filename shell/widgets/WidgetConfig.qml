@@ -19,6 +19,7 @@ FocusScope {
     // The widget whose config is shown; "" renders nothing (parent hides it).
     property string widgetId: ""
     readonly property bool _isMoonlight: root.widgetId === "moonlight"
+    readonly property bool _isSteam: root.widgetId === "steam"
 
     // Any navigation — lets the app reset the auto-suspend idle timer.
     signal userActivity
@@ -79,9 +80,14 @@ FocusScope {
                 it.forceActiveFocus();
             return;
         }
-        // Last control: drop into the Moonlight server surface when present.
+        // Last control: drop into the widget's inlined server surface when
+        // present (Moonlight's target manager / Steam's server picker). The
+        // Steam picker is always shown but only focusable when it has hosts to
+        // pick (an empty state has nothing to land on).
         if (root._isMoonlight && moonlightServersLoader.item)
             moonlightServersLoader.item.forceActiveFocus();
+        else if (root._isSteam && steamServersLoader.item && steamServersLoader.item.available)
+            steamServersLoader.item.forceActiveFocus();
     }
 
     Flickable {
@@ -258,6 +264,25 @@ FocusScope {
                 }
             }
 
+            // Steam special-case: inline the server surface below the manifest
+            // controls — selects which configured tv-shell-host sidecar the
+            // daemon actively checks (`steam-hosts` / `steam-set-host` IPC).
+            // Always shown on the Steam config (mirrors Moonlight); it renders
+            // its own empty state when no host is configured.
+            Loader {
+                id: steamServersLoader
+                Layout.fillWidth: true
+                active: root._isSteam
+                visible: active
+                sourceComponent: steamServersComp
+                onLoaded: {
+                    if (item)
+                        item.upTarget = Qt.binding(function () {
+                            return l1Repeater.count > 0 ? l1Repeater.itemAt(l1Repeater.count - 1) : null;
+                        });
+                }
+            }
+
             Item {
                 Layout.fillHeight: true
                 Layout.minimumHeight: Units.spacingLG
@@ -275,6 +300,11 @@ FocusScope {
         MoonlightSettings {
             embedded: true
         }
+    }
+
+    Component {
+        id: steamServersComp
+        SteamServerSettings {}
     }
 
     // Follow keyboard/controller focus inside the embedded Moonlight surface so

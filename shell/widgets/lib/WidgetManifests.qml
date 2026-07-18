@@ -37,7 +37,7 @@ QtObject {
         {
             "id": "moonlight",
             "name": "Moonlight",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": ["moonlight-backend"],
             "defaultOrder": 0,
             "config": [
@@ -113,7 +113,7 @@ QtObject {
         {
             "id": "steam",
             "name": "Steam",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "requires": [],
             "defaultOrder": 4,
             "defaultEnabled": false,

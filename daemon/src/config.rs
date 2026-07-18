@@ -923,6 +923,26 @@ pub fn rumble_enabled(path: &Path) -> bool {
     }
 }
 
+/// Read the `steamServer` setting — the selected `[[steam.hosts]]` name, written
+/// by the `steam-set-host` IPC (daemon-owned, like `keyBindings`) — from a
+/// parsed settings document. `None` when absent or not a string; the caller
+/// falls back to the first configured host, so a stale name never breaks the
+/// widget. Pure (no I/O) so it unit-tests on any host.
+pub fn steam_server_from(settings: &serde_json::Value) -> Option<String> {
+    settings
+        .get("steamServer")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// Read the `steamServer` setting from `settings.json` on disk. A missing or
+/// unparseable file yields `None` (⇒ first configured host).
+pub fn steam_server(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
+    steam_server_from(&parsed)
+}
+
 /// Apply a `set-config` update to disk: read existing, merge, write single-line.
 /// Returns the new document text on success. `updates` must be a JSON object.
 /// The read→modify→write is serialized by [`SETTINGS_LOCK`] against a concurrent

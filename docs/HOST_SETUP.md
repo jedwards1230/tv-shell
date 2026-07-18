@@ -142,11 +142,15 @@ firewall to port 47995. See the role for the full variable list.
 
    Steam must be running in the same interactive session for launches to work.
 
-> **Dual-boot note.** desktop-2 (Windows) and the CachyOS boot are the **same
-> machine, same LAN IP**. Reuse the same `TV_SHELL_HOST_TOKEN` on both OSes so
-> the TV daemon's `[steam]` config (`url` + `token`) never has to change —
-> whichever OS is currently booted answers on the same IP:port with zero
-> client-side changes.
+> **Dual-boot note.** A dual-boot gaming PC may present the **same LAN IP from
+> both OSes** or a **different IP per OS** (per-OS static leases / hostnames).
+> Same IP: reuse the same `TV_SHELL_HOST_TOKEN` on both OSes so the TV daemon's
+> single `[steam]` config (`url` + `token`) never has to change — whichever OS
+> is booted answers on the same IP:port. Different IPs: declare one
+> `[[steam.hosts]]` entry per OS identity (see `config/config.toml.example`)
+> and switch the active one from the couch — Widgets ▸ Steam ▸ Server (the
+> `steam-set-host` IPC). The widget's Wake card always targets the active
+> entry's host.
 
 > **Big Picture nav timing on Windows**: the daemon fires the `steam://nav/...`
 > URL immediately with no "is Big Picture up yet?" wait (unlike Linux) — see

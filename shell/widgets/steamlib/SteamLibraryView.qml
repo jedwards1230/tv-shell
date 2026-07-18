@@ -55,11 +55,23 @@ ColumnLayout {
     property real posterScale: 0.62
 
     // The streaming-target host (IP/hostname) this view can wake. Threaded in
-    // from the parent MoonlightWidget (which reads it off the configured
-    // targets). When the host is unavailable and this is non-empty, the poster
-    // row is replaced by a single "Wake <host>" card. Never hardcoded — the
-    // value comes entirely from the caller / targets.json.
+    // from the parent widget (which reads it off the configured targets) as a
+    // FALLBACK only: the daemon's `steam-library` reply carries the ACTIVE
+    // sidecar's host (`reportedHost` below), which wins when present — the view
+    // then checks/wakes the server actually selected via `steam-set-host`, not
+    // whatever targets.json happens to list first. When the effective host is
+    // non-empty and the library is unreachable, the poster row is replaced by a
+    // single "Wake <host>" card. Never hardcoded.
     property string host: ""
+
+    // The active sidecar's host from the latest `steam-library` reply (its
+    // `host` field, present on both populated and down/empty replies). "" until
+    // the first reply — or when the daemon predates the field.
+    property string reportedHost: ""
+
+    // What the Wake card shows and `wol` targets: the daemon-reported active
+    // host, else the caller-threaded fallback.
+    readonly property string effectiveHost: reportedHost !== "" ? reportedHost : host
 
     // Mirror of the daemon's `streaming` flag from the latest `steam-library`
     // reply (a Moonlight stream is currently live on the host). Surfaced for the
@@ -137,10 +149,11 @@ ColumnLayout {
     readonly property bool hasContent: root._hasRecent || root._hasAll || steamMon.degraded
 
     // Host unavailable: the `steam-library` monitor is degraded
-    // (`unreachable`/`error`) AND a host is configured to wake. In this state the
+    // (`unreachable`/`error`) AND a host is known to wake. In this state the
     // poster row is hidden and a single "Wake <host>" card takes its place. When
-    // `host` is empty (no target) we fall back to the plain ServiceStatusNotice.
-    readonly property bool _hostDown: steamMon.degraded && root.host !== ""
+    // no host is known (no reply-carried host, no target) we fall back to the
+    // plain ServiceStatusNotice.
+    readonly property bool _hostDown: steamMon.degraded && root.effectiveHost !== ""
     // Show the wake card in place of posters whenever the host is down. Once the
     // monitor recovers to "ok" this flips false and the poster row returns
     // automatically (the existing reconnect refetch repopulates the rails).
@@ -203,9 +216,9 @@ ColumnLayout {
     // (or until the host returns "ok", whichever is first). One-shot SocketClient
     // request, same mechanism ServiceMonitor uses for `dataCommand`.
     function wakeHost() {
-        if (root.host === "")
+        if (root.effectiveHost === "")
             return;
-        wakeReq.request("wol", root.host);
+        wakeReq.request("wol", root.effectiveHost);
         root._fastPolling = true;
         fastPollWindow.restart();
         // Kick an immediate poll so the 3s cadence starts from "now".
@@ -267,6 +280,12 @@ ColumnLayout {
             // exposes JSON arrays as `QVariantList`, for which `Array.isArray()`
             // returns false, which silently rejected good 21-game replies.
             let d = steamMon.data;
+            // Adopt the reply-carried active host on EVERY data poll, ok or not —
+            // the down/empty reply carries it too, and that is exactly when the
+            // Wake card needs it. Absent field (older daemon) leaves the
+            // caller-threaded fallback in charge.
+            if (d && d.host !== undefined)
+                root.reportedHost = d.host || "";
             if (d && d.status === "ok") {
                 // Guard partial replies: only overwrite a rail when the reply
                 // actually carries it, so a malformed/partial "ok" can never blank
@@ -321,7 +340,7 @@ ColumnLayout {
         Layout.topMargin: Units.spacingMD
         cardWidth: root.posterW
         cardHeight: root.steamRowHeight
-        host: root.host
+        host: root.effectiveHost
         waking: root._fastPolling
         previousRow: root.previousRow
         nextRow: root.nextRow
