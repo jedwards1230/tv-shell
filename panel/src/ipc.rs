@@ -112,6 +112,17 @@ impl IpcClient {
         serde_json::from_str(&reply).map_err(|e| IpcError::Parse(e.to_string()))
     }
 
+    /// Like [`command`](Self::command), but with a caller-supplied `timeout`
+    /// instead of [`DEFAULT_TIMEOUT`] — for commands whose protocol-level wait
+    /// can exceed the default (e.g. `capture-next`, which blocks up to 10s
+    /// server-side waiting for a gamepad button press; see
+    /// `pages::controllers`).
+    pub async fn command_timeout(&self, line: &str, timeout: Duration) -> Result<String, IpcError> {
+        tokio::time::timeout(timeout, self.command_inner(line))
+            .await
+            .unwrap_or(Err(IpcError::Timeout))
+    }
+
     /// Fetch the full settings document (`~/.config/tv-shell/settings.json`)
     /// via `get-config`. Stateless on the daemon side: a missing or
     /// unparseable file yields `{}` rather than an error (see

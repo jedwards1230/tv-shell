@@ -6,8 +6,9 @@ HTML + HTMX over the daemon's existing control surface. It runs as its own
 restart a wedged daemon — the recovery path that previously required remote
 config management.
 
-> Status: under construction on the `panel-staging` branch. This document is the
-> panel's living doc — each milestone extends it.
+> Status: all four milestones (M1-M4) have landed on the `panel-staging` branch —
+> every page is fully implemented. This document is the panel's living doc; a
+> final promotion sweep (merging `panel-staging` into `main`) is still pending.
 
 ## Architecture
 
@@ -39,11 +40,11 @@ config management.
 |---|---|
 | Dashboard | unit status, build info, system/storage tiles, pad fleet, quick actions |
 | Processes | tv-shell systemd user units (daemon/shell/panel) with per-unit restart; Hyprland active window/clients/monitors via IPC; read-only top-processes snapshot (`ps`, CPU-sorted, no kill action in v1) |
-| Settings | grouped typed forms over `settings.json` via `get-config`/`set-config` (shallow merge — unmentioned keys, notably the daemon-owned `keyBindings`/`perGameBindings`/`perPlayerBindings`, are left untouched); those daemon-owned binding keys are shown read-only pending a Controllers page; read-only `config.toml` view (the edit path is deferred — editing still requires a manual edit + daemon/panel restart via the Dev page); raw JSON escape hatch with an explicit shallow-merge/`null`-deletes warning for keys not modeled as typed fields (e.g. `widgets`, `cecDeviceNames`) |
+| Settings | grouped typed forms over `settings.json` via `get-config`/`set-config` (shallow merge — unmentioned keys, notably the daemon-owned `keyBindings`/`perGameBindings`/`perPlayerBindings`, are left untouched); those daemon-owned binding keys are shown read-only here (`keyBindings` is also editable via the Controllers page's bindings editor; the per-game/per-player layers are read-only there too — full editors are deferred); read-only `config.toml` view (the edit path is deferred — editing still requires a manual edit + daemon/panel restart via the Dev page); raw JSON escape hatch with an explicit shallow-merge/`null`-deletes warning for keys not modeled as typed fields (e.g. `widgets`, `cecDeviceNames`) |
 | Widgets | per-widget enabled/order/size/prefs editors (`widgets.<id>` subtree) |
-| Tools | IPC console grouped by domain — Navigation (intent/key), Apps (list/launch/recents), Bluetooth (power/scan/list/connect-disconnect-pair-trust), Network (status/wifi/throughput/ping), Power (can-suspend/battery), System (sys-status/sys-metrics/storage-status/build-info/controllerdb); plus a raw-line escape hatch with a warning on commands owned by another page's guarded flow. CEC and controller/pads/bindings commands are deferred to the M4 Controllers/CEC pages. |
-| Controllers | pads, battery, rumble test, bindings editor, capture, controller DB, grab/release/handoff |
-| CEC | device scan, active-source switching, power on/off, health, wedge diagnosis + recovery |
+| Tools | IPC console grouped by domain — Navigation (intent/key), Apps (list/launch/recents), Bluetooth (power/scan/list/connect-disconnect-pair-trust), Network (status/wifi/throughput/ping), Power (can-suspend/battery), System (sys-status/sys-metrics/storage-status/build-info/controllerdb); plus a raw-line escape hatch with a warning on commands owned by another page's guarded flow. CEC and controller/pads/bindings commands live on their own Controllers/CEC pages (below) instead. |
+| Controllers | Fleet table (`get-pads`, per-pad battery/rumble-status/bounded rumble test) with a lazy `list-input-devices` diagnostics panel; grab-management (`grab`/`release`/`handoff`) with explanations and confirms on the two that affect the live input path; a bindings editor (`get-bindings`/`set-binding` against the fixed action/button vocabulary, plus a `capture-next`/`capture-cancel` capture-and-apply flow); read-only per-game/per-player binding layers with a `set-active-game`/clear form (editing deferred — use the Settings raw JSON hatch); controller-DB status/refresh |
+| CEC | Topology (`cec-scan`/`cec-device`, merged with the `cecDeviceNames` friendly-name overrides from Settings); switching (`cec-active-source` as the "switch input" primitive, per-device `cec-power-on`/`-off`, all confirmed); a health panel (`cec-health`/`cec-test`) classifying the daemon's transmit-wedge state, with an escalating "Recover CEC" ladder (test → restart daemon, reusing the Dev page's bridge-then-exec tier logic → link to a full reboot on Dev) that flags the recommended step for the current state; a build/platform-gated daemon renders as an honest "not available" note, never a failure banner |
 | Dev | deploy/build/restart daemon/restart shell/reboot with tier labels + confirms; screenshot viewer (provenance sha/branch/version/captured-at, proxied via `/dev/screenshot`) |
 | Logs | shell + daemon log tails with filters |
 
@@ -65,4 +66,6 @@ or `cargo run -p tv-shell-panel` for a dev loop. It reads `[panel]` from
   - [x] Tools console (Navigation/Apps/Bluetooth/Network/Power/System + raw escape hatch)
   - [x] Processes page (systemd units, Hyprland, top processes)
   - [x] Dev screenshot viewer (provenance headers, PNG proxy)
-- [ ] M4 — Controllers + CEC (switching, grab handling, wedge recovery)
+- [x] M4 — Controllers + CEC (switching, grab handling, wedge recovery)
+  - [x] Controllers page (fleet/battery/rumble, grab management, bindings editor + capture, per-game/per-player read-only, controller DB)
+  - [x] CEC page (topology, switching, health + escalating wedge recovery)
