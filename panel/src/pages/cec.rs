@@ -668,6 +668,148 @@ pub async fn render_power_off(state: &AppState, addr: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// OSD device name — the input label TVs/AVRs display for this machine.
+// ---------------------------------------------------------------------------
+//
+// The daemon resolves it as `[cec].osd_name` from config.toml, else the
+// machine hostname (daemon/src/daemon_config.rs `resolve_osd_name`); the
+// panel mirrors that resolution for display and owns the config.toml write —
+// its only config write, done format-preservingly via `toml_edit` so the
+// operator's comments/sections survive. A daemon restart applies the change
+// (libcec announces the name once, at connection open).
+
+/// libcec's `strDeviceName` limit; mirrors `CEC_OSD_NAME_MAX` in the daemon.
+const OSD_NAME_MAX: usize = 13;
+
+/// The machine hostname via `gethostname(2)`, `None` on failure/empty.
+fn hostname() -> Option<String> {
+    let mut buf = [0u8; 256];
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&b| b == 0)?;
+    let name = String::from_utf8_lossy(&buf[..end]).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Read the current `[cec].osd_name` override out of config.toml, `None` when
+/// the file/key is absent or unparseable (the daemon then uses the hostname).
+fn read_osd_override() -> Option<String> {
+    let text = std::fs::read_to_string(crate::config::config_toml_path()).ok()?;
+    let doc = text.parse::<toml_edit::DocumentMut>().ok()?;
+    let name = doc.get("cec")?.get("osd_name")?.as_str()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Validate a submitted OSD name: trimmed; empty ⇒ `Ok(None)` (clear the
+/// override, reverting to the hostname default); else printable-ASCII-only and
+/// at most [`OSD_NAME_MAX`] chars.
+fn validate_osd_name(input: &str) -> Result<Option<String>, String> {
+    let name = input.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.len() > OSD_NAME_MAX {
+        return Err(format!(
+            "name is {} chars; the CEC OSD name limit is {OSD_NAME_MAX}",
+            name.len()
+        ));
+    }
+    if !name.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+        return Err("name must be printable ASCII (letters, digits, - _ etc.)".to_string());
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// Apply an OSD-name override to a config.toml document, preserving all other
+/// content: `Some(name)` sets `[cec].osd_name`, `None` removes the key (and a
+/// then-empty `[cec]` table stays — harmless and less surprising than deleting
+/// a section the operator may have commented around).
+fn apply_osd_name(doc_text: &str, name: Option<&str>) -> Result<String, String> {
+    let mut doc = doc_text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("config.toml parse failed: {e}"))?;
+    match name {
+        Some(n) => {
+            doc.entry("cec")
+                .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+            let table = doc["cec"]
+                .as_table_mut()
+                .ok_or_else(|| "[cec] exists but is not a table".to_string())?;
+            table["osd_name"] = toml_edit::value(n);
+        }
+        None => {
+            if let Some(table) = doc.get_mut("cec").and_then(|i| i.as_table_mut()) {
+                table.remove("osd_name");
+            }
+        }
+    }
+    Ok(doc.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct OsdNameForm {
+    osd_name: String,
+}
+
+/// `POST /cec/osd-name` — validate and write the `[cec].osd_name` override to
+/// config.toml (format-preserving), or clear it when the field is emptied.
+/// The daemon announces the name at libcec-open, so the result points at the
+/// Processes page to restart it.
+pub async fn save_osd_name(
+    State(_state): State<SharedState>,
+    Form(form): Form<OsdNameForm>,
+) -> impl IntoResponse {
+    Html(render_save_osd_name(&form.osd_name))
+}
+
+pub fn render_save_osd_name(input: &str) -> String {
+    let name = match validate_osd_name(input) {
+        Ok(n) => n,
+        Err(msg) => return result_html(false, &format!("Not saved: {msg}")),
+    };
+    let path = crate::config::config_toml_path();
+    let current = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        // A missing config.toml is only workable when SETTING a name (we
+        // create the file); clearing on a missing file is a no-op success.
+        Err(_) if name.is_none() => {
+            return result_html(
+                true,
+                "No override set — the hostname default already applies.",
+            )
+        }
+        Err(_) => String::new(),
+    };
+    let updated = match apply_osd_name(&current, name.as_deref()) {
+        Ok(u) => u,
+        Err(msg) => return result_html(false, &format!("Not saved: {msg}")),
+    };
+    if let Err(e) = std::fs::write(&path, updated) {
+        return result_html(false, &format!("Write failed for {}: {e}", path.display()));
+    }
+    let effective = name.unwrap_or_else(default_osd_name);
+    result_html(
+        true,
+        &format!(
+            "Saved. CEC input name is now \"{}\" — restart tv-shell-input \
+             (Processes page) to announce it on the bus.",
+            esc(&effective)
+        ),
+    )
+}
+
+/// The name the daemon falls back to without an override: hostname truncated
+/// to [`OSD_NAME_MAX`] (mirroring the daemon's `resolve_osd_name`), else the
+/// historical `"tv-shell"`.
+fn default_osd_name() -> String {
+    hostname()
+        .map(|h| h.chars().take(OSD_NAME_MAX).collect())
+        .unwrap_or_else(|| "tv-shell".to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Page shell — GET /cec
 // ---------------------------------------------------------------------------
 
@@ -676,6 +818,12 @@ pub async fn render_power_off(state: &AppState, addr: &str) -> String {
 struct CecTemplate {
     active: &'static str,
     health_section_html: String,
+    /// The name the daemon will announce: override else hostname else fallback.
+    osd_effective: String,
+    /// Where the effective name comes from, for the source hint line.
+    osd_source: &'static str,
+    /// Current override value (input prefill; empty when hostname-defaulted).
+    osd_configured: String,
 }
 
 pub async fn page(State(state): State<SharedState>) -> impl IntoResponse {
@@ -684,10 +832,65 @@ pub async fn page(State(state): State<SharedState>) -> impl IntoResponse {
 
 pub async fn render_page(state: &AppState) -> String {
     let health_section_html = render_health_section(state).await;
+    let configured = read_osd_override();
+    let (osd_effective, osd_source) = match &configured {
+        Some(name) => (name.clone(), "config.toml [cec].osd_name override"),
+        None => match hostname() {
+            Some(h) => (
+                h.chars().take(OSD_NAME_MAX).collect(),
+                "hostname default (no [cec].osd_name override)",
+            ),
+            None => ("tv-shell".to_string(), "built-in fallback"),
+        },
+    };
     let tmpl = CecTemplate {
         active: "cec",
         health_section_html,
+        osd_effective,
+        osd_source,
+        osd_configured: configured.unwrap_or_default(),
     };
     tmpl.render()
         .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_osd_name_rules() {
+        assert_eq!(validate_osd_name("  ").unwrap(), None); // empty ⇒ clear
+        assert_eq!(
+            validate_osd_name(" living-room ").unwrap(),
+            Some("living-room".to_string())
+        );
+        assert!(validate_osd_name("a-name-way-too-long").is_err()); // > 13
+        assert!(validate_osd_name("télé").is_err()); // non-ASCII
+    }
+
+    #[test]
+    fn apply_osd_name_preserves_document() {
+        let doc = "# my comment\n[http]\nbind = \"127.0.0.1:8089\"\n\n[cec]\nlifecycle = true\n";
+        let set = apply_osd_name(doc, Some("htpc-1")).unwrap();
+        assert!(set.contains("# my comment"), "comment must survive: {set}");
+        assert!(set.contains("bind = \"127.0.0.1:8089\""));
+        assert!(set.contains("lifecycle = true"));
+        assert!(set.contains("osd_name = \"htpc-1\""));
+
+        // Clearing removes only the key; the rest stays intact.
+        let cleared = apply_osd_name(&set, None).unwrap();
+        assert!(!cleared.contains("osd_name"));
+        assert!(cleared.contains("lifecycle = true"));
+        assert!(cleared.contains("# my comment"));
+    }
+
+    #[test]
+    fn apply_osd_name_creates_cec_table_when_absent() {
+        let out = apply_osd_name("", Some("htpc-1")).unwrap();
+        assert!(out.contains("[cec]"));
+        assert!(out.contains("osd_name = \"htpc-1\""));
+        // Clearing on a doc with no [cec] table is a clean no-op.
+        assert_eq!(apply_osd_name("", None).unwrap(), "");
+    }
 }

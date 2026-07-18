@@ -196,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/cec/power-on", post(pages::cec::power_on))
         .route("/cec/power-off", post(pages::cec::power_off))
         .route("/cec/test", post(pages::cec::test))
+        .route("/cec/osd-name", post(pages::cec::save_osd_name))
         .route(
             "/cec/recover/restart-daemon",
             post(pages::cec::recover_restart_daemon),

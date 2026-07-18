@@ -69,6 +69,11 @@
 [cec]
 # Daemon wakes the AV chain on start/resume and standbys it on suspend.
 #lifecycle = false
+# OSD device name announced on the CEC bus — the input label TVs/AVRs display
+# for this machine. Absent ⇒ the machine hostname (same name as SSH/network).
+# ASCII, max 13 chars (libcec limit); longer values are truncated.
+# Editable from the web panel's CEC page (daemon restart applies it).
+#osd_name = "living-room"
 
 # --- Plex home-screen widget (optional) --------------------------------------
 [plex]

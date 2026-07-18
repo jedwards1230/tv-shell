@@ -119,6 +119,29 @@ pub fn lifecycle_enabled() -> bool {
     crate::daemon_config::global().cec.lifecycle
 }
 
+/// The OSD device name this daemon announces on the CEC bus — what TVs/AVRs
+/// display as the input label. `[cec].osd_name` from config.toml when set,
+/// else the machine hostname (so the AV chain shows the same name as SSH/the
+/// network), else the historical `"tv-shell"` fallback.
+fn osd_device_name() -> String {
+    crate::daemon_config::resolve_osd_name(
+        crate::daemon_config::global().cec.osd_name.as_deref(),
+        hostname().as_deref(),
+    )
+}
+
+/// The machine hostname via `gethostname(2)`, `None` on failure/empty.
+fn hostname() -> Option<String> {
+    let mut buf = [0u8; 256];
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&b| b == 0)?;
+    let name = String::from_utf8_lossy(&buf[..end]).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 // ---------------------------------------------------------------------------
 // CEC remote input -> navigation key mapping.
 // ---------------------------------------------------------------------------
@@ -293,7 +316,7 @@ fn scan_devices(conn: &cec_rs::CecConnection) -> Vec<String> {
 fn reopen_connection() -> Option<cec_rs::CecConnection> {
     tracing::warn!("cec: reopening libcec connection (recovery after transmit failure)");
     cec_rs::CecConnectionCfgBuilder::default()
-        .device_name("tv-shell".to_string())
+        .device_name(osd_device_name())
         .device_types(cec_rs::CecDeviceTypeVec::new(
             cec_rs::CecDeviceType::PlaybackDevice,
         ))
@@ -595,7 +618,7 @@ fn blocking_worker(
     // CecConnectionCfgBuilder (owned pattern, so each setter consumes+returns
     // the builder); `open(self)` consumes the config.
     let mut builder = cec_rs::CecConnectionCfgBuilder::default()
-        .device_name("tv-shell".to_string())
+        .device_name(osd_device_name())
         .device_types(cec_rs::CecDeviceTypeVec::new(
             cec_rs::CecDeviceType::PlaybackDevice,
         ))
