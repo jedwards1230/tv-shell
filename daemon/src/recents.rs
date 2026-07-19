@@ -181,11 +181,9 @@ mod tests {
 
     #[test]
     fn record_launch_then_load_round_trips_on_disk() {
-        let path = std::env::temp_dir().join(format!(
-            "gs-recents-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let path = crate::testutil::scratch_path("gs-recents", ".json");
         let _ = std::fs::remove_file(&path);
 
         // Missing file -> empty array.

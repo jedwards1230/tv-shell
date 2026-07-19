@@ -986,6 +986,15 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_commands_and_subscribe() {
+        // Deliberately NOT `crate::testutil::scratch_path` here: this binds a
+        // real Unix-domain socket, and `sockaddr_un::sun_path` caps the path
+        // at ~104-108 bytes. A `crate::testutil` path lives under this
+        // checkout's `target/debug/deps/`, which under a nested worktree can
+        // already be close to that budget before the filename — so this one
+        // site keeps the short, real system temp dir on purpose. (It's also a
+        // documented *separate* sandboxed-hook flake: the sandbox denies the
+        // `bind()` syscall itself regardless of path, so relocating it
+        // wouldn't fix the hook anyway — Linux CI is authoritative for it.)
         let dir = std::env::temp_dir();
         let sock = dir
             .join(format!("gs-ipc-test-{}.sock", std::process::id()))

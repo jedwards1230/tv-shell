@@ -1,6 +1,7 @@
 import Quickshell.Io
 import QtQuick
 import "prewarm.js" as Prewarm
+import "appQuirks.js" as AppQuirks
 
 Item {
     id: root
@@ -258,11 +259,41 @@ Item {
         appLaunched();
     }
 
-    function closeByAddress(address) {
-        if (address && address !== "") {
-            closeWindowAddr.addr = address;
-            closeWindowAddr.running = true;
+    // Window class of a currently-known running window, or "" when the address is
+    // unknown. Used to resolve a live window back to its desktop entry.
+    function _windowClassForAddress(address) {
+        for (let i = 0; i < runningWindows.length; i++) {
+            if (runningWindows[i].address === address)
+                return runningWindows[i].windowClass || "";
         }
+        return "";
+    }
+
+    // Quit the app owning `address`. Closing the window is the default and is a
+    // real quit for most apps — but some close to background instead (see
+    // appQuirks.js), so those declare an explicit quit command there and we run it
+    // rather than dispatching closewindow. No per-app branching lives here.
+    //
+    // `app` is OPTIONAL: callers that already hold the desktop entry pass it and
+    // skip the lookup. Callers that only have an address (every UI close path
+    // today — the drawer, HomeScreen, and LibraryScreen resume rows all carry a
+    // window, not an app) get the app resolved from the window snapshot, so they
+    // pick up quirks for free without a signal-signature change.
+    function closeByAddress(address, app) {
+        if (!address || address === "")
+            return;
+        let cmd = app ? AppQuirks.quitCommandFor(app, WindowMatcher) : AppQuirks.quitCommandForWindow(_windowClassForAddress(address), applications, WindowMatcher);
+        if (cmd && cmd.length > 0) {
+            // The strategy IS the quit — do NOT also dispatch closewindow. If the
+            // command fails to run we fall back to the window close below (see
+            // quitAppProc.onExited), so the action can never become a silent no-op.
+            quitAppProc.addr = address;
+            quitAppProc.command = cmd;
+            quitAppProc.running = true;
+            return;
+        }
+        closeWindowAddr.addr = address;
+        closeWindowAddr.running = true;
     }
 
     // Resume an app that's ALREADY running at a known address while ALSO
@@ -298,6 +329,23 @@ Item {
         id: closeWindowAddr
         property string addr: ""
         command: ["hyprctl", "dispatch", "closewindow", "address:" + addr]
+    }
+
+    // Runs an app's declared quit command (appQuirks.js). `command` is assigned
+    // imperatively by closeByAddress, so no binding is declared here. A non-zero
+    // exit means the command could not do its job (binary missing, app already
+    // gone) — fall back to the plain window close so "Quit App" still does
+    // something rather than silently failing.
+    Process {
+        id: quitAppProc
+        property string addr: ""
+        onExited: exitCode => {
+            if (exitCode !== 0 && quitAppProc.addr !== "") {
+                console.warn("[AppLifecycle] quit command exited", exitCode, "- falling back to closewindow");
+                closeWindowAddr.addr = quitAppProc.addr;
+                closeWindowAddr.running = true;
+            }
+        }
     }
 
     // Fire-and-forget exec redelivery for redeliverAndFocus() above — a plain

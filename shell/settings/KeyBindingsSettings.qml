@@ -41,11 +41,11 @@ FocusScope {
             description: "Tab navigation"
         },
         {
-            action: "confirm",
-            label: "Confirm",
+            action: "menu",
+            label: "Menu",
             keys: ["Start"],
             category: "Navigation",
-            description: "Confirm / enter"
+            description: "Toggle the nav drawer"
         },
         {
             action: "altAction",
@@ -155,7 +155,7 @@ FocusScope {
     ]
 
     // Actions that can be remapped via daemon IPC
-    property var remappableActions: ["select", "back", "altSelect", "confirm", "altAction"]
+    property var remappableActions: ["select", "back", "altSelect", "menu", "altAction"]
 
     // Capture state
     property int editingIndex: -1
@@ -188,9 +188,8 @@ FocusScope {
             "select": "BTN_SOUTH",
             "back": "BTN_EAST",
             "altSelect": "BTN_WEST",
-            "confirm": "BTN_START",
-            "altAction": "BTN_NORTH",
-            "drawer": "BTN_MODE"
+            "menu": "BTN_START",
+            "altAction": "BTN_NORTH"
         })
 
     function buttonDisplayName(codeName) {

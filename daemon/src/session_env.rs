@@ -221,30 +221,12 @@ pub fn input_bin() -> PathBuf {
 mod tests {
     use super::*;
 
-    /// Create a unique scratch directory for a test, next to the running test
-    /// binary rather than in the system temp dir. The system temp dir is
-    /// unwritable under the sandbox the Rust pre-commit/Stop hook runs in (writes
-    /// there fail `EACCES`). The directory of `current_exe()` — the test binary's
-    /// own `target/<profile>/deps/` — is guaranteed writable, because cargo just
-    /// wrote the binary there. We deliberately do NOT derive the base from
-    /// `CARGO_MANIFEST_DIR/target`: in a cargo WORKSPACE the real target dir is
-    /// the workspace root's, not `<crate>/target`, so `daemon/target/` may not
-    /// exist and creating it fails under the sandbox (which only permits writes
-    /// to the pre-existing target tree). Named by tag + pid + thread id so
-    /// parallel test threads never collide.
+    /// Create a unique scratch directory for a test. Delegates to the
+    /// shared [`crate::testutil::scratch_dir`] helper — see its doc comment
+    /// for why it's based on `current_exe()` rather than the system temp dir,
+    /// and for the residual fresh-worktree limitation.
     fn scratch(tag: &str) -> PathBuf {
-        let base = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
-        let dir = base.join("session-env-test-scratch").join(format!(
-            "{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::testutil::scratch_dir(tag)
     }
 
     /// Materialize a fake `hypr/<sig>/` instance dir; when `with_socket`, drop a
@@ -252,6 +234,10 @@ mod tests {
     fn make_instance(hypr_dir: &Path, sig: &str, with_socket: bool) {
         let sub = hypr_dir.join(sig);
         std::fs::create_dir_all(&sub).unwrap();
+        // `create_dir_all` may also freshly mint `hypr_dir` itself (a missing
+        // intermediate component) — harden both, not just the leaf.
+        crate::testutil::harden_dir(hypr_dir);
+        crate::testutil::harden_dir(&sub);
         if with_socket {
             std::fs::write(sub.join(".socket2.sock"), b"").unwrap();
         }
@@ -267,6 +253,7 @@ mod tests {
         // Present but empty hypr/ dir.
         let hypr = root.join("hypr");
         std::fs::create_dir_all(&hypr).unwrap();
+        crate::testutil::harden_dir(&hypr);
         assert_eq!(newest_live_signature_in(&hypr), None);
         let _ = std::fs::remove_dir_all(&root);
     }

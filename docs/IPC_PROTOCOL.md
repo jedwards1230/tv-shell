@@ -128,7 +128,7 @@ Return current button-to-action mappings as compact JSON.
 
 **Response:** Single-line JSON object mapping action names to evdev button code names.
 
-Example: `{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}\n`
+Example: `{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","menu":"BTN_START"}\n`
 
 ### `set-binding <action> <button_name>`
 
@@ -143,7 +143,7 @@ Remap a button for the given action. Rebuilds the internal button map and persis
 | Unknown action | `error:unknown action '<action>'\n` |
 | Invalid or non-remappable button | `error:invalid button '<button_name>'\n` |
 
-Valid actions: `select`, `back`, `altSelect`, `confirm`
+Valid actions: `select`, `back`, `altSelect`, `menu`, `altAction`
 
 ### `set-active-game <id>`
 
@@ -2269,7 +2269,12 @@ command each interval as a self-healing floor, with the broadcast as the fast pa
 | `select` | `BTN_SOUTH` (A) | `KEY_ENTER` | Yes |
 | `back` | `BTN_EAST` (B) | `KEY_ESC` | Yes |
 | `altSelect` | `BTN_NORTH` (Y) | `KEY_TAB` | Yes |
-| `confirm` | `BTN_START` (Start) | `KEY_ENTER` | Yes |
+| `menu` | `BTN_START` (Start) | `KEY_TAB` | Yes |
+
+`menu` emits the same `KEY_TAB` as `altSelect` — that is the nav drawer's
+existing keyboard gesture (`ShellLayout.qml`'s `Keys.onTabPressed`), so Start
+toggles the drawer open/closed as a dedicated menu button rather than
+duplicating `select`'s `KEY_ENTER`.
 
 `BTN_MODE` (Home/Guide) is **not** a mapped action. It is handled directly via the
 [tap-vs-hold split](#home-button-meta--guide--tap-vs-hold) — a tap belongs to the
@@ -2415,7 +2420,7 @@ never drop or back up a focus change (it retains just the latest).
 Key bindings are persisted to `~/.config/tv-shell/settings.json` under the `keyBindings` key. The daemon reads on startup and writes on each `set-binding` command (read-modify-write, compact JSON).
 
 ```json
-{"keyBindings":{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}}
+{"keyBindings":{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","menu":"BTN_START"}}
 ```
 
 Values are evdev code names (e.g., `BTN_SOUTH`). On load, if a value is an array, the last element is used. Unknown actions and non-remappable buttons are silently skipped.
@@ -2445,7 +2450,7 @@ The active game id is set at runtime via `set-active-game <id>`.
 ```json
 {
   "perGameBindings": {
-    "steam_12345": {"select": "BTN_SOUTH", "confirm": "BTN_EAST"}
+    "steam_12345": {"select": "BTN_SOUTH", "menu": "BTN_EAST"}
   }
 }
 ```

@@ -1056,13 +1056,14 @@ mod tests {
     #[cfg(unix)]
     fn with_temp_config_dir(f: impl FnOnce(&std::path::Path)) {
         let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-        let base = std::env::temp_dir().join(format!(
-            "tv-cfgdir-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let base = crate::testutil::scratch_path("tv-cfgdir", "");
         let gs = base.join("tv-shell");
         std::fs::create_dir_all(&gs).unwrap();
+        // `create_dir_all` freshly mints both `base` and `gs` — harden both.
+        crate::testutil::harden_dir(&base);
+        crate::testutil::harden_dir(&gs);
         let prev = std::env::var_os("XDG_CONFIG_HOME");
         // SAFETY: serialized by ENV_GUARD; restored before returning.
         unsafe { std::env::set_var("XDG_CONFIG_HOME", &base) };

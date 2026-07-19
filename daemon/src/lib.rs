@@ -9,6 +9,10 @@
 
 pub mod apps;
 pub mod config;
+// Shared test-only scratch-path helper (sandboxed Stop-hook `temp_dir()` fix).
+// Cross-platform; used by every module's `#[cfg(test)]` unit tests below.
+#[cfg(test)]
+pub(crate) mod testutil;
 // Typed daemon configuration (~/.config/tv-shell/config.toml). Cross-platform
 // (toml + serde); replaces the old daemon.env env-var loader. Carries the
 // startup validate() that refuses an unauthenticated LAN control surface.
