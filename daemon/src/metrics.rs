@@ -679,8 +679,9 @@ mod tests {
 
     #[test]
     fn write_atomic_creates_file_with_exact_contents() {
-        let dir = std::env::temp_dir().join(format!("gs-metrics-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let dir = crate::testutil::scratch_dir("gs-metrics-test");
         let path = dir.join("tv-shell.prom");
         let body = "# HELP x test\n# TYPE x counter\nx 1\n";
         write_atomic(&path, body).expect("atomic write succeeds");

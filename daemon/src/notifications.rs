@@ -219,11 +219,9 @@ mod tests {
 
     #[test]
     fn record_notification_then_load_round_trips_on_disk() {
-        let path = std::env::temp_dir().join(format!(
-            "gs-notifications-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let path = crate::testutil::scratch_path("gs-notifications", ".json");
         let _ = std::fs::remove_file(&path);
 
         // Missing file -> empty array.
@@ -246,11 +244,9 @@ mod tests {
 
     #[test]
     fn set_notifications_overwrites_on_disk() {
-        let path = std::env::temp_dir().join(format!(
-            "gs-notifications-set-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let path = crate::testutil::scratch_path("gs-notifications-set", ".json");
         let _ = std::fs::remove_file(&path);
 
         record_notification(&path, n(1, "A", 1.0)).unwrap();

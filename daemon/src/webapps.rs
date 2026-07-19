@@ -551,13 +551,9 @@ mod tests {
 
     #[test]
     fn write_refuses_to_clobber_a_foreign_entry() {
-        let dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(Path::to_path_buf))
-            .unwrap()
-            .join(format!("webapps-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let dir = crate::testutil::scratch_dir("webapps-test");
 
         let app = sample();
         let victim = dir.join(desktop_file_name(&app.id));

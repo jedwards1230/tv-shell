@@ -1166,11 +1166,9 @@ mod tests {
     #[test]
     fn atomic_write_creates_parent_and_replaces_atomically() {
         // Nested path under a fresh dir: atomic_write must mkdir -p the parent.
-        let dir = std::env::temp_dir().join(format!(
-            "gs-atomic-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let dir = crate::testutil::scratch_path("gs-atomic", "");
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("nested").join("data.json");
 
@@ -1193,12 +1191,10 @@ mod tests {
 
     #[test]
     fn set_config_then_load_round_trips_on_disk() {
-        // Unique temp file (no global env) so this is parallel-safe.
-        let path = std::env::temp_dir().join(format!(
-            "gs-cfg-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // Unique temp file (no global env) so this is parallel-safe. See
+        // `crate::testutil` for why this is based on `current_exe()` rather
+        // than the system temp dir.
+        let path = crate::testutil::scratch_path("gs-cfg", ".json");
         let _ = std::fs::remove_file(&path);
 
         // Seed a foreign daemon-owned key.
@@ -1236,12 +1232,10 @@ mod tests {
         // thread) both read→modify→write settings.json. Without SETTINGS_LOCK their
         // RMW cycles interleave and silently drop the loser's keys. Here many
         // threads each set a *distinct* key while another writes bindings; with the
-        // lock, every key and the keyBindings block must survive.
-        let path = std::env::temp_dir().join(format!(
-            "gs-concurrent-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // lock, every key and the keyBindings block must survive. See
+        // `crate::testutil` for why this is based on `current_exe()` rather
+        // than the system temp dir.
+        let path = crate::testutil::scratch_path("gs-concurrent", ".json");
         let _ = std::fs::remove_file(&path);
         std::fs::write(&path, "{}").unwrap();
 
@@ -1313,11 +1307,9 @@ mod tests {
 
     #[test]
     fn rumble_enabled_from_disk_round_trips() {
-        let path = std::env::temp_dir().join(format!(
-            "gs-rumble-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let path = crate::testutil::scratch_path("gs-rumble", ".json");
         let _ = std::fs::remove_file(&path);
         // Missing file -> default.
         assert_eq!(rumble_enabled(&path), RUMBLE_ENABLED_DEFAULT);
@@ -1371,16 +1363,10 @@ mod tests {
 
     #[test]
     fn cec_focus_from_disk_round_trips() {
-        let startup_path = std::env::temp_dir().join(format!(
-            "gs-cec-startup-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let wake_path = std::env::temp_dir().join(format!(
-            "gs-cec-wake-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why these are based on `current_exe()`
+        // rather than the system temp dir.
+        let startup_path = crate::testutil::scratch_path("gs-cec-startup", ".json");
+        let wake_path = crate::testutil::scratch_path("gs-cec-wake", ".json");
         let _ = std::fs::remove_file(&startup_path);
         let _ = std::fs::remove_file(&wake_path);
 
@@ -1435,11 +1421,9 @@ mod tests {
 
     #[test]
     fn cec_auto_switch_from_disk_round_trips() {
-        let path = std::env::temp_dir().join(format!(
-            "gs-cec-autoswitch-{}-{:?}.json",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        // See `crate::testutil` for why this is based on `current_exe()`
+        // rather than the system temp dir.
+        let path = crate::testutil::scratch_path("gs-cec-autoswitch", ".json");
         let _ = std::fs::remove_file(&path);
 
         // Missing file -> default (off).
