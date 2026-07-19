@@ -165,7 +165,10 @@ Drawer {
                 required property var modelData
                 width: navList.width
                 height: Math.round(Units.gridUnit * 2.2)
-                color: navList.currentIndex === index && navList.activeFocus ? Theme.surfaceHover : "transparent"
+                // The row stays lit while its context popover is open — the
+                // popover takes activeFocus off navList, and gating on
+                // activeFocus alone would flatten the row mid-interaction.
+                color: navList.currentIndex === index && (navList.activeFocus || rowContextMenu.opened) ? Theme.surfaceHover : "transparent"
                 Accessible.role: Accessible.Button
                 Accessible.name: modelData.label
                 Accessible.focusable: true
@@ -177,7 +180,7 @@ Drawer {
                 }
 
                 FocusAccentBar {
-                    active: navList.currentIndex === index && navList.activeFocus
+                    active: navList.currentIndex === index && (navList.activeFocus || rowContextMenu.opened)
                 }
 
                 RowLayout {
@@ -249,6 +252,28 @@ Drawer {
                     currentIndex--;
             }
             Keys.onReturnPressed: root._activateNav(currentIndex)
+
+            // Context popover trigger = the X face (daemon altAction → KEY_X),
+            // NOT the Y face (altSelect → KEY_TAB). Standardized across every
+            // surface — mirrors NavigableRow's handler. The event is accepted
+            // only when a menu actually opened, so X on the Home row stays inert
+            // rather than silently swallowing the key.
+            Keys.onPressed: event => {
+                if (event.key === Qt.Key_X) {
+                    InputMode.exitMouseMode();
+                    if (root._openRowContext(navList.currentIndex))
+                        event.accepted = true;
+                }
+            }
+        }
+
+        // X-face affordance for the resume rows — shown only when there is at
+        // least one, since X on the Home row is a no-op.
+        HintBar {
+            visible: root.resumeApps.length > 0
+            muted: true
+            Layout.topMargin: Units.spacingXS
+            text: "A: Resume   X: Actions"
         }
 
         // === Quick Actions row ===
@@ -376,6 +401,76 @@ Drawer {
                 text: "\u{1F514} " + NotificationManager.unreadCount
             }
         }
+    }
+
+    // Resume-row context menu (Resume / Quit App). Declared as a child of the
+    // drawer ROOT, so it lands in Drawer's contentContainer and paints inside the
+    // panel (z: 20, above the ColumnLayout) — its scrim therefore dims the drawer
+    // only, not the whole screen, which is the intended read. Hosting it here
+    // rather than bubbling an anchorRect up to ShellLayout (the Volume/Network
+    // pattern) keeps the drawer self-contained and gives BOTH instances — the
+    // idle navDrawer and the appRunning overlayNavDrawer — the feature for free.
+    PopoverMenu {
+        id: rowContextMenu
+        onClosed: {
+            rowContextMenu.opened = false;
+            // Return focus to the row we came from — but only if the drawer is
+            // still open. "Resume" fires root.closed() before this handler runs;
+            // ShellLayout's onClosed then drives its home-focus timer, and
+            // grabbing focus into a closing drawer would fight it.
+            if (root.opened)
+                navList.forceActiveFocus();
+        }
+    }
+
+    // X-face context popover on a resume row: Resume (focus the live window) or
+    // Quit App (close it). Restores the menu the hero rail used to provide for
+    // free; the actions mirror HomeScreen._recentContext's running branch.
+    // Returns true only when a menu opened, so the key handler leaves the event
+    // unaccepted on the Home row.
+    function _openRowContext(index) {
+        let items = root.navModel;
+        if (index < 0 || index >= items.length)
+            return false;
+        let row = items[index];
+        if (row.kind !== "resume" || !row.entry)
+            return false;
+        let addr = row.entry.address;
+        if (!addr || addr === "")
+            return false;
+        // Anchor over the focused row. PopoverMenu draws ABOVE targetY and clamps
+        // to its own bounds, so the row TOP is the right anchor (same as the card
+        // popovers). Map to rowContextMenu, NOT to root: this popover lives inside
+        // drawerPanel, which is translated by `x` during the slide animation, so
+        // mapping to the full-screen Drawer FocusScope would be off by that much.
+        // A delegate that hasn't been created yet yields null — the popover then
+        // falls back to its clamped top-left rather than throwing.
+        let item = navList.itemAtIndex(index);
+        if (item) {
+            let pos = item.mapToItem(rowContextMenu, item.width / 2, 0);
+            rowContextMenu.targetX = pos.x;
+            rowContextMenu.targetY = pos.y;
+        }
+        rowContextMenu.actions = [
+            {
+                label: "Resume",
+                hint: "A: Resume",
+                action: function () {
+                    root.appFocusRequested(addr);
+                    root.closed();
+                }
+            },
+            {
+                label: "Quit App",
+                hint: "A: Quit App",
+                action: function () {
+                    root.appCloseRequested(addr);
+                }
+            }
+        ];
+        rowContextMenu.opened = true;
+        rowContextMenu.forceActiveFocus();
+        return true;
     }
 
     function _activateNav(index) {

@@ -1,5 +1,6 @@
 import Quickshell.Io
 import QtQuick
+import "prewarm.js" as Prewarm
 
 Item {
     id: root
@@ -12,12 +13,23 @@ Item {
     property var applications: []
     property string shellState: ""
 
-    // wmClass list of apps to silently prewarm at login (#238), bound from
-    // SettingsStore in shell.qml.
+    // Prewarm key list of apps to silently prewarm at login (#238), bound from
+    // SettingsStore in shell.qml. An entry is normally a StartupWMClass; for
+    // desktop entries that declare none (e.g. Steam) it is the exec basename —
+    // see prewarm.js keyFor().
     property var prewarmApps: []
-    // One-shot guard for the login prewarm pass — set once the first idle poll
-    // after startup-adoption has run the prewarm launch (#238).
+    // One-shot guard for the login prewarm pass — set once a poll with BOTH a
+    // usable window snapshot and a usable process snapshot has decided every
+    // candidate. A poll missing either snapshot decides nothing and leaves this
+    // false so the next poll retries.
     property bool _prewarmDone: false
+    // { issued: {key:true} } — owned here, computed by prewarm.js. `issued` is the
+    // in-flight dedup for launches WE issue: a key is marked the instant a launch
+    // is dispatched, so a window/process that takes seconds to appear can never be
+    // double-launched.
+    property var _prewarmState: ({
+            issued: ({})
+        })
     // Staggered launch queue: apps resolved by _runPrewarm, dequeued one at a
     // time by prewarmStagger to avoid a thundering herd of cold starts (#238).
     property var _prewarmQueue: []
@@ -165,7 +177,23 @@ Item {
             _launchedApps = tracked;
         }
 
+        // A foreground launch satisfies any prewarm entry for the same app —
+        // record it so the prewarm pass can't launch a second copy in the gap
+        // before this one's process and window actually appear.
+        root._markPrewarmIssued(app);
+
         appLaunched();
+    }
+
+    // Mark `app`'s prewarm key as already-launched for this session, so no
+    // prewarm pass can dispatch a duplicate while its window is still mapping.
+    function _markPrewarmIssued(app) {
+        let key = Prewarm.keyFor(app, WindowMatcher);
+        if (key === "")
+            return;
+        let st = root._prewarmState;
+        st.issued[key] = true;
+        root._prewarmState = st;
     }
 
     function checkAndLaunchApp(app) {
@@ -294,6 +322,37 @@ Item {
         }
     }
 
+    // Process-table snapshot for prewarm dedup (#238 follow-up). One cheap call;
+    // `-eo comm=` lists every process's NAME ONLY, with no header and, crucially,
+    // no arguments — matching over a full cmdline for "steam" would also hit
+    // steamwebhelper / srt-logger / pv-adverb / steam-runtime-launcher-service
+    // and silently suppress a legitimate prewarm forever. prewarm.js compares
+    // these names EXACTLY (and against the 15-char kernel truncation).
+    Process {
+        id: prewarmProcScan
+        // The window snapshot this scan is being paired with, held across the
+        // async gap so both halves describe the same moment.
+        property var clients: []
+        command: ["ps", "-eo", "comm="]
+        stdout: SplitParser {
+            property var collected: []
+            onRead: line => {
+                let name = line.trim();
+                if (name !== "")
+                    collected.push(name);
+            }
+        }
+        onExited: exitCode => {
+            let names = prewarmProcScan.stdout.collected;
+            prewarmProcScan.stdout.collected = [];
+            let clients = prewarmProcScan.clients;
+            prewarmProcScan.clients = [];
+            // A failed `ps` yields no usable list — hand null through so the
+            // decision is skipped entirely rather than made on bad data.
+            root._evaluatePrewarm(clients, exitCode === 0 ? names : null);
+        }
+    }
+
     // Launch `app` SILENTLY in the background (#238). The `[silent]` exec-rule
     // prefix is the proven production-hack incantation: it opens the window
     // UNFOCUSED so it never steals focus or enters the foreground path. This is a
@@ -303,17 +362,22 @@ Item {
     function prewarmApp(app) {
         if (!app)
             return;
+        // Belt-and-braces: evaluate() already marked this key issued before it
+        // reached the queue, but prewarmApp is public, so re-mark here too.
+        root._markPrewarmIssued(app);
         prewarmRunner._appName = app.name || "";
         prewarmRunner.command = ["hyprctl", "dispatch", "exec", "[silent] " + (app.exec || app.name)];
         prewarmRunner.running = true;
     }
 
-    // One-shot login prewarm trigger (#238), driven from the first idle poll AFTER
-    // the startup-adoption pass (see the windowPoller wiring for the ordering
-    // rationale). Resolves each configured wmClass to a discovered app, de-dups
-    // against already-running windows, and queues the survivors for a staggered
-    // silent launch. `clients` MUST be a real array — a poll error gives us no
-    // client list to de-dup against, so we wait for a good poll before firing.
+    // Login prewarm trigger (#238), driven from the first idle poll AFTER the
+    // startup-adoption pass (see the windowPoller wiring for the ordering
+    // rationale). Mapped windows alone are NOT enough to dedup against: an app
+    // launched out-of-band moments earlier has no window for 10-15s (a Plex HTPC
+    // cold start), which is how prewarm used to launch a second copy. So this
+    // takes a process-table snapshot to pair with the window list, and defers the
+    // decision to _evaluatePrewarm below. `clients` MUST be a real array — a poll
+    // error gives us no window list, so that poll decides nothing and we retry.
     function _runPrewarm(clients) {
         if (root._prewarmDone)
             return;
@@ -323,43 +387,33 @@ Item {
             return;
         if (!Array.isArray(clients))
             return;
-        root._prewarmDone = true;
-
-        let toLaunch = [];
-        let seen = {};
-        for (let li = 0; li < list.length; li++) {
-            let wmClass = list[li];
-            // Skip blanks and in-list duplicates (a hand-edited/duplicated
-            // prewarmApps entry must not double-launch).
-            if (!wmClass || seen[wmClass])
-                continue;
-            seen[wmClass] = true;
-            // Resolve the configured wmClass to a discovered app.
-            let app = null;
-            for (let ai = 0; ai < apps.length; ai++) {
-                if (apps[ai].wmClass === wmClass) {
-                    app = apps[ai];
-                    break;
-                }
-            }
-            if (!app)
-                continue;  // unknown/removed app or a wmClass typo — silently skip
-            // De-dup: an already-running window is already instant-resume — skip.
-            let running = false;
-            for (let ci = 0; ci < clients.length; ci++) {
-                if (WindowMatcher.matchesApp(app, clients[ci])) {
-                    running = true;
-                    break;
-                }
-            }
-            if (running)
-                continue;
-            toLaunch.push(app);
-        }
-        if (toLaunch.length === 0)
+        // A scan from the previous poll is still in flight — let it finish rather
+        // than restarting the Process and losing its half-collected output.
+        if (prewarmProcScan.running)
             return;
-        root._prewarmQueue = toLaunch;
-        prewarmStagger.start();
+        prewarmProcScan.clients = clients;
+        prewarmProcScan.running = true;
+    }
+
+    // Second half of the prewarm trigger, invoked once the process scan returns.
+    // The decision logic itself lives in the pure, headless-tested prewarm.js.
+    // `procNames` is null when the scan failed — evaluate() then decides nothing,
+    // because a missing process list is NOT evidence that nothing is running and
+    // acting on it is exactly how a double launch happens.
+    function _evaluatePrewarm(clients, procNames) {
+        if (root._prewarmDone)
+            return;
+        let res = Prewarm.evaluate(root.prewarmApps || [], root.applications || [], clients, procNames, root._prewarmState, WindowMatcher);
+        if (!res.decided)
+            return;                       // bad snapshot — retry on the next poll
+        root._prewarmState = res.state;
+        if (res.launch.length > 0) {
+            root._prewarmQueue = (root._prewarmQueue || []).concat(res.launch);
+            prewarmStagger.start();
+        }
+        // Window + process dedup is a COMPLETE answer for every candidate — there
+        // is nothing left to settle or re-check — so the pass is over.
+        root._prewarmDone = true;
     }
 
     // Dequeues one prewarm app every 600ms (triggeredOnStart → the first fires
@@ -677,7 +731,9 @@ Item {
             // never mis-adopted into appRunning. The poll succeeding IS the readiness
             // signal (Hyprland answering + app list loaded) — replacing the deploy
             // hack's crude fixed `sleep 10` — and hands _runPrewarm the live `clients`
-            // list for de-dup in one place.
+            // list, which it pairs with a process-table scan before deciding. Note
+            // _runPrewarm is ASYNC (it awaits that scan); the adoption above is
+            // synchronous and already finished, so the ordering still holds.
             if (root.shellState === "idle" && !root._prewarmDone && root.applications.length > 0 && root.prewarmApps.length > 0)
                 root._runPrewarm(clients);
 
