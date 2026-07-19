@@ -2,6 +2,7 @@ import Quickshell.Io
 import QtQuick
 import "prewarm.js" as Prewarm
 import "appQuirks.js" as AppQuirks
+import "launchTrace.js" as LaunchTrace
 
 Item {
     id: root
@@ -24,6 +25,9 @@ Item {
     // candidate. A poll missing either snapshot decides nothing and leaves this
     // false so the next poll retries.
     property bool _prewarmDone: false
+    // One-shot guard for the "prewarm decided nothing" diagnostic line, so a
+    // persistently failing snapshot logs once rather than on every poll.
+    property bool _prewarmUndecidedLogged: false
     // { issued: {key:true} } — owned here, computed by prewarm.js. `issued` is the
     // in-flight dedup for launches WE issue: a key is marked the instant a launch
     // is dispatched, so a window/process that takes seconds to appear can never be
@@ -142,6 +146,27 @@ Item {
         appLaunched();
     }
 
+    // === The single choke point for every app-launch shell-out ===
+    //
+    // All three `hyprctl dispatch exec` paths (the foreground `[fullscreen]`
+    // launch, the `[silent]` prewarm, and the rule-less single-instance
+    // redelivery) dispatch through here, so the journal names WHICH path issued a
+    // given launch and with WHICH window rule — see launchTrace.js. Every launch
+    // in the shell arriving at the compositor via one function also means the next
+    // such question costs one log field, not a fresh instrumentation pass.
+    //
+    // This is PURELY OBSERVATIONAL. It builds the exact command each call site
+    // built inline, logs immediately before starting the process, and never
+    // decides whether to launch — that stays with the callers.
+    //
+    // `rule` is the Hyprland exec-rule prefix ("[fullscreen]" / "[silent]") or ""
+    // for a rule-less dispatch; `execArg` is the app's exec line.
+    function _dispatchExec(proc, origin, rule, app, execArg) {
+        proc.command = ["hyprctl", "dispatch", "exec", rule === "" ? execArg : rule + " " + execArg];
+        LaunchTrace.logExec(origin, rule, (app && app.name) || "", (app && app.wmClass) || "", WindowMatcher.execBasename(execArg), execArg);
+        proc.running = true;
+    }
+
     function launchDesktopApp(app) {
         runningAppClass = "";
         // Clear any stale foreground address from a previous launch so it can't
@@ -162,8 +187,7 @@ Item {
         // `windowrule = fullscreen` + the daemon's openwindow backstop remain as
         // defense-in-depth. Exec-rule syntax verified against Hyprland
         // src/config/supplementary/executor/Executor.cpp (`args[0] == '['`).
-        appRunner.command = ["hyprctl", "dispatch", "exec", "[fullscreen] " + (app.exec || app.name)];
-        appRunner.running = true;
+        _dispatchExec(appRunner, "launch", "[fullscreen]", app, app.exec || app.name);
         detectNewWindow.restart();
 
         // Track launched app for resilient window matching
@@ -306,8 +330,11 @@ Item {
     // event that a single-instance app will never produce.
     function redeliverAndFocus(app, address) {
         if (app && app.exec) {
-            redeliverProcess.command = ["hyprctl", "dispatch", "exec", app.exec];
-            redeliverProcess.running = true;
+            // NOTE (diagnostic, behaviour unchanged): this dispatch carries NO
+            // exec-rule prefix, so a window it maps is NOT placed fullscreen at
+            // map time — it logs as `rule=none`, distinguishing it in the journal
+            // from the `[fullscreen]` and `[silent]` paths.
+            _dispatchExec(redeliverProcess, "redeliver", "", app, app.exec);
         }
         focusByAddress(address);
     }
@@ -414,8 +441,7 @@ Item {
         // reached the queue, but prewarmApp is public, so re-mark here too.
         root._markPrewarmIssued(app);
         prewarmRunner._appName = app.name || "";
-        prewarmRunner.command = ["hyprctl", "dispatch", "exec", "[silent] " + (app.exec || app.name)];
-        prewarmRunner.running = true;
+        _dispatchExec(prewarmRunner, "prewarm", "[silent]", app, app.exec || app.name);
     }
 
     // Login prewarm trigger (#238), driven from the first idle poll AFTER the
@@ -452,9 +478,22 @@ Item {
         if (root._prewarmDone)
             return;
         let res = Prewarm.evaluate(root.prewarmApps || [], root.applications || [], clients, procNames, root._prewarmState, WindowMatcher);
-        if (!res.decided)
-            return;                       // bad snapshot — retry on the next poll
+        if (!res.decided) {
+            // Bad snapshot — retry on the next poll. Logged ONCE per shell
+            // process: a repeating `ps`/client-list failure is a real fault worth
+            // seeing, but the poll retries every few seconds and this must stay
+            // low-volume.
+            if (!root._prewarmUndecidedLogged) {
+                root._prewarmUndecidedLogged = true;
+                LaunchTrace.logUndecided(Array.isArray(procNames) ? "no-window-snapshot" : "no-process-snapshot");
+            }
+            return;
+        }
         root._prewarmState = res.state;
+        // The prewarm pass decides exactly once per shell process, so this is one
+        // line per boot recording what it saw and what it chose — the direct
+        // answer to "was that launch prewarm, or something else?".
+        LaunchTrace.logDecision((root.prewarmApps || []).length, clients.length, procNames.length, res.launch.map(a => Prewarm.keyFor(a, WindowMatcher)), res.skipped);
         if (res.launch.length > 0) {
             root._prewarmQueue = (root._prewarmQueue || []).concat(res.launch);
             prewarmStagger.start();

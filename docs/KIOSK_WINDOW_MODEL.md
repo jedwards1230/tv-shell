@@ -183,3 +183,40 @@ Deploy to htpc-1 and confirm:
 - [ ] **Config parses clean:** `hyprctl configerrors` is empty after reload.
 - [ ] Single-app launch/resume still fullscreens correctly with the daemon as the
   only enforcer (QML toggle removed).
+
+## Diagnosing "who launched this window?"
+
+The kiosk contract is violated whenever *two* windows of one app map, or a window
+maps unplaced. Both failure modes look identical in the compositor — every launch
+the shell issues arrives as a `hyprctl dispatch exec` child of Hyprland, so the
+compositor cannot say which of the shell's several launch paths issued it.
+
+The shell therefore traces every app-launch shell-out through one choke point
+(`shell/components/AppLifecycleManager.qml`'s `_dispatchExec`, formatted by
+`shell/components/launchTrace.js`). One boot's journal answers the question:
+
+```bash
+journalctl --user -b -t tv-shell-quickshell | grep 'tv-shell:launch'
+```
+
+Each line carries the call path that issued the launch and the window rule it
+used:
+
+```
+[tv-shell:launch] origin=launch rule=[fullscreen] app=Plex class=tv.plex.Plex comm=plex exec=/usr/bin/Plex
+```
+
+| `origin` | Call path | Rule |
+|---|---|---|
+| `launch` | `launchDesktopApp` — foreground launch | `[fullscreen]` |
+| `prewarm` | `prewarmApp` — silent login prewarm | `[silent]` |
+| `redeliver` | `redeliverAndFocus` — single-instance exec redelivery | `none` |
+| `stream` | `StreamManager._launchMoonlight` — direct child, not via `hyprctl` | `none` |
+| `prewarm-decision` | the login prewarm pass's one evaluation (what it saw, what it chose) | — |
+
+`comm=` is the process name `ps -eo comm=` reports, so a journal line correlates
+directly with a live pid. **Two lines with different `origin` values for the same
+`comm` is a double launch, and the `origin` names the second culprit.** A launch
+logging `rule=none` will not be placed fullscreen at map time — it depends on the
+`windowrule = fullscreen` backstop and the daemon's `openwindow` enforcement
+instead.

@@ -1,5 +1,6 @@
 import Quickshell.Io
 import QtQuick
+import "launchTrace.js" as LaunchTrace
 
 Item {
     id: root
@@ -162,6 +163,12 @@ Item {
             return;
         }
         moonlight.command = cmd;
+        // The one app-launch path that does NOT go through `hyprctl dispatch exec`
+        // — the stream client is spawned as a direct child of the shell, so it
+        // carries no exec rule and its parent is quickshell rather than Hyprland.
+        // Traced with the same prefix so a boot's journal accounts for every
+        // window-mapping process the shell starts (see launchTrace.js).
+        LaunchTrace.logExec("stream", "", (currentTarget && (currentTarget.app || currentTarget.name)) || "", "", WindowMatcher.execBasename(cmd[0]), cmd.join(" "));
         // #221: hand the physical pads to Moonlight (ungrab) rather than the old
         // `release` (which kept the grab + a virtual twin → SDL saw a phantom).
         requestInputHandoff();
