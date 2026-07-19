@@ -129,9 +129,21 @@ FocusScope {
     // Keyboard drawer toggle (Tab), independent of Home. First-class keyboard
     // co-primary: the K400 on the couch opens the drawer without a controller.
     // Only meaningful on the home screen; when an app owns focus the shell
-    // window isn't focused, so this never fires over a stream.
+    // window isn't focused, so this never fires over a stream. The gamepad Y
+    // face also lands here (the daemon maps altSelect → KEY_TAB).
+    //
+    // OPEN-only, deliberately (#216). Tab/Y reaches this handler even while the
+    // drawer holds focus — nothing in the drawer's key chain accepts Tab, so the
+    // event bubbles from navList up to this FocusScope — and toggleMenu() would
+    // then CLOSE it. Only B and Escape close the drawer (Drawer.qml); Y is a face
+    // button nobody reads as "back". The gate lives here rather than inside
+    // toggleMenu() because `intent menu` / the gamepad Home tap / the Super bind
+    // all route through toggleMenu() and MUST keep toggling the drawer shut.
+    // SessionQAM is a Drawer too and is not in toggleMenu()'s overlay-dismiss
+    // cascade, so Tab over an open QAM would otherwise open the nav drawer
+    // behind it — same bug, same gate.
     Keys.onTabPressed: {
-        if (root.shellState === "idle")
+        if (root.shellState === "idle" && !navDrawer.opened && !sessionQam.opened)
             toggleMenu();
     }
 

@@ -155,9 +155,16 @@ FocusScope {
         event.accepted = true;
     }
     // X face (daemon altAction → KEY_X) = the per-item secondary action.
+    // Keyboard `b` = back (the gamepad B face already arrives as Escape, handled
+    // above). Without this branch a literal `b` bubbles past the popover to its
+    // host — harmless on Home, but inside the nav drawer it hits Drawer's Key_B
+    // handler and closes the whole drawer out from under an open menu.
     Keys.onPressed: event => {
         if (event.key === Qt.Key_X) {
             root._secondaryItem(root._selectedIndex);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_B && !event.modifiers) {
+            root.closed();
             event.accepted = true;
         }
     }
