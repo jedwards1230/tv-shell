@@ -1,5 +1,6 @@
 import Quickshell.Io
 import QtQuick
+import "prewarm.js" as Prewarm
 
 Item {
     id: root
@@ -12,12 +13,26 @@ Item {
     property var applications: []
     property string shellState: ""
 
-    // wmClass list of apps to silently prewarm at login (#238), bound from
-    // SettingsStore in shell.qml.
+    // Prewarm key list of apps to silently prewarm at login (#238), bound from
+    // SettingsStore in shell.qml. An entry is normally a StartupWMClass; for
+    // desktop entries that declare none (e.g. Steam) it is the exec basename —
+    // see prewarm.js keyFor().
     property var prewarmApps: []
-    // One-shot guard for the login prewarm pass — set once the first idle poll
-    // after startup-adoption has run the prewarm launch (#238).
+    // Terminal guard for the login prewarm pass. Now means "nothing left to
+    // decide", not "the one-shot pass ran" — the pass re-evaluates on every idle
+    // poll until every candidate has either launched or been seen running.
     property bool _prewarmDone: false
+    // { absent: {key:int}, issued: {key:true} } — owned here, computed by
+    // prewarm.js. `issued` is the in-flight dedup: a key is marked the instant a
+    // launch is dispatched, so a slow-mapping window can never be double-launched.
+    property var _prewarmState: ({
+            absent: ({}),
+            issued: ({})
+        })
+    // Consecutive idle polls (5s each) a candidate must be absent before we
+    // launch it — the settle window that lets an out-of-band launch's window map
+    // first. 4 polls ≈ 20s, past a Plex HTPC 10-15s cold start.
+    property int prewarmSettlePolls: 4
     // Staggered launch queue: apps resolved by _runPrewarm, dequeued one at a
     // time by prewarmStagger to avoid a thundering herd of cold starts (#238).
     property var _prewarmQueue: []
@@ -165,7 +180,23 @@ Item {
             _launchedApps = tracked;
         }
 
+        // A foreground launch satisfies any prewarm entry for the same app —
+        // record it so the settle pass can't launch a second copy while this
+        // one's window is still mapping.
+        root._markPrewarmIssued(app);
+
         appLaunched();
+    }
+
+    // Mark `app`'s prewarm key as already-launched for this session, so no
+    // prewarm pass can dispatch a duplicate while its window is still mapping.
+    function _markPrewarmIssued(app) {
+        let key = Prewarm.keyFor(app, WindowMatcher);
+        if (key === "")
+            return;
+        let st = root._prewarmState;
+        st.issued[key] = true;
+        root._prewarmState = st;
     }
 
     function checkAndLaunchApp(app) {
@@ -303,17 +334,22 @@ Item {
     function prewarmApp(app) {
         if (!app)
             return;
+        // Belt-and-braces: evaluate() already marked this key issued before it
+        // reached the queue, but prewarmApp is public, so re-mark here too.
+        root._markPrewarmIssued(app);
         prewarmRunner._appName = app.name || "";
         prewarmRunner.command = ["hyprctl", "dispatch", "exec", "[silent] " + (app.exec || app.name)];
         prewarmRunner.running = true;
     }
 
-    // One-shot login prewarm trigger (#238), driven from the first idle poll AFTER
-    // the startup-adoption pass (see the windowPoller wiring for the ordering
-    // rationale). Resolves each configured wmClass to a discovered app, de-dups
-    // against already-running windows, and queues the survivors for a staggered
-    // silent launch. `clients` MUST be a real array — a poll error gives us no
-    // client list to de-dup against, so we wait for a good poll before firing.
+    // Login prewarm pass (#238), driven from every idle poll AFTER the
+    // startup-adoption pass (see the windowPoller wiring for the ordering
+    // rationale) until it terminates. The decision logic lives in the pure,
+    // headless-tested prewarm.js: a candidate must be absent from `clients` for
+    // `prewarmSettlePolls` CONSECUTIVE polls before it is launched, which is what
+    // stops a competing out-of-band launch (whose window may take 10-15s to map)
+    // from being double-launched. `clients` MUST be a real array — a poll error
+    // gives us no client list to decide against, so that poll decides nothing.
     function _runPrewarm(clients) {
         if (root._prewarmDone)
             return;
@@ -321,45 +357,21 @@ Item {
         let list = root.prewarmApps || [];
         if (apps.length === 0 || list.length === 0)
             return;
-        if (!Array.isArray(clients))
-            return;
-        root._prewarmDone = true;
-
-        let toLaunch = [];
-        let seen = {};
-        for (let li = 0; li < list.length; li++) {
-            let wmClass = list[li];
-            // Skip blanks and in-list duplicates (a hand-edited/duplicated
-            // prewarmApps entry must not double-launch).
-            if (!wmClass || seen[wmClass])
-                continue;
-            seen[wmClass] = true;
-            // Resolve the configured wmClass to a discovered app.
-            let app = null;
-            for (let ai = 0; ai < apps.length; ai++) {
-                if (apps[ai].wmClass === wmClass) {
-                    app = apps[ai];
-                    break;
-                }
-            }
-            if (!app)
-                continue;  // unknown/removed app or a wmClass typo — silently skip
-            // De-dup: an already-running window is already instant-resume — skip.
-            let running = false;
-            for (let ci = 0; ci < clients.length; ci++) {
-                if (WindowMatcher.matchesApp(app, clients[ci])) {
-                    running = true;
-                    break;
-                }
-            }
-            if (running)
-                continue;
-            toLaunch.push(app);
+        let res = Prewarm.evaluate(list, apps, clients, root._prewarmState, WindowMatcher, root.prewarmSettlePolls);
+        if (res.pending < 0)
+            return;                       // bad snapshot — decide nothing this poll
+        root._prewarmState = res.state;
+        if (res.launch.length > 0) {
+            root._prewarmQueue = (root._prewarmQueue || []).concat(res.launch);
+            // start() on an already-running repeat Timer restarts it (and
+            // re-fires triggeredOnStart) — only start when idle.
+            if (!prewarmStagger.running)
+                prewarmStagger.start();
         }
-        if (toLaunch.length === 0)
-            return;
-        root._prewarmQueue = toLaunch;
-        prewarmStagger.start();
+        // Nothing still settling and nothing queued ⇒ the pass is over; stop
+        // re-evaluating on every poll for the rest of the session.
+        if (res.pending === 0 && root._prewarmQueue.length === 0)
+            root._prewarmDone = true;
     }
 
     // Dequeues one prewarm app every 600ms (triggeredOnStart → the first fires
@@ -381,6 +393,10 @@ Item {
             let q = root._prewarmQueue || [];
             if (q.length === 0) {
                 prewarmStagger.stop();
+                // Deliberately NOT setting _prewarmDone here: a drained queue does
+                // not mean the pass is over — another candidate may still be
+                // settling. _runPrewarm owns termination (pending === 0 AND the
+                // queue empty), which it re-evaluates on the next idle poll.
                 return;
             }
             let app = q.shift();

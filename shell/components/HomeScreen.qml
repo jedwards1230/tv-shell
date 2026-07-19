@@ -4,6 +4,7 @@ import QtQuick.Effects
 import "lib"
 import "../widgets/lib"
 import "steamLaunch.js" as SteamLaunch
+import "prewarm.js" as Prewarm
 
 // Home screen — the "glance + jump back in" overview (#249), composed of
 // standardized, individually-toggleable, individually-sized home widgets. The
@@ -761,13 +762,15 @@ FocusScope {
             root.launchApp(entry);
     }
 
-    // Resolve a recent/running/app entry to a DISCOVERED app's stable wmClass
+    // Resolve a recent/running/app entry to a DISCOVERED app's stable prewarm KEY
     // (from AppDiscoveryManager.applications, which carries wmClass off list-apps),
-    // or "" when none resolves or the resolved wmClass is empty. Running entries
-    // carry `windowClass`; recents carry name/exec — neither is a stable
-    // StartupWMClass, so we match back to a discovered app. This doubles as the
-    // defensive Flatpak-mismatch guard: no resolved non-empty wmClass → no prewarm
-    // toggle offered (#238).
+    // or "" when no app resolves. Running entries carry `windowClass`; recents
+    // carry name/exec — neither is a stable StartupWMClass, so we match back to a
+    // discovered app. The key itself comes from prewarm.js keyFor(), the single
+    // definition shared with AppLifecycleManager: StartupWMClass when the desktop
+    // entry declares one, else the exec basename — which is what makes Steam (no
+    // StartupWMClass) prewarmable at all. This still doubles as the defensive
+    // Flatpak-mismatch guard: no resolvable key → no prewarm toggle offered (#238).
     function _resolvePrewarmClass(entry) {
         if (!entry)
             return "";
@@ -781,7 +784,7 @@ FocusScope {
             };
             for (let i = 0; i < apps.length; i++) {
                 if (WindowMatcher.matchesApp(apps[i], probe))
-                    return apps[i].wmClass || "";
+                    return Prewarm.keyFor(apps[i], WindowMatcher);
             }
             return "";
         }
@@ -794,9 +797,9 @@ FocusScope {
         for (let i = 0; i < apps.length; i++) {
             let a = apps[i];
             if (name !== "" && (a.name || "").toLowerCase() === name)
-                return a.wmClass || "";
+                return Prewarm.keyFor(a, WindowMatcher);
             if (execBase !== "" && WindowMatcher.execBasename(a.exec || "") === execBase)
-                return a.wmClass || "";
+                return Prewarm.keyFor(a, WindowMatcher);
         }
         return "";
     }
