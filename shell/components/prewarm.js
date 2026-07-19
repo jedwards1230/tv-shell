@@ -83,7 +83,13 @@ function matchesWindow(app, clients, matcher) {
 
 // Decide one poll.
 //   state:  { issued: {key:true} }   (caller-owned, treated as immutable)
-//   returns { launch: [app...], state: <next state>, decided: bool }
+//   returns { launch: [app...], state: <next state>, decided: bool,
+//             skipped: [{key, reason}...] }
+//
+// `skipped` is DIAGNOSTIC ONLY — it records why each configured key was not
+// launched (issued / unknown-app / window-mapped / process-alive) so the pass's
+// one decision is legible in the journal (see launchTrace.js). Nothing branches
+// on it; adding a reason can never change what gets launched.
 //
 // `decided: false` means the snapshot was unusable and NOTHING was decided — the
 // caller keeps the state it had and retries on the next poll. BOTH the window
@@ -104,7 +110,8 @@ function evaluate(list, apps, clients, procNames, state, matcher) {
         return {
             launch: [],
             state: state,
-            decided: false
+            decided: false,
+            skipped: []
         };
 
     var out = {
@@ -112,7 +119,8 @@ function evaluate(list, apps, clients, procNames, state, matcher) {
         state: {
             issued: issued
         },
-        decided: true
+        decided: true,
+        skipped: []
     };
 
     var seen = {};
@@ -121,15 +129,35 @@ function evaluate(list, apps, clients, procNames, state, matcher) {
         if (!key || seen[key])
             continue;               // blanks + hand-edited dupes
         seen[key] = true;
-        if (issued[key])
+        if (issued[key]) {
+            out.skipped.push({
+                key: key,
+                reason: "issued"
+            });
             continue;               // already launched this session
+        }
         var app = resolveApp(key, apps, matcher);
-        if (!app)
+        if (!app) {
+            out.skipped.push({
+                key: key,
+                reason: "unknown-app"
+            });
             continue;               // unknown app / typo — silently skip
-        if (matchesWindow(app, clients, matcher))
+        }
+        if (matchesWindow(app, clients, matcher)) {
+            out.skipped.push({
+                key: key,
+                reason: "window-mapped"
+            });
             continue;               // window mapped: already running
-        if (matchesProcess(app, procNames, matcher))
+        }
+        if (matchesProcess(app, procNames, matcher)) {
+            out.skipped.push({
+                key: key,
+                reason: "process-alive"
+            });
             continue;               // process alive: running, or still starting
+        }
         out.launch.push(app);
         out.state.issued[key] = true;
     }
