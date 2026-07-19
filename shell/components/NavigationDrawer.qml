@@ -276,6 +276,16 @@ Drawer {
             text: "A: Resume   X: Actions"
         }
 
+        // Absorbs the slack so the QuickActions row (and the Now-Playing strip +
+        // status line below it) stay pinned to the BOTTOM of the drawer. The nav
+        // list sizes to its content (Layout.preferredHeight: contentHeight), so
+        // without this every child stacks at the top and QuickActions rides up
+        // under the last resume row — the taller the list, the lower it floats.
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
+
         // === Quick Actions row ===
         Item {
             Layout.fillWidth: true
