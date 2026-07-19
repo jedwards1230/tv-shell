@@ -2839,11 +2839,11 @@ mod tests {
             ("select".to_string(), "BTN_SOUTH".to_string()),
             ("back".to_string(), "BTN_EAST".to_string()),
             ("altSelect".to_string(), "BTN_NORTH".to_string()),
-            ("confirm".to_string(), "BTN_START".to_string()),
+            ("menu".to_string(), "BTN_START".to_string()),
         ];
         assert_eq!(
             resp_bindings(&ordered),
-            r#"{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","confirm":"BTN_START"}"#
+            r#"{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_NORTH","menu":"BTN_START"}"#
         );
     }
 

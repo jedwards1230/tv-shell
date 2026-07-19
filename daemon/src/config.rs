@@ -271,6 +271,15 @@ pub struct Binding {
 /// apps). The legacy IPC doc lists a `drawer` action — that is stale. `altSelect`
 /// is the "Y" face (BTN_WEST) and `altAction` the "X" face (BTN_NORTH); the QML
 /// `remappableActions` mirrors this set.
+///
+/// `menu` (Start, `BTN_START`) emits `KEY_TAB` rather than `KEY_ENTER`. Start
+/// used to be bound to a `confirm` action that synthesized the *same*
+/// `KEY_ENTER` as `select` — a second A button in disguise. `ShellLayout.qml`'s
+/// `Keys.onTabPressed` already toggles the nav drawer, so wiring Start to
+/// `KEY_TAB` makes it a dedicated, self-toggling menu button for free, with no
+/// QML change. `confirm` is retired rather than kept as a bindable-but-unbound
+/// action: nothing else uses it, and a dangling default-less action would only
+/// invite a confusing remap target (see [`is_default_action`]).
 pub fn default_bindings() -> Vec<Binding> {
     vec![
         Binding {
@@ -289,9 +298,9 @@ pub fn default_bindings() -> Vec<Binding> {
             key: KEY_TAB,
         },
         Binding {
-            action: "confirm",
+            action: "menu",
             button: BTN_START,
-            key: KEY_ENTER,
+            key: KEY_TAB,
         },
         // Secondary face button ("X" face). The shell uses KEY_X as a per-context
         // secondary action (e.g. the home Moonlight Y-menu "set default profile").
@@ -306,7 +315,7 @@ pub fn default_bindings() -> Vec<Binding> {
 pub fn is_default_action(action: &str) -> bool {
     matches!(
         action,
-        "select" | "back" | "altSelect" | "confirm" | "altAction"
+        "select" | "back" | "altSelect" | "menu" | "altAction"
     )
 }
 
@@ -974,10 +983,48 @@ mod tests {
         let actions: Vec<&str> = b.iter().map(|x| x.action).collect();
         assert_eq!(
             actions,
-            ["select", "back", "altSelect", "confirm", "altAction"]
+            ["select", "back", "altSelect", "menu", "altAction"]
         );
         // No `drawer`, BTN_MODE not bound.
         assert!(!b.iter().any(|x| x.button == BTN_MODE));
+    }
+
+    #[test]
+    fn start_button_is_menu_not_a_second_confirm() {
+        // Regression guard: Start (BTN_START) must NOT emit KEY_ENTER — that
+        // would make it a second `select`/A button. It emits KEY_TAB (the nav
+        // drawer's existing keyboard gesture), giving it toggle-open/close
+        // behavior for free via ShellLayout's Keys.onTabPressed.
+        let b = default_bindings();
+        let start = b
+            .iter()
+            .find(|x| x.button == BTN_START)
+            .expect("BTN_START must be bound by default");
+        assert_eq!(start.action, "menu");
+        assert_eq!(start.key, KEY_TAB);
+        assert_ne!(start.key, KEY_ENTER);
+
+        // `confirm` is retired: not a recognized action, and not remap-able.
+        assert!(!is_default_action("confirm"));
+        assert!(is_default_action("menu"));
+
+        // Coherence: every default binding's action is a known default action,
+        // and every default action is claimed by exactly one binding.
+        for binding in &b {
+            assert!(
+                is_default_action(binding.action),
+                "binding action {:?} not recognized by is_default_action",
+                binding.action
+            );
+        }
+        let mut actions: Vec<&str> = b.iter().map(|x| x.action).collect();
+        actions.sort_unstable();
+        actions.dedup();
+        assert_eq!(
+            actions.len(),
+            b.len(),
+            "duplicate action in default_bindings"
+        );
     }
 
     #[test]
@@ -1033,7 +1080,7 @@ mod tests {
             "keyBindings": {
                 "select": "BTN_NORTH",        // remap select -> Y
                 "back": ["BTN_WEST", "BTN_TR"], // array -> last element (BTN_TR)
-                "confirm": "BTN_LEFT",        // not remappable -> skipped
+                "menu": "BTN_LEFT",           // not remappable -> skipped
                 "bogus": "BTN_SOUTH"          // unknown action -> skipped
             }
         });
@@ -1042,7 +1089,7 @@ mod tests {
         let by = |a: &str| b.iter().find(|x| x.action == a).unwrap().button;
         assert_eq!(by("select"), BTN_NORTH);
         assert_eq!(by("back"), BTN_TR);
-        assert_eq!(by("confirm"), BTN_START); // unchanged (BTN_LEFT not remappable)
+        assert_eq!(by("menu"), BTN_START); // unchanged (BTN_LEFT not remappable)
         assert_eq!(by("altSelect"), BTN_WEST); // default unchanged (Y face)
     }
 
@@ -1057,7 +1104,7 @@ mod tests {
         assert_eq!(v["themeMode"], "dark");
         assert_eq!(v["moonlightViewMode"], "grid");
         assert_eq!(v["keyBindings"]["select"], "BTN_SOUTH");
-        assert_eq!(v["keyBindings"]["confirm"], "BTN_START");
+        assert_eq!(v["keyBindings"]["menu"], "BTN_START");
         // Insertion order preserved: keyBindings appended after existing keys.
         let prefix = r#"{"themeMode":"dark","moonlightViewMode":"grid","keyBindings":"#;
         assert!(out.starts_with(prefix), "got: {out}");
@@ -1068,7 +1115,7 @@ mod tests {
         let out = build_settings_json(None, &default_bindings());
         assert_eq!(
             out,
-            r#"{"keyBindings":{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_WEST","confirm":"BTN_START","altAction":"BTN_NORTH"}}"#
+            r#"{"keyBindings":{"select":"BTN_SOUTH","back":"BTN_EAST","altSelect":"BTN_WEST","menu":"BTN_START","altAction":"BTN_NORTH"}}"#
         );
     }
 
@@ -1507,7 +1554,7 @@ mod tests {
         use std::collections::HashMap;
 
         let global = default_bindings();
-        // Default: select=BTN_SOUTH, back=BTN_EAST, altSelect=BTN_WEST, confirm=BTN_START, altAction=BTN_NORTH
+        // Default: select=BTN_SOUTH, back=BTN_EAST, altSelect=BTN_WEST, menu=BTN_START, altAction=BTN_NORTH
 
         // No overrides: global mapping
         assert_eq!(
@@ -1571,10 +1618,11 @@ mod tests {
             Some(KEY_ENTER)
         );
 
-        // No layers -> global default
+        // No layers -> global default. Start (menu) emits KEY_TAB, NOT
+        // KEY_ENTER — it must not be a second `select`/A button.
         assert_eq!(
             resolve_button_key(&global, None, None, BTN_START),
-            Some(KEY_ENTER) // confirm -> Enter
+            Some(KEY_TAB) // menu -> Tab (toggles the nav drawer)
         );
 
         // Button not in any action after all layers -> None
