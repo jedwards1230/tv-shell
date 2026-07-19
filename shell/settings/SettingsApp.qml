@@ -420,7 +420,7 @@ FocusScope {
                 // Back hint
                 Rectangle {
                     Layout.fillWidth: true
-                    height: Units.settingsHintHeight
+                    Layout.preferredHeight: Units.settingsHintHeight
                     color: Theme.surfaceHover
 
                     Text {
@@ -436,7 +436,7 @@ FocusScope {
         // Divider
         Rectangle {
             Layout.fillHeight: true
-            width: 2
+            Layout.preferredWidth: 2
             color: Theme.surfaceBorder
         }
 
@@ -464,8 +464,8 @@ FocusScope {
                         id: headerIcon
                         source: Qt.resolvedUrl(root.sections[root.currentSection].iconSource)
                         sourceSize: Qt.size(Theme.fontTitle, Theme.fontTitle)
-                        width: Theme.fontTitle
-                        height: Theme.fontTitle
+                        Layout.preferredWidth: Theme.fontTitle
+                        Layout.preferredHeight: Theme.fontTitle
                         fillMode: Image.PreserveAspectFit
                         visible: status === Image.Ready
                         layer.enabled: status === Image.Ready

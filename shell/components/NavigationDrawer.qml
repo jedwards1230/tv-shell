@@ -5,15 +5,16 @@ import "resumeModel.js" as ResumeModel
 
 // Left navigation drawer (#216, epic #133 Phase 1). Top→bottom:
 //   1. Clock/date header
-//   2. Resume HERO zone — large app tiles merging running windows + recent apps
-//      (deduped, running-first). Collapses entirely when nothing is running/recent.
-//   3. Nav cluster — the Home row (navList) + the QuickActions row (drawerActions)
+//   2. Nav list — the Home row, followed by one row per RUNNING app to resume.
+//      Resume rows share the Home row's styling (icon + label + accent bar); the
+//      list simply grows/shrinks with the running-window set.
+//   3. Quick Actions row
 //   4. Now-Playing mini-strip — a MediaWidget, hidden when idle (no MPRIS player)
 //   5. Status glyph line — a non-focusable readout pinned to the bottom
 //      (online · volume · controller battery · notifications)
 //
-// Focus chain (down-flow): Resume row → navList → drawerActions → MediaWidget.
-// Up reverses. The status line is NOT in the focus chain.
+// Focus chain (down-flow): navList (Home + resume rows) → drawerActions →
+// MediaWidget. Up reverses. The status line is NOT in the focus chain.
 Drawer {
     id: root
     edge: "left"
@@ -22,7 +23,7 @@ Drawer {
     property bool overlayMode: false
 
     // Running windows (Hyprland clients) — wired from ShellLayout
-    // (AppLifecycleManager.runningWindows). Feeds the resume merge.
+    // (AppLifecycleManager.runningWindows). Feeds the resume list.
     property var runningWindows: []
     // Gamepad fleet model (InputManager.pads) — wired from ShellLayout. Drives the
     // controller-battery status glyph; empty ⇒ that glyph is hidden.
@@ -36,18 +37,42 @@ Drawer {
     signal volumeRequested(var anchorRect)
     signal homeSelected
 
-    // Resume-tile activation contract (mirrors HomeScreen; ShellLayout forwards
+    // Resume-row activation contract (mirrors HomeScreen; ShellLayout forwards
     // each to shell.qml → AppLifecycle).
     signal appLaunchRequested(var app)
     signal appResumeRequested(var app, string address)
     signal appFocusRequested(string address)
     signal appCloseRequested(string address)
 
-    // === Resume model — running windows + non-running recents, deduped ===
-    // Pure merge lives in resumeModel.js (headless-testable). WindowMatcher is a
-    // components singleton exposing execBasename/normalize (the matcher contract).
+    // === Resume list — RUNNING windows only ===
+    // resumeModel.build merges running windows + recents and resolves each entry's
+    // name/icon (via the WindowMatcher singleton + AppDiscoveryManager). We keep
+    // only the running entries here: the drawer's resume rows are for jumping back
+    // into a live app, one row each. (Recents live on the Home screen.)
     readonly property var resumeModel: ResumeModel.build(root.runningWindows, RecentsTracker.recentApps, AppDiscoveryManager.applications, WindowMatcher)
-    readonly property bool hasResume: root.resumeModel.length > 0
+    readonly property var resumeApps: root.resumeModel.filter(function (e) {
+        return e.running === true;
+    })
+
+    // Nav list model: the Home row, then one "resume" row per running app.
+    readonly property var navModel: {
+        var rows = [
+            {
+                label: "Home",
+                icon: "\u{1F3E0}",
+                kind: "home"
+            }
+        ];
+        for (var i = 0; i < root.resumeApps.length; i++) {
+            var app = root.resumeApps[i];
+            rows.push({
+                label: app.name || "App",
+                kind: "resume",
+                entry: app
+            });
+        }
+        return rows;
+    }
 
     // Best wireless pad reporting a battery level (mirrors HomeScreen._batteryPad).
     // null when only wired pads / none are connected — the glyph then hides.
@@ -63,14 +88,6 @@ Drawer {
         return best;
     }
 
-    // Two large tiles across the drawer, inset a gridUnit each side. The tiles are
-    // half-width (not full-width) and sit inside a gridUnit gutter, so BaseCard's
-    // center-origin focus scale (6%) stays within the drawer edge — the FocusFrame
-    // full-width overflow hazard doesn't bite here (BaseCard exposes no
-    // availableWidth to clamp, so the geometry is the guard).
-    readonly property int _resumeTileWidth: Math.round((root.drawerWidth - Units.gridUnit * 2 - Theme.cardSpacing) / 2)
-    readonly property int _resumeTileHeight: Math.round(root._resumeTileWidth * 0.82)
-
     onOpenedChanged: {
         if (opened) {
             navList.currentIndex = 0;
@@ -81,13 +98,8 @@ Drawer {
     Timer {
         id: navFocusTimer
         interval: 50
-        // Land on the resume row's first tile when present, else the Home row.
-        onTriggered: {
-            if (root.hasResume)
-                resumeRow.focusFirstChild();
-            else
-                navList.forceActiveFocus();
-        }
+        // Land on the nav list (Home row) whenever the drawer opens.
+        onTriggered: navList.forceActiveFocus()
     }
 
     // Return controller focus to the QuickActions row — called when an anchored
@@ -95,61 +107,6 @@ Drawer {
     // lands back on the glyph the user activated rather than jumping to home.
     function focusQuickActions() {
         drawerActions.forceActiveFocus();
-    }
-
-    // Resume-tile activation (mirrors HomeScreen._recentActivate): focus a running
-    // window, else launch a non-running app + record it. Closes the drawer either
-    // way (a successful jump-back-in, like the nav actions do).
-    function _resumeActivate(entry) {
-        if (entry.running === true) {
-            root.appFocusRequested(entry.address);
-        } else {
-            root.appLaunchRequested(entry);
-            RecentsTracker.recordLaunch(entry);
-        }
-        root.closed();
-    }
-
-    // Resume-tile context popover (mirrors HomeScreen._recentContext): Resume/Quit
-    // for a running app, Launch otherwise. Positioned over the focused tile.
-    function _resumeContext(entry, card) {
-        if (!entry || !card)
-            return;
-        var pos = card.mapToItem(root, card.width / 2, 0);
-        popoverMenu.targetX = pos.x;
-        popoverMenu.targetY = pos.y;
-        if (entry.running === true) {
-            var addr = entry.address;
-            popoverMenu.actions = [
-                {
-                    label: "Resume",
-                    action: function () {
-                        root.appFocusRequested(addr);
-                        root.closed();
-                    }
-                },
-                {
-                    label: "Quit App",
-                    action: function () {
-                        root.appCloseRequested(addr);
-                    }
-                }
-            ];
-        } else {
-            var app = entry;
-            popoverMenu.actions = [
-                {
-                    label: "Launch",
-                    action: function () {
-                        root.appLaunchRequested(app);
-                        RecentsTracker.recordLaunch(app);
-                        root.closed();
-                    }
-                }
-            ];
-        }
-        popoverMenu.opened = true;
-        popoverMenu.forceActiveFocus();
     }
 
     ColumnLayout {
@@ -186,90 +143,19 @@ Drawer {
 
         Rectangle {
             Layout.fillWidth: true
-            height: 2
+            Layout.preferredHeight: 2
             color: Theme.surfaceBorder
         }
 
-        // === Resume HERO zone (collapses entirely when empty) ===
-        ColumnLayout {
-            id: resumeZone
-            Layout.fillWidth: true
-            visible: root.hasResume
-            Layout.preferredHeight: visible ? implicitHeight : 0
-            Layout.topMargin: visible ? Units.spacingMD : 0
-            spacing: Units.spacingSM
-
-            Text {
-                text: "Resume"
-                Layout.leftMargin: Units.gridUnit
-                font.pixelSize: Theme.fontBody
-                font.bold: true
-                color: Theme.textSecondary
-            }
-
-            // Horizontal rail of large tiles — a NavigableRow so D-pad Left/Right +
-            // focusHistoryId ordering work (matches how AppsWidget rails the same
-            // merged model). Reuses AppCard for the icon + letter-initial fallback
-            // (#114 box-art graceful fallback) and the ember running dot.
-            NavigableRow {
-                id: resumeRow
-                Layout.fillWidth: true
-                Layout.leftMargin: Math.max(0, Units.gridUnit - 16)
-                Layout.rightMargin: Units.gridUnit
-                Layout.preferredHeight: root._resumeTileHeight + Units.spacingMD
-                keyNavigationWraps: false
-                model: root.resumeModel
-                // Top of the focus chain (Up = no-op); Down → the Home row.
-                previousRow: null
-                nextRow: navList
-
-                delegate: AppCard {
-                    required property int index
-                    required property var modelData
-                    width: root._resumeTileWidth
-                    height: root._resumeTileHeight
-                    app: modelData
-                    running: modelData.running === true
-                    focus: index === resumeRow.currentIndex
-                    onActivated: {
-                        resumeRow.currentIndex = index;
-                        root._resumeActivate(modelData);
-                    }
-                }
-
-                onContextRequested: {
-                    if (currentItem && currentIndex >= 0 && currentIndex < root.resumeModel.length)
-                        root._resumeContext(root.resumeModel[currentIndex], currentItem);
-                }
-                onEscaped: root.closed()
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.topMargin: root.hasResume ? Units.spacingMD : 0
-            height: 2
-            color: Theme.surfaceBorder
-            visible: root.hasResume
-        }
-
-        // === Nav cluster: Home row ===
+        // === Nav list: Home row + one resume row per running app ===
         ListView {
             id: navList
             Layout.fillWidth: true
+            Layout.topMargin: Units.spacingSM
             Layout.preferredHeight: contentHeight
-            // Widgets is reached via the QuickActions row below (idx 2) / the
-            // `intent settings:widgets` path — no redundant drawer row for it.
-            model: [
-                {
-                    label: "Home",
-                    icon: "\u{1F3E0}",
-                    action: "home"
-                }
-            ]
+            model: root.navModel
             // Hold default focus the instant the drawer opens so there is never a
-            // handler-less window before navFocusTimer runs; the timer then refines
-            // focus onto the resume row's first tile when the hero is present.
+            // handler-less window before navFocusTimer runs.
             focus: true
             interactive: false
             currentIndex: 0
@@ -300,17 +186,47 @@ Drawer {
                     anchors.rightMargin: Units.gridUnit
                     spacing: Units.spacingLG
 
-                    Text {
-                        text: modelData.icon
-                        font.pixelSize: Theme.fontTitle
+                    // Icon column: the 🏠 glyph for Home, the app icon (with
+                    // letter-initial fallback) for a resume row.
+                    Item {
                         Layout.preferredWidth: Units.gridUnit
-                        horizontalAlignment: Text.AlignHCenter
+                        Layout.preferredHeight: Units.gridUnit
+                        Layout.alignment: Qt.AlignVCenter
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: modelData.kind === "home"
+                            text: modelData.icon || ""
+                            font.pixelSize: Theme.fontTitle
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        AppIcon {
+                            anchors.centerIn: parent
+                            visible: modelData.kind === "resume"
+                            iconSize: Math.round(Units.gridUnit * 1.2)
+                            iconSource: modelData.kind === "resume" && modelData.entry ? (modelData.entry.icon || "") : ""
+                            fallbackText: modelData.kind === "resume" && modelData.entry ? (modelData.entry.name || modelData.label) : ""
+                        }
                     }
+
                     Text {
                         text: modelData.label
                         font.pixelSize: Theme.fontTitle
                         color: Theme.textPrimary
+                        elide: Text.ElideRight
                         Layout.fillWidth: true
+                    }
+
+                    // Running-app cue: a small ember dot on resume rows (every row
+                    // below Home is a live app you can jump back into).
+                    Rectangle {
+                        visible: modelData.kind === "resume"
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitWidth: 8
+                        implicitHeight: 8
+                        radius: 4
+                        color: Theme.ember
                     }
                 }
 
@@ -331,13 +247,11 @@ Drawer {
             Keys.onUpPressed: {
                 if (currentIndex > 0)
                     currentIndex--;
-                else if (root.hasResume)
-                    resumeRow.focusFirstChild();
             }
             Keys.onReturnPressed: root._activateNav(currentIndex)
         }
 
-        // === Nav cluster: Quick Actions row ===
+        // === Quick Actions row ===
         Item {
             Layout.fillWidth: true
             Layout.topMargin: Units.spacingSM
@@ -418,7 +332,7 @@ Drawer {
         // === Status glyph line (non-focusable readout, bottom-pinned) ===
         Rectangle {
             Layout.fillWidth: true
-            height: 2
+            Layout.preferredHeight: 2
             color: Theme.surfaceBorder
         }
 
@@ -464,25 +378,19 @@ Drawer {
         }
     }
 
-    // Resume-tile context menu (Resume/Quit or Launch), positioned over the tile.
-    PopoverMenu {
-        id: popoverMenu
-        onClosed: {
-            popoverMenu.opened = false;
-            if (root.hasResume)
-                resumeRow.forceActiveFocus();
-            else
-                navList.forceActiveFocus();
-        }
-    }
-
     function _activateNav(index) {
-        let items = navList.model;
+        let items = root.navModel;
         if (index < 0 || index >= items.length)
             return;
-        switch (items[index].action) {
+        var row = items[index];
+        switch (row.kind) {
         case "home":
             root.homeSelected();
+            break;
+        case "resume":
+            // Jump back into the running window, then close the drawer.
+            root.appFocusRequested(row.entry.address);
+            root.closed();
             break;
         }
     }

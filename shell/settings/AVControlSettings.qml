@@ -782,8 +782,8 @@ SettingsPageBase {
 
                                         // Power status badge
                                         Rectangle {
-                                            width: powerLabel.implicitWidth + 24
-                                            height: 40
+                                            Layout.preferredWidth: powerLabel.implicitWidth + 24
+                                            Layout.preferredHeight: 40
                                             radius: 20
                                             color: {
                                                 if (deviceRow.modelData.powerStatus === "on")
@@ -823,8 +823,8 @@ SettingsPageBase {
                                         // power-badge styling (crimson/sidebarActive tint).
                                         Rectangle {
                                             visible: deviceRow.modelData.logicalAddress === SettingsStore.cecDefaultInput
-                                            width: defaultLabel.implicitWidth + 24
-                                            height: 40
+                                            Layout.preferredWidth: defaultLabel.implicitWidth + 24
+                                            Layout.preferredHeight: 40
                                             radius: 20
                                             color: Theme.sidebarActive
 

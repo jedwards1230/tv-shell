@@ -55,7 +55,6 @@ ShellRoot {
             State {
                 name: "idle"
                 PropertyChanges {
-                    target: root
                     // restoreEntryValues:false — when idle is entered with the
                     // overlay drawer open (Home-tap over an app, then Home from
                     // the nav), force it closed but do NOT restore the prior
@@ -63,7 +62,7 @@ ShellRoot {
                     // restores overlayDrawerOpen=true and the drawer reopens
                     // over the fresh app.
                     restoreEntryValues: false
-                    overlayDrawerOpen: false
+                    root.overlayDrawerOpen: false
                 }
             },
             State {
