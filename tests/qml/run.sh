@@ -41,8 +41,13 @@ cp "$shellc/NavigableGrid.qml" "$build/components/"
 # loads via the -import "$build/qml" path) — headless-testable; tst_idleinhibit-
 # controller exercises its streaming/appRunning truth table.
 cp "$shellc/IdleInhibitController.qml" "$build/components/"
+# Drawer is pure QtQuick and touches only Theme.surface, so it loads headless.
+# tst_drawer pins the clip contract that keeps an overflowing child (the Resume
+# rail's third tile) from painting outside a closed drawer.
+cp "$shellc/Drawer.qml" "$build/components/"
 cat >>"$build/components/qmldir" <<'EOF'
 IdleInhibitController 1.0 IdleInhibitController.qml
+Drawer 1.0 Drawer.qml
 EOF
 cp "$shellc/lib/CountBadge.qml" "$build/components/lib/"
 # focusChain.js — the shared vertical-traversal helper imported by Widget.qml and
