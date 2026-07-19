@@ -515,6 +515,21 @@ ShellRoot {
             }
 
             color: root.state === "appRunning" ? "transparent" : Components.Theme.background
+            // Overlay layer, NOT the PanelWindow default (Top): Hyprland renders
+            // a fullscreen window above the Top layer, and the kiosk model keeps
+            // every app window fullscreen (daemon re-asserts `fullscreen 0 set`).
+            // On Top, `returnToShell()` over a still-running local app mapped the
+            // home screen UNDER fullscreen Steam with exclusive keyboard focus —
+            // the user saw the app while the D-pad drove an invisible shell — and
+            // the over-app drawers (home-tap overlay drawer / Session QAM) could
+            // never display at all. The `visible:` binding above already encodes
+            // exactly "the shell should own or share the screen now", so Overlay
+            // (which stacks above fullscreen — same reasoning as the
+            // screenshot-flash window below) makes that binding truthful in every
+            // mapped state; when an app should own the screen the surface is
+            // unmapped, so nothing sits above the app. Streams were never
+            // affected (escape tears the stream client window down entirely).
+            WlrLayershell.layer: WlrLayer.Overlay
             // Exclusive keyboard focus so non-Hyprland-bound keys (arrows,
             // Enter, Esc, etc.) reach focused QML widgets. Without this,
             // the compositor gives keyboard input to whatever non-layer

@@ -13,7 +13,20 @@ never be visible at once.
 **layer-shell** surface (`WlrLayershell`, holds `WlrKeyboardFocus.Exclusive`
 while mapped) — not a tiled toplevel, so it is unaffected by window rules and
 workspace switches and is never a party to the tiling layout. App windows are
-ordinary xdg toplevels the tiler owns. Every option below is verified against the
+ordinary xdg toplevels the tiler owns.
+
+**Stacking.** Hyprland renders a fullscreen window **above the Top layer**
+(only the Overlay layer stacks higher), and this model keeps every app window
+fullscreen. The shell's main surface therefore lives on the **Overlay layer**
+(`shell.qml`, `WlrLayershell.layer: WlrLayer.Overlay`): its `visible:` binding
+already encodes "the shell should own or share the screen now" (home/idle, or a
+drawer/QAM over an app), so a mapped shell must actually stack above the
+fullscreen app — on the default Top layer, `returnToShell()` over a running
+local app mapped the home screen *underneath* the app while stealing exclusive
+keyboard focus (an invisible shell driving the D-pad), and the over-app drawers
+could never display. When an app should own the screen the surface is unmapped,
+so Overlay never covers a foregrounded app. The screenshot-flash and
+launch-overlay windows use Overlay for the same reason. Every option below is verified against the
 Hyprland source (file references inline); anything that did not survive that
 check is listed under *Rejected*.
 
