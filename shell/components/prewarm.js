@@ -5,17 +5,26 @@
 // a plain object in tests — same contract as resumeModel.js.
 //
 // Two defects this fixes:
-//  (a) The one-shot pass deduped against MAPPED WINDOWS only, from a single
-//      snapshot. An app launched out-of-band ~1s before the pass has no window
-//      yet (a Plex HTPC cold start is 10-15s), so prewarm launched a SECOND copy.
-//      Fixed by requiring a candidate to be absent for `settlePolls` CONSECUTIVE
-//      polls before launching, plus an `issued` set so nothing launches twice.
+//  (a) The pass deduped against MAPPED WINDOWS only. A competing out-of-band
+//      launch has no window for 10-15s (a Plex HTPC cold start), so the snapshot
+//      was honestly empty and prewarm launched a SECOND copy. But that app's
+//      PROCESS exists immediately — so we dedup against the process table too.
+//      The union of the two signals means "already running or starting", which
+//      closes the race with ZERO added delay: prewarm still fires on the first
+//      successful idle poll.
 //  (b) An app whose desktop entry has an empty StartupWMClass (Steam) could
 //      never be named or resolved. Fixed by keyFor()'s exec-basename fallback.
 
+// Linux truncates a process name (/proc/<pid>/comm, and therefore `ps -eo comm=`)
+// to 15 characters — visible in real output as `QtWebEngineProc` /
+// `steam-runtime-l`. A long-named app must still match, so we compare against the
+// truncation too rather than letting it silently never match.
+var COMM_MAX_LEN = 15;
+
 // The stable prewarm key for an app: StartupWMClass when present, else the exec
 // basename. Steam's .desktop carries no StartupWMClass, so it keys as "steam" —
-// which is also what its window class reports, so WindowMatcher dedup still works.
+// which is also what its window class and its process name report, so both dedup
+// signals still work.
 function keyFor(app, matcher) {
     if (!app)
         return "";
@@ -40,33 +49,71 @@ function resolveApp(key, apps, matcher) {
     return null;
 }
 
-// Evaluate one poll.
-//   state: { absent: {key:int}, issued: {key:true} }   (caller-owned, immutable)
-//   returns { launch: [app...], state: <next state>, pending: int }
-// `pending === 0` means nothing is left to decide — the caller stops evaluating.
-// `pending === -1` means the snapshot was unusable, so NOTHING was decided and
-// the caller must keep the state it already had.
-function evaluate(list, apps, clients, state, matcher, settlePolls) {
-    var prevAbsent = (state && state.absent) || {};
+// Is `app`'s process already alive? `procNames` is a list of process NAMES only
+// (`ps -eo comm=`); this function owns the normalization, so callers hand over
+// unprocessed lines and tests can't drift from production.
+//
+// The comparison is EXACT, never substring — that precision is the whole point.
+// A substring match over a full cmdline for "steam" also hits `steamwebhelper`,
+// `srt-logger`, `pv-adverb` and `steam-runtime-launcher-service --alongside-steam`,
+// any of which would silently suppress a legitimate Steam prewarm forever.
+// `steamwebhelper !== steam`, so exact comm matching is immune to all of them.
+function matchesProcess(app, procNames, matcher) {
+    var base = matcher.execBasename(app.exec || "");
+    if (base === "")
+        return false;
+    var truncated = base.length > COMM_MAX_LEN ? base.substring(0, COMM_MAX_LEN) : base;
+    for (var i = 0; i < procNames.length; i++) {
+        var p = (procNames[i] || "").trim().toLowerCase();
+        if (p === "")
+            continue;
+        if (p === base || p === truncated)
+            return true;
+    }
+    return false;
+}
+
+function matchesWindow(app, clients, matcher) {
+    for (var i = 0; i < clients.length; i++) {
+        if (matcher.matchesApp(app, clients[i]))
+            return true;
+    }
+    return false;
+}
+
+// Decide one poll.
+//   state:  { issued: {key:true} }   (caller-owned, treated as immutable)
+//   returns { launch: [app...], state: <next state>, decided: bool }
+//
+// `decided: false` means the snapshot was unusable and NOTHING was decided — the
+// caller keeps the state it had and retries on the next poll. BOTH the window
+// list and the process list are required: a missing process list is not evidence
+// that nothing is running, and acting on it is exactly how a double launch
+// happens.
+//
+// On a usable snapshot every candidate is resolved in this one pass — there is no
+// settling and no deferral — so prewarm fires as early as the shell can safely
+// know Hyprland is answering and the app list has loaded.
+function evaluate(list, apps, clients, procNames, state, matcher) {
     var issued = {};
     var k;
     for (k in ((state && state.issued) || {}))
         issued[k] = true;
 
-    var out = {
-        launch: [],
-        state: {
-            absent: {},
-            issued: issued
-        },
-        pending: 0
-    };
-    if (!Array.isArray(clients) || !apps || !list)
+    if (!Array.isArray(clients) || !Array.isArray(procNames) || !apps || !list)
         return {
             launch: [],
             state: state,
-            pending: -1
+            decided: false
         };
+
+    var out = {
+        launch: [],
+        state: {
+            issued: issued
+        },
+        decided: true
+    };
 
     var seen = {};
     for (var li = 0; li < list.length; li++) {
@@ -78,27 +125,13 @@ function evaluate(list, apps, clients, state, matcher, settlePolls) {
             continue;               // already launched this session
         var app = resolveApp(key, apps, matcher);
         if (!app)
-            continue;               // unknown app / typo — silently skip, forever
-
-        var running = false;
-        for (var ci = 0; ci < clients.length; ci++) {
-            if (matcher.matchesApp(app, clients[ci])) {
-                running = true;
-                break;
-            }
-        }
-        if (running) {
-            out.state.absent[key] = 0;   // someone else has it: never launch
-            continue;
-        }
-        var n = (prevAbsent[key] || 0) + 1;
-        out.state.absent[key] = n;
-        if (n >= settlePolls) {
-            out.launch.push(app);
-            out.state.issued[key] = true;
-        } else {
-            out.pending++;               // still settling
-        }
+            continue;               // unknown app / typo — silently skip
+        if (matchesWindow(app, clients, matcher))
+            continue;               // window mapped: already running
+        if (matchesProcess(app, procNames, matcher))
+            continue;               // process alive: running, or still starting
+        out.launch.push(app);
+        out.state.issued[key] = true;
     }
     return out;
 }

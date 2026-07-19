@@ -52,7 +52,7 @@ shell/                       # QML shell — Quickshell config root (-c tv-shell
     Drawer.qml               # Reusable slide-in drawer (any edge)
     NavigationDrawer.qml     # Left nav drawer: clock header, nav list (Home row + one row per running app; X opens a Resume/Quit popover), QuickActions row, Now-Playing mini-strip, bottom status glyph line
     resumeModel.js           # Pure .pragma library: merge/dedup running windows + recent apps → the drawer's Resume list (headless-testable)
-    prewarm.js               # Pure .pragma library: login-prewarm key resolution + settle-window launch decisions (headless-testable)
+    prewarm.js               # Pure .pragma library: login-prewarm key resolution + launch decisions (dedup against mapped windows AND the process table) (headless-testable)
     StreamOverlay.qml        # Reconnecting/error overlay
     lib/                     # Shared reusable component library (own qmldir module)
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)

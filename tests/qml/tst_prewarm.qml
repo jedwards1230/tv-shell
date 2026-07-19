@@ -4,11 +4,12 @@ import "../../shell/components/prewarm.js" as Prewarm
 
 // Headless tests for the login-prewarm decision engine (#238 follow-up).
 // prewarm.js is a pure `.pragma library` module imported by its real source path
-// (zero drift) — no Quickshell, no stubs. These pin the two invariants the fix
-// exists for: a candidate must be ABSENT for `settlePolls` consecutive polls
-// before it is launched (so a slow-mapping out-of-band launch is not
-// double-launched), and a key resolves by exec basename when the desktop entry
-// declares no StartupWMClass (Steam).
+// (zero drift) — no Quickshell, no stubs. These pin the invariants the fix exists
+// for: a candidate is suppressed when its PROCESS is alive even though its WINDOW
+// has not mapped yet (the double-launch regression), a genuinely-absent candidate
+// launches on the very FIRST poll (no delay), process matching is exact enough
+// that `steamwebhelper` cannot suppress `steam`, and an unusable snapshot decides
+// nothing rather than launching blind.
 TestCase {
     id: testCase
     name: "Prewarm"
@@ -40,123 +41,134 @@ TestCase {
 
     readonly property var plex: ({
             name: "Plex",
-            exec: "/usr/bin/plex-htpc",
+            exec: "/usr/bin/Plex",
             wmClass: "plex"
         })
     readonly property var steam: ({
             name: "Steam",
-            exec: "/usr/bin/steam %U",
+            exec: "/home/user/.local/share/Steam/ubuntu12_32/steam %U",
             wmClass: ""
         })
 
     function emptyState() {
         return {
-            absent: {},
             issued: {}
         };
     }
 
-    // --- 1. THE regression: a slow-mapping out-of-band launch is not doubled --
-    // Polls 1-2 see no Plex window (the external launch is still cold-starting),
-    // poll 3 the window finally maps. With settlePolls = 4 the candidate never
-    // reaches the threshold, so prewarm must NEVER launch a second copy.
-    function test_settle_window_suppresses_slow_mapper() {
-        var st = emptyState();
-        var apps = [testCase.plex];
-        var list = ["plex"];
-        var r;
-        // Polls 1-2: nothing mapped yet.
-        for (var p = 0; p < 2; p++) {
-            r = Prewarm.evaluate(list, apps, [], st, testCase.matcher, 4);
-            compare(r.launch.length, 0, "no launch while still settling (poll " + (p + 1) + ")");
-            verify(r.pending > 0, "candidate still pending");
-            st = r.state;
-        }
-        compare(st.absent["plex"], 2, "absent counter accumulated");
-        // Poll 3+: the out-of-band window mapped — counter resets, forever.
-        var clients = [
-            {
-                "class": "plex"
-            }
-        ];
-        for (var q = 0; q < 6; q++) {
-            r = Prewarm.evaluate(list, apps, clients, st, testCase.matcher, 4);
-            compare(r.launch.length, 0, "never launches once the window is seen");
-            compare(r.state.absent["plex"], 0, "absent counter reset to 0");
-            st = r.state;
-        }
+    // --- 1. THE regression: process alive, window not mapped yet → NO launch ---
+    // An out-of-band Plex launch ~1s earlier has a live process but no window for
+    // 10-15s. The window snapshot is honestly empty; the process table is not.
+    // Suppression must happen on the FIRST poll, with no settle delay.
+    function test_live_process_without_window_suppresses_launch() {
+        var procs = ["systemd", "Plex", "Plex", "QtWebEngineProc"];
+        var r = Prewarm.evaluate(["plex"], [testCase.plex], [], procs, emptyState(), testCase.matcher);
+        verify(r.decided, "a usable snapshot decides");
+        compare(r.launch.length, 0, "never launches a second copy while the process is alive");
+        compare(r.state.issued["plex"], undefined, "and does not mark it issued");
     }
 
-    // --- 2. Genuinely-absent app IS launched, exactly once, after the settle ---
-    function test_launches_after_settle() {
-        var st = emptyState();
-        var apps = [testCase.plex];
-        var list = ["plex"];
-        var r;
-        for (var p = 1; p <= 3; p++) {
-            r = Prewarm.evaluate(list, apps, [], st, testCase.matcher, 4);
-            compare(r.launch.length, 0, "no launch on poll " + p);
-            st = r.state;
-        }
-        r = Prewarm.evaluate(list, apps, [], st, testCase.matcher, 4);
-        compare(r.launch.length, 1, "launched on the 4th consecutive absent poll");
+    // --- 2. THE requirement: genuinely absent → launches on the FIRST poll ------
+    // No window, no process. This is the "as early as possible" guarantee.
+    function test_launches_immediately_when_genuinely_absent() {
+        var procs = ["systemd", "bash", "quickshell"];
+        var r = Prewarm.evaluate(["plex"], [testCase.plex], [], procs, emptyState(), testCase.matcher);
+        verify(r.decided);
+        compare(r.launch.length, 1, "launched on the very first poll — no settle window");
         compare(r.launch[0].name, "Plex");
-        compare(r.pending, 0, "nothing left to decide");
-        st = r.state;
-        // Polls 5-8: still no window (the launch is cold-starting) — no re-launch.
-        for (var q = 5; q <= 8; q++) {
-            r = Prewarm.evaluate(list, apps, [], st, testCase.matcher, 4);
-            compare(r.launch.length, 0, "no second launch on poll " + q);
-            compare(r.pending, 0);
-            st = r.state;
-        }
+        compare(r.state.issued["plex"], true, "marked issued the instant it is dispatched");
     }
 
     // --- 3. `issued` is sticky across polls (the in-flight dedup) -------------
+    // Our own launch's window/process may not appear for 10-15s; `issued` is what
+    // stops the next poll launching a second copy in that gap.
     function test_issued_is_sticky() {
-        var st = {
-            absent: {},
-            issued: {
-                "plex": true
-            }
-        };
-        var r = Prewarm.evaluate(["plex"], [testCase.plex], [], st, testCase.matcher, 1);
-        compare(r.launch.length, 0, "a pre-issued key never launches again");
-        compare(r.pending, 0);
+        var st = emptyState();
+        var procs = [];
+        var r = Prewarm.evaluate(["plex"], [testCase.plex], [], procs, st, testCase.matcher);
+        compare(r.launch.length, 1, "first poll launches");
+        st = r.state;
+        // Second poll: still no window AND still no process (cold start in flight).
+        r = Prewarm.evaluate(["plex"], [testCase.plex], [], procs, st, testCase.matcher);
+        compare(r.launch.length, 0, "issued suppresses the second launch");
         compare(r.state.issued["plex"], true, "issued survives the round-trip");
     }
 
-    // --- 4. Today's happy path: running from the first poll → never launches ---
-    function test_running_from_first_poll_never_launches() {
-        var st = emptyState();
+    // --- 4. Precision guard: steamwebhelper must NOT suppress steam -----------
+    // The exact-comm rule exists for this. A substring match over "steam" would
+    // hit every one of these helpers and silently break Steam prewarm forever.
+    function test_steam_helpers_do_not_suppress_steam() {
+        var procs = ["steamwebhelper", "steam-runtime-l", "srt-logger", "pv-adverb", "steamerrorrepor"];
+        var r = Prewarm.evaluate(["steam"], [testCase.steam], [], procs, emptyState(), testCase.matcher);
+        compare(r.launch.length, 1, "helper processes must not suppress the real prewarm");
+        compare(r.launch[0].name, "Steam");
+        // ...but the real `steam` process does suppress it.
+        procs.push("steam");
+        r = Prewarm.evaluate(["steam"], [testCase.steam], [], procs, emptyState(), testCase.matcher);
+        compare(r.launch.length, 0, "the real steam process suppresses it");
+    }
+
+    // --- 5. comm truncation: a >15-char exec basename still matches -----------
+    function test_long_exec_basename_matches_truncated_comm() {
+        var longApp = {
+            name: "Web Engine Thing",
+            exec: "/usr/lib/QtWebEngineProcess",
+            wmClass: ""
+        };
+        // Linux reports this as the 15-char `QtWebEngineProc`.
+        var r = Prewarm.evaluate(["qtwebengineprocess"], [longApp], [], ["QtWebEngineProc"], emptyState(), testCase.matcher);
+        compare(r.launch.length, 0, "matches the truncated comm, so does not double-launch");
+        // Absent from the process table → still launches normally.
+        r = Prewarm.evaluate(["qtwebengineprocess"], [longApp], [], ["systemd"], emptyState(), testCase.matcher);
+        compare(r.launch.length, 1, "a long-named app is still prewarmable when genuinely absent");
+    }
+
+    // --- 6. A mapped window also suppresses (the original signal, unchanged) ---
+    function test_mapped_window_suppresses_launch() {
         var clients = [
             {
                 "class": "plex"
             }
         ];
-        var r = Prewarm.evaluate(["plex"], [testCase.plex], clients, st, testCase.matcher, 4);
-        compare(r.launch.length, 0);
-        compare(r.pending, 0, "an already-running candidate is decided immediately");
+        var r = Prewarm.evaluate(["plex"], [testCase.plex], clients, ["systemd"], emptyState(), testCase.matcher);
+        compare(r.launch.length, 0, "an already-mapped window is already instant-resume");
+        verify(r.decided);
     }
 
-    // --- 5. Blank + duplicate keys are skipped (behaviour moved from QML) -----
+    // --- 7. Unusable snapshot decides nothing --------------------------------
+    function test_bad_snapshot_is_a_noop() {
+        var st = {
+            issued: {
+                "other": true
+            }
+        };
+        // No process list (the `ps` call failed): must NOT launch blind.
+        var r = Prewarm.evaluate(["plex"], [testCase.plex], [], null, st, testCase.matcher);
+        verify(!r.decided, "a missing process list is not a decision");
+        compare(r.launch.length, 0);
+        compare(r.state.issued["other"], true, "the caller's state is handed straight back");
+        // No window list either.
+        r = Prewarm.evaluate(["plex"], [testCase.plex], null, ["systemd"], st, testCase.matcher);
+        verify(!r.decided, "a missing window list is not a decision");
+        compare(r.launch.length, 0);
+    }
+
+    // --- 8. Blank + duplicate keys are skipped (behaviour moved from QML) -----
     function test_blank_and_duplicate_keys_skipped() {
-        var st = emptyState();
-        var r = Prewarm.evaluate(["", "plex", "plex", "nosuchapp"], [testCase.plex], [], st, testCase.matcher, 1);
+        var r = Prewarm.evaluate(["", "plex", "plex", "nosuchapp"], [testCase.plex], [], ["systemd"], emptyState(), testCase.matcher);
         compare(r.launch.length, 1, "one launch despite the duplicate entry");
         compare(r.launch[0].name, "Plex");
-        compare(r.pending, 0, "the blank and the unresolvable key add no pending work");
     }
 
-    // --- 6. keyFor falls back to the exec basename (Steam, item 3b) ----------
+    // --- 9. keyFor falls back to the exec basename (Steam, item 3b) ----------
     function test_keyFor_falls_back_to_exec_basename() {
         compare(Prewarm.keyFor(testCase.steam, testCase.matcher), "steam");
         compare(Prewarm.keyFor(testCase.plex, testCase.matcher), "plex", "wmClass still wins when present");
         compare(Prewarm.keyFor(null, testCase.matcher), "");
     }
 
-    // --- 7. resolveApp prefers an exact wmClass over the basename fallback ----
-    // Proves existing configs are unaffected by the new fallback tier.
+    // --- 10. resolveApp prefers an exact wmClass over the basename fallback ---
+    // Proves existing configs are unaffected by the fallback tier.
     function test_resolveApp_prefers_exact_wmClass() {
         var realSteam = {
             name: "Steam (declared)",
@@ -168,19 +180,5 @@ TestCase {
         // With only the wmClass-less entry present, the fallback tier resolves it.
         compare(Prewarm.resolveApp("steam", [testCase.steam], testCase.matcher).name, "Steam");
         compare(Prewarm.resolveApp("nope", apps, testCase.matcher), null);
-    }
-
-    // --- 8. A bad snapshot decides nothing and leaves state untouched --------
-    function test_bad_snapshot_is_a_noop() {
-        var st = {
-            absent: {
-                "plex": 2
-            },
-            issued: {}
-        };
-        var r = Prewarm.evaluate(["plex"], [testCase.plex], null, st, testCase.matcher, 4);
-        compare(r.pending, -1, "signals 'no decision made'");
-        compare(r.launch.length, 0);
-        compare(r.state.absent["plex"], 2, "the caller's state is handed straight back");
     }
 }
