@@ -321,9 +321,11 @@ at relevant lifecycle points):
 | `cecFocusOnWake` | bool | `true` | At CEC resume from sleep (within `[cec] lifecycle`) |
 | `prewarmApps` | array | `[]` | No |
 
-The `prewarmApps` key is an array of `StartupWMClass` strings — apps to silently
-prewarm (launch unfocused in the background) at shell login, keyed by
-StartupWMClass (#238). It is opaque to the daemon; the QML shell owns the launch.
+The `prewarmApps` key is an array of app keys — apps to silently prewarm (launch
+unfocused in the background) at shell login (#238). An entry is normally a
+`StartupWMClass`; for desktop entries that declare none (e.g. Steam) the key is
+the `Exec` basename instead. It is opaque to the daemon; the QML shell owns both
+the resolution and the launch.
 
 The `widgets` key is the **namespaced per-widget config** the home-widget
 framework owns (still opaque to the daemon). Shape:
