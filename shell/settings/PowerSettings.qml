@@ -228,7 +228,7 @@ SettingsPageBase {
                     root.canSuspend = true;
                 else if (t === "no")
                     root.canSuspend = false;
-                // "error" leaves the optimistic default untouched.
+            // "error" leaves the optimistic default untouched.
             }
         },
         ConfirmDialog {

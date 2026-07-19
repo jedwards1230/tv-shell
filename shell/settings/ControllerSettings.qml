@@ -442,8 +442,8 @@ SettingsPageBase {
 
             FocusScope {
                 id: refreshScope
-                width: refreshBtn.width
-                height: refreshBtn.height
+                Layout.preferredWidth: refreshBtn.width
+                Layout.preferredHeight: refreshBtn.height
                 activeFocusOnTab: true
 
                 KeyNavigation.down: root.controllers.length > 0 ? controllerList : grabScope
@@ -602,8 +602,8 @@ SettingsPageBase {
 
             FocusScope {
                 id: grabScope
-                width: grabBtn.width
-                height: grabBtn.height
+                Layout.preferredWidth: grabBtn.width
+                Layout.preferredHeight: grabBtn.height
                 activeFocusOnTab: true
 
                 KeyNavigation.up: controllerList
@@ -714,8 +714,8 @@ SettingsPageBase {
 
             FocusScope {
                 id: dbScope
-                width: dbRefreshBtn.width
-                height: dbRefreshBtn.height
+                Layout.preferredWidth: dbRefreshBtn.width
+                Layout.preferredHeight: dbRefreshBtn.height
                 activeFocusOnTab: true
 
                 KeyNavigation.up: grabScope
@@ -767,8 +767,8 @@ SettingsPageBase {
 
             FocusScope {
                 id: debugScope
-                width: debugBtn.width
-                height: debugBtn.height
+                Layout.preferredWidth: debugBtn.width
+                Layout.preferredHeight: debugBtn.height
                 activeFocusOnTab: true
 
                 KeyNavigation.up: dbScope
