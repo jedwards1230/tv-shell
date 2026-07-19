@@ -1061,6 +1061,9 @@ mod tests {
         let base = crate::testutil::scratch_path("tv-cfgdir", "");
         let gs = base.join("tv-shell");
         std::fs::create_dir_all(&gs).unwrap();
+        // `create_dir_all` freshly mints both `base` and `gs` — harden both.
+        crate::testutil::harden_dir(&base);
+        crate::testutil::harden_dir(&gs);
         let prev = std::env::var_os("XDG_CONFIG_HOME");
         // SAFETY: serialized by ENV_GUARD; restored before returning.
         unsafe { std::env::set_var("XDG_CONFIG_HOME", &base) };

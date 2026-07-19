@@ -1167,7 +1167,11 @@ mod tests {
     fn atomic_write_creates_parent_and_replaces_atomically() {
         // Nested path under a fresh dir: atomic_write must mkdir -p the parent.
         // See `crate::testutil` for why this is based on `current_exe()`
-        // rather than the system temp dir.
+        // rather than the system temp dir. Note this is one of the sites
+        // `crate::testutil`'s doc calls out as NOT fully hardened: the
+        // `mkdir -p` under test here is `atomic_write`'s own (production
+        // code), so we can't pre-chmod what it creates without defeating the
+        // point of the test.
         let dir = crate::testutil::scratch_path("gs-atomic", "");
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("nested").join("data.json");

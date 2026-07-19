@@ -20,24 +20,44 @@
 //! Every path is tagged by `tag` + pid + thread id, so parallel test threads
 //! (and parallel test binaries) never collide.
 //!
-//! **Known residual limitation — this is NOT a complete cure.** Relocating off
-//! the system temp dir is a strict improvement (that dir is *always* denied
-//! under the hook's sandbox; `target/debug/deps/` usually is not), but it does
-//! not make these tests deterministic under the sandbox. Confirmed
-//! empirically 2026-07-19, in the *same* already-built worktree, across
-//! repeated back-to-back `cargo test --all-targets` runs with no code changes
-//! in between: most runs were fully green, but some failed one of
-//! `session_env`'s tests, and others instead failed
-//! `metrics::tests::write_atomic_creates_file_with_exact_contents` — with the
-//! `EACCES` in the latter case coming from `metrics::write_atomic`'s own file
-//! write, *after* this helper's `create_dir_all` for the same scratch
-//! directory had already succeeded in the same test. That rules out "the
-//! directory doesn't exist yet" as the sole explanation, and rules out fixing
-//! it from test code alone: the denial can land on a production write inside
-//! an already-successfully-created directory, and `metrics::write_atomic` is
-//! not ours to add retry logic to. Treat any hook failure whose log shows
-//! `PermissionDenied` on a path under `target/` as this same known flake — do
-//! not chase it further locally; Linux CI (no such sandbox) is authoritative.
+//! **A second, distinct failure mode found while chasing this**: it is not
+//! only *whether* a new directory can be created under the sandbox — a
+//! `create_dir_all` call can report `Ok` while leaving the directory with mode
+//! `rw-------` (no search/execute bit), which then makes any later write
+//! *inside* it fail with the same `EACCES`, even though creating the
+//! directory itself "succeeded". Confirmed by directly inspecting a leftover
+//! scratch directory after a hook-sandboxed run: `ls -ld` showed
+//! `drw-------` plus a `com.apple.provenance` xattr, and `chmod 755` on it
+//! immediately fixed access — so this is a real, inspectable mode bit, not a
+//! transient deny. [`scratch_dir`] now explicitly re-`chmod`s to `0o755`
+//! after creating its directory, and [`harden_dir`] is available for any test
+//! that mkdirs a further nested directory of its own inside a scratch root
+//! (see `session_env`'s `make_instance` and `daemon_config`'s
+//! `with_temp_config_dir` for examples). Empirically this closed most of the
+//! observed flake in an already-built worktree (0 failures across 15
+//! back-to-back `cargo test --all-targets` runs here, vs. failing roughly
+//! every other run before the `chmod`).
+//!
+//! **Known residual limitation — this is still NOT a guaranteed cure,
+//! especially on a brand-new worktree's first run.** Every *new* directory
+//! created during a sandboxed test run is independently exposed to the
+//! mode-bit flake above; a shared helper can only harden the directories it
+//! (or a caller that remembers to call [`harden_dir`]) actually creates. Two
+//! test-owned nested `create_dir_all` calls were found and hardened this way
+//! (`session_env`'s `make_instance` helper and its "present but empty hypr/
+//! dir" case, and `daemon_config`'s `with_temp_config_dir`) — before that
+//! extra hardening, 2 of 7 genuinely-fresh-worktree first runs failed at
+//! exactly `make_instance`'s nested mkdir; after it, 5 of 5 follow-up
+//! fresh-worktree first runs were green (small sample; a sandbox race, not a
+//! proof of elimination). One site remains **structurally unfixable from
+//! test code**: `config::atomic_write_creates_parent_and_replaces_atomically`
+//! exercises `atomic_write`'s own `mkdir -p` of its parent — that's
+//! **production** code we must not touch, and the whole point of the test is
+//! that the directory does *not* exist before the call, so we can't pre-chmod
+//! it either. Treat any hook failure whose log shows `PermissionDenied` on a
+//! path under `target/` as this same known, environment-level sandbox flake —
+//! do not chase it further locally; Linux CI (no such sandbox) is
+//! authoritative.
 //!
 //! **Not every `temp_dir()` call site is a candidate for this helper.**
 //! `ipc::tests::end_to_end_commands_and_subscribe` binds a real Unix-domain
@@ -70,6 +90,18 @@ pub fn scratch_path(tag: &str, suffix: &str) -> PathBuf {
     ))
 }
 
+/// Force `rwxr-xr-x` on `dir`. A no-op error is swallowed (non-unix, or the
+/// directory vanished) — best-effort hardening only, see module docs.
+pub fn harden_dir(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
 /// Create (`mkdir -p`) a fresh, empty scratch directory unique to this test
 /// invocation, removing any stale leftover first. For tests that need a
 /// directory to write multiple files/subdirs into.
@@ -77,5 +109,6 @@ pub fn scratch_dir(tag: &str) -> PathBuf {
     let dir = scratch_path(tag, "");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    harden_dir(&dir);
     dir
 }

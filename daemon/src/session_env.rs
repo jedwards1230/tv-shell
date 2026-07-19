@@ -234,6 +234,10 @@ mod tests {
     fn make_instance(hypr_dir: &Path, sig: &str, with_socket: bool) {
         let sub = hypr_dir.join(sig);
         std::fs::create_dir_all(&sub).unwrap();
+        // `create_dir_all` may also freshly mint `hypr_dir` itself (a missing
+        // intermediate component) — harden both, not just the leaf.
+        crate::testutil::harden_dir(hypr_dir);
+        crate::testutil::harden_dir(&sub);
         if with_socket {
             std::fs::write(sub.join(".socket2.sock"), b"").unwrap();
         }
@@ -249,6 +253,7 @@ mod tests {
         // Present but empty hypr/ dir.
         let hypr = root.join("hypr");
         std::fs::create_dir_all(&hypr).unwrap();
+        crate::testutil::harden_dir(&hypr);
         assert_eq!(newest_live_signature_in(&hypr), None);
         let _ = std::fs::remove_dir_all(&root);
     }
