@@ -79,6 +79,18 @@ FocusScope {
         width: (root.edge === "left" || root.edge === "right") ? root.drawerWidth : parent.width
         height: (root.edge === "top" || root.edge === "bottom") ? root.drawerHeight : parent.height
 
+        // Bound EVERY child to the panel. Content wider/taller than the drawer
+        // (e.g. the Resume rail, whose tiles are sized so exactly two fit) is
+        // otherwise painted outside these bounds — and since a closed drawer is
+        // only translated offscreen (`x: -drawerWidth` below), an overflowing
+        // third tile lands back at screen x≈0 and is visible while the drawer is
+        // shut. Clipping HERE rather than inside the rail is deliberate: the
+        // rail's `NavigableRow` sets `clip: false` (plus negative vertical
+        // margins) on purpose so a focus-scaled tile can bleed past the row, and
+        // clipping there would slice focused tiles instead. Overflowing items
+        // stay reachable — the rail is a ListView and scrolls them into view.
+        clip: true
+
         // Position: slides in from offscreen
         x: {
             if (root.edge === "left")

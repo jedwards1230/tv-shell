@@ -29,7 +29,9 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-axum = "0.8"
+# `multipart` powers the panel's wallpaper upload (the panel is the only member
+# that needs it; the feature is additive and harmless for the host sidecar).
+axum = { version = "0.8", features = ["multipart"] }
 subtle = "2"
 keyvalues-parser = "0.2"
 askama = "0.12"

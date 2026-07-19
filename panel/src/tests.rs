@@ -235,6 +235,43 @@ pub fn spawn_config_daemon(
     (sock, received)
 }
 
+/// Like [`spawn_config_daemon`], but records the FULL command line of every
+/// request (not just `set-config` bodies) and answers each with `canned_reply`.
+/// Use it to assert the exact wire text a page sends for non-config commands.
+pub fn spawn_recording_daemon(
+    name: &str,
+    canned_reply: &'static str,
+) -> (std::path::PathBuf, Arc<Mutex<Vec<String>>>) {
+    let sock = std::path::PathBuf::from(format!(
+        "/tmp/tvshp-recd-{name}-{}-{}.sock",
+        std::process::id(),
+        config_daemon_uniquifier()
+    ));
+    let _ = std::fs::remove_file(&sock);
+    let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let listener = UnixListener::bind(&sock).expect("bind recording daemon socket");
+    let recorded = Arc::clone(&received);
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            let recorded = Arc::clone(&recorded);
+            tokio::spawn(async move {
+                let (read_half, mut write_half) = stream.into_split();
+                let mut lines = BufReader::new(read_half).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    recorded.lock().unwrap().push(line.clone());
+                    let _ = write_half
+                        .write_all(format!("{canned_reply}\n").as_bytes())
+                        .await;
+                }
+            });
+        }
+    });
+    (sock, received)
+}
+
 fn config_daemon_uniquifier() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -317,8 +354,14 @@ async fn settings_save_sends_expected_patch() {
     let mut form: HashMap<String, String> = HashMap::new();
     form.insert("themeMode".to_string(), "light".to_string());
     form.insert("rumbleEnabled".to_string(), "on".to_string()); // checked
-                                                                // controllerDebug intentionally absent from the form -> must become
-                                                                // explicit `false`, not be omitted.
+    form.insert("wallpaperPath".to_string(), "/home/u/wall.png".to_string());
+    // StrList textarea: blank + padded lines must be dropped, order kept.
+    form.insert(
+        "prewarmApps".to_string(),
+        "tv.plex.PlexHTPC\r\n\r\n  com.spotify.Client  \n".to_string(),
+    );
+    // controllerDebug intentionally absent from the form -> must become
+    // explicit `false`, not be omitted.
 
     let html = pages::settings::render_save(&state, &form).await;
     assert!(
@@ -336,6 +379,15 @@ async fn settings_save_sends_expected_patch() {
     assert_eq!(patch["themeMode"], "light");
     assert_eq!(patch["rumbleEnabled"], true);
     assert_eq!(patch["controllerDebug"], false);
+    assert_eq!(patch["wallpaperPath"], "/home/u/wall.png");
+    assert_eq!(
+        patch["prewarmApps"],
+        serde_json::json!(["tv.plex.PlexHTPC", "com.spotify.Client"])
+    );
+    assert!(
+        patch.get("webApps").is_none(),
+        "webApps is daemon-owned and must never appear in a Settings save patch: {patch}"
+    );
     assert!(
         patch.get("keyBindings").is_none(),
         "keyBindings must never appear in a Settings save patch: {patch}"
@@ -436,6 +488,55 @@ async fn widgets_page_degrades_when_daemon_unreachable() {
         html.to_lowercase().contains("unreachable"),
         "widgets page must show an unreachable marker when the daemon is down: {html}"
     );
+}
+
+#[tokio::test]
+async fn media_page_degrades_when_daemon_unreachable() {
+    // The daemon owns wallpaperPath and the web-app registry, so with it down
+    // the page must still render (200 + honest banner) rather than 500 — the
+    // wallpaper FILES are local and still listable.
+    let state = hermetic_state();
+    let html = pages::media::render_page(&state).await;
+    assert!(!html.is_empty());
+    assert!(
+        html.to_lowercase().contains("unreachable"),
+        "media page must show an unreachable marker when the daemon is down: {html}"
+    );
+    // Both sections still render their shells.
+    assert!(html.contains("Wallpapers"), "missing wallpapers section");
+    assert!(html.contains("Web apps"), "missing web apps section");
+}
+
+#[tokio::test]
+async fn media_webapp_add_relays_a_compact_json_body() {
+    // The panel must not validate/allocate ids itself — it relays name+url and
+    // lets the daemon (the registry's sole writer) do the work.
+    let (sock, received) = spawn_recording_daemon(
+        "media-webapp-add",
+        r#"{"id":"youtube","name":"YouTube","url":"https://youtube.com/tv","wmClass":"tvshell-youtube"}"#,
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_socket(sock);
+    let _ =
+        pages::media::render_webapp_add(&state, "  YouTube  ", " https://youtube.com/tv ").await;
+    let sent: Vec<String> = received
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|l| l.starts_with("webapp-add"))
+        .cloned()
+        .collect();
+    assert_eq!(sent.len(), 1, "expected exactly one webapp-add: {sent:?}");
+    assert!(
+        sent[0].starts_with("webapp-add {"),
+        "expected a webapp-add with a JSON body, got: {}",
+        sent[0]
+    );
+    assert!(!sent[0].contains('\n'), "command must stay single-line");
+    let body: serde_json::Value =
+        serde_json::from_str(sent[0].trim_start_matches("webapp-add ")).unwrap();
+    assert_eq!(body["name"], "YouTube", "name must be trimmed");
+    assert_eq!(body["url"], "https://youtube.com/tv", "url must be trimmed");
 }
 
 #[tokio::test]

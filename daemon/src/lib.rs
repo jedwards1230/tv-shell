@@ -30,6 +30,9 @@ pub mod notifications;
 pub mod plex;
 pub mod protocol;
 pub mod recents;
+// Web-app registry + .desktop generation (#187 P1/P3). Cross-platform (pure
+// path/string/JSON work), so it builds and unit-tests alongside `apps`.
+pub mod webapps;
 // Reusable client plumbing for a remote widget sidecar (base URL + bearer,
 // reachability probe, typed/size-capped bearer HTTP helpers). The daemon is an
 // HTTP client to a sidecar on another machine — NOT a process supervisor.

@@ -13,7 +13,20 @@ never be visible at once.
 **layer-shell** surface (`WlrLayershell`, holds `WlrKeyboardFocus.Exclusive`
 while mapped) — not a tiled toplevel, so it is unaffected by window rules and
 workspace switches and is never a party to the tiling layout. App windows are
-ordinary xdg toplevels the tiler owns. Every option below is verified against the
+ordinary xdg toplevels the tiler owns.
+
+**Stacking.** Hyprland renders a fullscreen window **above the Top layer**
+(only the Overlay layer stacks higher), and this model keeps every app window
+fullscreen. The shell's main surface therefore lives on the **Overlay layer**
+(`shell.qml`, `WlrLayershell.layer: WlrLayer.Overlay`): its `visible:` binding
+already encodes "the shell should own or share the screen now" (home/idle, or a
+drawer/QAM over an app), so a mapped shell must actually stack above the
+fullscreen app — on the default Top layer, `returnToShell()` over a running
+local app mapped the home screen *underneath* the app while stealing exclusive
+keyboard focus (an invisible shell driving the D-pad), and the over-app drawers
+could never display. When an app should own the screen the surface is unmapped,
+so Overlay never covers a foregrounded app. The screenshot-flash and
+launch-overlay windows use Overlay for the same reason. Every option below is verified against the
 Hyprland source (file references inline); anything that did not survive that
 check is listed under *Rejected*.
 
@@ -110,6 +123,18 @@ frame ever shows two tiled app windows.
 | `idleinhibit fullscreen` windowrule | **Rejected** | Every app is always fullscreen, so this would inhibit idle for *any* running app and defeat the shell's configurable sleep timer (Power page). Media players already send the Wayland idle-inhibit protocol when actually playing — the nuance a blanket rule loses. |
 | Compositor watchdog in the daemon | **Partial (Phase 1) / Phase 2** | The event-socket-dead case (incident 2) is now detected + escalated. The render-wedge (incident 4 — frozen frames while `hyprctl` still answers) is **not** IPC-observable from the daemon; detecting it needs a render-side heartbeat (Phase 2). Auto-heal (kill Hyprland → restart plasmalogin → restart daemon) is Phase 2. |
 | "Running apps" list in the NavigationDrawer | **Phase 2 (UI, not implemented)** | The daemon window model already exposes everything it needs — each running window's `address`, `class`, `workspace`, `focusHistoryId` via `hypr-clients`. So `A` → `focusByAddress` (today) or `dispatch workspace N` (under Phase-2 isolation) is a race-free switch. Phase 1 does not paint it into a corner. |
+
+**Shell-side selective idle-inhibitor (#195, implemented).** Instead of the
+rejected blanket `idleinhibit fullscreen` windowrule, the shell asserts a Wayland
+idle-inhibitor only when it *knows* video is playing: its own `streaming` state,
+or an `appRunning` app while an MPRIS player reports Playing (Plex/mpv) —
+`IdleInhibitController` computes the policy; a dedicated per-screen `IdleInhibitor`
+window in `shell.qml` asserts it. That window is **Background-layer + mapped only
+while inhibiting** so it sits below the fullscreen app and preserves Hyprland
+direct scanout (an Overlay-layer surface would force compositing). Static app
+screens and the idle home screen are deliberately left un-inhibited so a
+compositor-level idle daemon (hypridle/DPMS — a system concern outside this repo,
+which honors these inhibitors) can still blank them for OLED burn-in protection.
 
 ## Interaction with the Steam widget (PR #306)
 

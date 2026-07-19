@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Effects
 import "lib"
 import "../widgets/lib"
 import "steamLaunch.js" as SteamLaunch
@@ -420,6 +421,48 @@ FocusScope {
         return result;
     }
 
+    // === Wallpaper (#29) ===
+    // Optional background image behind the scrolling content, chosen on the
+    // Wallpaper settings page. Both layers are invisible when wallpaperPath is
+    // "" (the default) — the solid parent-painted background shows through
+    // unchanged, so this is a no-op regression-wise until a wallpaper is set.
+    Image {
+        id: wallpaperImage
+        anchors.fill: parent
+        source: SettingsStore.wallpaperPath !== "" ? "file://" + encodeURI(SettingsStore.wallpaperPath).replace(/#/g, "%23").replace(/\?/g, "%3F") : ""
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+        cache: true
+        visible: SettingsStore.wallpaperPath !== "" && status === Image.Ready
+
+        // Blur the wallpaper once the user scrolls past the hero row so the
+        // scrolling widget content stays readable over it (prior art from #29).
+        readonly property bool blurActive: visible && scrollView.contentY > 8
+        layer.enabled: blurActive
+        layer.effect: MultiEffect {
+            blurEnabled: true
+            blur: 1.0
+            blurMax: 32
+            autoPaddingEnabled: false
+        }
+    }
+
+    // Theme-tinted readability scrim — keeps foreground text/cards legible over
+    // the wallpaper in both light and dark mode while the wallpaper stays
+    // clearly visible. Invisible (opacity 0) whenever no wallpaper is set.
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.background
+        opacity: wallpaperImage.visible ? 0.4 : 0
+        visible: opacity > 0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.reduceMotion ? 0 : 200
+            }
+        }
+    }
+
     Flickable {
         id: scrollView
         anchors.fill: parent
@@ -718,6 +761,46 @@ FocusScope {
             root.launchApp(entry);
     }
 
+    // Resolve a recent/running/app entry to a DISCOVERED app's stable wmClass
+    // (from AppDiscoveryManager.applications, which carries wmClass off list-apps),
+    // or "" when none resolves or the resolved wmClass is empty. Running entries
+    // carry `windowClass`; recents carry name/exec — neither is a stable
+    // StartupWMClass, so we match back to a discovered app. This doubles as the
+    // defensive Flatpak-mismatch guard: no resolved non-empty wmClass → no prewarm
+    // toggle offered (#238).
+    function _resolvePrewarmClass(entry) {
+        if (!entry)
+            return "";
+        let apps = AppDiscoveryManager.applications || [];
+        if (entry.running === true) {
+            // Match the running window against discovered apps via WindowMatcher.
+            let probe = {
+                "class": entry.windowClass,
+                "initialClass": entry.windowClass,
+                "title": entry.name
+            };
+            for (let i = 0; i < apps.length; i++) {
+                if (WindowMatcher.matchesApp(apps[i], probe))
+                    return apps[i].wmClass || "";
+            }
+            return "";
+        }
+        // Non-running (recents / app entry): prefer an already-present wmClass,
+        // else match by name equality or exec-basename against discovered apps.
+        if (entry.wmClass && entry.wmClass !== "")
+            return entry.wmClass;
+        let name = (entry.name || "").toLowerCase();
+        let execBase = WindowMatcher.execBasename(entry.exec || "");
+        for (let i = 0; i < apps.length; i++) {
+            let a = apps[i];
+            if (name !== "" && (a.name || "").toLowerCase() === name)
+                return a.wmClass || "";
+            if (execBase !== "" && WindowMatcher.execBasename(a.exec || "") === execBase)
+                return a.wmClass || "";
+        }
+        return "";
+    }
+
     // Recent-row context popover (Resume/Quit for a running app, Launch otherwise),
     // positioned over the focused card.
     function _recentContext(entry, card) {
@@ -726,9 +809,10 @@ FocusScope {
         let pos = card.mapToItem(root, card.width / 2, 0);
         popoverMenu.targetX = pos.x;
         popoverMenu.targetY = pos.y;
+        let actions;
         if (entry.running === true) {
             let addr = entry.address;
-            popoverMenu.actions = [
+            actions = [
                 {
                     label: "Resume",
                     action: function () {
@@ -744,7 +828,7 @@ FocusScope {
             ];
         } else {
             let app = entry;
-            popoverMenu.actions = [
+            actions = [
                 {
                     label: "Launch",
                     action: function () {
@@ -753,6 +837,28 @@ FocusScope {
                 }
             ];
         }
+        // Prewarm-at-startup toggle (#238) — offered only when the entry resolves
+        // to a discovered app carrying a non-empty StartupWMClass (running/recents
+        // entries don't carry a stable wmClass; this also guards the Flatpak
+        // mismatch case). Appended to BOTH branches.
+        let pwClass = root._resolvePrewarmClass(entry);
+        if (pwClass !== "") {
+            actions.push({
+                label: (SettingsStore.isPrewarm(pwClass) ? "Prewarm at startup: On" : "Prewarm at startup: Off"),
+                hint: "A: Toggle prewarm",
+                dividerBefore: true,
+                // Plain primary action: toggle + persist, then let the menu close
+                // like every other item (Resume/Launch/Quit all close on A). The
+                // label reflects current state at open time; reopening shows the
+                // new state. No in-place rebuild — the primary action auto-closes
+                // the menu (PopoverMenu._activateItem), so a rebuild here would
+                // reopen it and reset the selection (visible focus-jump).
+                action: function () {
+                    SettingsStore.setPrewarm(pwClass, !SettingsStore.isPrewarm(pwClass));
+                }
+            });
+        }
+        popoverMenu.actions = actions;
         popoverMenu.opened = true;
         popoverMenu.forceActiveFocus();
     }

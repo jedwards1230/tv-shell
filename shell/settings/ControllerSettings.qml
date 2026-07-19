@@ -814,34 +814,11 @@ SettingsPageBase {
                 Layout.fillWidth: true
             }
 
-            FocusScope {
+            SettingsToggle {
                 id: rumbleScope
-                width: rumbleBtn.width
-                height: rumbleBtn.height
-                activeFocusOnTab: true
-
                 KeyNavigation.up: debugScope
-
-                SettingsButton {
-                    id: rumbleBtn
-                    text: SettingsStore.rumbleEnabled ? "Disable" : "Enable"
-                    focus: parent.activeFocus
-                    anchors.fill: parent
-
-                    color: SettingsStore.rumbleEnabled ? Theme.sidebarActive : (parent.activeFocus ? Theme.surfaceHover : Theme.surface)
-
-                    onActivated: SettingsStore.setRumbleEnabled(!SettingsStore.rumbleEnabled)
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            rumbleScope.forceActiveFocus();
-                            rumbleBtn.activated();
-                        }
-                    }
-                }
+                checked: SettingsStore.rumbleEnabled
+                onToggled: SettingsStore.setRumbleEnabled(!SettingsStore.rumbleEnabled)
             }
         }
     }

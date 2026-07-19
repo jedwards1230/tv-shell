@@ -116,6 +116,15 @@ ShellRoot {
         shellState: root.state
     }
 
+    // #195 idle-inhibit policy — computes WHETHER to assert a Wayland
+    // idle-inhibitor (streaming, or appRunning while an MPRIS player is Playing).
+    // Drives the dedicated Background-layer inhibitor window near the bottom of
+    // this file. Pure/headless (see IdleInhibitController.qml).
+    Components.IdleInhibitController {
+        id: idleInhibit
+        shellState: root.state
+    }
+
     // Mute a backgrounded native stream app (Steam Remote Play) so its audio
     // doesn't play behind the shell; unmute on refocus / exit. Narrowly scoped
     // to the allowlisted stream classes inside the component. Bound to the same
@@ -301,6 +310,7 @@ ShellRoot {
         id: appLifecycle
         shellState: root.state
         applications: root._applications
+        prewarmApps: Components.SettingsStore.prewarmApps
         onAppLaunched: {
             root.state = "appRunning";
             // #99: short haptic confirmation on a successful app launch.
@@ -505,6 +515,21 @@ ShellRoot {
             }
 
             color: root.state === "appRunning" ? "transparent" : Components.Theme.background
+            // Overlay layer, NOT the PanelWindow default (Top): Hyprland renders
+            // a fullscreen window above the Top layer, and the kiosk model keeps
+            // every app window fullscreen (daemon re-asserts `fullscreen 0 set`).
+            // On Top, `returnToShell()` over a still-running local app mapped the
+            // home screen UNDER fullscreen Steam with exclusive keyboard focus —
+            // the user saw the app while the D-pad drove an invisible shell — and
+            // the over-app drawers (home-tap overlay drawer / Session QAM) could
+            // never display at all. The `visible:` binding above already encodes
+            // exactly "the shell should own or share the screen now", so Overlay
+            // (which stacks above fullscreen — same reasoning as the
+            // screenshot-flash window below) makes that binding truthful in every
+            // mapped state; when an app should own the screen the surface is
+            // unmapped, so nothing sits above the app. Streams were never
+            // affected (escape tears the stream client window down entirely).
+            WlrLayershell.layer: WlrLayer.Overlay
             // Exclusive keyboard focus so non-Hyprland-bound keys (arrows,
             // Enter, Esc, etc.) reach focused QML widgets. Without this,
             // the compositor gives keyboard input to whatever non-layer
@@ -689,6 +714,61 @@ ShellRoot {
                 anchors.fill: parent
                 appName: root._launchAppName
                 appIcon: root._launchAppIcon
+            }
+        }
+    }
+
+    // Idle-inhibitor window (#195). A dedicated per-screen layer-shell surface
+    // whose sole job is to host a Wayland IdleInhibitor while the shell KNOWS
+    // playback is active (streaming, or an app with an MPRIS player Playing —
+    // see IdleInhibitController). Three deliberate choices:
+    //
+    //   1. Dedicated window, NOT the main shell surface: the main shell
+    //      PanelWindow is UNMAPPED during streaming/appRunning (visible:false —
+    //      see its binding ~L498). A Wayland idle-inhibitor is only honored while
+    //      its surface is MAPPED, so an inhibitor parented to the main surface
+    //      would be inert in exactly the states we need it. This window maps
+    //      independently, keyed only on shouldInhibit.
+    //   2. Background layer, NOT Overlay: an Overlay-layer surface above a
+    //      fullscreen game/stream forces compositing and breaks Hyprland direct
+    //      scanout (hurts stream/game latency — see the flash-window warning
+    //      ~L616). A Background-layer surface sits BELOW the fullscreen app, is
+    //      fully occluded, yet is still a mapped surface the compositor honors
+    //      for idle-inhibit — so it preserves scanout.
+    //   3. Mapped only while inhibiting (visible: shouldInhibit): when not
+    //      inhibiting there is zero extra surface. Kept tiny + inert (a few px in
+    //      one corner, transparent, click-through, no keyboard focus) so it never
+    //      covers the screen or intercepts input.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            id: idleInhibitWindow
+            required property var modelData
+            screen: modelData
+            visible: idleInhibit.shouldInhibit
+
+            // Anchor to a single corner with a tiny explicit size — do NOT
+            // anchor all four edges (that would cover the screen).
+            anchors {
+                top: true
+                left: true
+            }
+            implicitWidth: 4
+            implicitHeight: 4
+
+            color: "transparent"
+            exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.layer: WlrLayer.Background
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            // Empty input mask -> fully click-through.
+            mask: Region {}
+
+            // Inhibitor tied to this window, active only while the window is
+            // mapped (which is only while shouldInhibit — the visible binding).
+            IdleInhibitor {
+                window: idleInhibitWindow
+                enabled: idleInhibitWindow.visible
             }
         }
     }

@@ -50,7 +50,8 @@ shell/                       # QML shell — Quickshell config root (-c tv-shell
     SettingsEmptyState.qml   # Reusable empty-state card
     MarqueeText.qml          # Scrolling text for long names
     Drawer.qml               # Reusable slide-in drawer (any edge)
-    NavigationDrawer.qml     # Left nav drawer (Home + QuickActions row; Widgets via the QuickAction)
+    NavigationDrawer.qml     # Left nav drawer: clock header, Resume hero (large running/recent tiles), Home + QuickActions row, Now-Playing mini-strip, bottom status glyph line
+    resumeModel.js           # Pure .pragma library: merge/dedup running windows + recent apps → the drawer's Resume list (headless-testable)
     StreamOverlay.qml        # Reconnecting/error overlay
     lib/                     # Shared reusable component library (own qmldir module)
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)
@@ -325,7 +326,17 @@ restarted Hyprland doesn't leave it silently deaf.
 with static-linked libcec — no system `libcec`/`libcec-dev` at build or runtime).
 CEC startup/wake focus is gated by `cecFocusOnStartup` (default `false`) and
 `cecFocusOnWake` (default `true`), both within the `[cec].lifecycle` master gate
-(in `config.toml`).
+(in `config.toml`). The OSD device name the daemon announces (the input label
+TVs/AVRs display) is `[cec].osd_name`, defaulting to the machine hostname —
+editable from the panel's CEC page. Keep CEC disabled in other CEC-capable apps
+(e.g. Plex HTPC) so the daemon stays the box's single CEC owner: the USB adapter
+(`/dev/ttyACM0`) takes an **exclusive** serial lock, so whichever process opens it
+first owns CEC for its lifetime and the loser just logs `CEC_ALERT_PORT_BUSY` and
+retries forever. Two consequences: the AVR/TV input label is whichever owner's OSD
+name won the race (the "sometimes tv-shell, sometimes PlexHTPC" swap), and
+**restarting the daemon while another CEC app runs hands that app the adapter** —
+a deploy is exactly such a restart, so stop the other app first, or expect to
+restart the daemon again once it's gone.
 
 ### Widget sidecars (remote HTTP backends)
 

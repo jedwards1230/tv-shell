@@ -25,6 +25,7 @@
 //!
 //! [cec]                       # HDMI-CEC lifecycle (needs --features cec)
 //! lifecycle = false
+//! osd_name = "living-room"    #   input label TVs/AVRs display; absent ⇒ hostname
 //!
 //! [plex]                      # Plex home-screen widget (optional)
 //! url = "http://plex:32400"
@@ -162,11 +163,50 @@ pub struct McpConfig {
 }
 
 /// `[cec]` — HDMI-CEC lifecycle.
+///
+/// Deliberately does NOT set `deny_unknown_fields` (same rationale as
+/// [`PanelConfig`]): the tv-shell-panel binary writes `[cec].osd_name` into
+/// the shared config.toml, and panel and daemon are released independently
+/// (`input-v*` tags) — a daemon predating a panel-written key must ignore it
+/// and keep starting, not abort the whole shell backend on "unknown field".
 #[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct CecConfig {
     /// Wake the AV chain on start/resume and standby on suspend. Default `false`.
     pub lifecycle: bool,
+    /// OSD device name announced on the CEC bus — the input label TVs/AVRs
+    /// display for this machine. Absent ⇒ the machine hostname, so the AV
+    /// chain shows the same name as SSH/the network. Resolved by
+    /// [`resolve_osd_name`].
+    pub osd_name: Option<String>,
+}
+
+/// Maximum OSD name length: libcec's `libcec_configuration.strDeviceName` is a
+/// 13-char buffer, so anything longer is truncated on the bus anyway — truncate
+/// deterministically here instead.
+pub const CEC_OSD_NAME_MAX: usize = 13;
+
+/// Resolve the CEC OSD device name from the `[cec].osd_name` override and the
+/// machine hostname: the override wins when non-blank, else the hostname, else
+/// the historical `"tv-shell"` fallback. The result is reduced to printable
+/// ASCII (CEC OSD strings are ASCII) and truncated to [`CEC_OSD_NAME_MAX`].
+pub fn resolve_osd_name(configured: Option<&str>, hostname: Option<&str>) -> String {
+    let picked = [configured, hostname]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or("tv-shell");
+    let cleaned: String = picked
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .take(CEC_OSD_NAME_MAX)
+        .collect();
+    if cleaned.trim().is_empty() {
+        "tv-shell".to_string()
+    } else {
+        cleaned
+    }
 }
 
 /// `[plex]` — Plex home-screen widget. Both a URL and a token are required for
@@ -713,6 +753,31 @@ fn ensure_owner_only(_path: &Path, _field: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn osd_name_prefers_config_then_hostname_then_fallback() {
+        assert_eq!(
+            resolve_osd_name(Some("living-room"), Some("htpc-1")),
+            "living-room"
+        );
+        assert_eq!(resolve_osd_name(None, Some("htpc-1")), "htpc-1");
+        assert_eq!(resolve_osd_name(Some("  "), Some("htpc-1")), "htpc-1");
+        assert_eq!(resolve_osd_name(None, None), "tv-shell");
+        assert_eq!(resolve_osd_name(Some(""), Some(" ")), "tv-shell");
+    }
+
+    #[test]
+    fn osd_name_is_ascii_and_truncated() {
+        // 13-char libcec strDeviceName limit.
+        assert_eq!(
+            resolve_osd_name(Some("a-very-long-device-name"), None),
+            "a-very-long-d"
+        );
+        // Non-ASCII is dropped, not mangled.
+        assert_eq!(resolve_osd_name(Some("héllo tv"), None), "hllo tv");
+        // All-non-ASCII collapses to the fallback rather than an empty name.
+        assert_eq!(resolve_osd_name(Some("телевизор"), None), "tv-shell");
+    }
 
     fn loopback_http(dev_allow: bool, bind: &str, auth: bool) -> DaemonConfig {
         let mut c = DaemonConfig::default();

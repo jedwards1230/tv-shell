@@ -51,4 +51,22 @@
     </form>
   </div>
 </section>
+
+<section class="controllers-section">
+  <h2>Input name</h2>
+  <p class="muted">
+    The OSD device name this box announces on the CEC bus — the input label TVs/AVRs display.
+    Currently <strong>{{ osd_effective }}</strong> <span class="muted">({{ osd_source }})</span>.
+    Empty = use the hostname. Max 13 ASCII characters (libcec limit). Saving writes
+    <code>[cec].osd_name</code> in config.toml; restart <code>tv-shell-input</code> (Processes
+    page) to announce the new name. Note: other CEC-capable apps that grab the adapter
+    (e.g. Plex HTPC with CEC enabled) announce their own name — keep CEC disabled in apps so
+    the daemon stays the single CEC owner.
+  </p>
+  <form hx-post="/cec/osd-name" hx-disabled-elt="find button" hx-target="#cec-result" hx-swap="innerHTML" class="inline-form">
+    <input type="text" name="osd_name" value="{{ osd_configured }}" maxlength="13"
+           placeholder="hostname default" style="width:12rem;">
+    <button type="submit">Save input name</button>
+  </form>
+</section>
 {% endblock %}

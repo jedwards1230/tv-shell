@@ -56,6 +56,14 @@ FocusScope {
     function applyDeepTarget(target) {
     }
 
+    // Page → app back request. A page whose only focusable control SWALLOWS
+    // B/Escape (e.g. NavigableGrid accepts the event and merely emits `escaped`,
+    // doing no back-nav itself) must re-emit this so SettingsApp can route it
+    // through the unified _back() handler — otherwise focus is stranded on the
+    // page. SettingsApp wires this via a Connections on the loaded page; pages
+    // that let B/Escape bubble naturally never need to emit it.
+    signal backRequested
+
     // Page content is appended into the content column.
     default property alias content: contentColumn.data
 

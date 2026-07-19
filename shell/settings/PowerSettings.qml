@@ -100,14 +100,12 @@ SettingsPageBase {
                 Layout.fillWidth: true
             }
 
-            FocusButton {
+            SettingsToggle {
                 id: wakeOnControllerScope
                 KeyNavigation.up: sleepTimerScope
                 KeyNavigation.down: endSessionScope
-                text: SettingsStore.wakeOnController ? "On" : "Off"
-                fillActive: SettingsStore.wakeOnController
-                fillColor: Theme.sidebarActive
-                onActivated: SettingsStore.setWakeOnController(!SettingsStore.wakeOnController)
+                checked: SettingsStore.wakeOnController
+                onToggled: SettingsStore.setWakeOnController(!SettingsStore.wakeOnController)
             }
         }
 

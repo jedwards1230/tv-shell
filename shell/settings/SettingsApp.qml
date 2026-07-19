@@ -80,6 +80,11 @@ FocusScope {
     }
 
     Component {
+        id: wallpaperComp
+        WallpaperSettings {}
+    }
+
+    Component {
         id: controllerComp
         ControllerSettings {}
     }
@@ -92,6 +97,11 @@ FocusScope {
     Component {
         id: avControlComp
         AVControlSettings {}
+    }
+
+    Component {
+        id: webAppsComp
+        WebAppsSettings {}
     }
 
     Component {
@@ -143,6 +153,13 @@ FocusScope {
                 component: displayComp
             },
             {
+                id: "wallpaper",
+                name: "Wallpaper",
+                iconSource: "icons/appearance.svg",
+                fallback: "\u{1F5BC}",
+                component: wallpaperComp
+            },
+            {
                 id: "controllers",
                 name: "Controllers",
                 iconSource: "icons/controllers.svg",
@@ -168,6 +185,13 @@ FocusScope {
         // the nav drawer / the `widgets` deep-link (intercepted in
         // ShellLayout.openSettings) — it is no longer a Settings sidebar page. The
         // demoted "moonlight"/"streaming" deep-links also reroute there.
+        s.push({
+            id: "webapps",
+            name: "Web Apps",
+            iconSource: "icons/webapps.svg",
+            fallback: "\u{1F310}",
+            component: webAppsComp
+        });
         s.push({
             id: "accessibility",
             name: "Accessibility",
@@ -256,19 +280,24 @@ FocusScope {
                     clip: true
 
                     delegate: Rectangle {
+                        id: sectionRow
                         required property int index
                         required property var modelData
+
+                        // The sidebar's single "you are here" cue is FOCUS: the
+                        // moving highlight (fill + accent bar + text/icon emphasis)
+                        // tracks only the focused row — or the hovered row in mouse
+                        // mode. Which page is actually OPEN is signalled separately
+                        // by the accent-coloured page title in the content pane
+                        // (see sectionHeader), so the two cues can never point at
+                        // different rows and compete for "current" (#269). The old
+                        // `currentSection`-driven sidebar fill/emphasis is gone for
+                        // exactly that reason.
+                        readonly property bool highlighted: (sidebarList.currentIndex === index && sidebarList.activeFocus && !InputMode.mouseMode) || (sidebarMA.containsMouse && InputMode.mouseMode)
+
                         width: sidebarList.width
                         height: Units.settingsRowHeight
-                        color: {
-                            if (root.currentSection === index)
-                                return Theme.sidebarActive;
-                            if (sidebarList.currentIndex === index && sidebarList.activeFocus && !InputMode.mouseMode)
-                                return Theme.surfaceHover;
-                            if (sidebarMA.containsMouse && InputMode.mouseMode)
-                                return Theme.surfaceHover;
-                            return "transparent";
-                        }
+                        color: sectionRow.highlighted ? Theme.surfaceHover : "transparent"
 
                         Behavior on color {
                             ColorAnimation {
@@ -276,9 +305,10 @@ FocusScope {
                             }
                         }
 
-                        // Left accent bar on focused item
+                        // Left accent bar on the focused (or hovered) row — the
+                        // same single highlight the fill uses.
                         FocusAccentBar {
-                            active: (sidebarList.currentIndex === index && sidebarList.activeFocus && !InputMode.mouseMode) || (sidebarMA.containsMouse && InputMode.mouseMode)
+                            active: sectionRow.highlighted
                         }
 
                         RowLayout {
@@ -306,7 +336,7 @@ FocusScope {
                                     visible: status === Image.Ready
                                     layer.enabled: status === Image.Ready
                                     layer.effect: ColorOverlay {
-                                        color: root.currentSection === index ? Theme.textOnDark : Theme.textSecondary
+                                        color: sectionRow.highlighted ? Theme.textPrimary : Theme.textSecondary
                                     }
                                 }
 
@@ -314,7 +344,7 @@ FocusScope {
                                     anchors.centerIn: parent
                                     text: modelData.fallback
                                     font.pixelSize: Theme.fontBody
-                                    color: root.currentSection === index ? Theme.textOnDark : Theme.textSecondary
+                                    color: sectionRow.highlighted ? Theme.textPrimary : Theme.textSecondary
                                     horizontalAlignment: Text.AlignHCenter
                                     visible: secIcon.status !== Image.Ready
                                 }
@@ -323,8 +353,8 @@ FocusScope {
                             Text {
                                 text: modelData.name
                                 font.pixelSize: Theme.fontBody
-                                font.bold: root.currentSection === index
-                                color: root.currentSection === index ? Theme.textOnDark : Theme.textSecondary
+                                font.bold: sectionRow.highlighted
+                                color: sectionRow.highlighted ? Theme.textPrimary : Theme.textSecondary
                                 Layout.fillWidth: true
                             }
                         }
@@ -451,11 +481,17 @@ FocusScope {
                         visible: headerIcon.status !== Image.Ready
                     }
 
+                    // Accent-coloured page title = the distinct secondary cue for
+                    // which page is OPEN (#269). It lives in the content pane, apart
+                    // from the sidebar's focus highlight, so "current page" and
+                    // "focused row" never read as two competing sidebar highlights.
+                    // Ember (secondary accent) — not the crimson focus colour — so it
+                    // reads as "active page", not "focused".
                     Text {
                         text: root.sections[root.currentSection].name
                         font.pixelSize: Theme.fontTitle
                         font.bold: true
-                        color: Theme.textPrimary
+                        color: Theme.cardAccent
                     }
                 }
             }
@@ -558,6 +594,19 @@ FocusScope {
     }
 
     Keys.onEscapePressed: root._back()
+
+    // Route a loaded page's backRequested() through the unified back handler.
+    // A page whose only focusable control SWALLOWS B/Escape (NavigableGrid
+    // accepts the event and merely emits `escaped`) re-emits backRequested so
+    // it isn't stranded. `target` re-binds when the Loader swaps pages;
+    // ignoreUnknownSignals keeps pages without the signal safe.
+    Connections {
+        target: contentLoader.item
+        ignoreUnknownSignals: true
+        function onBackRequested() {
+            root._back();
+        }
+    }
 
     function openSection(idx) {
         if (visible) {

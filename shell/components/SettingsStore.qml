@@ -30,7 +30,7 @@ import "settingsPayload.js" as SettingsPayload
 // QML-owned display keys: hdrEnabled, nightLightEnabled, nightLightTemp, overscan,
 //                         sleepTimerMinutes, wakeOnController, defaultSink,
 //                         cecFocusOnStartup, cecFocusOnWake, cecAutoSwitchOnPowerOn,
-//                         cecDefaultInput, cecDeviceNames
+//                         cecDefaultInput, cecDeviceNames, wallpaperPath
 Item {
     id: store
 
@@ -55,6 +55,7 @@ Item {
     property bool nightLightEnabled: false       // drives hyprsunset
     property int nightLightTemp: 4500            // color temperature in Kelvin
     property int overscan: 0                     // safe-area overscan percent (0-10)
+    property string wallpaperPath: ""             // absolute path to home-screen wallpaper ("" = solid color)
     property int sleepTimerMinutes: 0            // 0 = disabled; cycle: 0/5/10/15/30/60
     property bool wakeOnController: true         // declarative preference (no suspend wiring)
     property bool autoDimEnabled: false          // auto-dim OLED protection (#143)
@@ -66,6 +67,13 @@ Item {
     property bool cecAutoSwitchOnPowerOn: false // switch TV/AVR input when a device powers on (default off, daemon wiring TBD)
     property int cecDefaultInput: -1            // logical address of the preferred default input (-1 = unset; persist-only in Phase 1)
     property var cecDeviceNames: ({})           // local label overrides keyed by logical address, e.g. {"0":"Living Room TV"}
+    property var prewarmApps: []                 // wmClass list of apps to silently prewarm at login (#238)
+
+    // Web-app registry (#187) — DAEMON-OWNED, read-only mirror here. Each entry:
+    // { id, name, url, wmClass }. The daemon writes .desktop launchers +
+    // this registry key (P1 webapp-* IPC); QML only reads/lists it (P0). Hence
+    // noSave in the schema — never sent in a set-config payload.
+    property var webApps: []
 
     // === Daemon-owned mirror (authoritative copy lives in the daemon) ===
     property var keyBindings: ({})
@@ -135,6 +143,10 @@ Item {
             t: "number"
         },
         {
+            key: "wallpaperPath",
+            t: "string"
+        },
+        {
             key: "sleepTimerMinutes",
             t: "number"
         },
@@ -177,6 +189,17 @@ Item {
         {
             key: "cecDeviceNames",
             t: "object"
+        },
+        {
+            key: "webApps",
+            t: "object",
+            noSave: true,
+            validate: v => Array.isArray(v)
+        },
+        {
+            key: "prewarmApps",
+            t: "object",
+            validate: v => Array.isArray(v)
         },
         {
             key: "keyBindings",
@@ -393,6 +416,10 @@ Item {
         store._setKey("overscan", pct);
     }
 
+    function setWallpaperPath(path) {
+        store._setKey("wallpaperPath", path);
+    }
+
     function setSleepTimerMinutes(m) {
         store._setKey("sleepTimerMinutes", m);
     }
@@ -447,6 +474,36 @@ Item {
             delete copy[key];
         cecDeviceNames = copy;
         store._saveKeys(["cecDeviceNames"]);
+    }
+
+    // Is wmClass marked for login prewarm? (#238) Exact string membership; an
+    // empty/undefined list or blank wmClass → false. Normalizes nothing.
+    function isPrewarm(wmClass) {
+        if (!wmClass || !store.prewarmApps)
+            return false;
+        return store.prewarmApps.indexOf(wmClass) >= 0;
+    }
+
+    // Add or remove a wmClass from the prewarm list, then persist. Builds a NEW
+    // array (copy-then-assign, mirroring setCecDeviceName above) so the
+    // reassignment fires prewarmAppsChanged — an in-place push would notify
+    // nothing. A blank wmClass is a no-op: an app with no StartupWMClass can't be
+    // targeted for prewarm.
+    function setPrewarm(wmClass, enabled) {
+        if (!wmClass || wmClass === "")
+            return;
+        var next = (store.prewarmApps || []).slice();
+        var idx = next.indexOf(wmClass);
+        if (enabled) {
+            if (idx < 0)
+                next.push(wmClass);
+        } else {
+            next = next.filter(function (c) {
+                return c !== wmClass;
+            });
+        }
+        store.prewarmApps = next;
+        store._saveKeys(["prewarmApps"]);
     }
 
     // === Binding IPC (respects TV_SHELL_SOCK; no hardcoded socket path) ===

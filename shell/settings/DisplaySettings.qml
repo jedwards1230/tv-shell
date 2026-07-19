@@ -334,19 +334,13 @@ SettingsPageBase {
             visible: root.monitors.length > 0
         }
 
-        FocusButton {
+        SettingsToggle {
             id: hdrToggleScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: 80
             visible: root.monitors.length > 0
-            buttonWidth: 160
-            buttonHeight: 72
             KeyNavigation.up: monitorList
             KeyNavigation.down: scaleRow
-            text: SettingsStore.hdrEnabled ? "On" : "Off"
-            fillActive: SettingsStore.hdrEnabled
-            fillColor: Theme.sidebarActive
-            onActivated: {
+            checked: SettingsStore.hdrEnabled
+            onToggled: {
                 SettingsStore.setHdrEnabled(!SettingsStore.hdrEnabled);
                 root.applyHdr(SettingsStore.hdrEnabled);
             }
@@ -520,18 +514,12 @@ SettingsPageBase {
             text: "Night Light"
         }
 
-        FocusButton {
+        SettingsToggle {
             id: nightLightToggleScope
-            Layout.fillWidth: true
-            Layout.preferredHeight: 80
-            buttonWidth: 160
-            buttonHeight: 72
             KeyNavigation.up: refreshDropdownScope
             KeyNavigation.down: nightLightTempScope
-            text: SettingsStore.nightLightEnabled ? "On" : "Off"
-            fillActive: SettingsStore.nightLightEnabled
-            fillColor: Theme.sidebarActive
-            onActivated: {
+            checked: SettingsStore.nightLightEnabled
+            onToggled: {
                 SettingsStore.setNightLightEnabled(!SettingsStore.nightLightEnabled);
                 root.applyNightLightSetting(SettingsStore.nightLightEnabled, SettingsStore.nightLightTemp);
             }
