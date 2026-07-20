@@ -20,7 +20,7 @@ FocusScope {
     signal streamRequested(var target)
     signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
-    signal appFocusRequested(string address)
+    signal appFocusRequested(string address, string windowClass)
     signal appCloseRequested(string address)
     // Back-out to the home screen (B/Escape).
     signal closed

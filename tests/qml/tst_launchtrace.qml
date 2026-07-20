@@ -73,4 +73,52 @@ TestCase {
         verify(line.indexOf("launch=-") >= 0, "a pass that launched nothing says so explicitly");
         verify(line.indexOf("skip=-") >= 0);
     }
+
+    // --- Resume tracing (#347) ---
+    //
+    // These lines exist because the resume path had NO output at all: a resume
+    // that focused nothing was indistinguishable from one that worked. They
+    // share the launch prefix on purpose — "why is this app not on screen?" is
+    // one question, answerable by one grep, whether the cause was a launch that
+    // never happened or a resume that landed nowhere.
+
+    function test_resume_line_shares_the_launch_prefix() {
+        var line = LaunchTrace.formatResume("none", "0xstale", "", "unknown-address");
+        verify(line.indexOf(LaunchTrace.PREFIX) === 0, "one prefix answers 'why is this app not on screen'");
+        verify(line.indexOf("origin=resume") >= 0, "origin distinguishes a resume from a launch on the shared prefix");
+        verify(line.indexOf("mode=none") >= 0);
+        verify(line.indexOf("address=0xstale") >= 0);
+        verify(line.indexOf("reason=unknown-address") >= 0, "the reason is the whole diagnostic value of the line");
+    }
+
+    function test_resume_fallback_line_names_the_class_it_used() {
+        var line = LaunchTrace.formatResume("class", "0xstale", "tv.plex.Plex", "unknown-address");
+        verify(line.indexOf("mode=class") >= 0);
+        verify(line.indexOf("class=tv.plex.Plex") >= 0);
+    }
+
+    // A resume with nothing to act on must still render every field — an absent
+    // field would make the line unparseable exactly when it matters most.
+    function test_resume_line_never_collapses() {
+        var line = LaunchTrace.formatResume("none", "", null, undefined);
+        verify(line.indexOf("address=-") >= 0);
+        verify(line.indexOf("class=-") >= 0);
+        verify(line.indexOf("reason=-") >= 0);
+        compare(line.indexOf("\n"), -1);
+    }
+
+    // The verify line is the ONLY evidence that a focus dispatch landed —
+    // `hyprctl dispatch` exits 0 even when it matched no window.
+    function test_focus_verify_line_reports_wanted_vs_actual() {
+        var line = LaunchTrace.formatFocusVerify("address", "0xaaa", "steam", "active-address-mismatch");
+        verify(line.indexOf("origin=resume-verify") >= 0);
+        verify(line.indexOf("wanted=0xaaa") >= 0, "what we aimed at");
+        verify(line.indexOf("active=steam") >= 0, "what actually ended up focused — the pair is the diagnosis");
+        verify(line.indexOf("reason=active-address-mismatch") >= 0);
+    }
+
+    function test_focus_verify_line_with_nothing_active() {
+        var line = LaunchTrace.formatFocusVerify("class", "tv.plex.Plex", "", "no-active-window");
+        verify(line.indexOf("active=-") >= 0, "'nothing is focused' must be explicit, not an empty field");
+    }
 }

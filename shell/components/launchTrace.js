@@ -96,3 +96,44 @@ function logDecision(configured, windowCount, procCount, launchKeys, skipped) {
 function logUndecided(reason) {
     console.warn(PREFIX + " " + [_field("origin", "prewarm-decision"), _field("decided", "false"), _field("reason", reason)].join(" "));
 }
+
+// --- Resume tracing (#347) ---
+//
+// A resume is not a launch, but it belongs on the SAME greppable prefix: the
+// question one asks the journal is "why is this app not on screen?", and the
+// answer may be either a launch that never happened or a resume that focused
+// nothing. Splitting them across two prefixes would mean grepping twice to
+// answer one question. The `origin` field keeps them distinguishable.
+
+// Format one resume dispatch decision (resumeFocus.js resolve()).
+//   mode    — "address" (exact window), "class" (snapshot missed, class
+//             fallback), or "none" (nothing actionable — the case that used to
+//             return SILENTLY and is the reason #347 was so hard to corner).
+//   reason  — why the address path was not taken ("unknown-address" /
+//             "no-address"), or "-" on a clean address hit.
+function formatResume(mode, address, windowClass, reason) {
+    return PREFIX + " " + [_field("origin", "resume"), _field("mode", mode), _field("address", address), _field("class", windowClass), _field("reason", reason)].join(" ");
+}
+
+// A resume that could not be dispatched at all, or that fell back off the
+// precise address path, is a FAULT worth seeing — console.warn (unlike the
+// normal-operation launch lines, which are console.log).
+function logResume(mode, address, windowClass, reason) {
+    console.warn(formatResume(mode, address, windowClass, reason));
+}
+
+// Format the post-dispatch focus verification (resumeFocus.js verifyFocus()).
+// `hyprctl dispatch` exits 0 even when its selector matched no window, so this
+// line — not an exit code — is the evidence that a resume actually landed.
+//   wanted — the selector we dispatched (address or class).
+//   active — the class the compositor reports as active afterwards.
+function formatFocusVerify(mode, wanted, active, reason) {
+    return PREFIX + " " + [_field("origin", "resume-verify"), _field("mode", mode), _field("wanted", wanted), _field("active", active), _field("reason", reason)].join(" ");
+}
+
+// Only a FAILED verification is logged. A resume that landed is the normal case
+// and must not add a line per resume; a resume that silently focused nothing is
+// exactly the invisible failure this whole facility exists to surface.
+function logFocusMiss(mode, wanted, active, reason) {
+    console.warn(formatFocusVerify(mode, wanted, active, reason));
+}

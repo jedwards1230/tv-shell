@@ -41,7 +41,9 @@ Drawer {
     // each to shell.qml → AppLifecycle).
     signal appLaunchRequested(var app)
     signal appResumeRequested(var app, string address)
-    signal appFocusRequested(string address)
+    // `windowClass` lets AppLifecycleManager fall back to a class-targeted
+    // focus when our window snapshot has gone stale (#347).
+    signal appFocusRequested(string address, string windowClass)
     signal appCloseRequested(string address)
 
     // === Resume list — RUNNING windows only ===
@@ -466,7 +468,7 @@ Drawer {
                 label: "Resume",
                 hint: "A: Resume",
                 action: function () {
-                    root.appFocusRequested(addr);
+                    root.appFocusRequested(addr, row.entry.windowClass || "");
                     root.closed();
                 }
             },
@@ -494,7 +496,7 @@ Drawer {
             break;
         case "resume":
             // Jump back into the running window, then close the drawer.
-            root.appFocusRequested(row.entry.address);
+            root.appFocusRequested(row.entry.address, row.entry.windowClass || "");
             root.closed();
             break;
         }
