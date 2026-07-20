@@ -99,6 +99,43 @@ and its `hypr-active` read (`ensureFullscreen`/`ensureFullscreenQuery`) are
 0 set` are now the only things that ever change fullscreen — the incident-1 root
 cause is gone.
 
+**Amendment (#347) — the resume path re-asserts fullscreen, idempotently.** The
+statement above held only while every window mapped fullscreen. Prewarm (#238)
+broke that premise: it launches apps with the `[silent]` exec rule, which maps
+them **tiled** (`fs=0`), so the kiosk now deliberately carries a second,
+non-fullscreen window from boot. Focusing a tiled window that sits *under* a
+fullscreen one changes focus but not what is on screen — the resumed app is
+focused-but-invisible, and when `on_focus_under_fullscreen` and the daemon's
+`activewindowv2` backstop both miss, nothing else ever corrects it.
+
+So `AppLifecycleManager` again asserts fullscreen after a resume — but with the
+**idempotent `set` form** (`hyprctl dispatch fullscreen 0 set`), never the bare
+toggle #308 removed. This is not a reversal of #308: the toggle *inverted* state,
+so firing it at an already-fullscreen window flipped it back out (incident 1),
+and whether it helped depended on who won the race. `set` *assigns* state, so it
+is a no-op against a window that is already fullscreen and cannot invert
+anything — two idempotent writers of the same state cannot race into a wrong
+result the way a toggle and a setter could. It is the same form, for the same
+reason, that `force_fullscreen` / `enforce_active_fullscreen` use in
+`daemon/src/hyprland.rs`, and it targets the **active** window (no address
+selector) exactly as `enforce_active_fullscreen` does.
+
+**Focus landing is now verified, because an exit code cannot.** `hyprctl
+dispatch` exits 0 even when its selector matched no window, so a focus that hit
+nothing was structurally indistinguishable from one that worked. After a resume
+dispatch the shell reads the daemon's `hypr-active` once (a single delayed read,
+not a retry loop) and logs a `origin=resume-verify` trace line when the window
+that became active is not the one it aimed at. Relatedly, the address-resolution
+miss in `focusByAddress` no longer returns silently: it logs
+(`origin=resume`) and falls back to a class-targeted focus, since an address
+absent from the poll snapshot usually means the snapshot is stale rather than
+that the app is gone. The decision + verification logic is pure and headlessly
+tested in `shell/components/resumeFocus.js` (`tests/qml/tst_resumefocus.qml`).
+
+Reconciling prewarm's `[silent]` mapping with the kiosk invariant — i.e. whether
+prewarmed windows should map differently in the first place — is **deferred**
+(#347 item 4).
+
 **Self-healing daemon** (`daemon/src/session_env.rs`, `hyprland.rs`): signature
 resolution scans `$XDG_RUNTIME_DIR/hypr/` for the live socket dir *before*
 trusting an inherited env var, so a reconnect re-attaches to a restarted Hyprland
@@ -213,6 +250,13 @@ used:
 | `redeliver` | `redeliverAndFocus` — single-instance exec redelivery | `none` |
 | `stream` | `StreamManager._launchMoonlight` — direct child, not via `hyprctl` | `none` |
 | `prewarm-decision` | the login prewarm pass's one evaluation (what it saw, what it chose) | — |
+| `resume` | `focusByAddress` — the address missed the window snapshot: either a class fallback (`mode=class`) or nothing actionable (`mode=none`) | — |
+| `resume-verify` | a resume focus dispatch that did NOT land — `wanted=` vs `active=` names the miss | — |
+
+The two `resume*` origins carry no `rule=`/`comm=` (they focus an existing
+window rather than exec a new one). They are logged **only on a fault** — a
+resume that resolves and lands adds no line, so any `origin=resume*` line in the
+journal is itself the finding.
 
 `comm=` is the process name `ps -eo comm=` reports, so a journal line correlates
 directly with a live pid. **Two lines with different `origin` values for the same

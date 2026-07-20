@@ -33,7 +33,7 @@ FocusScope {
     signal streamQuitRequested(var target)
     signal appLaunchRequested(var app)
     signal appResumeRequested(var app, string address)
-    signal appFocusRequested(string address)
+    signal appFocusRequested(string address, string windowClass)
     signal appCloseRequested(string address)
     signal returnToShellRequested
     signal overlayDrawerClosed
@@ -242,7 +242,7 @@ FocusScope {
         onStreamQuitRequested: target => root.streamQuitRequested(target)
         onAppLaunchRequested: app => root.appLaunchRequested(app)
         onAppResumeRequested: (app, address) => root.appResumeRequested(app, address)
-        onAppFocusRequested: address => root.appFocusRequested(address)
+        onAppFocusRequested: (address, windowClass) => root.appFocusRequested(address, windowClass)
         onAppCloseRequested: address => root.appCloseRequested(address)
         onLibraryRequested: screens.push("library")
         onSettingsRequested: screens.push("settings")
@@ -290,9 +290,9 @@ FocusScope {
             libraryScreen.visible = false;
             root.appLaunchRequested(app);
         }
-        onAppFocusRequested: address => {
+        onAppFocusRequested: (address, windowClass) => {
             libraryScreen.visible = false;
-            root.appFocusRequested(address);
+            root.appFocusRequested(address, windowClass);
         }
         onAppCloseRequested: address => root.appCloseRequested(address)
         onUserActivity: root.userActivity()
@@ -374,7 +374,7 @@ FocusScope {
         pads: root.pads
         onAppLaunchRequested: app => root.appLaunchRequested(app)
         onAppResumeRequested: (app, address) => root.appResumeRequested(app, address)
-        onAppFocusRequested: address => root.appFocusRequested(address)
+        onAppFocusRequested: (address, windowClass) => root.appFocusRequested(address, windowClass)
         onAppCloseRequested: address => root.appCloseRequested(address)
         onSettingsRequested: {
             navDrawer.opened = false;
@@ -511,7 +511,7 @@ FocusScope {
             pads: root.pads
             onAppLaunchRequested: app => root.appLaunchRequested(app)
             onAppResumeRequested: (app, address) => root.appResumeRequested(app, address)
-            onAppFocusRequested: address => root.appFocusRequested(address)
+            onAppFocusRequested: (address, windowClass) => root.appFocusRequested(address, windowClass)
             onAppCloseRequested: address => root.appCloseRequested(address)
             onHomeSelected: {
                 root.returnToShellRequested();

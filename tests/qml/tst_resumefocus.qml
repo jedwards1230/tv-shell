@@ -1,0 +1,267 @@
+import QtQuick
+import QtTest
+import "../../shell/components/resumeFocus.js" as ResumeFocus
+
+// Headless tests for the resume-focus decision logic (#347). resumeFocus.js is a
+// pure `.pragma library` imported by its real source path (zero drift) — no
+// Quickshell, no stubs.
+//
+// WHAT THESE PIN, and why it matters more than usual: the bug being fixed was
+// INVISIBLE at runtime. `hyprctl dispatch` exits 0 even when its selector
+// matched no window, and the miss branch used to `return` with no log at all, so
+// neither an exit code nor a journal could tell a working resume from a dead
+// one. On-device observation could not distinguish these branches; assertions
+// can. Every branch below is one the device could not show us.
+TestCase {
+    id: testCase
+    name: "ResumeFocus"
+
+    function _win(address, windowClass) {
+        return {
+            address: address,
+            windowClass: windowClass
+        };
+    }
+
+    // --- resolve(): picking a selector -------------------------------------
+
+    function test_known_address_takes_the_precise_path() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        compare(d.mode, ResumeFocus.MODE_ADDRESS);
+        compare(d.address, "0xaaa");
+        compare(d.windowClass, "tv.plex.Plex", "class comes from the snapshot, which is authoritative");
+        compare(d.reason, "");
+    }
+
+    // The snapshot wins over a caller-supplied class: the poller read it from the
+    // compositor, the caller's copy may be a lowercased StartupWMClass.
+    function test_snapshot_class_overrides_the_caller_hint() {
+        var d = ResumeFocus.resolve("0xaaa", "plex", [_win("0xaaa", "tv.plex.Plex")]);
+        compare(d.mode, ResumeFocus.MODE_ADDRESS);
+        compare(d.windowClass, "tv.plex.Plex");
+    }
+
+    function test_correct_window_is_chosen_among_several() {
+        var d = ResumeFocus.resolve("0xbbb", "", [_win("0xaaa", "steam"), _win("0xbbb", "tv.plex.Plex"), _win("0xccc", "other")]);
+        compare(d.mode, ResumeFocus.MODE_ADDRESS);
+        compare(d.windowClass, "tv.plex.Plex");
+    }
+
+    // THE REGRESSION TEST FOR #347. This exact input used to hit `if (!found)
+    // return;` — no focus, no launch, no log.
+    function test_unknown_address_with_class_falls_back_instead_of_vanishing() {
+        var d = ResumeFocus.resolve("0xstale", "tv.plex.Plex", [_win("0xaaa", "steam")]);
+        compare(d.mode, ResumeFocus.MODE_CLASS, "a stale snapshot must degrade to class focus, not to silence");
+        compare(d.windowClass, "tv.plex.Plex");
+        compare(d.reason, ResumeFocus.REASON_UNKNOWN_ADDRESS, "the reason is what makes the fallback greppable");
+    }
+
+    function test_unknown_address_without_class_is_reported_not_silent() {
+        var d = ResumeFocus.resolve("0xstale", "", [_win("0xaaa", "steam")]);
+        compare(d.mode, ResumeFocus.MODE_NONE);
+        compare(d.reason, ResumeFocus.REASON_UNKNOWN_ADDRESS, "MODE_NONE still carries a reason so the caller can log WHY");
+    }
+
+    function test_empty_address_with_class_still_focuses() {
+        var d = ResumeFocus.resolve("", "tv.plex.Plex", [_win("0xaaa", "steam")]);
+        compare(d.mode, ResumeFocus.MODE_CLASS);
+        compare(d.reason, ResumeFocus.REASON_NO_ADDRESS);
+    }
+
+    function test_no_address_and_no_class_is_the_only_true_noop() {
+        var d = ResumeFocus.resolve("", "", []);
+        compare(d.mode, ResumeFocus.MODE_NONE);
+        compare(d.reason, ResumeFocus.REASON_NO_ADDRESS);
+    }
+
+    function test_empty_snapshot_does_not_match_an_empty_address() {
+        // A window with no address must never be matched by an empty address —
+        // that would resume an arbitrary window.
+        var d = ResumeFocus.resolve("", "", [_win("", "steam")]);
+        compare(d.mode, ResumeFocus.MODE_NONE, "an empty address must not match an addressless window");
+    }
+
+    function test_null_and_undefined_inputs_do_not_throw() {
+        var d = ResumeFocus.resolve(null, undefined, null);
+        compare(d.mode, ResumeFocus.MODE_NONE);
+        var d2 = ResumeFocus.resolve("0xaaa", null, [null, _win("0xaaa", "steam")]);
+        compare(d2.mode, ResumeFocus.MODE_ADDRESS, "a null entry in the snapshot must not abort the scan");
+    }
+
+    // --- verifyFocus(): did the dispatch land? -----------------------------
+
+    function test_address_focus_that_landed_verifies_ok() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.verifyFocus(d, {
+            "class": "tv.plex.Plex",
+            "address": "0xaaa",
+            "fullscreen": true
+        });
+        verify(r.ok);
+        compare(r.reason, "");
+    }
+
+    // The measured #347 state: focus dispatched at Plex, Steam still active.
+    // Exit code was 0. Only this comparison can tell.
+    function test_address_focus_that_hit_nothing_is_detected() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.verifyFocus(d, {
+            "class": "steam",
+            "address": "0xbbb",
+            "fullscreen": true
+        });
+        verify(!r.ok, "a dispatch that left a DIFFERENT window active must not read as success");
+        compare(r.reason, ResumeFocus.REASON_ADDRESS_MISMATCH);
+    }
+
+    function test_class_focus_verifies_case_insensitively() {
+        var d = ResumeFocus.resolve("0xstale", "tv.plex.plex", []);
+        var r = ResumeFocus.verifyFocus(d, {
+            "class": "tv.plex.Plex",
+            "address": "0xaaa"
+        });
+        verify(r.ok, "Hyprland reports the window's own casing; a case difference is not a miss");
+    }
+
+    function test_class_focus_that_hit_nothing_is_detected() {
+        var d = ResumeFocus.resolve("0xstale", "tv.plex.Plex", []);
+        var r = ResumeFocus.verifyFocus(d, {
+            "class": "steam",
+            "address": "0xbbb"
+        });
+        verify(!r.ok);
+        compare(r.reason, ResumeFocus.REASON_CLASS_MISMATCH);
+    }
+
+    // `hypr-active` answers `{}` when nothing is focused, and on IPC failure.
+    function test_empty_active_window_is_a_miss_not_a_pass() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.verifyFocus(d, {});
+        verify(!r.ok, "an empty hypr-active reply must never read as a successful resume");
+        compare(r.reason, ResumeFocus.REASON_NO_ACTIVE_WINDOW);
+    }
+
+    function test_verify_handles_null_active() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.verifyFocus(d, null);
+        verify(!r.ok);
+    }
+
+    // Nothing was dispatched, so nothing can have landed — verifying a MODE_NONE
+    // decision must never report success.
+    function test_none_decision_never_verifies_ok() {
+        var d = ResumeFocus.resolve("", "", []);
+        var r = ResumeFocus.verifyFocus(d, {
+            "class": "steam",
+            "address": "0xbbb"
+        });
+        verify(!r.ok);
+        compare(r.reason, ResumeFocus.REASON_NO_TARGET);
+    }
+
+    function test_verify_handles_missing_decision() {
+        var r = ResumeFocus.verifyFocus(null, {
+            "class": "steam"
+        });
+        verify(!r.ok);
+        compare(r.reason, ResumeFocus.REASON_NO_TARGET);
+    }
+
+    // --- shouldAssertFullscreen(): the ORDERING guard ----------------------
+    //
+    // `hyprctl dispatch fullscreen 0 set` takes no window selector — it acts on
+    // whatever is active when it runs. These pin that we only ever issue it once
+    // the compositor has confirmed OUR window is the active one. They are the
+    // headless stand-in for a race that cannot be reproduced on demand on-device.
+
+    function test_fullscreen_asserted_once_the_intended_window_is_active() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.shouldAssertFullscreen(d, {
+            "class": "tv.plex.Plex",
+            "address": "0xaaa",
+            "fullscreen": false
+        });
+        verify(r.assert, "a resumed window confirmed active and still tiled is exactly the case QML exists to fix");
+        compare(r.reason, "");
+    }
+
+    // THE REGRESSION TEST FOR THE ORDERING DEFECT. Resume tiled Plex while
+    // fullscreen Steam is still active: asserting here would fullscreen STEAM,
+    // reproducing #347. Idempotence is no defence — `set` is idempotent in which
+    // STATE it applies, not which WINDOW.
+    function test_fullscreen_not_asserted_while_the_previous_window_is_still_active() {
+        var d = ResumeFocus.resolve("0xplex", "", [_win("0xplex", "tv.plex.Plex")]);
+        var r = ResumeFocus.shouldAssertFullscreen(d, {
+            "class": "steam",
+            "address": "0xsteam",
+            "fullscreen": true
+        });
+        verify(!r.assert, "asserting fullscreen while the PREVIOUS window is active re-fullscreens that window — the #347 bug");
+        compare(r.reason, ResumeFocus.REASON_ADDRESS_MISMATCH);
+    }
+
+    function test_fullscreen_not_asserted_on_a_class_miss() {
+        var d = ResumeFocus.resolve("0xstale", "tv.plex.Plex", []);
+        var r = ResumeFocus.shouldAssertFullscreen(d, {
+            "class": "steam",
+            "address": "0xsteam",
+            "fullscreen": true
+        });
+        verify(!r.assert);
+        compare(r.reason, ResumeFocus.REASON_CLASS_MISMATCH);
+    }
+
+    // Nothing active at all: `fullscreen 0 set` prints "Window not found" and
+    // exits 0, so a blind dispatch here is silently wasted rather than caught.
+    function test_fullscreen_not_asserted_when_nothing_is_active() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.shouldAssertFullscreen(d, {});
+        verify(!r.assert);
+        compare(r.reason, ResumeFocus.REASON_NO_ACTIVE_WINDOW);
+    }
+
+    function test_fullscreen_not_asserted_for_a_none_decision() {
+        var d = ResumeFocus.resolve("", "", []);
+        var r = ResumeFocus.shouldAssertFullscreen(d, {
+            "class": "steam",
+            "address": "0xsteam"
+        });
+        verify(!r.assert, "nothing was dispatched, so no window was ever aimed at");
+        compare(r.reason, ResumeFocus.REASON_NO_TARGET);
+    }
+
+    // Mirrors the daemon's needs_fullscreen skip: already-fullscreen is a no-op.
+    function test_already_fullscreen_window_is_left_alone() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.shouldAssertFullscreen(d, {
+            "class": "tv.plex.Plex",
+            "address": "0xaaa",
+            "fullscreen": true
+        });
+        verify(!r.assert, "the declarative swap already fired — re-dispatching is pointless churn");
+        compare(r.reason, ResumeFocus.REASON_ALREADY_FULLSCREEN);
+    }
+
+    // Fail-safe direction: an absent/unknown `fullscreen` field must still
+    // assert. A redundant idempotent `set` is harmless; a skipped needed one
+    // leaves the resumed window focused-but-invisible, which is the #347 symptom.
+    function test_unknown_fullscreen_field_still_asserts() {
+        var d = ResumeFocus.resolve("0xaaa", "", [_win("0xaaa", "tv.plex.Plex")]);
+        var r = ResumeFocus.shouldAssertFullscreen(d, {
+            "class": "tv.plex.Plex",
+            "address": "0xaaa"
+        });
+        verify(r.assert, "a missing fullscreen field must not suppress the assertion");
+        var r2 = ResumeFocus.shouldAssertFullscreen(d, {
+            "class": "tv.plex.Plex",
+            "address": "0xaaa",
+            "fullscreen": 0
+        });
+        verify(r2.assert, "fullscreen:0 means NOT fullscreen — assert");
+    }
+
+    function test_should_assert_handles_null_inputs() {
+        var r = ResumeFocus.shouldAssertFullscreen(null, null);
+        verify(!r.assert);
+    }
+}

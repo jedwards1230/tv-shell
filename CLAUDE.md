@@ -54,6 +54,7 @@ shell/                       # QML shell — Quickshell config root (-c tv-shell
     resumeModel.js           # Pure .pragma library: merge/dedup running windows + recent apps → the drawer's Resume list (headless-testable)
     prewarm.js               # Pure .pragma library: login-prewarm key resolution + launch decisions (dedup against mapped windows AND the process table) (headless-testable)
     appQuirks.js             # Pure .pragma library: per-app behaviour overrides keyed by prewarm.keyFor() — first quirk is `quitCommand` for apps that close-to-background instead of exiting (Steam) (headless-testable)
+    resumeFocus.js           # Pure .pragma library: resume focus-selector decision (known address → class fallback → nothing) + post-dispatch landing verification against hypr-active, since `hyprctl dispatch` exits 0 on a no-match (headless-testable)
     StreamOverlay.qml        # Reconnecting/error overlay
     lib/                     # Shared reusable component library (own qmldir module)
       SettingsDropdown.qml   #   Collapsible single-select dropdown (D-pad)
@@ -316,10 +317,17 @@ maps fullscreen via the QML `[fullscreen]` exec-rule prefix + the
 fullscreen maximize` stops apps churning that state themselves. The daemon's
 Hyprland actor is the **single idempotent backstop** on top of those rules
 (`force_fullscreen` on `openwindow`, `enforce_active_fullscreen` on
-`closewindow`/`movewindowv2`/`activewindowv2`, both `fullscreen 0 set`). QML no
-longer re-asserts fullscreen on launch/resume — a non-idempotent `fullscreen 0`
-toggle there used to race the daemon and toggle a resumed window back OUT of
-fullscreen, which produced the two-app split view. The daemon actor also
+`closewindow`/`movewindowv2`/`activewindowv2`, both `fullscreen 0 set`). QML does
+not re-assert fullscreen on **launch** — a non-idempotent `fullscreen 0` toggle
+there used to race the daemon and toggle a resumed window back OUT of
+fullscreen, which produced the two-app split view. On **resume** QML does assert
+it (#347), but only via the idempotent **`fullscreen 0 set`** form the daemon
+uses — never the bare toggle: prewarmed apps map tiled (`[silent]`), so focusing
+one under a fullscreen window changes focus but not the screen, and `set` is a
+no-op when the declarative swap already fired. The resume path also verifies the
+focus actually landed by reading `hypr-active` once (`hyprctl dispatch` exits 0
+even when it matched no window) and logs a `resume`/`resume-verify` trace on a
+miss; the decision logic is pure in `components/resumeFocus.js`. The daemon actor also
 **self-heals its compositor attachment**: it re-resolves the live Hyprland
 instance on each reconnect (`session_env::resolve_hypr_signature` scans
 `$XDG_RUNTIME_DIR/hypr/` before trusting an inherited signature) so a killed +

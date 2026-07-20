@@ -62,7 +62,9 @@ FocusScope {
     // for single-instance apps (Steam) whose deep-link needs to reach a
     // running instance, not spawn a new one. See launchSteamLocalGame below.
     signal appResumeRequested(var app, string address)
-    signal appFocusRequested(string address)
+    // `windowClass` lets AppLifecycleManager fall back to a class-targeted
+    // focus when our window snapshot has gone stale (#347).
+    signal appFocusRequested(string address, string windowClass)
     signal appCloseRequested(string address)
     signal settingsRequested
     signal widgetsRequested
@@ -757,7 +759,7 @@ FocusScope {
     // Recent-row activation: focus a running window, or launch a non-running app.
     function _recentActivate(entry) {
         if (entry.running === true)
-            root.appFocusRequested(entry.address);
+            root.appFocusRequested(entry.address, entry.windowClass || "");
         else
             root.launchApp(entry);
     }
@@ -815,11 +817,12 @@ FocusScope {
         let actions;
         if (entry.running === true) {
             let addr = entry.address;
+            let cls = entry.windowClass || "";
             actions = [
                 {
                     label: "Resume",
                     action: function () {
-                        root.appFocusRequested(addr);
+                        root.appFocusRequested(addr, cls);
                     }
                 },
                 {

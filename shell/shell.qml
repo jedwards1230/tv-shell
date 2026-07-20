@@ -583,7 +583,7 @@ ShellRoot {
                 }
                 onAppLaunchRequested: app => appLifecycle.checkAndLaunchApp(app)
                 onAppResumeRequested: (app, address) => appLifecycle.redeliverAndFocus(app, address)
-                onAppFocusRequested: address => appLifecycle.focusByAddress(address)
+                onAppFocusRequested: (address, windowClass) => appLifecycle.focusByAddress(address, windowClass)
                 onAppCloseRequested: address => appLifecycle.closeByAddress(address)
                 onReturnToShellRequested: root.returnToShell()
                 onUserActivity: {
