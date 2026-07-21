@@ -39,12 +39,12 @@ jobs:
       # Build on stable (the host ships as a prebuilt binary from CI; its dep
       # closure requires Cargo >=1.85, so it is not bound to the daemon's 1.75).
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: .
           key: host-${{ matrix.os }}
