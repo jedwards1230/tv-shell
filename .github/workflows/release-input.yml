@@ -43,7 +43,7 @@ jobs:
             libudev-dev libdbus-1-dev pkg-config
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: .
           key: release-input
@@ -75,7 +75,7 @@ jobs:
         run: sha256sum tv-shell-input-* | tee checksums.txt
 
       - name: Publish release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           files: dist/*
           generate_release_notes: true
