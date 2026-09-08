@@ -1,0 +1,7 @@
+{
+  "apps": [
+    { "id": 9003, "title": "Moonlight", "subtitle": "Stream from the gaming PC", "accent": "#e06236" },
+    { "id": 9004, "title": "Steam", "subtitle": "Big Picture" },
+    { "id": 9005, "title": "Plex", "subtitle": "Movies and TV" }
+  ]
+}

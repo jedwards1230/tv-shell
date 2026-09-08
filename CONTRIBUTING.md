@@ -122,11 +122,19 @@ cmake --build build --target all_qmllint   # module-resolving qmllint
 ctest --test-dir build --output-on-failure
 ```
 
+**qmllint's defaults are weak here, and no category can be promoted.** qmllint
+does not resolve the C++ `Surface` type out of this static module on the pinned
+Qt, and with it unresolved a correct `Main.qml` reports as unqualified from top
+to bottom. The coverage comes from the `qml` ctest lane running under
+`QT_FATAL_WARNINGS=1`, where an undefined binding — a *warning*, never an error —
+fails the test. See [docs/V2_SHELL.md](docs/V2_SHELL.md) §11.9. A test that
+deliberately provokes a warning must use `ignoreWarning()`.
+
 The X-backed lane (`premap`, which asserts the `STEAM_*` properties reach the
 server BEFORE the window maps) is opt-in behind `TV_SHELL_TEST_XVFB`, the same
 shape as `core/`'s X tests — so the commands above stay offline and need no
 display server. The variable is read at **configure** time, so it must be set
-before `cmake -S`, and `ctest` reports two lanes without it and three with it:
+before `cmake -S`, and `ctest` reports three lanes without it and four with it:
 
 ```bash
 Xvfb :99 -screen 0 1280x800x24 &

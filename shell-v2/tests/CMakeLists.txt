@@ -2,8 +2,17 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Test QuickTest)
 
 # --- lane 1: the pure mapping. No display, no Qt GUI, no X. -----------------
 qt_add_executable(tst_surfacetags tst_surfacetags.cpp)
-target_link_libraries(tst_surfacetags PRIVATE Qt6::Test tvshell-tags)
+target_link_libraries(tst_surfacetags PRIVATE Qt6::Test tvshell-pure)
 add_test(NAME surfacetags COMMAND tst_surfacetags)
+
+# --- lane 1b: path resolution + the core client, over a REAL socket. --------
+# Needs an event loop but no display: QLocalServer/QLocalSocket are Qt Network,
+# not Qt GUI. Asserts K1..K4 against a fake core speaking the real framing rather
+# than against a mock of CoreClient, so a change to the framing fails here.
+qt_add_executable(tst_coreclient tst_coreclient.cpp)
+target_link_libraries(tst_coreclient PRIVATE Qt6::Test Qt6::Network tvshell-qml)
+add_test(NAME coreclient COMMAND tst_coreclient)
+set_tests_properties(coreclient PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # --- lane 2: the focus graph + the QML types, offscreen. -------------------
 # Imports the SAME TvShell module the shell ships (linked, not copied), so there

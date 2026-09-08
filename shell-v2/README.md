@@ -1,16 +1,15 @@
 # shell-v2 — the tv-shell v2 shell
 
-A spike. It is built beside v1's `shell/`, wired into no session, and it exists to
-prove three things under gamescope: **it maps, it self-tags its X11 atoms before
-it maps, and it takes controller focus.**
+Built beside v1's `shell/`, wired into no session. It began as a spike proving
+three things under gamescope: **it maps, it self-tags its X11 atoms before it
+maps, and it takes controller focus.** All three held on real hardware
+(htpc-1, 2026-09-08), so what it renders is now a real home screen rather than a
+placeholder grid.
 
-Every pixel is placeholder. The structure is not — this tree sets the patterns
-every later screen follows, so the parts worth reviewing are the shapes.
-
-Why it has to exist at all is measured, not assumed: gamescope resolves a window's
-app id at **creation** and never re-reads it, so a property arriving after the map
-has missed the decision (bench 2026-09-06 on the pinned 3.16.28, plus a live
-control on 2026-09-07 — `../docs/V2_SHELL.md` §8a).
+Why the tagging shim has to exist at all is measured, not assumed: gamescope
+resolves a window's app id at **creation** and never re-reads it, so a property
+arriving after the map has missed the decision (bench 2026-09-06 on the pinned
+3.16.28, plus a live control on 2026-09-07 — `../docs/V2_SHELL.md` §8a).
 
 Full rationale, the two repo rules it reverses, the mutation record, and (at
 equal length) what it does **not** prove: [`../docs/V2_SHELL.md`](../docs/V2_SHELL.md).
@@ -22,18 +21,29 @@ The compositor contract it implements: [`../docs/V2_DESIGN.md`](../docs/V2_DESIG
 CMakeLists.txt          The build step v1 deliberately lacks. ONE QML module, URI TvShell.
 src/
   surfacetags.{h,cpp}   PURE role -> STEAM_* atoms. No Qt GUI, no X in its link line.
+  paths.{h,cpp}         PURE path resolution: the core socket, the catalog file.
   x11tagger.{h,cpp}     The ONLY place the shell speaks X (mirrors core/src/atoms.rs).
   surface.{h,cpp}       Surface: a toplevel that declares its ROLE and tags before map.
+  coreclient.{h,cpp}    The ONLY channel to tv-shell-core. One socket; no Process, ever.
+  shellconfig.{h,cpp}   Reads shell.json and hands QML its text. I/O only; no parsing.
   main.cpp              Entry point; warns loudly on a non-xcb platform plugin.
 qml/TvShell/            The single QML module — no qmldir, no relative-dir imports.
-  Main.qml              Placeholder screen: three SEPARATE toplevels + a D-pad grid.
+  Main.qml              Composition root: three toplevels, one core connection.
+  HomeScreen.qml        The home screen. Renders the model; owns none of it.
+  DrawerScreen.qml      The overlay toplevel's content.
+  Rail.qml              A row of cards that keeps the focused one in view.
+  Card.qml              The shell's ONE focusable thing. One focus ring, everywhere.
+  Tokens.qml            The design system: colour, type, space, duration. Singleton.
   FocusRouter.qml       Owns currentId; every decision delegates to focusGraph.js.
   FocusSlot.qml         One cell: declares WHERE it sits, never who its neighbours are.
-  focusGraph.js         Pure .pragma library: neighbour / rehome / initial / problems.
-tests/                  Three lanes — see below.
+  focusGraph.js         Pure: neighbour / rehome / initial / problems.
+  homeModel.js          Pure: (catalog, core snapshot) -> rails. The whole home screen.
+  catalog.js            Pure: shell.json text -> entries + problems.
+  viewport.js           Pure: scroll-into-view offset, and the UI scale.
+tests/                  Four lanes — see below.
 ```
 
-## Three things to know before editing
+## Five things to know before editing
 
 1. **`Surface` tags before map, and Qt gives no virtual hook to do it.**
    `QWindow::setVisible` is not virtual in Qt 6 and neither is `create()`. The
@@ -49,9 +59,37 @@ tests/                  Three lanes — see below.
 
 3. **Focus is computed, never wired.** A `FocusSlot` declares `row`, `column` and
    `slotEnabled`. It does not name a neighbour, and neither does anything else.
-   Disabling a slot cannot strand focus: traversal skips empty rows and the router
-   re-homes off a cell that stops being focusable. Put new decision logic in
-   `focusGraph.js` (pure, headlessly tested), not in a binding.
+   Disabling a slot cannot strand focus: traversal skips empty rows, and the
+   router re-homes off a cell that stops being focusable. The cell set is judged
+   once per event-loop turn (R6), so a screen rebuilding its delegates does not
+   throw focus away and re-place it. Put new decision logic in `focusGraph.js`
+   (pure, headlessly tested), not in a binding.
+
+4. **The core owns state; the shell renders it.** The home screen is a pure
+   function of two inputs — `shell.json` and one `screen-state` snapshot — in
+   `homeModel.js`. There is no cache, no "what did I launch" bookkeeping, and no
+   second opinion about what is running. If a screen needs something the core
+   does not publish, that is a finding to report, not a licence to shell out:
+   there are **zero** `Process` sites in this tree, against 50 in v1's `shell/`.
+
+5. **There is no polling, because there is nothing to subscribe to.** The core
+   ships no event stream yet (`core/src/protocol.rs` says so in as many words),
+   so the shell asks for a snapshot at the three moments that can have changed it
+   — the connection coming up, one of its own commands completing, the drawer
+   closing — and is otherwise silent. The honest consequence: an app that exits on
+   its own leaves a stale "Running" badge until the next of those. The fix belongs
+   in the core.
+
+## Configuration
+
+`~/.config/tv-shell/shell.json` — display metadata for launchable apps. See
+[`../docs/V2_SHELL_CATALOG.md`](../docs/V2_SHELL_CATALOG.md) and
+`../config/shell.json.example`. Launch mechanics stay in the core's `core.toml`;
+this file never repeats them.
+
+The core socket is `$TV_SHELL_CORE_SOCK`, else `/run/user/<uid>/tv-shell-core.sock`
+— the same rule as `core/src/config.rs`, with a test that spells the default out
+so a rename on either side fails loudly.
 
 ## Build and test
 
@@ -65,7 +103,8 @@ ctest --test-dir build --output-on-failure
 | Lane | Needs | Asserts |
 |---|---|---|
 | `surfacetags` | nothing | the role → atoms mapping, including the two negative rules |
-| `qml` | nothing (offscreen) | `focusGraph.js` directly, plus a real router over real slots |
+| `coreclient` | nothing | path resolution, and K1–K4 against a real socket and the real framing |
+| `qml` | nothing (offscreen) | the four pure modules directly, plus a real HomeScreen over a real router |
 | `premap` | a real X server | `PropertyNotify` before `MapNotify`, per role |
 
 `premap` is opt-in behind `TV_SHELL_TEST_XVFB`, read at **configure** time:
@@ -76,7 +115,21 @@ TV_SHELL_TEST_XVFB=:99 cmake -S shell-v2 -B build -G Ninja
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-Without it `ctest` reports two lanes; with it, three. CI sets it.
+Without it `ctest` reports three lanes; with it, four. CI sets it.
+
+**qmllint is weaker here than it looks, and the tests make up for it.** The
+generated `all_qmllint` target runs qmllint with its defaults, which let
+`Tokens.onlineTypo`, `card.titleTypo` and a plain unqualified access all pass. No
+category can be promoted, either: qmllint does not resolve the C++ `Surface` type
+out of this static module on the Qt 6.8 CI pins, and with `Surface` unresolved
+scope resolution inside a Surface block fails too, so a correct `Main.qml` reports
+the whole file as unqualified. The coverage comes from the `qml` lane instead,
+which runs under `QT_FATAL_WARNINGS=1` — an undefined binding is a *warning*,
+never an error, so this is what turns it into a test failure. Full account,
+including what was tried: `../docs/V2_SHELL.md` §11.9.
+
+A consequence for anyone adding tests: a test that deliberately provokes a
+warning must wrap it in `ignoreWarning()`, or the lane aborts.
 
 ## Running it
 
@@ -84,9 +137,9 @@ Without it `ctest` reports two lanes; with it, three. CI sets it.
 QT_QPA_PLATFORM=xcb ./build/tv-shell-v2
 ```
 
-Arrows move focus, **space** toggles the middle cell (watch focus re-home rather
-than strand), **menu** opens the overlay toplevel, **tab** shows the toast. The
-header line reports the current cell id and whether the base window was tagged.
+Arrows move focus, **Enter** activates a card, **Menu** opens the overlay drawer.
+With no `shell.json` and no core you get the empty state, which is itself
+focusable — the home screen always has somewhere for focus to be.
 
 On a Wayland platform plugin it starts, warns, and maps untagged — under gamescope
 that means it is never a focus candidate, which looks like a black screen. The

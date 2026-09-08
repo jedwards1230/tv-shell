@@ -35,6 +35,21 @@ QtObject {
     // screen) or a bug.
     signal focusUnplaceable
 
+    // R6's coalescer. A Timer rather than Qt.callLater because restart() is
+    // explicit about the coalescing and needs no assumption about how QML
+    // deduplicates a bound method.
+    readonly property Timer syncTimer: Timer {
+        interval: 0
+        repeat: false
+        onTriggered: router.sync()
+    }
+
+    // Ask for a re-sync at the end of this turn. Every caller uses this; the
+    // only direct call to sync() is the timer's.
+    function scheduleSync() {
+        router.syncTimer.restart();
+    }
+
     function cells(): var {
         const out = [];
         for (const slot of router.slots) {
@@ -53,7 +68,7 @@ QtObject {
         return out;
     }
 
-    function register(slot: Item) {
+    function register(slot: FocusSlot) {
         const next = router.slots.slice();
         next.push(slot);
         router.slots = next;
@@ -64,14 +79,20 @@ QtObject {
             console.warn("FocusRouter: malformed focus graph:", bad.join("; "));
         if (router.currentId === "")
             router.focusInitial();
+        else if (slot && slot.slotId === router.currentId)
+            // The cell under focus was just re-created by a delegate rebuild.
+            // Its `current` was already true at construction, so onCurrentChanged
+            // never fires and nothing would ever give it real focus.
+            slot.forceActiveFocus();
+        router.scheduleSync();
     }
 
-    function unregister(slot: Item) {
+    function unregister(slot: FocusSlot) {
         const next = router.slots.filter(s => s !== slot);
         if (next.length === router.slots.length)
             return;
         router.slots = next;
-        router.sync();
+        router.scheduleSync();
     }
 
     function setCurrent(id: string) {

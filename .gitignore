@@ -8,3 +8,6 @@ tests/qml/.build/
 # Python bytecode (scripts/)
 __pycache__/
 *.py[cod]
+
+# CMake build tree for shell-v2 (the documented `cmake -S shell-v2 -B build`)
+/build/

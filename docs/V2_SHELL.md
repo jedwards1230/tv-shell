@@ -390,6 +390,7 @@ nothing changed.
 cmake -S shell-v2 -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 cmake --build build --target all_qmllint
+cmake --build build --target qmllint_strict   # see §11.9 -- the defaults miss things
 ctest --test-dir build --output-on-failure
 
 # with the X-backed lane (needs an X server):
@@ -398,5 +399,233 @@ TV_SHELL_TEST_XVFB=:99 cmake -S shell-v2 -B build -G Ninja
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-`TV_SHELL_TEST_XVFB` is read at **configure** time: without it `ctest` reports two
-lanes, with it three.
+`TV_SHELL_TEST_XVFB` is read at **configure** time: without it `ctest` reports
+three lanes, with it four.
+
+## 11. The home screen
+
+> Added 2026-09-08, after the spike's three claims held on hardware. This section
+> covers what the shell now *renders*, the primitives it renders it with, and the
+> two things the core does not publish that the design had to work around.
+
+### 11.1 What is on it
+
+A header (clock, and what the core says is on screen), a **Continue** rail of apps
+the core reports as focus candidates, and an **Apps** rail of everything in the
+catalog. Activating a card sends one command: `show <id>` if the core says it is
+running, `launch <id>` otherwise.
+
+That is the whole screen. Settings and a Library are deliberately not in it: a
+small, correct primitive set is worth more than several half-built screens, and
+every screen after this one is built out of the same four types.
+
+### 11.2 The primitives, and why these four
+
+| Primitive | Why it exists |
+|---|---|
+| **`Tokens`** | One singleton holding every colour, size, weight and duration. A literal anywhere else is a bug. It carries v1's *decisions* — crimson focus, ember secondary, gold never as text, near-black for OLED, type sized for three metres — and none of v1's code. |
+| **`Card`** | The shell's **one** focusable thing. Every activatable element in v2 is this type, so there is one focus ring, at one width, in one colour. A screen cannot introduce a second focus treatment without adding a second type, which review would see. |
+| **`Rail`** | A row of cards that keeps the focused one in view. It *watches* the router rather than being told to scroll — which is what deletes v1's `ensureVisibleRequested`, a signal every widget had to remember to emit and every host to connect. |
+| **`Surface`** | Unchanged from the spike: a toplevel that declares a role. The drawer being a separate toplevel is what makes input routing free — see 11.5. |
+
+Everything else is a pure `.pragma library`: `homeModel.js` (the screen),
+`catalog.js` (the config file), `viewport.js` (scrolling and scale), alongside the
+spike's `focusGraph.js`. That is the one v1 pattern carried forward on purpose,
+and the rule applied here is stricter than v1's: **every non-trivial decision is
+in one of those four files, and QML is glue.** The home screen contains no
+branch that is not a call into `homeModel.js`.
+
+### 11.3 The core owns state; the shell renders it
+
+`homeModel.build(catalog, snapshot, shellAppId)` is the entire home screen as a
+pure function. The shell holds no idea of what is running — not a launch it
+remembers making, not a pid it kept. If the core does not list an app, it is not
+running, however recently the shell started it.
+
+Two consequences are worth stating because they look like bugs and are not:
+
+- A running app absent from the catalog **still appears**, titled `App <id>`. The
+  core is the authority on what exists; hiding it would make an app unreachable
+  from the shell that started it.
+- The shell's own app id **never** appears. It is always a focus candidate — it is
+  on screen — so without that filter the home screen would offer you a card that
+  switches to the home screen.
+
+### 11.4 Two things the core does not publish
+
+Both are reported here rather than worked around by shelling out. **There are zero
+`Process` sites in `shell-v2/`**, against 50 in v1's `shell/`.
+
+**There is no event stream.** `core/src/protocol.rs` says so in as many words —
+no `Event` type, nothing broadcasts. So the shell cannot be push-driven. It
+requests a snapshot at the three moments that can have changed it (the connection
+coming up, one of its own commands completing, the drawer closing) and is
+otherwise silent. That is not polling and there is no timer. The honest cost: an
+app that exits on its own leaves a stale "Running" badge until the next of those
+moments. The fix is a `screen-state` event or a subscribe verb in the core, not a
+poll in the shell.
+
+**There is no way to enumerate `[[app]]`.** The core's class table lives in
+`core.toml` and no verb exposes it, so the shell cannot ask what is launchable.
+It therefore has its own `~/.config/tv-shell/shell.json` holding *display*
+metadata only — id, title, subtitle, accent — with launching still delegated to
+`launch <id>`, the class form, so the argv and environment exist in exactly one
+place. The split is defensible on its merits (the core will never know what a
+poster looks like), but it does mean an app id appears in two files. A core
+`list-apps` verb would let the shell take ids from the core and leave this file
+purely cosmetic. See [`V2_SHELL_CATALOG.md`](V2_SHELL_CATALOG.md).
+
+### 11.5 Input routing costs nothing, because the compositor decides
+
+The drawer is a separate toplevel with `STEAM_INPUT_FOCUS`, so gamescope gives it
+keyboard focus and the base surface simply stops receiving keys. There is no focus
+stack in this process, no "who owns input" flag, and no way for the two to
+disagree. Each surface owns its own `FocusRouter` and the two never interact.
+
+This is the separate-toplevel requirement (§5, §7) paying for itself: it was
+adopted for tagging correctness and it removed a whole class of input-routing
+state as a side effect.
+
+### 11.6 R6: the cell set is judged once it has settled
+
+A rule the wired test forced into existence, and the clearest evidence the test
+was worth writing.
+
+A screen whose model changes rebuilds its delegates. During that rebuild the focus
+graph passes through states nobody intends: every slot unregistered, then
+re-registered. Judged eagerly, that transient reads as *"nothing is focusable"* —
+`focusUnplaceable` fired **nine times** for a single rail disappearing — and focus
+is thrown away and re-placed on the first card. Judged once at the end of the
+event-loop turn, a rebuild that re-creates the same ids is not a change at all and
+focus survives it.
+
+So `FocusRouter.sync()` is reached only through `scheduleSync()`, and the two
+pre-existing wired tests in `tst_focusgraph.qml` gained a `wait(0)`. That is a
+deliberate contract change, not a weakened test: the router now promises a
+*settled* answer, and asserting before the turn ends is asserting about a state
+the screen never renders.
+
+### 11.7 The mutation record
+
+Every rule stated in a comment was broken, the suite was rebuilt and run, and the
+test that caught it recorded. **30 mutations, 30 caught.** The harness is
+mechanical (apply one minimal edit, rebuild, `ctest`, revert) and the baseline was
+confirmed green before and after the run.
+
+| Rule | Mutation applied | Caught by |
+|---|---|---|
+| **C1** malformed JSON is reported | the parse error returns no problem | `Catalog::test_malformed_json_is_an_empty_catalog_with_a_problem` |
+| **C2** one bad row drops only itself | `continue` → `break` | `Catalog::test_a_bad_row_drops_only_itself` |
+| **C3** a duplicate id keeps the first | the duplicate check is removed | `Catalog::test_duplicate_id_keeps_the_first` |
+| **C4** absence is not an error | empty text reports a problem | `Catalog::test_absence_is_silent` |
+| **C5** file order is preserved | entries sorted by id | `Catalog::test_order_is_file_order` |
+| **H1** running comes from `focusable_apps` | read `base_layer` instead | 4 `HomeScreen` tests |
+| **H2** an unknown running app is shown | require a catalog row | `HomeModel::test_an_unknown_running_app_is_shown_not_hidden` |
+| **H3** the shell never offers itself | the filter is removed | `HomeModel::test_the_shell_app_id_never_appears` + 1 |
+| **H4** the Apps rail does not reshuffle | running apps dropped from it | 4 tests across both suites |
+| **H5** show for running, launch otherwise | always `launch` | 4 tests across both suites |
+| **H6** a missing snapshot is survivable | the null guard is removed | `HomeModel::test_a_missing_snapshot_leaves_apps_intact` |
+| **H7** an empty rail is omitted | Continue always pushed | 4 tests across both suites |
+| **H8** an empty model says so | `empty` hardcoded false | `HomeScreen::test_an_empty_screen_still_has_somewhere_to_focus` + 3 |
+| on-screen id ignores the diagnostic atom | read `focused_app_atom_diagnostic` | `HomeModel::test_on_screen_id_ignores_the_diagnostic_atom` |
+| **V1** a visible item does not scroll | always recompute the offset | `Viewport::test_a_fully_visible_item_does_not_scroll` + 1 |
+| **V2** minimum movement, not centring | centre the item | `Viewport::test_an_item_past_the_trailing_edge_scrolls_the_minimum` |
+| **V4** the offset is clamped | the clamp is removed | `Viewport::test_the_offset_never_leaves_the_content` + 1 |
+| **V5** an oversized item aligns leading | the branch is removed | `Viewport::test_an_item_wider_than_the_viewport_aligns_leading` |
+| **V7** a degenerate height yields 1 | return `height / 2160` unguarded | `Viewport::test_a_degenerate_height_is_one_and_never_zero` |
+| **V8** scale is clamped | the clamp is removed | `Viewport::test_scale_is_clamped_at_both_ends` |
+| **R4** `rehome` finds a survivor | `rehome` always gives up | 4 `FocusGraph` tests |
+| **R6** the cell set is judged once settled | `scheduleSync()` → `sync()` | `HomeScreen::test_a_rail_vanishing_under_focus_rehomes_instead_of_stranding` |
+| **K1** replies pair in send order | `dequeue()` → `takeLast()` | `TstCoreClient::repliesPairInOrder` + 1 |
+| **K2** a control character is refused | the check is removed | `TstCoreClient::newlineInCommandIsRefused` |
+| **K3** an over-long command is refused | the check is removed | `TstCoreClient::oversizedCommandIsRefused` |
+| **K4** a disconnect clears the queue | the queue is kept | `TstCoreClient::disconnectClearsPendingCommands` |
+| the reply buffer keeps what follows a newline | `remove(0, nl+1)` → `clear()` | `TstCoreClient::coalescedRepliesAreSplit` |
+| the socket path matches the core's | the basename is changed | `TstCoreClient::socketPath` |
+| the catalog path falls through XDG then HOME | the XDG branch is removed | `TstCoreClient::catalogPathPrecedence` |
+| each drawer row fires its own effect | the reload branch is made unreachable | `DrawerScreen::test_each_row_fires_its_own_effect` |
+
+### 11.8 Two defects the tests found that reading the code did not
+
+Recorded because both are the kind that a green suite and a clean lint would have
+shipped.
+
+**`CoreClient` had no destructor.** Qt destroys a connected `QLocalSocket` member
+by running its close path from inside the destructor, at which point the owning
+object is already half-destroyed — and its slots ran anyway. It presented as a
+glibc *"corrupted double-linked list"* abort attributed to an unrelated test, and
+an **AddressSanitizer build of the same suite reported zero errors**, so only
+running it non-sanitized found it at all. Fixed by an explicit teardown that
+unwires the socket before aborting it.
+
+**`QT_QML_SINGLETON_TYPE` set after `qt_add_qml_module` is silently ignored.**
+The symptom is every `Tokens.*` reading `undefined` at runtime, with no error
+beyond a pile of *"Unable to assign [undefined]"* warnings — and the property has
+to be set *before* the module is declared. Caught by the wired test failing, not
+by lint.
+
+### 11.9 The lint gate is weaker than it looks, and one category cannot be fixed
+
+`all_qmllint` runs qmllint with its **defaults**, and the defaults are weaker than
+they look: `Tokens.onlineTypo`, `card.titleTypo` and a plain unqualified access
+all passed it. This matters more here than in most Qt projects — there is no
+screenshot path on a v2 session, so a binding that resolves to `undefined` or to
+the wrong scope is a property that is simply never set, on a screen nobody can
+look at.
+
+**What was fixed.** `shell-v2/CMakeLists.txt` adds a **`qmllint_strict`** target
+that re-runs the same response file (same import paths, same resources, no second
+file list to drift) with `unqualified` promoted and `--max-warnings 0`, so any
+warning at all fails. It found two real unqualified accesses in `Main.qml` the
+first time it ran, and a mutation confirms it still catches one.
+
+**What could not be, and why it is recorded rather than hidden.**
+`missing-property` — the category that would catch `Tokens.onlineTypo` — is
+**not** enabled, because it cannot be made portable here:
+
+- On the **Qt 6.8 that CI pins**, qmllint does not resolve the C++ `Surface` type
+  out of this static QML module (`Type Surface is used but it is not resolved`),
+  so every property on a Surface reads as missing and `Main.qml` fails six times
+  while being correct.
+- Naming the module's own qmltypes explicitly with `-i` does **not** fix that,
+  and makes it worse: on Qt 6.11, where discovery works unaided, `-i` breaks the
+  same resolution and adds a cascade of spurious `unqualified` warnings.
+
+Both were measured, in that order, at the cost of two CI rounds. A per-file
+exclusion for `Main.qml` was rejected — it would silently stop covering whatever
+file grows a Surface next.
+
+**So the category was replaced rather than dropped.** The offscreen `qml` lane
+now runs with **`QT_FATAL_WARNINGS=1`**, which turns any QML warning into a test
+failure — and an undefined binding *is* a warning ("Unable to assign [undefined]
+to QColor"), never an error. Mutating `Tokens.online` to `Tokens.onlineTypo` now
+fails the lane, which is the coverage `missing-property` would have given,
+obtained in a way that does not depend on qmllint resolving C++ types.
+
+That has a cost worth stating: a future test that *deliberately* provokes a
+warning — `FocusRouter`'s malformed-graph `console.warn`, say — must wrap it in
+`ignoreWarning()` or the lane aborts.
+
+### 11.10 What this does not prove
+
+The same discipline as §8: what follows is what remains open, at the same length
+as what is settled.
+
+- **Nothing here has been seen rendering.** `grim` fails under gamescope (no
+  `wlr-screencopy`), so there is no screenshot path on a v2 session and none of
+  the visual work has been looked at. Correctness comes from structural tests
+  only: focus traversal, visibility, role tagging, and the pure decision modules.
+  Layout, spacing, colour, legibility at three metres and the readability of the
+  focus ring on an OLED panel are all **unverified**.
+- **The shell has never talked to a running core.** `CoreClient` is tested against
+  a fake core speaking the real framing over a real Unix socket, which pins the
+  queue discipline but not the core's actual replies. The first live
+  `screen-state` may disagree with the fixture in ways the fixture cannot show.
+- **The catalog has never been read from a real deployment.** `shell.json` is
+  parsed under test from strings; no box has one.
+- **The drawer's input routing is untested.** That gamescope hands keyboard focus
+  to a `STEAM_INPUT_FOCUS` overlay is the design's premise (§5) and the reason
+  there is no focus stack in-process. It is not asserted by anything here — the
+  offscreen lane has no compositor.
+- **`Tokens.scale` has only ever been 1.** The scale path is unit-tested, but the
+  shell has run at no resolution but the test harness's.
