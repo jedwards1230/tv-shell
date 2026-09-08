@@ -508,7 +508,7 @@ the screen never renders.
 ### 11.7 The mutation record
 
 Every rule stated in a comment was broken, the suite was rebuilt and run, and the
-test that caught it recorded. **29 mutations, 29 caught.** The harness is
+test that caught it recorded. **30 mutations, 30 caught.** The harness is
 mechanical (apply one minimal edit, rebuild, `ctest`, revert) and the baseline was
 confirmed green before and after the run.
 
@@ -543,6 +543,7 @@ confirmed green before and after the run.
 | the reply buffer keeps what follows a newline | `remove(0, nl+1)` → `clear()` | `TstCoreClient::coalescedRepliesAreSplit` |
 | the socket path matches the core's | the basename is changed | `TstCoreClient::socketPath` |
 | the catalog path falls through XDG then HOME | the XDG branch is removed | `TstCoreClient::catalogPathPrecedence` |
+| each drawer row fires its own effect | the reload branch is made unreachable | `DrawerScreen::test_each_row_fires_its_own_effect` |
 
 ### 11.8 Two defects the tests found that reading the code did not
 
@@ -573,9 +574,17 @@ never set, on a screen nobody can look at.
 
 `shell-v2/CMakeLists.txt` therefore adds a **`qmllint_strict`** target that re-runs
 the same response file (same import paths, same resources, no second file list to
-drift) with `missing-property` and `unqualified` promoted to errors. It catches
-both typos, and it found two real unqualified accesses in `Main.qml` when it was
-first enabled. CI builds it alongside `all_qmllint`.
+drift) with those two categories on and `--max-warnings 0`, so any warning at all
+fails. It catches both typos, and it found two real unqualified accesses in
+`Main.qml` when it was first enabled. CI builds it alongside `all_qmllint`.
+
+The level matters and cost a CI round: qmllint accepts only `disable`, `info` and
+`warning` as category levels on **Qt 6.8**, which CI pins, and rejects
+`--missing-property error` with a usage message. Local Qt is 6.11 and took it, so
+the target passed here and failed there — the kind of gap only watching CI
+actually run can close. `--max-warnings 0` gets the same effect on both, and goes
+further than naming two categories: a category added by a future Qt cannot slip
+through either.
 
 ### 11.10 What this does not prove
 
