@@ -184,8 +184,13 @@ QtObject {
 
         role: Surface.Overlay
         visible: root.drawerOpen
+        // The WIDTH of a drawer is a design choice; its HEIGHT is the output's.
+        // This was a hardcoded 1080, which is half the screen on the 2160-tall
+        // panel this ships to. Only `Base` gets its size from the role (see
+        // src/surface.cpp) — an overlay's geometry is deliberately the caller's,
+        // so a caller that wants the full height has to say so.
         width: Tokens.drawerWidth
-        height: 1080
+        height: drawerSurface.screen ? drawerSurface.screen.height : 0
         color: Tokens.scrim
         title: "tv-shell-drawer"
 

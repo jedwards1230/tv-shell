@@ -645,17 +645,76 @@ That has a cost worth stating: a future test that *deliberately* provokes a
 warning — `FocusRouter`'s malformed-graph `console.warn`, say — must wrap it in
 `ignoreWarning()` or the lane aborts.
 
+### 11.9a It rendered on hardware, and the window was 160x160
+
+Run on htpc-1 on 2026-09-08 under the live gamescope beside Moonlight: it maps,
+tags as 9001, `show 9001` puts it on screen, and the clock, the live
+"On screen: 9003" read from core state, and the Continue heading are all really
+there. That closes most of §11.10's first bullet — it *has* now been seen
+rendering.
+
+It also immediately produced a defect **no lane in this repo could have caught**:
+
+```
+xprop -id 8388625 WM_NORMAL_HINTS
+  user specified size: 160 by 160
+```
+
+`Main.qml`'s base `Surface` set `role`, `appId`, `visible`, `color` and `title`
+and **no size**, so Qt fell back to `QWindow`'s 160x160 default and gamescope
+faithfully upscaled it to 3840x2160. The capture was a blurry, clipped, enormous
+fragment of a UI that was otherwise correct.
+
+Under an ordinary window manager this is invisible, because the WM sizes the
+window for you. Under gamescope the client's own size is honoured, so the default
+becomes the entire UI.
+
+**The fix is in `Surface`, not at the call site.** A base surface *is* the output;
+that is a property of the role, exactly like its atoms, so `applyVisibility()`
+sizes a `Base` to its screen immediately before `create()` — the same point in the
+sequence, and for the same reason, as the tagging. An `Overlay` or `Toast` has a
+legitimate size of its own and is left alone. The call site that got this wrong
+can no longer exist.
+
+A second-order effect worth understanding, because "fixing" it would be wrong:
+the base surface is the single writer of `Tokens.scale`, so at height 160 the
+scale clamped at `MIN_SCALE` rather than shrinking proportionally, and the type
+rendered near-full-size inside a 160px window before being blown up 24x. The V7/V8
+clamp is correct and must not be loosened — it simply cannot rescue a window this
+wrong.
+
+The drawer had the same disease in milder form: a hardcoded `height: 1080` on a
+2160-tall output. Its **width** is a design choice; its **height** is the
+output's, and it now says so.
+
+**The lane that was missing.** Every other lane builds `HomeScreen` and
+`DrawerScreen` directly; nothing instantiated a window, and §11.10's own
+`Main.qml` smoke test loads clean because *loading clean and being correctly
+sized are different questions*. `tests/tst_geometry.cpp` is now the one lane that
+creates a real `Surface`, and it asserts both that a Base fills its output and
+that an Overlay/Toast keeps the size it was given. Mutation-confirmed: removing
+the sizing fails both Base assertions and leaves the Overlay one passing.
+
+**One assertion in that lane was worthless and was deleted rather than adjusted.**
+The first version also checked `size() != QSize(160, 160)`, naming the number seen
+on hardware. 160x160 is the **xcb** default; under the offscreen platform an
+unsized window is **1x1**, so that check passed happily with the bug fully
+present — verified by mutation before it was noticed. A test that stays green
+while the defect is live is precisely the failure this suite exists to avoid, so
+it was replaced by the relationship that holds on any platform: a base surface is
+never smaller than its output.
+
 ### 11.10 What this does not prove
 
 The same discipline as §8: what follows is what remains open, at the same length
 as what is settled.
 
-- **Nothing here has been seen rendering.** `grim` fails under gamescope (no
-  `wlr-screencopy`), so there is no screenshot path on a v2 session and none of
-  the visual work has been looked at. Correctness comes from structural tests
-  only: focus traversal, visibility, role tagging, and the pure decision modules.
-  Layout, spacing, colour, legibility at three metres and the readability of the
-  focus ring on an OLED panel are all **unverified**.
+- **It has now been seen rendering (§11.9a), but only once and only to find a
+  sizing bug.** Layout, spacing, colour, legibility at three metres and the
+  readability of the focus ring on an OLED panel remain **unverified** — the one
+  capture was of a 24x-upscaled 160x160 window, so it proved the shell maps,
+  tags and reads live core state, and proved nothing whatsoever about how any of
+  it looks. A capture at the correct size has not been taken yet.
 - **The shell has never talked to a running core.** `CoreClient` is tested against
   a fake core speaking the real framing over a real Unix socket, which pins the
   queue discipline but not the core's actual replies. The first live

@@ -134,7 +134,7 @@ The X-backed lane (`premap`, which asserts the `STEAM_*` properties reach the
 server BEFORE the window maps) is opt-in behind `TV_SHELL_TEST_XVFB`, the same
 shape as `core/`'s X tests — so the commands above stay offline and need no
 display server. The variable is read at **configure** time, so it must be set
-before `cmake -S`, and `ctest` reports three lanes without it and four with it:
+before `cmake -S`, and `ctest` reports four lanes without it and five with it:
 
 ```bash
 Xvfb :99 -screen 0 1280x800x24 &

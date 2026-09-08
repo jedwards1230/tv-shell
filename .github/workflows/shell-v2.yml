@@ -109,15 +109,15 @@ jobs:
           QT_QUICK_BACKEND: software
         run: ctest --test-dir build --output-on-failure
 
-      - name: Assert all four lanes ran
+      - name: Assert all five lanes ran
         # An ignore-gated leg wired to nothing defends nothing
-        # (jedwards1230/tv-shell#469). ctest reports 3 tests when the premap lane
-        # was skipped at configure time and 4 when it was registered, so the count
+        # (jedwards1230/tv-shell#469). ctest reports 4 tests when the premap lane
+        # was skipped at configure time and 5 when it was registered, so the count
         # is the signal that the X leg genuinely executed.
         run: |
           names=$(ctest --test-dir build -N | sed -n 's/^ *Test *#[0-9]*: //p' | sort | tr '\n' ' ')
           echo "registered lanes: $names"
-          for lane in coreclient premap qml surfacetags; do
+          for lane in coreclient geometry premap qml surfacetags; do
             case " $names " in
               *" $lane "*) ;;
               *) echo "::error::lane '$lane' did not run"; exit 1 ;;
@@ -132,8 +132,8 @@ jobs:
           {
             echo "## shell-v2"
             echo ""
-            echo "CMake build + qmllint (default and strict) + four test lanes"
-            echo "(surfacetags, coreclient, qml, premap)."
+            echo "CMake build + qmllint + five test lanes"
+            echo "(surfacetags, coreclient, geometry, qml, premap)."
             echo "The premap lane runs against a real Xvfb display and asserts that"
             echo "the STEAM_* properties reach the X server BEFORE the window maps."
             echo ""

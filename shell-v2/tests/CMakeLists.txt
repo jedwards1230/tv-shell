@@ -14,6 +14,16 @@ target_link_libraries(tst_coreclient PRIVATE Qt6::Test Qt6::Network tvshell-qml)
 add_test(NAME coreclient COMMAND tst_coreclient)
 set_tests_properties(coreclient PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# --- lane 1c: a real window, offscreen. ------------------------------------
+# The ONLY lane that instantiates a Surface. Every other lane builds the screens
+# directly, which is why a base window created at Qt's default 160x160 reached
+# hardware before anything noticed. Needs a platform plugin but no display.
+qt_add_executable(tst_geometry tst_geometry.cpp)
+target_link_libraries(tst_geometry PRIVATE Qt6::Test Qt6::Quick tvshell-qml)
+add_test(NAME geometry COMMAND tst_geometry)
+set_tests_properties(geometry PROPERTIES ENVIRONMENT
+    "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
 # --- lane 2: the focus graph + the QML types, offscreen. -------------------
 # Imports the SAME TvShell module the shell ships (linked, not copied), so there
 # is no drift between what is tested and what runs.
