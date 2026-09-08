@@ -137,20 +137,27 @@ install(TARGETS tv-shell-v2 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # never set, on a screen nobody can look at.
 #
 # So this target re-runs the SAME response file -- same include paths, same
-# resources, no second list of files to drift -- with the two categories that
-# catch it promoted to errors. CI builds this one, not `all_qmllint`.
+# resources, no second list of files to drift -- with those categories on and
+# `--max-warnings 0`, so any warning at all fails. CI builds this one as well as
+# `all_qmllint`.
 # ---------------------------------------------------------------------------
 qt_query_qml_module(tvshell-qml)
 find_program(QMLLINT_EXECUTABLE NAMES qmllint qmllint6 HINTS ${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS})
 
+# `warning` plus `--max-warnings 0`, NOT `--missing-property error`: qmllint only
+# accepts disable/info/warning as levels on Qt 6.8 (which CI pins), and `error`
+# is rejected outright with a usage message. `-W 0` gets the same effect on both
+# -- any warning at all fails the target -- and it goes further than promoting
+# two categories, since a category added by a future Qt cannot slip through.
 add_custom_target(qmllint_strict
     COMMAND ${QMLLINT_EXECUTABLE}
-        --missing-property error
-        --unqualified error
+        --missing-property warning
+        --unqualified warning
+        --max-warnings 0
         "@${CMAKE_BINARY_DIR}/.rcc/qmllint/tvshell-qml.rsp"
     DEPENDS all_qmllint
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Running qmllint with missing-property and unqualified promoted to errors"
+    COMMENT "Running qmllint strictly (missing-property + unqualified on, zero warnings tolerated)"
     VERBATIM
 )
 
