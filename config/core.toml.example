@@ -189,23 +189,26 @@
 # THIS IS THE ONLY WAY TO SEE THE SCREEN UNDER V2. gamescope implements no
 # Wayland screen-capture protocol, so `grim` — and every v1 surface built on it
 # — cannot work here. The core instead sets gamescope's
-# GAMESCOPECTRL_REQUEST_SCREENSHOT root property, waits for gamescope to clear
-# it, and moves the frame gamescope wrote to the path you named.
+# GAMESCOPECTRL_REQUEST_SCREENSHOT root property and waits for the FILE
+# gamescope writes, then moves it to the path you named.
 #
-# The wait is one vblank-gated repaint plus a detached encode-and-write, and
-# gamescope does NOT nudge its own repaint loop for a capture request, so this
-# is not instantaneous. One live capture at 4K took roughly a second.
+# It waits for the file and NOT for the request property, which clears long
+# before the frame exists (measured: 32 ms vs 712 ms). This bound therefore
+# governs the slow half — one vblank-gated repaint plus a detached
+# encode-and-write, with no repaint nudge from gamescope — and not the
+# compositor's acknowledgement.
 #
 # A capture that does not complete in this window is an `error:`, never a
 # screenshot — and in particular never the PREVIOUS capture, which gamescope
 # leaves lying at its one hardcoded output path. The core clears that path
 # before every request precisely so a stale frame cannot be mistaken for a
-# fresh one.
+# fresh one, and only accepts a file that is a complete PNG, since gamescope
+# writes it in place and a poll can otherwise land mid-write.
 #
-# RANGE: 1..=30000. The default is headroom over a measured ~1 s, not an
-# expected time. Bounded above because a capture holds the capture lock for its
-# whole wait, so a larger value queues every later screenshot behind one wedged
-# compositor.
+# RANGE: 1..=30000. The default is a guess with headroom, NOT a measurement —
+# raise it if captures on your hardware come back as timeouts. Bounded above
+# because a capture holds the capture lock for its whole wait, so a larger value
+# queues every later screenshot behind one wedged compositor.
 #screenshot_timeout_ms = 5000
 
 # The app class the core launches and shows once, on a FRESH session. 0 = none,

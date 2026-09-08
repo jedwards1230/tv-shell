@@ -21,7 +21,11 @@
 //! GPU-rendered client window (via the window or via
 //! `XCompositeNameWindowPixmap`) returns 100% black — a DRI3 client's frames
 //! live in a buffer the X server passes through and never rasterizes. Both
-//! measured on the box. And the v2 shell is not an X client in the first place:
+//! observed on the box, in a probe run that was **not** authorised and has not
+//! been repeated under controlled conditions; the conclusion is corroborated by
+//! the gamescope and wlroots sources (`-rootless` is passed unconditionally, and
+//! `steamcompmgr` redirects manually), which is why it is stated here as fact.
+//! And the v2 shell is not an X client in the first place:
 //! the session runs `--expose-wayland`, so the shell is an xdg-shell Wayland
 //! client with no X window to capture.
 //!
@@ -41,18 +45,40 @@
 //! 2. **The property's value is a screenshot TYPE, not flags** — the
 //!    `gamescope_control_screenshot_type` enum from
 //!    `protocol/gamescope-control.xml:83-88`. See [`FULL_COMPOSITION`].
-//! 3. **gamescope deletes the property when the attempt finishes**, from the
-//!    encoder thread, after the file is closed (`:3295`). That deletion is the
-//!    only completion signal the X path has — and it fires on the write-FAILURE
-//!    path too (`:3316`).
+//! 3. **gamescope deletes the property well BEFORE the file exists.** Measured
+//!    on the deploy box, live v2 session: the property cleared at **32 ms** and
+//!    the file appeared at **712 ms** — a 22x gap, and the poll that saw the
+//!    property already gone saw the file still absent in the same iteration.
+//!
+//! Point 3 replaces an earlier claim in this module that the delete happened
+//! *after* the file was closed, so no such window existed. That claim was read
+//! off `steamcompmgr.cpp:3295` and it is **wrong in practice**; the measurement
+//! is the authority. It is called out rather than quietly corrected because the
+//! bug it caused — waiting on the property and then harvesting — is the exact
+//! shape this module is supposed to prevent, and reasoning from the source
+//! instead of from the hardware is how it got in.
 //!
 //! # The two rules, and why they are rules
 //!
-//! **Rule 1 — the property clearing means the attempt FINISHED, never that it
-//! SUCCEEDED.** Point 3: gamescope clears on failure as well. An implementation
-//! that replied `ok` the moment the property vanished would report success for a
-//! capture that produced nothing — precisely the class [`crate::baselayer`]
-//! exists to eliminate.
+//! **Rule 1 — the file is the completion signal; the property is a
+//! diagnostic.** The property clearing does not mean the capture succeeded
+//! (gamescope clears it on the write-FAILURE path too, `:3316`) and, per point
+//! 3, it does not even mean the capture *finished*. Exiting the wait on it and
+//! then checking the file reports `NotWritten` roughly 680 ms into a capture
+//! that goes on to succeed — a false failure, and the mirror image of the stale
+//! frame Rule 2 exists to stop. So the wait is satisfied by a **complete file**
+//! and by nothing else, the timeout governs that wait, and the property is
+//! polled only to record *when* it cleared, which sharpens the error when one is
+//! returned. A capture that never produces a file still fails; it just takes the
+//! full deadline to say so, because until the deadline "failed" and "slow" are
+//! genuinely indistinguishable.
+//!
+//! **Complete, not merely present.** gamescope writes the PNG in place with
+//! `stbi_write_png` — there is no write-then-rename — so a reader can observe a
+//! partial file. "Present" is therefore not a completion test: a frame counts
+//! only when it opens with the PNG signature and closes with an `IEND` chunk.
+//! That is a structural check rather than a size-stability heuristic, which
+//! cannot tell a finished small file from a stalled large one.
 //!
 //! **Rule 2 — a stale screenshot is made unrepresentable, not merely
 //! detected.** Point 1 is the trap. Because the path is fixed and shared, a
@@ -74,9 +100,10 @@
 //!   this job — `base_plane_only` renders the game plane alone, at the *nested*
 //!   resolution, missing every overlay the shell draws — or measurably wrong on
 //!   this display: `screen_buffer` skips the inverse-EOTF step (`:3437`) and
-//!   dumps the raw PQ scanout buffer into an 8-bit sRGB PNG, measured on the
-//!   deploy box's HDR session as visibly washed out with lifted blacks. A knob
-//!   whose other positions are all defects is not a knob.
+//!   dumps the raw PQ scanout buffer into an 8-bit sRGB PNG, which on an HDR
+//!   session is visibly washed out with lifted blacks (observed once, in the
+//!   same unauthorised probe as above, and consistent with the code path). A
+//!   knob whose other positions are all defects is not a knob.
 //! * **No HDR/AVIF capture.** True 10-bit capture needs a `.avif` destination,
 //!   and the X path cannot request one: the extension is baked into the
 //!   hardcoded path. `full_composition` to PNG is tone-mapped to gamma 2.2 by
@@ -109,15 +136,17 @@ pub const GAMESCOPE_OUTPUT: &str = "/tmp/gamescope.png";
 
 /// How long the compositor gets to complete a capture.
 ///
-/// A guess with headroom, not a measurement. gamescope stores the request and
-/// raises `hasRepaint`, but — unlike `force_repaint` — it does **not** call
-/// `nudge_steamcompmgr()`, so the capture waits for the next vblank-gated
-/// repaint and then for a detached thread to encode and write the PNG. One live
-/// capture on the deploy box took roughly a second at 4K. Five seconds is
-/// enough that a
-/// loaded box cannot produce a false failure, and short enough that a wedged
-/// compositor says so inside one interaction. [`Captured::took_ms`] is what
-/// would replace this guess with a number.
+/// **A guess. There is no measured number behind it yet.** gamescope stores the
+/// request and raises `hasRepaint`, but — unlike `force_repaint` — it does
+/// **not** call `nudge_steamcompmgr()`, so the capture waits for the next
+/// vblank-gated repaint and then for a detached thread to encode and write the
+/// PNG. That is an argument for "not instant", not a duration.
+///
+/// Five seconds is chosen to be long enough that a loaded box cannot produce a
+/// false failure and short enough that a wedged compositor says so inside one
+/// interaction. [`Captured::took_ms`] exists to replace it with a real figure
+/// once one is taken under controlled conditions; until then, treat this as
+/// unvalidated and do not quote it as a bound anyone has checked.
 ///
 /// The SINGLE source of the value: [`crate::config::SessionConfig`]'s default
 /// derives `screenshot_timeout_ms` from it rather than repeating the literal.
@@ -138,8 +167,12 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 pub trait ScreenshotSurface {
     /// Ask for a capture of `kind`. One property write.
     fn request(&self, kind: u32) -> Result<(), AtomError>;
-    /// Is the request property still set? `true` means the compositor has not
-    /// finished the attempt. Per Rule 1 it says nothing about whether it worked.
+    /// Is the request property still set?
+    ///
+    /// **Diagnostic only — never a completion signal.** It was measured
+    /// clearing 680 ms before the file existed, so `false` here means neither
+    /// "the capture worked" nor even "the capture is over". [`capture`] uses it
+    /// solely to record when the compositor let go of the request.
     fn outstanding(&self) -> Result<bool, AtomError>;
 }
 
@@ -166,8 +199,14 @@ pub trait CaptureFile {
     /// warning, because after it nothing downstream can distinguish this
     /// request's frame from the previous one's.
     fn clear(&self) -> std::io::Result<()>;
-    /// Does the output file exist now?
-    fn present(&self) -> bool;
+    /// Is a **complete** frame sitting at the output path?
+    ///
+    /// Not "does the file exist". gamescope writes the PNG in place with
+    /// `stbi_write_png` and never renames, so a poll can land mid-write and see
+    /// a real file that is half a picture. This is the wait loop's exit
+    /// condition, so a partial file passing it would be harvested and handed to
+    /// the caller as a screenshot.
+    fn complete_frame(&self) -> bool;
     /// Move the output file to `dest`, returning its size in bytes.
     fn take(&self, dest: &Path) -> std::io::Result<u64>;
 }
@@ -197,8 +236,8 @@ impl CaptureFile for GamescopeOutput {
         }
     }
 
-    fn present(&self) -> bool {
-        self.source.is_file()
+    fn complete_frame(&self) -> bool {
+        complete_png(&self.source).unwrap_or(false)
     }
 
     fn take(&self, dest: &Path) -> std::io::Result<u64> {
@@ -228,6 +267,45 @@ impl CaptureFile for GamescopeOutput {
     }
 }
 
+/// The 8-byte PNG signature every PNG opens with.
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+/// The final chunk of a complete PNG: a zero length, the `IEND` type, and that
+/// chunk's (constant) CRC32. A file ending in these twelve bytes has had its
+/// last chunk written.
+const PNG_IEND: [u8; 12] = [
+    0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82,
+];
+
+/// Is `path` a PNG that has been written all the way to its end?
+///
+/// Structural rather than heuristic: the signature says it is a PNG at all, and
+/// the trailing `IEND` says the writer got to the end. The alternative —
+/// watching the size hold steady across two polls — cannot tell a finished small
+/// file from a stalled large one, and would pass a truncated frame whenever the
+/// writer happened to be descheduled between polls.
+///
+/// Any I/O error is "not complete": a file being written can legitimately fail a
+/// read, and the caller's deadline is what turns a persistent failure into an
+/// error. Cheap enough to poll — it reads twenty bytes, not the image.
+fn complete_png(path: &Path) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    if len < (PNG_SIGNATURE.len() + PNG_IEND.len()) as u64 {
+        return Ok(false);
+    }
+    let mut head = [0u8; PNG_SIGNATURE.len()];
+    f.read_exact(&mut head)?;
+    if head != PNG_SIGNATURE {
+        return Ok(false);
+    }
+    f.seek(SeekFrom::End(-(PNG_IEND.len() as i64)))?;
+    let mut tail = [0u8; PNG_IEND.len()];
+    f.read_exact(&mut tail)?;
+    Ok(tail == PNG_IEND)
+}
+
 /// Why a capture did not produce a screenshot.
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
@@ -250,24 +328,37 @@ pub enum CaptureError {
     Request(#[source] AtomError),
     #[error("reading back the screenshot request: {0}")]
     Poll(#[source] AtomError),
-    /// The request property was still set at the deadline: the compositor never
-    /// picked the request up, or never reached a repaint.
+    /// No frame, and the compositor never even let go of the request: it did not
+    /// pick the request up, or never reached a repaint. Usually a wedged or dead
+    /// compositor rather than a failed capture.
     #[error(
-        "the compositor did not complete a screenshot within {waited_ms} ms \
-         (bound {bound_ms} ms); {atom} is still set on the root"
+        "no screenshot within {waited_ms} ms (bound {bound_ms} ms), and {atom} is STILL \
+         set on the root — the compositor never picked the request up"
     )]
     TimedOut {
         waited_ms: u64,
         bound_ms: u64,
         atom: &'static str,
     },
-    /// Rule 1. The attempt finished and produced nothing.
+    /// The compositor took the request and no complete frame ever appeared.
+    ///
+    /// `cleared_after_ms` is the diagnostic that separates this from
+    /// [`Self::TimedOut`]: the request WAS picked up. Note it is normal for that
+    /// number to be a small fraction of `waited_ms` — the property clears long
+    /// before the file lands (32 ms vs 712 ms, measured) — so a clear followed
+    /// by a file is the healthy case, not this one.
     #[error(
-        "the compositor finished the screenshot request but wrote no file to {path}; \
-         gamescope clears the request property on failure as well as on success, so \
-         this is a failed capture, not a slow one"
+        "the compositor took the screenshot request (cleared after {cleared_after_ms} ms) \
+         but no complete PNG appeared at {path} within {waited_ms} ms (bound {bound_ms} ms); \
+         the request property clears long before the file is written, so this waited for \
+         the FILE and it never arrived"
     )]
-    NotWritten { path: String },
+    NotWritten {
+        path: String,
+        cleared_after_ms: u64,
+        waited_ms: u64,
+        bound_ms: u64,
+    },
     #[error("moving the screenshot to {dest}: {source}")]
     Harvest {
         dest: String,
@@ -284,10 +375,20 @@ pub struct Captured {
     /// Its size on disk, so a caller has something to check that is not merely
     /// "the file exists".
     pub bytes: u64,
-    /// Milliseconds from the request write to the file landing at `path`.
-    /// Returned rather than dropped because [`DEFAULT_SCREENSHOT_TIMEOUT`] is a
-    /// guess and this is the measurement that would replace it.
+    /// Milliseconds from the request write to a COMPLETE file at the output
+    /// path. Returned rather than dropped because
+    /// [`DEFAULT_SCREENSHOT_TIMEOUT`] is a guess and this is the measurement
+    /// that would replace it.
     pub took_ms: u64,
+    /// Milliseconds from the request write to the compositor clearing the
+    /// request property, when that was observed before the file landed.
+    ///
+    /// Reported because the gap between this and [`Self::took_ms`] is the whole
+    /// reason the wait is on the file: they were measured 32 ms and 712 ms
+    /// apart. A deployment where they converge is one where the old
+    /// property-based wait would have looked fine, and is worth knowing about.
+    /// `None` means the file beat the first property poll.
+    pub request_cleared_ms: Option<u64>,
 }
 
 /// Capture the screen to `dest`.
@@ -346,31 +447,44 @@ fn capture_with(
         .request(FULL_COMPOSITION)
         .map_err(CaptureError::Request)?;
 
-    // Wait for the compositor to stop working on it. Per Rule 1, this loop
-    // learns only that the attempt ENDED.
+    // **Wait for the FILE, not for the property** (Rule 1). The property was
+    // measured clearing at 32 ms against a file that landed at 712 ms, so
+    // breaking on the property and then testing the file reports `NotWritten`
+    // most of a second into a capture that succeeds.
+    //
+    // Reading a complete file here as "this request's frame" is sound only
+    // because of Rule 2: the path was empty when we asked.
+    let mut cleared_after_ms: Option<u64> = None;
     loop {
-        if !surface.outstanding().map_err(CaptureError::Poll)? {
+        if file.complete_frame() {
             break;
         }
+        // Diagnostic only, and only until it happens: once the compositor has
+        // let go of the request there is nothing further to learn, so this stops
+        // costing an X round trip per poll.
+        if cleared_after_ms.is_none() && !surface.outstanding().map_err(CaptureError::Poll)? {
+            cleared_after_ms = Some(elapsed_ms(started));
+        }
         if started.elapsed() >= timeout {
-            return Err(CaptureError::TimedOut {
-                waited_ms: elapsed_ms(started),
-                bound_ms: timeout.as_millis() as u64,
-                atom: crate::atoms::names::REQUEST_SCREENSHOT,
+            let waited_ms = elapsed_ms(started);
+            let bound_ms = timeout.as_millis() as u64;
+            // Which failure it is turns on whether the compositor ever took the
+            // request — the one thing the property is good for.
+            return Err(match cleared_after_ms {
+                Some(cleared_after_ms) => CaptureError::NotWritten {
+                    path: GAMESCOPE_OUTPUT.to_string(),
+                    cleared_after_ms,
+                    waited_ms,
+                    bound_ms,
+                },
+                None => CaptureError::TimedOut {
+                    waited_ms,
+                    bound_ms,
+                    atom: crate::atoms::names::REQUEST_SCREENSHOT,
+                },
             });
         }
         wait();
-    }
-
-    // Rule 1's other half: whether it WORKED is a separate question, answered on
-    // disk. Reading the answer as "this request's frame" is sound only because
-    // of Rule 2 — the path was empty when we asked. gamescope deletes the
-    // property after closing the file, so there is no window in which the
-    // property is gone and the file is still being written.
-    if !file.present() {
-        return Err(CaptureError::NotWritten {
-            path: GAMESCOPE_OUTPUT.to_string(),
-        });
     }
 
     let bytes = file.take(path).map_err(|source| CaptureError::Harvest {
@@ -382,6 +496,7 @@ fn capture_with(
         path: dest.to_string(),
         bytes,
         took_ms: elapsed_ms(started),
+        request_cleared_ms: cleared_after_ms,
     })
 }
 
@@ -392,18 +507,36 @@ fn elapsed_ms(since: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    /// A stand-in for the shared `/tmp/gamescope.png`, as a presence flag plus a
-    /// GENERATION — which capture wrote what is currently there. Generation `0`
-    /// is a leftover from before this test's request; `1` is this request's own
-    /// frame. Without that distinction a test cannot tell a stale screenshot
-    /// from a fresh one, which is the entire subject of Rule 2.
-    #[derive(Default)]
+    /// A poll counter shared by both fakes, incremented by the injected wait.
+    ///
+    /// **The compositor clearing the request and the file appearing are
+    /// scheduled INDEPENDENTLY against this clock, and that is the point.** The
+    /// first version of these fakes had the surface write the file at the moment
+    /// it cleared the property — it encoded the assumption the code was built
+    /// on. The suite was green and the implementation was broken on real
+    /// hardware, where the property cleared at 32 ms and the file landed at
+    /// 712 ms. A fake that can only produce the timeline you expect cannot
+    /// falsify anything, so here the two events are set separately and the
+    /// interesting cases are the ones where they disagree.
+    type Clock = Rc<Cell<u32>>;
+
+    /// A stand-in for the shared `/tmp/gamescope.png`.
+    ///
+    /// Carries a GENERATION as well as presence — `0` is a leftover from before
+    /// this request, `1` is this request's own frame — because without it a test
+    /// cannot tell a stale screenshot from a fresh one, which is the whole
+    /// subject of Rule 2.
     struct FakeFile {
+        clock: Clock,
         present: RefCell<bool>,
         generation: RefCell<u32>,
+        /// The poll at which this request's frame lands. `None` = never.
+        appears_at: RefCell<Option<u32>>,
+        /// The frame that lands is a PARTIAL png: present, but not complete.
+        truncated: RefCell<bool>,
         clear_fails: RefCell<bool>,
         take_fails: RefCell<bool>,
         cleared: RefCell<u32>,
@@ -412,9 +545,24 @@ mod tests {
     }
 
     impl FakeFile {
-        /// A file left over from a PREVIOUS capture — generation 0.
-        fn with_stale_leftover() -> Rc<Self> {
-            let f = Rc::new(Self::default());
+        fn new(clock: &Clock, appears_at: Option<u32>) -> Rc<Self> {
+            Rc::new(Self {
+                clock: Rc::clone(clock),
+                present: RefCell::new(false),
+                generation: RefCell::new(0),
+                appears_at: RefCell::new(appears_at),
+                truncated: RefCell::new(false),
+                clear_fails: RefCell::new(false),
+                take_fails: RefCell::new(false),
+                cleared: RefCell::new(0),
+                taken_generation: RefCell::new(None),
+            })
+        }
+
+        /// As `new`, but with a file left over from a PREVIOUS capture —
+        /// generation 0, present before this request is even made.
+        fn with_stale_leftover(clock: &Clock, appears_at: Option<u32>) -> Rc<Self> {
+            let f = Self::new(clock, appears_at);
             *f.present.borrow_mut() = true;
             *f.generation.borrow_mut() = 0;
             f
@@ -430,12 +578,31 @@ mod tests {
             *self.present.borrow_mut() = false;
             Ok(())
         }
-        fn present(&self) -> bool {
-            *self.present.borrow()
+
+        fn complete_frame(&self) -> bool {
+            // This request's frame lands at its own scheduled poll, whatever the
+            // compositor has done with the request property.
+            if let Some(at) = *self.appears_at.borrow() {
+                if self.clock.get() >= at && !*self.present.borrow() {
+                    *self.present.borrow_mut() = true;
+                    *self.generation.borrow_mut() = 1;
+                }
+            }
+            *self.present.borrow() && !*self.truncated.borrow()
         }
+
         fn take(&self, _dest: &Path) -> std::io::Result<u64> {
             if *self.take_fails.borrow() {
                 return Err(std::io::Error::other("no such directory"));
+            }
+            // Harvesting something that is not there is the shape a premature
+            // exit from the wait loop produces, so it fails the way the real
+            // filesystem would rather than silently reporting bytes.
+            if !*self.present.borrow() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "no such file",
+                ));
             }
             *self.taken_generation.borrow_mut() = Some(*self.generation.borrow());
             *self.present.borrow_mut() = false;
@@ -443,12 +610,11 @@ mod tests {
         }
     }
 
-    /// A compositor that finishes after `polls_until_done` polls, and — when
-    /// `writes_on_finish` — writes a generation-1 frame as it does.
+    /// A compositor that lets go of the request property at a given poll.
     struct FakeSurface {
-        polls_until_done: RefCell<u32>,
-        writes_on_finish: bool,
-        file: Rc<FakeFile>,
+        clock: Clock,
+        /// The poll at which the request property disappears.
+        clears_at: u32,
         request_fails: bool,
         poll_fails: bool,
         requested: RefCell<Vec<u32>>,
@@ -466,48 +632,48 @@ mod tests {
             if self.poll_fails {
                 return Err(AtomError::Connect("connection lost".into()));
             }
-            let mut left = self.polls_until_done.borrow_mut();
-            if *left == 0 {
-                // The attempt has ended. Whether it produced anything is the
-                // separate question, which this fake answers either way.
-                if self.writes_on_finish && !*self.file.present.borrow() {
-                    *self.file.present.borrow_mut() = true;
-                    *self.file.generation.borrow_mut() = 1;
-                }
-                return Ok(false);
-            }
-            *left -= 1;
-            Ok(true)
+            Ok(self.clock.get() < self.clears_at)
         }
     }
 
-    fn surface(file: &Rc<FakeFile>, polls: u32, writes_on_finish: bool) -> FakeSurface {
+    fn surface(clock: &Clock, clears_at: u32) -> FakeSurface {
         FakeSurface {
-            polls_until_done: RefCell::new(polls),
-            writes_on_finish,
-            file: Rc::clone(file),
+            clock: Rc::clone(clock),
+            clears_at,
             request_fails: false,
             poll_fails: false,
             requested: RefCell::new(Vec::new()),
         }
     }
 
+    /// Never clears — a compositor that did not pick the request up.
+    const NEVER: u32 = u32::MAX;
+
     fn run(
         s: &FakeSurface,
         f: &Rc<FakeFile>,
+        clock: &Clock,
         dest: &str,
         timeout: Duration,
     ) -> Result<Captured, CaptureError> {
-        capture_with(s, f, dest, timeout, || {})
+        let clock = Rc::clone(clock);
+        capture_with(s, f, dest, timeout, move || clock.set(clock.get() + 1))
+    }
+
+    /// Long enough that the wall-clock deadline never fires: these tests are
+    /// driven by the poll clock, not by real time.
+    fn generous() -> Duration {
+        Duration::from_secs(60)
     }
 
     // -- the happy path ------------------------------------------------------
 
     #[test]
     fn a_completed_capture_returns_the_destination_and_its_size() {
-        let f = Rc::new(FakeFile::default());
-        let s = surface(&f, 3, true);
-        let got = run(&s, &f, "/tmp/shot.png", Duration::from_secs(5)).unwrap();
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, Some(3));
+        let s = surface(&clock, 1);
+        let got = run(&s, &f, &clock, "/tmp/shot.png", generous()).unwrap();
         assert_eq!(got.path, "/tmp/shot.png");
         assert_eq!(got.bytes, 4096);
         // The type asked for is the one the module argues for, and no other.
@@ -518,29 +684,109 @@ mod tests {
         );
     }
 
-    // -- Rule 1: a cleared property is not success ---------------------------
+    // -- Rule 1: the file is the completion signal, not the property ---------
 
-    /// **Rule 1: a finished attempt that wrote no file is an error, never a
-    /// screenshot.**
+    /// **THE REGRESSION TEST. The wait is satisfied by the FILE, and a request
+    /// property that clears long before the file is not a failure.**
+    ///
+    /// This is the timeline measured on hardware — property cleared at 32 ms,
+    /// complete PNG at 712 ms — expressed on the poll clock: the compositor lets
+    /// go at poll 1, the frame lands at poll 5. The capture must SUCCEED.
+    ///
+    /// The original implementation broke out of the wait on the property and
+    /// then tested the file, so it returned `NotWritten` at poll 1 for a capture
+    /// that was working perfectly. Its fake wrote the file at the instant the
+    /// property cleared, so the two could never disagree and the suite stayed
+    /// green over the bug.
+    ///
+    /// Mutation-check (run 2026-09-08): add `if !surface.outstanding()? { break; }`
+    /// back into the loop ahead of the file check and this fails —
+    /// `Err(Harvest { .. })`, harvesting a file that is not there yet.
+    #[test]
+    fn a_property_that_clears_long_before_the_file_is_not_a_failure() {
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, Some(5));
+        let s = surface(&clock, 1);
+        let got = run(&s, &f, &clock, "/tmp/shot.png", generous())
+            .expect("a capture whose file lands after the property clears must succeed");
+        assert_eq!(got.bytes, 4096);
+        assert_eq!(
+            *f.taken_generation.borrow(),
+            Some(1),
+            "the harvested frame must be this request's own"
+        );
+        // The gap is reported, because it is the number that disproved the old
+        // premise and the one that says whether a deployment still has it.
+        assert_eq!(got.request_cleared_ms, Some(0), "measured on a fake clock");
+        assert!(
+            clock.get() >= 5,
+            "the wait must have run to the frame's arrival, not stopped at the clear"
+        );
+    }
+
+    /// **Rule 1: a capture that never produces a file is an error — but only
+    /// after the deadline, never at the moment the property clears.**
     ///
     /// gamescope deletes the request property on its write-failure path
-    /// (`steamcompmgr.cpp:3316`) exactly as it does on success, so "the property
-    /// is gone" is worth nothing on its own.
-    ///
-    /// Mutation-check (run 2026-09-08): delete the `if !file.present()` guard in
-    /// `capture_with` and this fails with `Ok(Captured { .. })` — a reported
-    /// screenshot for a capture that produced no file.
+    /// (`steamcompmgr.cpp:3316`) exactly as it does on success, so a cleared
+    /// property distinguishes nothing on its own. The error names when the
+    /// clear happened, which is what separates this from `TimedOut`.
     #[test]
-    fn a_finished_request_that_produced_no_file_is_not_a_screenshot() {
-        let f = Rc::new(FakeFile::default());
-        let s = surface(&f, 2, false);
-        let err = run(&s, &f, "/tmp/shot.png", Duration::from_secs(5)).unwrap_err();
-        assert!(matches!(err, CaptureError::NotWritten { .. }), "{err:?}");
-        // The message must say why a cleared property is not enough — that is
-        // the whole non-obvious part, and the next reader needs it.
+    fn a_capture_that_never_writes_a_file_fails_once_the_deadline_passes() {
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, None);
+        let s = surface(&clock, 0); // already cleared: the request was taken
+        let err = run(&s, &f, &clock, "/tmp/shot.png", Duration::ZERO).unwrap_err();
+        match &err {
+            CaptureError::NotWritten { path, .. } => assert_eq!(path, GAMESCOPE_OUTPUT),
+            other => panic!("{other:?}"),
+        }
+        // The message must explain the ordering, since that is the whole
+        // non-obvious part and the next reader needs it.
         assert!(
-            err.to_string().contains("clears the request property"),
+            err.to_string().contains("clears long before the file"),
             "{err}"
+        );
+        assert!(f.taken_generation.borrow().is_none());
+    }
+
+    /// A compositor that never even takes the request is a different failure,
+    /// and the error says so — the atom is still set, so nothing is coming.
+    #[test]
+    fn a_request_the_compositor_never_took_is_a_timeout_not_a_failed_write() {
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, None);
+        let s = surface(&clock, NEVER);
+        let err = run(&s, &f, &clock, "/tmp/shot.png", Duration::ZERO).unwrap_err();
+        match err {
+            CaptureError::TimedOut { bound_ms, atom, .. } => {
+                assert_eq!(bound_ms, 0);
+                assert_eq!(atom, "GAMESCOPECTRL_REQUEST_SCREENSHOT");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// **A half-written PNG is not a frame.** gamescope writes in place with no
+    /// rename, so a poll can land mid-write; harvesting then would hand the
+    /// caller a truncated image that is a perfectly real file.
+    ///
+    /// Mutation-check (run 2026-09-08): make `FakeFile::complete_frame` return
+    /// bare presence (drop the `&& !truncated`) and this fails with
+    /// `Ok(Captured { .. })` — a partial frame reported as a screenshot.
+    #[test]
+    fn a_partially_written_file_is_not_treated_as_a_frame() {
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, Some(0));
+        *f.truncated.borrow_mut() = true;
+        // Already cleared: the compositor took the request, so the failure is
+        // "took it and wrote no COMPLETE frame", not "never took it".
+        let s = surface(&clock, 0);
+        let err = run(&s, &f, &clock, "/tmp/shot.png", Duration::ZERO).unwrap_err();
+        assert!(matches!(err, CaptureError::NotWritten { .. }), "{err:?}");
+        assert!(
+            f.taken_generation.borrow().is_none(),
+            "a truncated frame must never be harvested"
         );
     }
 
@@ -549,24 +795,22 @@ mod tests {
     /// **Rule 2: the shared output path is cleared BEFORE the request, so a
     /// failed capture cannot hand back the previous one.**
     ///
-    /// This is the defect the fixed path invites: `/tmp/gamescope.png` still
-    /// holds the last successful capture — a valid PNG, right size, wrong
-    /// moment. An agent would "verify" a change that never rendered.
+    /// `/tmp/gamescope.png` still holds the last successful capture — a valid
+    /// PNG, right size, wrong moment. An agent would "verify" a change that
+    /// never rendered.
     ///
     /// Mutation-check (run 2026-09-08): remove the `file.clear()` call from
     /// `capture_with` and this fails at `matches!(err, NotWritten)` — the
     /// leftover is still present, so the capture "succeeds" and harvests
-    /// generation 0. That mutation takes three tests down together — this one,
-    /// `a_successful_capture_over_a_leftover_returns_the_new_frame` and
-    /// `a_failed_clear_refuses_the_capture_rather_than_risking_a_stale_frame` —
-    /// which is the point of having all three: the last of them pins the
-    /// weaker mutation (`?` → `let _ =`) that only IT catches.
+    /// generation 0. That mutation takes three tests down together; the
+    /// `a_failed_clear_...` one below is the only one that also catches the
+    /// weaker `?` → `let _ =` mutation.
     #[test]
     fn a_leftover_screenshot_is_never_returned_as_this_captures_result() {
-        let f = FakeFile::with_stale_leftover();
-        // The compositor finishes the attempt and writes NOTHING.
-        let s = surface(&f, 1, false);
-        let err = run(&s, &f, "/tmp/shot.png", Duration::from_secs(5)).unwrap_err();
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::with_stale_leftover(&clock, None);
+        let s = surface(&clock, 0);
+        let err = run(&s, &f, &clock, "/tmp/shot.png", Duration::ZERO).unwrap_err();
         assert!(matches!(err, CaptureError::NotWritten { .. }), "{err:?}");
         assert_eq!(
             *f.cleared.borrow(),
@@ -586,9 +830,10 @@ mod tests {
     /// always fails.
     #[test]
     fn a_successful_capture_over_a_leftover_returns_the_new_frame() {
-        let f = FakeFile::with_stale_leftover();
-        let s = surface(&f, 2, true);
-        let got = run(&s, &f, "/tmp/shot.png", Duration::from_secs(5)).unwrap();
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::with_stale_leftover(&clock, Some(2));
+        let s = surface(&clock, 1);
+        let got = run(&s, &f, &clock, "/tmp/shot.png", generous()).unwrap();
         assert_eq!(got.bytes, 4096);
         assert_eq!(
             *f.taken_generation.borrow(),
@@ -603,15 +848,15 @@ mod tests {
     ///
     /// Mutation-check (run 2026-09-08): change the `?` on `file.clear()` to a
     /// `let _ =` and this fails with `Ok(Captured { .. })`, having harvested
-    /// generation 0 — the stale frame, reported as a fresh screenshot. That is
-    /// the bug this test is for, and this is the ONLY test that catches that
-    /// mutation: the run took exactly one test down.
+    /// generation 0 — the stale frame, reported as a fresh screenshot. This is
+    /// the ONLY test that catches that mutation.
     #[test]
     fn a_failed_clear_refuses_the_capture_rather_than_risking_a_stale_frame() {
-        let f = FakeFile::with_stale_leftover();
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::with_stale_leftover(&clock, None);
         *f.clear_fails.borrow_mut() = true;
-        let s = surface(&f, 0, false);
-        let err = run(&s, &f, "/tmp/shot.png", Duration::from_secs(5)).unwrap_err();
+        let s = surface(&clock, 0);
+        let err = run(&s, &f, &clock, "/tmp/shot.png", generous()).unwrap_err();
         assert!(matches!(err, CaptureError::Clear { .. }), "{err:?}");
         assert!(
             s.requested.borrow().is_empty(),
@@ -622,40 +867,12 @@ mod tests {
 
     // -- bounds and error propagation ----------------------------------------
 
-    /// A compositor that never finishes is a timeout — not a hang, and not an
-    /// `ok`. The error names the atom so an operator can check it by hand.
-    #[test]
-    fn a_request_that_never_clears_times_out() {
-        let f = Rc::new(FakeFile::default());
-        let s = surface(&f, u32::MAX, false);
-        let err = run(&s, &f, "/tmp/shot.png", Duration::from_millis(0)).unwrap_err();
-        match err {
-            CaptureError::TimedOut { bound_ms, atom, .. } => {
-                assert_eq!(bound_ms, 0);
-                assert_eq!(atom, "GAMESCOPECTRL_REQUEST_SCREENSHOT");
-            }
-            other => panic!("{other:?}"),
-        }
-    }
-
-    /// A timeout must not then harvest whatever happens to be on disk. The
-    /// belt-and-braces case: `clear` succeeded, and something else populated the
-    /// shared path while we were waiting.
-    #[test]
-    fn a_timeout_never_harvests_whatever_is_on_the_shared_path() {
-        let f = FakeFile::with_stale_leftover();
-        let s = surface(&f, u32::MAX, false);
-        *f.present.borrow_mut() = true;
-        let err = run(&s, &f, "/tmp/shot.png", Duration::from_millis(0)).unwrap_err();
-        assert!(matches!(err, CaptureError::TimedOut { .. }), "{err:?}");
-        assert!(f.taken_generation.borrow().is_none());
-    }
-
     #[test]
     fn a_relative_destination_is_rejected_before_anything_is_touched() {
-        let f = FakeFile::with_stale_leftover();
-        let s = surface(&f, 0, true);
-        let err = run(&s, &f, "shot.png", Duration::from_secs(5)).unwrap_err();
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::with_stale_leftover(&clock, None);
+        let s = surface(&clock, 0);
+        let err = run(&s, &f, &clock, "shot.png", generous()).unwrap_err();
         assert!(
             matches!(err, CaptureError::RelativeDestination { .. }),
             "{err:?}"
@@ -663,24 +880,31 @@ mod tests {
         // Nothing may have happened yet: not the clear, not the request.
         assert_eq!(*f.cleared.borrow(), 0);
         assert!(s.requested.borrow().is_empty());
-        assert!(f.present(), "the leftover must be left alone");
+        assert!(*f.present.borrow(), "the leftover must be left alone");
     }
 
     #[test]
     fn a_failed_request_write_is_an_error() {
-        let f = Rc::new(FakeFile::default());
-        let mut s = surface(&f, 0, true);
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, Some(1));
+        let mut s = surface(&clock, 1);
         s.request_fails = true;
-        let err = run(&s, &f, "/tmp/shot.png", Duration::from_secs(5)).unwrap_err();
+        let err = run(&s, &f, &clock, "/tmp/shot.png", generous()).unwrap_err();
         assert!(matches!(err, CaptureError::Request(_)), "{err:?}");
     }
 
+    /// A failed property read is an error, not a silently-skipped diagnostic.
+    ///
+    /// The property is only a diagnostic now, but an X connection that cannot be
+    /// read is a broken connection, and continuing to poll a dead socket until
+    /// the deadline would report a timeout for a connection failure.
     #[test]
     fn a_failed_poll_is_an_error_not_a_finished_attempt() {
-        let f = Rc::new(FakeFile::default());
-        let mut s = surface(&f, 5, true);
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, Some(5));
+        let mut s = surface(&clock, 1);
         s.poll_fails = true;
-        let err = run(&s, &f, "/tmp/shot.png", Duration::from_secs(5)).unwrap_err();
+        let err = run(&s, &f, &clock, "/tmp/shot.png", generous()).unwrap_err();
         assert!(matches!(err, CaptureError::Poll(_)), "{err:?}");
     }
 
@@ -689,10 +913,11 @@ mod tests {
     /// say so rather than reporting a mysterious failed screenshot.
     #[test]
     fn a_failed_harvest_names_the_destination() {
-        let f = Rc::new(FakeFile::default());
-        let s = surface(&f, 1, true);
+        let clock: Clock = Rc::new(Cell::new(0));
+        let f = FakeFile::new(&clock, Some(1));
         *f.take_fails.borrow_mut() = true;
-        let err = run(&s, &f, "/nope/shot.png", Duration::from_secs(5)).unwrap_err();
+        let s = surface(&clock, 1);
+        let err = run(&s, &f, &clock, "/nope/shot.png", generous()).unwrap_err();
         assert!(matches!(err, CaptureError::Harvest { .. }), "{err:?}");
         assert!(err.to_string().contains("/nope/shot.png"), "{err}");
     }
@@ -716,6 +941,9 @@ mod tests {
             },
             CaptureError::NotWritten {
                 path: GAMESCOPE_OUTPUT.into(),
+                cleared_after_ms: 32,
+                waited_ms: 5000,
+                bound_ms: 5000,
             },
             CaptureError::Harvest {
                 dest: "/tmp/x.png".into(),
@@ -755,6 +983,15 @@ mod tests {
         p
     }
 
+    /// The smallest byte string that satisfies [`complete_png`]: signature,
+    /// something in the middle, `IEND`.
+    fn whole_png() -> Vec<u8> {
+        let mut v = PNG_SIGNATURE.to_vec();
+        v.extend_from_slice(b"....IHDR....pretend this is image data....");
+        v.extend_from_slice(&PNG_IEND);
+        v
+    }
+
     /// `clear` treats an absent file as success: the first capture after a boot
     /// has nothing to remove, and making that an error would refuse every cold
     /// capture on the box.
@@ -764,7 +1001,7 @@ mod tests {
             source: scratch("absent"),
         };
         out.clear().unwrap();
-        assert!(!out.present());
+        assert!(!out.complete_frame());
     }
 
     /// `clear` really removes an existing file — the operative half of Rule 2 on
@@ -772,14 +1009,68 @@ mod tests {
     #[test]
     fn clearing_an_existing_output_removes_it() {
         let source = scratch("clear");
-        std::fs::write(&source, b"OLD").unwrap();
+        std::fs::write(&source, whole_png()).unwrap();
         let out = GamescopeOutput {
             source: source.clone(),
         };
-        assert!(out.present());
+        assert!(out.complete_frame());
         out.clear().unwrap();
-        assert!(!out.present());
+        assert!(!out.complete_frame());
         assert!(!source.exists());
+    }
+
+    /// **A PNG missing its `IEND` is not a complete frame**, which is the real
+    /// half of the truncation rule — the unit test above proves the loop honours
+    /// `complete_frame`, and this proves `complete_frame` can actually tell.
+    ///
+    /// Mutation-check (run 2026-09-08): make `complete_png` return
+    /// `Ok(len > 0)` and this fails — a half-written capture reads as finished.
+    #[test]
+    fn a_png_without_its_end_chunk_is_not_a_complete_frame() {
+        let source = scratch("partial");
+        let whole = whole_png();
+        // Everything but the last byte of IEND: a real file, a real PNG header,
+        // and exactly the state a poll lands in mid-write.
+        std::fs::write(&source, &whole[..whole.len() - 1]).unwrap();
+        let out = GamescopeOutput {
+            source: source.clone(),
+        };
+        assert!(
+            !out.complete_frame(),
+            "a truncated PNG must not read as a finished frame"
+        );
+        // And the moment the writer finishes, it does.
+        std::fs::write(&source, &whole).unwrap();
+        assert!(out.complete_frame());
+        let _ = std::fs::remove_file(&source);
+    }
+
+    /// Non-PNG bytes are not a frame either, however long the file is.
+    #[test]
+    fn a_file_that_is_not_a_png_is_not_a_complete_frame() {
+        let source = scratch("notpng");
+        std::fs::write(
+            &source,
+            b"this is not a png but it is long enough to be one",
+        )
+        .unwrap();
+        let out = GamescopeOutput {
+            source: source.clone(),
+        };
+        assert!(!out.complete_frame());
+        let _ = std::fs::remove_file(&source);
+    }
+
+    /// An empty file — the very first instant of a write — is not a frame.
+    #[test]
+    fn an_empty_output_is_not_a_complete_frame() {
+        let source = scratch("empty");
+        std::fs::write(&source, b"").unwrap();
+        let out = GamescopeOutput {
+            source: source.clone(),
+        };
+        assert!(!out.complete_frame());
+        let _ = std::fs::remove_file(&source);
     }
 
     /// `take` moves rather than copies: the shared path must be empty
@@ -788,16 +1079,17 @@ mod tests {
     fn taking_the_output_moves_it_off_the_shared_path() {
         let source = scratch("mv-src");
         let dest = scratch("mv-dest");
-        std::fs::write(&source, b"PNGDATA").unwrap();
+        let png = whole_png();
+        std::fs::write(&source, &png).unwrap();
         let out = GamescopeOutput {
             source: source.clone(),
         };
-        assert_eq!(out.take(&dest).unwrap(), 7);
+        assert_eq!(out.take(&dest).unwrap(), png.len() as u64);
         assert!(
-            !out.present(),
+            !out.complete_frame(),
             "the shared path must be empty after a harvest"
         );
-        assert_eq!(std::fs::read(&dest).unwrap(), b"PNGDATA");
+        assert_eq!(std::fs::read(&dest).unwrap(), png);
         let _ = std::fs::remove_file(&dest);
     }
 

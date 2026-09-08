@@ -26,14 +26,15 @@ screenshot batch. Keep this updated as views are added or changed.
 >
 > **On v2, ask the compositor instead**, via `tv-shell-core`'s `screenshot` verb
 > over its Unix socket. It sets gamescope's `GAMESCOPECTRL_REQUEST_SCREENSHOT`
-> root property, waits for gamescope to clear it, and moves the frame gamescope
-> composited to the path you name:
+> root property, waits for the complete PNG gamescope writes, and moves it to
+> the path you name. It waits for the FILE and not for the request property,
+> which clears long before the frame exists (measured: 32 ms vs 712 ms):
 >
 > ```bash
 > # On the box, as the session user — the socket is 0600 and owner-only.
 > SOCK="${TV_SHELL_CORE_SOCK:-/run/user/$(id -u)/tv-shell-core.sock}"
 > echo "screenshot /tmp/shot.png" | socat - UNIX-CONNECT:"$SOCK"
-> # -> {"path":"/tmp/shot.png","bytes":812345,"took_ms":940}   on success
+> # -> {"path":"/tmp/shot.png","bytes":812345,"took_ms":712}   on success
 > # -> error:<why>                                             on any failure
 > ```
 >

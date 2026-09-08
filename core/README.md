@@ -169,16 +169,24 @@ failure inverted:
   and the v2 shell is a Wayland client with no X window in the first place.
   What does work is asking the compositor: setting
   `GAMESCOPECTRL_REQUEST_SCREENSHOT` makes gamescope composite and write the
-  frame itself. Two things about that path are traps. gamescope clears the
-  property on its **write-failure** path as well as on success, so "the property
-  is gone" means the attempt ended and never that it worked; and it writes to
-  one **hardcoded, shared** output path, so a capture that never happened leaves
-  the previous one lying there — a valid PNG, right size, wrong moment, which an
-  agent would read as the current screen and "verify" a change that never
-  rendered. So the core clears that path *before* it asks, which makes anything
-  found afterwards this request's own frame, and treats a failed clear as a
-  failed capture rather than a warning. Whether the capture worked is then a
-  separate question answered on disk, and a wait that expires is an `error:`,
+  frame itself. Two things about that path are traps.
+  **The request property is not a completion signal** — measured on hardware, it
+  cleared at 32 ms against a file that landed at 712 ms, and gamescope clears it
+  on the write-FAILURE path too. Waiting on it and then checking the file
+  reports a failure most of a second into a capture that succeeds, which is how
+  the first version of this module shipped broken with a green suite: its fake
+  wrote the file at the instant the property cleared, so the two could never
+  disagree. The wait is therefore on a **complete file** — PNG signature and
+  `IEND`, since gamescope writes in place with no rename and a poll can land
+  mid-write — and the property is polled only to record *when* it cleared, which
+  is what separates "the compositor never took the request" from "it took it and
+  wrote nothing".
+  **The output path is hardcoded and shared**, so a capture that never happened
+  leaves the previous one lying there — a valid PNG, right size, wrong moment,
+  which an agent would read as the current screen and "verify" a change that
+  never rendered. So the core clears that path *before* it asks, which makes
+  anything found afterwards this request's own frame, and treats a failed clear
+  as a failed capture rather than a warning. A wait that expires is an `error:`,
   never a screenshot.
 - **The shell's app id is private and may not be 769.** Under `--steam`, 769 is
   the Steam client's own id (`window_is_steam`: forced fullscreen sizing,
@@ -359,10 +367,18 @@ rule in the source and confirm the suite goes red**, then revert:
   instead of an error. `an_unknown_id_with_no_command_is_a_clean_error` must fail.
 - Make an explicit command for a KNOWN class drop the class environment.
   `an_explicit_command_for_a_known_class_keeps_its_environment` must fail.
-- Delete the `if !file.present()` guard from `screenshot::capture_with`.
-  `a_finished_request_that_produced_no_file_is_not_a_screenshot` must fail — it
-  returns `Ok(Captured { .. })`, a reported screenshot for a capture that wrote
-  nothing.
+- Add `if !surface.outstanding()? { break; }` back into `screenshot::capture_with`'s
+  wait loop, ahead of the file check — i.e. wait on the property again.
+  **Six tests must fail**, led by
+  `a_property_that_clears_long_before_the_file_is_not_a_failure`. This is the
+  one that matters most here: the module shipped with exactly that bug and a
+  green suite, because its fake wrote the file at the moment the property
+  cleared. The fake now schedules the two events independently against a poll
+  clock, which is what makes the rule falsifiable at all.
+- Make `complete_png` return `Ok(len > 0)`.
+  `a_png_without_its_end_chunk_is_not_a_complete_frame` and
+  `a_file_that_is_not_a_png_is_not_a_complete_frame` must fail — a half-written
+  capture would read as finished, and gamescope writes in place with no rename.
 - Remove the `file.clear()` call from `screenshot::capture_with`.
   `a_leftover_screenshot_is_never_returned_as_this_captures_result`,
   `a_successful_capture_over_a_leftover_returns_the_new_frame` and
