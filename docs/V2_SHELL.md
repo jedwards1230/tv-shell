@@ -545,6 +545,34 @@ confirmed green before and after the run.
 | the catalog path falls through XDG then HOME | the XDG branch is removed | `TstCoreClient::catalogPathPrecedence` |
 | each drawer row fires its own effect | the reload branch is made unreachable | `DrawerScreen::test_each_row_fires_its_own_effect` |
 
+### 11.7a The stranding guarantee, mutation by mutation
+
+"Disabling or hiding a component cannot strand focus" is the claim v1 kept
+failing, so it gets its own mutation set rather than sitting inside the table
+above. Four mutations, each cutting a different link in the chain, run one at a
+time against the whole suite:
+
+| Link cut | Mutation | Caught by |
+|---|---|---|
+| **Disable is honoured** | `slot.slotEnabled` dropped from `FocusRouter.cells()`'s `focusable` | `FocusGraph::test_disabling_the_focused_row_rehomes_instead_of_stranding` |
+| **Hide is honoured** | `slot.visible` dropped from the same expression | 4 `HomeScreen` tests, incl. `test_a_rail_vanishing_under_focus_rehomes_instead_of_stranding` and `test_leaving_the_empty_state_restores_focus_to_a_card` |
+| **The re-home itself** | `rehome` always returns null | 9 tests across `FocusGraph` and `HomeScreen` |
+| **The repair trigger** | `FocusSlot.onSlotEnabledChanged` stops calling `scheduleSync()` | `FocusGraph::test_disabling_the_focused_row_rehomes_instead_of_stranding`, `test_router_moves_through_the_real_slots` |
+
+All four caught; none survived. The first mutation fails at
+`tst_focusgraph.qml:218` — `verify(theRouter.currentId !== "s4")`, the assertion
+that focus actually left the cell that was disabled under it.
+
+The **hide** row is the one worth dwelling on, because it was the last to be
+isolated and it defends the subtler half. `focusable` is
+`slotEnabled && visible` precisely so that a slot inside a container that goes
+hidden leaves the graph without anyone remembering to also clear `slotEnabled` —
+two ways to say "not now", one meaning. The home screen's empty-state card
+depends on exactly that: it stays instantiated at row 0 and is kept out of the
+graph purely by being invisible while rails exist. Drop `visible` from the
+expression and it competes for a row it does not own, which is why four separate
+navigation tests fail rather than one.
+
 ### 11.8 Two defects the tests found that reading the code did not
 
 Recorded because both are the kind that a green suite and a clean lint would have
@@ -557,6 +585,17 @@ glibc *"corrupted double-linked list"* abort attributed to an unrelated test, an
 an **AddressSanitizer build of the same suite reported zero errors**, so only
 running it non-sanitized found it at all. Fixed by an explicit teardown that
 unwires the socket before aborting it.
+
+The general lesson is worth keeping: **ASan clean is not evidence of memory
+correctness for Qt object-lifetime bugs**, because the corruption is in Qt's own
+signal dispatch rather than in a heap access ASan instruments.
+
+The fix is now **defended, not merely present**:
+`TstCoreClient::destroyingAConnectedClientIsQuiet` destroys twenty connected
+clients, each with a command in flight. It is a loop rather than a single
+destruction because one bad teardown can corrupt quietly and be tolerated while
+twenty cannot — mutation-verified by removing the destructor's body, which
+reproduces the abort and fails the lane.
 
 **`QT_QML_SINGLETON_TYPE` set after `qt_add_qml_module` is silently ignored.**
 The symptom is every `Tokens.*` reading `undefined` at runtime, with no error
