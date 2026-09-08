@@ -118,15 +118,24 @@ Unlike v1's `shell/`, this one BUILDS: the pre-map X11 tagging needs C++. See
 ```bash
 cmake -S shell-v2 -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cmake --build build --target all_qmllint   # module-resolving qmllint
+cmake --build build --target all_qmllint     # module-resolving qmllint
+cmake --build build --target qmllint_strict  # AND this one — see below
 ctest --test-dir build --output-on-failure
 ```
+
+**Run `qmllint_strict` too.** `all_qmllint` runs qmllint with its DEFAULTS, and
+the defaults let a reference to a member that does not exist through silently
+(measured: `Tokens.onlineTypo` and `card.titleTypo` both passed it). The strict
+target re-runs the same response file with `missing-property` and `unqualified`
+promoted to errors. It matters more here than in most Qt projects because there
+is no screenshot path on a v2 session, so a typo'd binding is a property that is
+simply never set on a screen nobody can look at.
 
 The X-backed lane (`premap`, which asserts the `STEAM_*` properties reach the
 server BEFORE the window maps) is opt-in behind `TV_SHELL_TEST_XVFB`, the same
 shape as `core/`'s X tests — so the commands above stay offline and need no
 display server. The variable is read at **configure** time, so it must be set
-before `cmake -S`, and `ctest` reports two lanes without it and three with it:
+before `cmake -S`, and `ctest` reports three lanes without it and four with it:
 
 ```bash
 Xvfb :99 -screen 0 1280x800x24 &
