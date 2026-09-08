@@ -108,9 +108,31 @@ void Surface::applyVisibility()
     // than at the one call site that got it wrong. A base surface has no
     // legitimate size other than the output's; an Overlay or Toast does, and is
     // therefore left alone.
+    //
+    // ON THE NULL BRANCH, AND WHY IT IS LOUD.
+    //
+    // `screen()` can legitimately return null — a QWindow is not guaranteed to
+    // have one, and on a platform with no screens it will not. Every platform
+    // this shell actually runs on supplies one (xcb from the X server, and the
+    // offscreen plugin synthesizes an 800x800 screen, which is what the geometry
+    // lane asserts against), so this branch is not expected to be taken.
+    //
+    // But "not expected" is exactly what the 160x160 window was. Silently
+    // skipping the sizing leaves the window at Qt's default, which is the same
+    // defect reached through a different door — and the reason that one survived
+    // to a television is that nothing said anything. So it warns rather than
+    // returning quietly: if this ever fires, the next person gets a sentence
+    // instead of a mystery.
     if (m_role == Base && !handle()) {
-        if (const QScreen *s = screen())
+        if (const QScreen *s = screen()) {
             setGeometry(s->geometry());
+        } else {
+            qCWarning(lcTag,
+                      "base surface has no QScreen: leaving it at Qt's default size (%dx%d). "
+                      "Under gamescope the client's own size is honoured, so this will be "
+                      "upscaled to fill the display.",
+                      width(), height());
+        }
     }
 
     // The three-step ordering this whole class exists for. `create()` issues X
