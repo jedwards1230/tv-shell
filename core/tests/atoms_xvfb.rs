@@ -178,6 +178,59 @@ fn deleting_an_absent_property_is_a_no_op() {
     conn.delete(win, names::STEAM_GAME).unwrap();
 }
 
+/// The screenshot request property, round-tripped through a real X server.
+///
+/// `screenshot::capture`'s whole wait loop is "is this property still there?",
+/// and its unit tests answer that from a `RefCell<u32>` counter. What they
+/// cannot show is that `request_screenshot` writes something the SERVER stores
+/// and that `screenshot_requested` reads that same thing back — the half where
+/// an atom-name typo, a wrong property width, or a missing flush would live. A
+/// missing flush is the interesting one: it would leave the request sitting in
+/// the output buffer while the loop reads absence and concludes the compositor
+/// had already finished, producing a `NotWritten` error for a capture that was
+/// never actually asked for.
+///
+/// gamescope, not Xvfb, is what deletes this property in production, so the
+/// delete here stands in for it: what is being checked is that the two
+/// accessors agree about presence and absence against a real server.
+#[test]
+#[ignore = "needs a live X server: set TV_SHELL_TEST_XVFB and run with --ignored"]
+fn the_screenshot_request_property_round_trips() {
+    use tv_shell_core::screenshot::FULL_COMPOSITION;
+    let conn = connect();
+    let root = conn.root();
+
+    // Start from absent, whatever an earlier test left behind.
+    conn.delete(root, names::REQUEST_SCREENSHOT).unwrap();
+    assert!(
+        !conn.screenshot_requested().unwrap(),
+        "an absent request property must read as no request outstanding"
+    );
+
+    conn.request_screenshot(FULL_COMPOSITION).unwrap();
+    assert!(
+        conn.screenshot_requested().unwrap(),
+        "the request must be visible to a read immediately after the write; \
+         a failure here is the write sitting unflushed in the output buffer"
+    );
+    // The VALUE matters as much as the presence: gamescope reads it as the
+    // screenshot type, so a wrong width or a wrong number would capture the
+    // wrong thing rather than fail.
+    assert_eq!(
+        conn.read_cardinals(root, names::REQUEST_SCREENSHOT)
+            .unwrap(),
+        vec![FULL_COMPOSITION],
+        "the property must hold exactly the one type value that was requested"
+    );
+
+    // gamescope's completion signal, as the wait loop sees it.
+    conn.delete(root, names::REQUEST_SCREENSHOT).unwrap();
+    assert!(
+        !conn.screenshot_requested().unwrap(),
+        "a deleted request property must read as the attempt having finished"
+    );
+}
+
 #[test]
 #[ignore = "needs a live X server: set TV_SHELL_TEST_XVFB and run with --ignored"]
 fn a_window_tag_round_trips() {

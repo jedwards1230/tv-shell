@@ -1109,6 +1109,9 @@ mod tests {
             fn home(&self) -> String {
                 panic!("adoption called home")
             }
+            fn screenshot(&self, _: &str) -> String {
+                panic!("adoption took a screenshot")
+            }
             fn launch(&self, _: AppId, _: &[String]) -> String {
                 panic!("adoption launched something — it must not start a process")
             }
@@ -1262,6 +1265,9 @@ mod tests {
         }
         fn home(&self) -> String {
             panic!("the boot client must never call home")
+        }
+        fn screenshot(&self, _: &str) -> String {
+            panic!("the boot client must never take a screenshot")
         }
         fn launch(&self, _: AppId, _: &[String]) -> String {
             panic!("the boot client must use the SUPERVISED launch")
@@ -1422,6 +1428,9 @@ mod tests {
             }
             fn home(&self) -> String {
                 panic!("boot client called home on a skip")
+            }
+            fn screenshot(&self, _: &str) -> String {
+                panic!("boot client took a screenshot on a skip")
             }
             fn launch(&self, _: AppId, _: &[String]) -> String {
                 panic!("boot client called launch on a skip")

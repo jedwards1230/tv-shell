@@ -13,6 +13,7 @@ its relationship to `daemon/`.
 | `screen` | `ScreenState` — one snapshot of what is on screen, replacing `hypr-active`/`hypr-clients`/`hypr-monitors`. Read in one round trip; `_APP` is not exposed as an app id at all (below) |
 | `launch` | Scoped launching: `systemd-run --user --scope` into `app-steam-app<appid>-<pid>.scope`, the argv as a testable value, and reading a scope back out of a cgroup path. Preflight is fail-closed — there is no unscoped fallback — and a launch is **confirmed** (the launcher is still alive and `/proc/<pid>/cgroup` names the scope) before it reports success |
 | `baselayer` | `show`/`home` as one write plus one bounded verify, `IntentGate` (which serializes a write and its verify against other intents), and `reconcile` as the read-only recovery path |
+| `screenshot` | `screenshot <path>` — the capture path that replaces v1's `grim`, which gamescope cannot serve at all. Asks gamescope for the frame via a root property rather than reading pixels, and **clears the compositor's one hardcoded output path before every request**, so a failed capture cannot hand back the previous one (below) |
 | `config` | `~/.config/tv-shell/core.toml` — a separate file from v1's `config.toml` (below), plus the socket path and the `[[app]]` class table. All-defaults on a missing file, `deny_unknown_fields` everywhere, `validate()` before any value is used |
 | `boot` | Whether a fresh session gets its first app, keeping it alive across crashes, and the two observations that stop either one stealing a live session (below) |
 | `protocol` | The IPC grammar, carried over from v1 unchanged in contract (§4): newline framing, 4096-byte lines, `ok` / `unknown` / `error:<msg>` / a bare JSON document |
@@ -156,6 +157,29 @@ failure inverted:
   state with nothing on disk — and deliberately does not re-assert. A write
   happens only when the core has an intent of its own to express. In particular
   the core never writes "home" on boot; that would yank a live game.
+- **A screenshot is asked for, not read — and a stale one is unrepresentable
+  rather than merely detected.** gamescope 3.16.28 implements no Wayland
+  screen-capture protocol (`wlr-screencopy` and `ext-image-copy-capture` appear
+  nowhere in its tree), so v1's `grim` path — and with it `GET /screenshot`, the
+  MCP `take_screenshot` tool, the panel's screenshot page and
+  `docs/qa-screenshot-views.md` — cannot work under v2 at all, and the
+  agent-native dev loop loses its verify step. The X11 fallback is dead too:
+  Xwayland runs `-rootless` under manual Composite redirection, so `XGetImage`
+  on the root is `BadMatch` and a GPU-rendered window reads back 100% black —
+  and the v2 shell is a Wayland client with no X window in the first place.
+  What does work is asking the compositor: setting
+  `GAMESCOPECTRL_REQUEST_SCREENSHOT` makes gamescope composite and write the
+  frame itself. Two things about that path are traps. gamescope clears the
+  property on its **write-failure** path as well as on success, so "the property
+  is gone" means the attempt ended and never that it worked; and it writes to
+  one **hardcoded, shared** output path, so a capture that never happened leaves
+  the previous one lying there — a valid PNG, right size, wrong moment, which an
+  agent would read as the current screen and "verify" a change that never
+  rendered. So the core clears that path *before* it asks, which makes anything
+  found afterwards this request's own frame, and treats a failed clear as a
+  failed capture rather than a warning. Whether the capture worked is then a
+  separate question answered on disk, and a wait that expires is an `error:`,
+  never a screenshot.
 - **The shell's app id is private and may not be 769.** Under `--steam`, 769 is
   the Steam client's own id (`window_is_steam`: forced fullscreen sizing,
   `focus=steam` in the stats pipe) and is reserved for it. `CoreConfig::validate`
@@ -335,6 +359,22 @@ rule in the source and confirm the suite goes red**, then revert:
   instead of an error. `an_unknown_id_with_no_command_is_a_clean_error` must fail.
 - Make an explicit command for a KNOWN class drop the class environment.
   `an_explicit_command_for_a_known_class_keeps_its_environment` must fail.
+- Delete the `if !file.present()` guard from `screenshot::capture_with`.
+  `a_finished_request_that_produced_no_file_is_not_a_screenshot` must fail — it
+  returns `Ok(Captured { .. })`, a reported screenshot for a capture that wrote
+  nothing.
+- Remove the `file.clear()` call from `screenshot::capture_with`.
+  `a_leftover_screenshot_is_never_returned_as_this_captures_result`,
+  `a_successful_capture_over_a_leftover_returns_the_new_frame` and
+  `a_failed_clear_refuses_the_capture_rather_than_risking_a_stale_frame` must
+  all fail. Weaken it instead to `let _ = file.clear();` and only the **last**
+  of those fails — which is why all three exist, and why the fake output file
+  carries a *generation* rather than just a presence flag: without it a test
+  cannot tell a stale frame from a fresh one, which is the entire subject of the
+  rule.
+- Widen `protocol`'s screenshot arm from `(Some(dest), None)` to
+  `(Some(dest), _)`. `a_destination_with_a_space_is_refused_rather_than_truncated`
+  must fail — `screenshot /tmp/my shot.png` would silently capture to `/tmp/my`.
 - Delete the `boot_app` arm of `CoreConfig::validate`.
   `a_boot_app_with_no_class_is_refused` must fail.
 - Make `boot::adopt` call `launch_and_show`, or make `start`'s `Adopt` arm fall

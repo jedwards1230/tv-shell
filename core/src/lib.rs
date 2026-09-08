@@ -13,6 +13,7 @@
 //! | [`screen`] | [`screen::ScreenState`], the one snapshot that replaces v1's `hypr-active`/`hypr-clients`/`hypr-monitors` |
 //! | [`launch`] | Scoped launching: `systemd-run --user --scope`, and reading a scope back out of a cgroup path |
 //! | [`baselayer`] | `show`/`home` as one write plus one bounded verify |
+//! | [`screenshot`] | `screenshot <path>`: the capture path that replaces v1's `grim`, which gamescope cannot serve |
 //! | [`config`] | `~/.config/tv-shell/core.toml` — a separate file from v1's |
 //! | [`protocol`] | The IPC grammar, carried over from v1 unchanged in contract (§4) |
 //! | [`ipc`] | The Unix-socket server |
@@ -52,3 +53,4 @@ pub mod ipc;
 pub mod launch;
 pub mod protocol;
 pub mod screen;
+pub mod screenshot;

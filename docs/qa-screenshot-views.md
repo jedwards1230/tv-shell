@@ -3,6 +3,53 @@
 A living catalog of tv-shell views/overlays/states worth capturing in a visual-QA
 screenshot batch. Keep this updated as views are added or changed.
 
+> ## ⚠️ Everything below is **v1 only**. Under the v2 (gamescope) session, `grim` does not work.
+>
+> gamescope 3.16.28 implements no Wayland screen-capture protocol — neither
+> `wlr-screencopy-unstable-v1` nor `ext-image-copy-capture-v1` exists in its
+> tree — so `grim` fails with `compositor doesn't support the screen capture
+> protocol` (measured on htpc-1's live v2 session, 2026-09-08). That is
+> structural, not a misconfiguration, and no flag changes it. **Every capture
+> route in this document is `grim`-based and therefore unavailable on v2**, as
+> are the other v1 surfaces built on it: the daemon's `GET /screenshot`, the MCP
+> `take_screenshot` tool and `screenshot://current` resource
+> ([`CONTROL_SURFACE.md`](CONTROL_SURFACE.md)), and the panel's Dev ▸ Screenshot
+> page ([`PANEL.md`](PANEL.md)). Those are documented for the v1 session they
+> serve and are deliberately **not** rewritten here.
+>
+> Reading pixels out of X instead does not work either, and is not worth
+> retrying: gamescope runs Xwayland `-rootless` under manual Composite
+> redirection, so `XGetImage` on the root fails `BadMatch` and a GPU-rendered
+> client window reads back 100% black. The v2 shell is not an X client at all —
+> the session runs `--expose-wayland`, so it is an xdg-shell Wayland client with
+> no X window to capture.
+>
+> **On v2, ask the compositor instead**, via `tv-shell-core`'s `screenshot` verb
+> over its Unix socket. It sets gamescope's `GAMESCOPECTRL_REQUEST_SCREENSHOT`
+> root property, waits for gamescope to clear it, and moves the frame gamescope
+> composited to the path you name:
+>
+> ```bash
+> # On the box, as the session user — the socket is 0600 and owner-only.
+> SOCK="${TV_SHELL_CORE_SOCK:-/run/user/$(id -u)/tv-shell-core.sock}"
+> echo "screenshot /tmp/shot.png" | socat - UNIX-CONNECT:"$SOCK"
+> # -> {"path":"/tmp/shot.png","bytes":812345,"took_ms":940}   on success
+> # -> error:<why>                                             on any failure
+> ```
+>
+> The reply is the contract: a JSON payload means a frame really landed at that
+> path, and an `error:` line means there is no screenshot — never a stale one.
+> The capture is the full composition at output resolution (every layer, HDR
+> tone-mapped to gamma 2.2 by gamescope), which is what these views want.
+> `core/src/screenshot.rs` carries the reasoning; `core/README.md` § "The §5
+> rules this code enforces" carries the two rules.
+>
+> **The view catalogue below — which screens exist and how to reach each — is
+> still the right catalogue.** Only the capture command and the navigation
+> surface change: v2 has no Hyprland, no `intent` socket and no `wtype`, so the
+> "how to reach" column is v1's. Retargeting it belongs with the v2 shell's own
+> input surface, not with this change.
+
 ## How to capture
 
 See the `tv-shell-dev` skill ("Driving the UI for Screenshots"). In short there

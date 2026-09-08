@@ -183,6 +183,31 @@
 # headroom for a loaded box, not an expected time.
 #launch_confirm_ms = 2000
 
+# Bound on how long `screenshot <path>` waits for the compositor to finish a
+# capture.
+#
+# THIS IS THE ONLY WAY TO SEE THE SCREEN UNDER V2. gamescope implements no
+# Wayland screen-capture protocol, so `grim` — and every v1 surface built on it
+# — cannot work here. The core instead sets gamescope's
+# GAMESCOPECTRL_REQUEST_SCREENSHOT root property, waits for gamescope to clear
+# it, and moves the frame gamescope wrote to the path you named.
+#
+# The wait is one vblank-gated repaint plus a detached encode-and-write, and
+# gamescope does NOT nudge its own repaint loop for a capture request, so this
+# is not instantaneous. One live capture at 4K took roughly a second.
+#
+# A capture that does not complete in this window is an `error:`, never a
+# screenshot — and in particular never the PREVIOUS capture, which gamescope
+# leaves lying at its one hardcoded output path. The core clears that path
+# before every request precisely so a stale frame cannot be mistaken for a
+# fresh one.
+#
+# RANGE: 1..=30000. The default is headroom over a measured ~1 s, not an
+# expected time. Bounded above because a capture holds the capture lock for its
+# whole wait, so a larger value queues every later screenshot behind one wedged
+# compositor.
+#screenshot_timeout_ms = 5000
+
 # The app class the core launches and shows once, on a FRESH session. 0 = none,
 # which is the default. Must name an [[app]] entry below, or the core refuses to
 # start — a boot_app pointing at nothing is a black television at the end of a
