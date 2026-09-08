@@ -188,6 +188,10 @@ Item {
         }
 
         function test_router_moves_through_the_real_slots() {
+            // Let any re-sync scheduled by a previous test land before touching
+            // the router: since R6 the cell set is judged at the end of a turn,
+            // so a stale pending sync would otherwise move focus mid-test.
+            wait(0);
             theRouter.setCurrent("s0");
             verify(theRouter.move("right"));
             compare(theRouter.currentId, "s1");
@@ -202,10 +206,14 @@ Item {
         // because there is no neighbour to re-wire.
         function test_disabling_the_focused_row_rehomes_instead_of_stranding() {
             harness.middleRowEnabled = true;
+            wait(0);
             theRouter.setCurrent("s4");
             compare(theRouter.currentId, "s4");
 
             harness.middleRowEnabled = false;
+            // R6: the re-home happens once the cell set has settled, not on the
+            // instant the property changes.
+            wait(0);
             verify(theRouter.currentId !== "");
             verify(theRouter.currentId !== "s4");
             // And traversal now skips the empty row entirely.
@@ -214,6 +222,7 @@ Item {
             compare(theRouter.currentId, "s7");
 
             harness.middleRowEnabled = true;
+            wait(0);
         }
     }
 }

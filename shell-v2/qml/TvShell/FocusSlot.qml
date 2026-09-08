@@ -47,9 +47,9 @@ FocusScope {
     // republishes the graph. Both properties are watched because both feed
     // FocusRouter.cells().
     onSlotEnabledChanged: if (slot.router)
-        slot.router.sync()
+        slot.router.scheduleSync()
     onVisibleChanged: if (slot.router)
-        slot.router.sync()
+        slot.router.scheduleSync()
 
     Component.onCompleted: if (slot.router)
         slot.router.register(slot)
