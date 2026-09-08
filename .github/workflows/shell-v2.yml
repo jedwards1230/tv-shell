@@ -101,6 +101,16 @@ jobs:
         # check is about real defects rather than unresolved imports.
         run: cmake --build build --target all_qmllint
 
+      - name: qmllint (strict)
+        # `all_qmllint` runs qmllint with its DEFAULTS, which let a reference to
+        # a member that does not exist through silently -- measured, not assumed.
+        # This re-runs the same response file with `missing-property` and
+        # `unqualified` promoted to errors. It matters more here than in most Qt
+        # projects: there is no screenshot path on a v2 session, so a typo'd
+        # binding is a property that is simply never set on a screen nobody can
+        # look at.
+        run: cmake --build build --target qmllint_strict
+
       - name: Test
         # Software rendering throughout: the runner has no GPU, and forcing it
         # here keeps the premap lane's failures about ORDERING rather than about
@@ -117,7 +127,7 @@ jobs:
         run: |
           names=$(ctest --test-dir build -N | sed -n 's/^ *Test *#[0-9]*: //p' | sort | tr '\n' ' ')
           echo "registered lanes: $names"
-          for lane in premap qml surfacetags; do
+          for lane in coreclient premap qml surfacetags; do
             case " $names " in
               *" $lane "*) ;;
               *) echo "::error::lane '$lane' did not run"; exit 1 ;;
@@ -132,7 +142,8 @@ jobs:
           {
             echo "## shell-v2"
             echo ""
-            echo "CMake build + qmllint + three test lanes (surfacetags, qml, premap)."
+            echo "CMake build + qmllint (default and strict) + four test lanes"
+            echo "(surfacetags, coreclient, qml, premap)."
             echo "The premap lane runs against a real Xvfb display and asserts that"
             echo "the STEAM_* properties reach the X server BEFORE the window maps."
             echo ""
