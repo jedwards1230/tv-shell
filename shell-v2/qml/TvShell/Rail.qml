@@ -99,6 +99,12 @@ Item {
                     // told to scroll is what removes the host-side wiring.
                     onCurrentChanged: if (cardItem.current)
                         rail.reveal(cardItem)
+                    // A card re-created by a model rebuild can be current from
+                    // the instant it exists, so onCurrentChanged never fires for
+                    // it and the rail would keep the offset it had before the
+                    // rebuild. Same shape as FocusRouter.register()'s re-focus.
+                    Component.onCompleted: if (cardItem.current)
+                        rail.reveal(cardItem)
                 }
             }
         }
