@@ -119,10 +119,18 @@ cmake --build build && ctest --test-dir build --output-on-failure
 Without it `ctest` reports three lanes; with it, four. CI sets it.
 
 **Run `qmllint_strict`, not just `all_qmllint`.** The generated target runs
-qmllint with its defaults, and the defaults let a reference to a member that does
-not exist through silently — measured, not assumed. `qmllint_strict` re-runs the
-same response file with `missing-property` and `unqualified` promoted to errors.
-This matters more here than in most Qt projects: there is no screenshot path on a
+qmllint with its defaults, and the defaults let an unqualified access through
+silently — measured, not assumed. `qmllint_strict` re-runs the same response file
+with `unqualified` promoted and zero warnings tolerated.
+
+`missing-property` is deliberately NOT enabled: qmllint does not resolve the C++
+`Surface` type out of this static module on the Qt 6.8 CI pins, so enabling it
+fails a correct `Main.qml` six times — and naming the qmltypes with `-i` makes it
+worse on 6.11. That coverage is provided instead by the `qml` lane running under
+`QT_FATAL_WARNINGS=1`, where an undefined binding (a *warning*, never an error)
+fails the test. See `../docs/V2_SHELL.md` §11.9.
+
+Both matter more here than in most Qt projects: there is no screenshot path on a
 v2 session, so a typo'd binding is a property that is simply never set, on a
 screen nobody can look at.
 

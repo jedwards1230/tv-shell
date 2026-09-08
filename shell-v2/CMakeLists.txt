@@ -126,38 +126,47 @@ install(TARGETS tv-shell-v2 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # nothing defends nothing (jedwards1230/tv-shell#469).
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# qmllint, strictly.
+# qmllint, strictly -- for the one category that survives contact with both Qt
+# versions in play.
 #
 # The generated `all_qmllint` target runs qmllint with its DEFAULTS, and the
-# defaults are weaker than they look: a reference to a member that does not
-# exist -- `Tokens.onlineTypo`, `card.titleTypo` -- passes it silently. That was
-# measured, not assumed (both typos were introduced and `all_qmllint` stayed
-# green), and it matters here more than in most Qt projects because there is no
-# screenshot path on a v2 session: a typo'd binding is a property that is simply
-# never set, on a screen nobody can look at.
+# defaults are weaker than they look: an unqualified access passes it silently.
+# That matters here more than in most Qt projects because there is no screenshot
+# path on a v2 session -- a binding that resolves to the wrong scope is a value
+# that is quietly never set, on a screen nobody can look at.
 #
 # So this target re-runs the SAME response file -- same include paths, same
-# resources, no second list of files to drift -- with those categories on and
-# `--max-warnings 0`, so any warning at all fails. CI builds this one as well as
-# `all_qmllint`.
+# resources, no second list of files to drift -- with `unqualified` promoted and
+# `--max-warnings 0`, so any warning at all fails. CI builds it.
+#
+# WHY `missing-property` IS *NOT* ENABLED, THOUGH IT WOULD BE THE BIGGER CATCH
+#
+# It cannot be, portably. qmllint does not resolve the C++ `Surface` type out of
+# this static QML module on the Qt 6.8 that CI pins -- it reports
+# "Type Surface is used but it is not resolved" -- and every property on a
+# Surface then reads as missing, so Main.qml fails six times while being
+# correct. Naming the module's qmltypes explicitly with `-i` does not fix it and
+# makes it worse: on Qt 6.11, where discovery works by itself, `-i` breaks the
+# same resolution and adds a cascade of spurious `unqualified` warnings.
+#
+# Both were measured, not assumed. The category is therefore left at its default
+# (it still runs under `all_qmllint`, non-fatally) and the gap is recorded in
+# docs/V2_SHELL.md rather than papered over with a per-file exclusion that would
+# rot. `unresolved-type` is silenced here because on 6.8 it is that same Qt
+# limitation talking, not a defect in the QML.
 # ---------------------------------------------------------------------------
 qt_query_qml_module(tvshell-qml)
 find_program(QMLLINT_EXECUTABLE NAMES qmllint qmllint6 HINTS ${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS})
 
-# `warning` plus `--max-warnings 0`, NOT `--missing-property error`: qmllint only
-# accepts disable/info/warning as levels on Qt 6.8 (which CI pins), and `error`
-# is rejected outright with a usage message. `-W 0` gets the same effect on both
-# -- any warning at all fails the target -- and it goes further than promoting
-# two categories, since a category added by a future Qt cannot slip through.
 add_custom_target(qmllint_strict
     COMMAND ${QMLLINT_EXECUTABLE}
-        --missing-property warning
         --unqualified warning
+        --unresolved-type disable
         --max-warnings 0
         "@${CMAKE_BINARY_DIR}/.rcc/qmllint/tvshell-qml.rsp"
     DEPENDS all_qmllint
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Running qmllint strictly (missing-property + unqualified on, zero warnings tolerated)"
+    COMMENT "Running qmllint strictly (unqualified access, zero warnings tolerated)"
     VERBATIM
 )
 

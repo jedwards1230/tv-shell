@@ -124,12 +124,15 @@ ctest --test-dir build --output-on-failure
 ```
 
 **Run `qmllint_strict` too.** `all_qmllint` runs qmllint with its DEFAULTS, and
-the defaults let a reference to a member that does not exist through silently
-(measured: `Tokens.onlineTypo` and `card.titleTypo` both passed it). The strict
-target re-runs the same response file with `missing-property` and `unqualified`
-promoted to errors. It matters more here than in most Qt projects because there
-is no screenshot path on a v2 session, so a typo'd binding is a property that is
-simply never set on a screen nobody can look at.
+the defaults let an unqualified access through silently. The strict target
+re-runs the same response file with `unqualified` promoted and `--max-warnings 0`.
+`missing-property` is deliberately left off — qmllint does not resolve the C++
+`Surface` type out of this static module on the Qt CI pins, so it fails a correct
+`Main.qml`; that coverage comes instead from the `qml` ctest lane running under
+`QT_FATAL_WARNINGS=1`, where an undefined binding fails the test. See
+[docs/V2_SHELL.md](docs/V2_SHELL.md) §11.9. It matters more here than in most Qt
+projects because there is no screenshot path on a v2 session, so a typo'd binding
+is a property that is simply never set on a screen nobody can look at.
 
 The X-backed lane (`premap`, which asserts the `STEAM_*` properties reach the
 server BEFORE the window maps) is opt-in behind `TV_SHELL_TEST_XVFB`, the same

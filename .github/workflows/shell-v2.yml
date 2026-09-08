@@ -102,13 +102,13 @@ jobs:
         run: cmake --build build --target all_qmllint
 
       - name: qmllint (strict)
-        # `all_qmllint` runs qmllint with its DEFAULTS, which let a reference to
-        # a member that does not exist through silently -- measured, not assumed.
-        # This re-runs the same response file with `missing-property` and
-        # `unqualified` promoted to errors. It matters more here than in most Qt
-        # projects: there is no screenshot path on a v2 session, so a typo'd
-        # binding is a property that is simply never set on a screen nobody can
-        # look at.
+        # `all_qmllint` runs qmllint with its DEFAULTS, which let an unqualified
+        # access through silently -- measured, not assumed. This re-runs the same
+        # response file with `unqualified` promoted and zero warnings tolerated.
+        # `missing-property` is deliberately NOT enabled: qmllint does not resolve
+        # the C++ `Surface` type out of this static module on the Qt pinned here,
+        # so it fails a correct Main.qml. That coverage comes from the `qml` ctest
+        # lane's QT_FATAL_WARNINGS=1 instead (docs/V2_SHELL.md §11.9).
         run: cmake --build build --target qmllint_strict
 
       - name: Test

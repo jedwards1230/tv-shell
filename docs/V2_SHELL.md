@@ -564,27 +564,47 @@ beyond a pile of *"Unable to assign [undefined]"* warnings — and the property 
 to be set *before* the module is declared. Caught by the wired test failing, not
 by lint.
 
-### 11.9 A weakness in the lint gate, measured
+### 11.9 The lint gate is weaker than it looks, and one category cannot be fixed
 
 `all_qmllint` runs qmllint with its **defaults**, and the defaults are weaker than
-they look: `Tokens.onlineTypo` and `card.titleTypo` were both introduced and the
-target stayed green. This matters more here than in most Qt projects — there is no
-screenshot path on a v2 session, so a typo'd binding is a property that is simply
-never set, on a screen nobody can look at.
+they look: `Tokens.onlineTypo`, `card.titleTypo` and a plain unqualified access
+all passed it. This matters more here than in most Qt projects — there is no
+screenshot path on a v2 session, so a binding that resolves to `undefined` or to
+the wrong scope is a property that is simply never set, on a screen nobody can
+look at.
 
-`shell-v2/CMakeLists.txt` therefore adds a **`qmllint_strict`** target that re-runs
-the same response file (same import paths, same resources, no second file list to
-drift) with those two categories on and `--max-warnings 0`, so any warning at all
-fails. It catches both typos, and it found two real unqualified accesses in
-`Main.qml` when it was first enabled. CI builds it alongside `all_qmllint`.
+**What was fixed.** `shell-v2/CMakeLists.txt` adds a **`qmllint_strict`** target
+that re-runs the same response file (same import paths, same resources, no second
+file list to drift) with `unqualified` promoted and `--max-warnings 0`, so any
+warning at all fails. It found two real unqualified accesses in `Main.qml` the
+first time it ran, and a mutation confirms it still catches one.
 
-The level matters and cost a CI round: qmllint accepts only `disable`, `info` and
-`warning` as category levels on **Qt 6.8**, which CI pins, and rejects
-`--missing-property error` with a usage message. Local Qt is 6.11 and took it, so
-the target passed here and failed there — the kind of gap only watching CI
-actually run can close. `--max-warnings 0` gets the same effect on both, and goes
-further than naming two categories: a category added by a future Qt cannot slip
-through either.
+**What could not be, and why it is recorded rather than hidden.**
+`missing-property` — the category that would catch `Tokens.onlineTypo` — is
+**not** enabled, because it cannot be made portable here:
+
+- On the **Qt 6.8 that CI pins**, qmllint does not resolve the C++ `Surface` type
+  out of this static QML module (`Type Surface is used but it is not resolved`),
+  so every property on a Surface reads as missing and `Main.qml` fails six times
+  while being correct.
+- Naming the module's own qmltypes explicitly with `-i` does **not** fix that,
+  and makes it worse: on Qt 6.11, where discovery works unaided, `-i` breaks the
+  same resolution and adds a cascade of spurious `unqualified` warnings.
+
+Both were measured, in that order, at the cost of two CI rounds. A per-file
+exclusion for `Main.qml` was rejected — it would silently stop covering whatever
+file grows a Surface next.
+
+**So the category was replaced rather than dropped.** The offscreen `qml` lane
+now runs with **`QT_FATAL_WARNINGS=1`**, which turns any QML warning into a test
+failure — and an undefined binding *is* a warning ("Unable to assign [undefined]
+to QColor"), never an error. Mutating `Tokens.online` to `Tokens.onlineTypo` now
+fails the lane, which is the coverage `missing-property` would have given,
+obtained in a way that does not depend on qmllint resolving C++ types.
+
+That has a cost worth stating: a future test that *deliberately* provokes a
+warning — `FocusRouter`'s malformed-graph `console.warn`, say — must wrap it in
+`ignoreWarning()` or the lane aborts.
 
 ### 11.10 What this does not prove
 
