@@ -1,4 +1,6 @@
 #include "surface.h"
+
+#include <QScreen>
 #include "x11tagger.h"
 
 #include <QLoggingCategory>
@@ -87,6 +89,28 @@ void Surface::applyVisibility()
     if (!m_wantVisible) {
         QQuickWindow::setVisible(false);
         return;
+    }
+
+    // A BASE SURFACE IS THE OUTPUT. Sized here, before `create()`, for the same
+    // reason the tags are written here: under gamescope the client's own size is
+    // honoured, so whatever the window is created at is what the compositor
+    // scales to fill the screen.
+    //
+    // Qt's default for a QWindow that was never given a size is 160x160. Under an
+    // ordinary window manager you never see that, because the WM sizes the window
+    // for you. Under gamescope nothing does, so the shell rendered at 160x160 and
+    // was upscaled 24x to 3840x2160 — a blurry, clipped fragment of a correct UI.
+    // Measured on hardware 2026-09-08 (`xprop WM_NORMAL_HINTS` -> "user specified
+    // size: 160 by 160"), which is the only way it could have been found: every
+    // offscreen lane builds the screens directly and never instantiates a window.
+    //
+    // It is a property of the ROLE, not of the caller, so it lives here rather
+    // than at the one call site that got it wrong. A base surface has no
+    // legitimate size other than the output's; an Overlay or Toast does, and is
+    // therefore left alone.
+    if (m_role == Base && !handle()) {
+        if (const QScreen *s = screen())
+            setGeometry(s->geometry());
     }
 
     // The three-step ordering this whole class exists for. `create()` issues X

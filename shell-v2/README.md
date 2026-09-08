@@ -40,7 +40,7 @@ qml/TvShell/            The single QML module — no qmldir, no relative-dir imp
   homeModel.js          Pure: (catalog, core snapshot) -> rails. The whole home screen.
   catalog.js            Pure: shell.json text -> entries + problems.
   viewport.js           Pure: scroll-into-view offset, and the UI scale.
-tests/                  Four lanes — see below.
+tests/                  Five lanes — see below.
 ```
 
 ## Five things to know before editing
@@ -104,6 +104,7 @@ ctest --test-dir build --output-on-failure
 |---|---|---|
 | `surfacetags` | nothing | the role → atoms mapping, including the two negative rules |
 | `coreclient` | nothing | path resolution, and K1–K4 against a real socket and the real framing |
+| `geometry` | nothing (offscreen) | a real `Surface`: a Base fills its output, an Overlay/Toast keeps the size it was given |
 | `qml` | nothing (offscreen) | the four pure modules directly, plus a real HomeScreen over a real router |
 | `premap` | a real X server | `PropertyNotify` before `MapNotify`, per role |
 
@@ -115,7 +116,7 @@ TV_SHELL_TEST_XVFB=:99 cmake -S shell-v2 -B build -G Ninja
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-Without it `ctest` reports three lanes; with it, four. CI sets it.
+Without it `ctest` reports four lanes; with it, five. CI sets it.
 
 **qmllint is weaker here than it looks, and the tests make up for it.** The
 generated `all_qmllint` target runs qmllint with its defaults, which let
