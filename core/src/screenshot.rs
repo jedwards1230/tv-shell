@@ -297,6 +297,16 @@ pub struct Captured {
 /// so a second request overwrites the first) and writes to one shared path, so
 /// two concurrent captures race for both. `GamescopeCompositor` wraps every call
 /// in a gate of its own.
+///
+/// That gate is process-local, and it is the limit of what this can promise.
+/// Another process on the box capturing at the same moment — `gamescopectl
+/// screenshot`, a `SIGUSR2`, the built-in keybind — shares the compositor's one
+/// request slot, and gamescope deletes BOTH request atoms when any capture
+/// finishes, so their completion can end our wait. The frame we then harvest is
+/// still a real full-screen capture taken a few milliseconds either side of the
+/// one we asked for, so it is not the stale-frame failure Rule 2 exists to stop;
+/// it is simply not provably *our* frame. Making it provable needs a lock
+/// outside this process, and nothing else on this box takes screenshots today.
 pub fn capture(
     surface: &impl ScreenshotSurface,
     file: &impl CaptureFile,
