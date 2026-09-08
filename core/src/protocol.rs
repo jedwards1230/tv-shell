@@ -46,6 +46,16 @@ pub enum Command {
     },
     /// `launch` with too few arguments.
     LaunchUsage,
+    /// Capture the screen to an absolute path.
+    ///
+    /// The path is mandatory and is NOT defaulted. gamescope writes every
+    /// X-requested capture to one hardcoded shared path, so a default would be a
+    /// second shared path — two callers silently overwriting each other's
+    /// screenshot with no way to notice. Naming the destination makes the frame
+    /// the caller's own. See [`crate::screenshot`].
+    Screenshot(String),
+    /// `screenshot` with no destination.
+    ScreenshotUsage,
     /// Not a verb this core knows.
     Unknown,
 }
@@ -64,6 +74,7 @@ impl Command {
             // the client asked for something real and got the arity wrong.
             "show" => return Command::ShowUsage,
             "launch" => return Command::LaunchUsage,
+            "screenshot" => return Command::ScreenshotUsage,
             _ => {}
         }
         if let Some(body) = command_body(cmd, "show") {
@@ -71,6 +82,17 @@ impl Command {
                 Command::ShowUsage
             } else {
                 Command::Show(body.to_string())
+            };
+        }
+        if let Some(body) = command_body(cmd, "screenshot") {
+            // Whitespace-split like every other verb, so a destination
+            // containing a space is not silently truncated to its first word:
+            // it is a path this core cannot express, and saying so beats writing
+            // the screenshot somewhere the caller did not ask for.
+            let mut parts = body.split_whitespace();
+            return match (parts.next(), parts.next()) {
+                (Some(dest), None) => Command::Screenshot(dest.to_string()),
+                _ => Command::ScreenshotUsage,
             };
         }
         if let Some(body) = command_body(cmd, "launch") {
@@ -225,11 +247,43 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_takes_exactly_one_destination() {
+        assert_eq!(
+            Command::parse("screenshot /tmp/a.png"),
+            Command::Screenshot("/tmp/a.png".into())
+        );
+        assert_eq!(
+            Command::parse("  screenshot   /tmp/a.png  "),
+            Command::Screenshot("/tmp/a.png".into())
+        );
+        assert_eq!(Command::parse("screenshot"), Command::ScreenshotUsage);
+        assert_eq!(Command::parse("screenshot "), Command::ScreenshotUsage);
+    }
+
+    /// **A destination with a space is a usage error, never a truncation.**
+    ///
+    /// The grammar has no quoting, so `screenshot /tmp/my shot.png` cannot mean
+    /// what it looks like. Taking the first word would write the capture to
+    /// `/tmp/my` — a real file, at a path nobody asked for, reported as success.
+    ///
+    /// Mutation-check (run 2026-09-08): drop the second-token check so the arm
+    /// is `(Some(dest), _)` and this fails — the reply becomes
+    /// `Screenshot("/tmp/my")`.
+    #[test]
+    fn a_destination_with_a_space_is_refused_rather_than_truncated() {
+        assert_eq!(
+            Command::parse("screenshot /tmp/my shot.png"),
+            Command::ScreenshotUsage
+        );
+    }
+
+    #[test]
     fn word_boundaries_are_enforced() {
         // `showX` must not be `show` with body `X`.
         assert_eq!(Command::parse("showX"), Command::Unknown);
         assert_eq!(Command::parse("show-me 1"), Command::Unknown);
         assert_eq!(Command::parse("launchpad 1 x"), Command::Unknown);
+        assert_eq!(Command::parse("screenshots /tmp/a.png"), Command::Unknown);
         assert_eq!(Command::parse("pingpong"), Command::Unknown);
     }
 

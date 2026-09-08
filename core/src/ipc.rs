@@ -49,6 +49,11 @@ pub trait Compositor: Send + Sync + 'static {
     /// Launch a command in a scope for an app id.
     fn launch(&self, app_id: AppId, command: &[String]) -> String;
 
+    /// Capture the screen to `dest`, an absolute path. Returns a `Captured`
+    /// JSON payload only if a frame really landed there — see
+    /// [`crate::screenshot`], whose two rules are what make that true.
+    fn screenshot(&self, dest: &str) -> String;
+
     /// Launch an app CLASS and hand back a channel that receives its exit
     /// status — the supervised form, used only by [`crate::boot`].
     ///
@@ -124,6 +129,15 @@ fn bind(sock_path: &str) -> Result<UnixListener> {
     // single `bind()` call wide, and it fails CLOSED — the only effect is
     // over-restrictive permissions on an unrelated file, never over-permissive
     // ones, so it cannot leak anything. The v1 daemon does exactly this.
+    //
+    // "Cannot leak anything" is not the same as "is harmless", and this crate's
+    // own test suite proved the difference: a *directory* created by another
+    // thread inside this window comes out `0o600`, with no `x` bit, and nothing
+    // can then be unlinked inside it. `screenshot`'s filesystem tests hit that
+    // as an `EACCES` flake on roughly one run in four, in a module that touches
+    // no permissions at all. The security argument stands; the "unrelated file"
+    // framing understates the blast radius, which is why those tests now use
+    // plain files under `/tmp` rather than a scratch directory.
     let prev_umask = unsafe { libc::umask(0o177) };
     let bind_result = UnixListener::bind(sock_path);
     unsafe {
@@ -186,6 +200,11 @@ pub async fn dispatch(
             Err(_) => protocol::resp_error(&format!("not an app id: {app_id}")),
         },
         Command::LaunchUsage => protocol::resp_usage("launch <appid> [cmd args...]"),
+        Command::Screenshot(dest) => {
+            let c = Arc::clone(compositor);
+            blocking(move || c.screenshot(&dest)).await
+        }
+        Command::ScreenshotUsage => protocol::resp_usage("screenshot <absolute-path>"),
         Command::Unknown => protocol::resp_unknown(),
     }
 }
@@ -246,6 +265,20 @@ mod tests {
                 "command": command,
             }))
         }
+        fn screenshot(&self, dest: &str) -> String {
+            if self.refuse_switch {
+                // A compositor that will not answer does not capture either.
+                protocol::resp_error(
+                    "the compositor finished the screenshot request but wrote no file",
+                )
+            } else {
+                protocol::resp_json(&serde_json::json!({
+                    "path": dest,
+                    "bytes": 4096,
+                    "took_ms": 7,
+                }))
+            }
+        }
     }
 
     fn fake(refuse_switch: bool) -> Arc<dyn Compositor> {
@@ -289,6 +322,32 @@ mod tests {
         assert_eq!(parsed["last_poll_unix_ms"], serde_json::Value::Null);
     }
 
+    /// The verb reaches the compositor, and its payload comes back untouched.
+    #[tokio::test]
+    async fn screenshot_dispatches_to_the_compositor() {
+        let c = fake(false);
+        assert_eq!(
+            reply(&c, "screenshot /tmp/a.png").await,
+            r#"{"path":"/tmp/a.png","bytes":4096,"took_ms":7}"#
+        );
+    }
+
+    /// **A failed capture must never come back as a payload.**
+    ///
+    /// Same shape as `the_ipc_layer_forwards_a_failed_switch_as_an_error`, and
+    /// the same caveat: the fake hardcodes the error string, so this cannot tell
+    /// whether a real failed capture produces one. That is what
+    /// `screenshot::tests` guards. This covers the layer above — that `dispatch`
+    /// does not turn an `error:` reply into a payload on the way out.
+    #[tokio::test]
+    async fn the_ipc_layer_forwards_a_failed_capture_as_an_error() {
+        let c = fake(true);
+        let r = reply(&c, "screenshot /tmp/a.png").await;
+        assert!(r.starts_with("error:"), "{r}");
+        assert!(!r.contains("\"path\""), "{r}");
+        assert!(!r.contains("\"bytes\""), "{r}");
+    }
+
     #[tokio::test]
     async fn usage_and_unknown_are_distinguished() {
         let c = fake(false);
@@ -296,6 +355,10 @@ mod tests {
         assert_eq!(
             reply(&c, "launch").await,
             "error:usage: launch <appid> [cmd args...]"
+        );
+        assert_eq!(
+            reply(&c, "screenshot").await,
+            "error:usage: screenshot <absolute-path>"
         );
         assert_eq!(reply(&c, "frobnicate").await, "unknown");
         assert_eq!(reply(&c, "hypr-active").await, "unknown");
@@ -340,6 +403,8 @@ mod tests {
             "show 9003",
             "home",
             "launch",
+            "screenshot",
+            "screenshot /tmp/a.png",
             "input-state",
             "frobnicate",
         ] {
@@ -369,10 +434,16 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_over_a_real_socket() {
-        // Deliberately the short system temp dir and not a deep scratch path:
-        // this binds a real Unix-domain socket and `sockaddr_un::sun_path` caps
-        // the path at ~104 bytes. Same exception the v1 daemon documents.
-        let sock = std::env::temp_dir()
+        // Deliberately a short `/tmp` path and not a deep scratch one: this
+        // binds a real Unix-domain socket and `sockaddr_un::sun_path` caps the
+        // path at ~104 bytes. Same exception the v1 daemon documents.
+        //
+        // Hardcoded rather than `std::env::temp_dir()`, which reads `TMPDIR`:
+        // this crate's config tests call `std::env::set_var`, and an environment
+        // READ concurrent with one of those is unsound on its own (see
+        // `crate::ENV_GUARD`). It surfaced as a flake in `screenshot`'s
+        // filesystem tests; the same latent hazard was here.
+        let sock = std::path::PathBuf::from("/tmp")
             .join(format!("tv-core-ipc-test-{}.sock", std::process::id()))
             .to_string_lossy()
             .to_string();
@@ -403,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_stale_socket_file_does_not_stop_a_restart() {
-        let sock = std::env::temp_dir()
+        let sock = std::path::PathBuf::from("/tmp")
             .join(format!("tv-core-stale-{}.sock", std::process::id()))
             .to_string_lossy()
             .to_string();

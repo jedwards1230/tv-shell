@@ -13,6 +13,7 @@ its relationship to `daemon/`.
 | `screen` | `ScreenState` — one snapshot of what is on screen, replacing `hypr-active`/`hypr-clients`/`hypr-monitors`. Read in one round trip; `_APP` is not exposed as an app id at all (below) |
 | `launch` | Scoped launching: `systemd-run --user --scope` into `app-steam-app<appid>-<pid>.scope`, the argv as a testable value, and reading a scope back out of a cgroup path. Preflight is fail-closed — there is no unscoped fallback — and a launch is **confirmed** (the launcher is still alive and `/proc/<pid>/cgroup` names the scope) before it reports success |
 | `baselayer` | `show`/`home` as one write plus one bounded verify, `IntentGate` (which serializes a write and its verify against other intents), and `reconcile` as the read-only recovery path |
+| `screenshot` | `screenshot <path>` — the capture path that replaces v1's `grim`, which gamescope cannot serve at all. Asks gamescope for the frame via a root property rather than reading pixels, and **clears the compositor's one hardcoded output path before every request**, so a failed capture cannot hand back the previous one (below) |
 | `config` | `~/.config/tv-shell/core.toml` — a separate file from v1's `config.toml` (below), plus the socket path and the `[[app]]` class table. All-defaults on a missing file, `deny_unknown_fields` everywhere, `validate()` before any value is used |
 | `boot` | Whether a fresh session gets its first app, keeping it alive across crashes, and the two observations that stop either one stealing a live session (below) |
 | `protocol` | The IPC grammar, carried over from v1 unchanged in contract (§4): newline framing, 4096-byte lines, `ok` / `unknown` / `error:<msg>` / a bare JSON document |
@@ -156,6 +157,37 @@ failure inverted:
   state with nothing on disk — and deliberately does not re-assert. A write
   happens only when the core has an intent of its own to express. In particular
   the core never writes "home" on boot; that would yank a live game.
+- **A screenshot is asked for, not read — and a stale one is unrepresentable
+  rather than merely detected.** gamescope 3.16.28 implements no Wayland
+  screen-capture protocol (`wlr-screencopy` and `ext-image-copy-capture` appear
+  nowhere in its tree), so v1's `grim` path — and with it `GET /screenshot`, the
+  MCP `take_screenshot` tool, the panel's screenshot page and
+  `docs/qa-screenshot-views.md` — cannot work under v2 at all, and the
+  agent-native dev loop loses its verify step. The X11 fallback is dead too:
+  Xwayland runs `-rootless` under manual Composite redirection, so `XGetImage`
+  on the root is `BadMatch` and a GPU-rendered window reads back 100% black —
+  and the v2 shell is a Wayland client with no X window in the first place.
+  What does work is asking the compositor: setting
+  `GAMESCOPECTRL_REQUEST_SCREENSHOT` makes gamescope composite and write the
+  frame itself. Two things about that path are traps.
+  **The request property is not a completion signal** — measured on hardware, it
+  cleared at 32 ms against a file that landed at 712 ms, and gamescope clears it
+  on the write-FAILURE path too. Waiting on it and then checking the file
+  reports a failure most of a second into a capture that succeeds, which is how
+  the first version of this module shipped broken with a green suite: its fake
+  wrote the file at the instant the property cleared, so the two could never
+  disagree. The wait is therefore on a **complete file** — PNG signature and
+  `IEND`, since gamescope writes in place with no rename and a poll can land
+  mid-write — and the property is polled only to record *when* it cleared, which
+  is what separates "the compositor never took the request" from "it took it and
+  wrote nothing".
+  **The output path is hardcoded and shared**, so a capture that never happened
+  leaves the previous one lying there — a valid PNG, right size, wrong moment,
+  which an agent would read as the current screen and "verify" a change that
+  never rendered. So the core clears that path *before* it asks, which makes
+  anything found afterwards this request's own frame, and treats a failed clear
+  as a failed capture rather than a warning. A wait that expires is an `error:`,
+  never a screenshot.
 - **The shell's app id is private and may not be 769.** Under `--steam`, 769 is
   the Steam client's own id (`window_is_steam`: forced fullscreen sizing,
   `focus=steam` in the stats pipe) and is reserved for it. `CoreConfig::validate`
@@ -335,6 +367,30 @@ rule in the source and confirm the suite goes red**, then revert:
   instead of an error. `an_unknown_id_with_no_command_is_a_clean_error` must fail.
 - Make an explicit command for a KNOWN class drop the class environment.
   `an_explicit_command_for_a_known_class_keeps_its_environment` must fail.
+- Add `if !surface.outstanding()? { break; }` back into `screenshot::capture_with`'s
+  wait loop, ahead of the file check — i.e. wait on the property again.
+  **Six tests must fail**, led by
+  `a_property_that_clears_long_before_the_file_is_not_a_failure`. This is the
+  one that matters most here: the module shipped with exactly that bug and a
+  green suite, because its fake wrote the file at the moment the property
+  cleared. The fake now schedules the two events independently against a poll
+  clock, which is what makes the rule falsifiable at all.
+- Make `complete_png` return `Ok(len > 0)`.
+  `a_png_without_its_end_chunk_is_not_a_complete_frame` and
+  `a_file_that_is_not_a_png_is_not_a_complete_frame` must fail — a half-written
+  capture would read as finished, and gamescope writes in place with no rename.
+- Remove the `file.clear()` call from `screenshot::capture_with`.
+  `a_leftover_screenshot_is_never_returned_as_this_captures_result`,
+  `a_successful_capture_over_a_leftover_returns_the_new_frame` and
+  `a_failed_clear_refuses_the_capture_rather_than_risking_a_stale_frame` must
+  all fail. Weaken it instead to `let _ = file.clear();` and only the **last**
+  of those fails — which is why all three exist, and why the fake output file
+  carries a *generation* rather than just a presence flag: without it a test
+  cannot tell a stale frame from a fresh one, which is the entire subject of the
+  rule.
+- Widen `protocol`'s screenshot arm from `(Some(dest), None)` to
+  `(Some(dest), _)`. `a_destination_with_a_space_is_refused_rather_than_truncated`
+  must fail — `screenshot /tmp/my shot.png` would silently capture to `/tmp/my`.
 - Delete the `boot_app` arm of `CoreConfig::validate`.
   `a_boot_app_with_no_class_is_refused` must fail.
 - Make `boot::adopt` call `launch_and_show`, or make `start`'s `Adopt` arm fall
@@ -436,9 +492,10 @@ And against `core/tests/input_uinput.rs`, which runs on a real kernel:
   `each_player_gets_its_own_presenter_device` must fail. **It did not, at first**
   — see survivor 4 below.
 
-Four mutations SURVIVED the first pass, and each exposed a test that proved
+Five mutations have SURVIVED a first pass, and each exposed a test that proved
 less than it claimed. They are recorded because the fixes are the interesting
-part:
+part — and because the five are genuinely different failure modes, not five
+instances of one:
 
 1. **`SlotAllocator::alloc` scanning up from the high-water mark instead of from
    zero.** The reconnect test frees the TOP slot, which both behaviours handle
@@ -462,6 +519,33 @@ part:
    an identity, not a property. It now asserts the two names DIFFER from each
    other, that each carries its own slot, and that both are recognisably ours —
    none of which reference `device_name`.
+5. **`screenshot`'s fake compositor writing the output file at the instant it
+   cleared the request property.** No mutation was needed to find this one: the
+   suite was green and the code was broken on hardware, because the fake
+   **encoded the premise the code was built on**. The code assumed the property
+   cleared only after the file was written; the fake made that true by
+   construction; so the two events could never disagree, and *no possible test
+   against that fake could have failed*. On the real compositor the property
+   clears at 32 ms and the file lands at 712 ms, and the verb would have
+   reported `NotWritten` for every successful capture.
+
+   **This is a distinct failure mode from 4, and worth naming separately.** A
+   self-referential test (4) asserts an identity instead of a property — the
+   assertion is weak, but the fake is honest. Here the *assertion* was fine and
+   the **double was dishonest**: it modelled the world the implementation
+   believed in rather than the world. A suite cannot disagree with the code when
+   its double is derived from the same assumption, which makes green
+   uninformative rather than merely weak — the two ordinary tells, a vacuous
+   assertion and a rule with no test at all, are both absent.
+
+   The fix is structural: the fake now schedules property-clear and
+   file-arrival **independently**, against a shared poll clock, so a test can
+   express a timeline the implementation did not expect. That is the general
+   rule for a double standing in for a multi-event interaction — **let the
+   events be ordered independently, and let at least one test order them the
+   way the code does not assume.** If a fake cannot express the timeline that
+   would break the code, it is not a test fixture, it is a restatement of the
+   code.
 
 - Drop the `self.emit_failures += 1` from `session::emit`, leaving the log line.
   `a_presenter_that_refuses_events_is_counted` must fail. `retire` documents that

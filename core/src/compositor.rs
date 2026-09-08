@@ -14,6 +14,7 @@ use crate::ipc::Compositor;
 use crate::launch::{self, ScopeEnv};
 use crate::protocol;
 use crate::screen;
+use crate::screenshot;
 
 /// The live compositor connection.
 pub struct GamescopeCompositor {
@@ -31,6 +32,20 @@ pub struct GamescopeCompositor {
     scope_error: Option<String>,
     /// Serializes one whole intent — the write AND its verify — against others.
     intents: IntentGate,
+    /// Serializes one whole capture against other captures.
+    ///
+    /// A SECOND gate rather than sharing [`Self::intents`], deliberately. The
+    /// two need serializing for unrelated reasons: an intent because a verify
+    /// that can observe another intent's window is not a verify, a capture
+    /// because gamescope holds one pending request and writes it to one shared
+    /// path. Sharing a lock would also make a capture — seconds, at 4K — block
+    /// `home`, which V2_DESIGN §9 requires to stay reachable when the box is
+    /// misbehaving. Screenshotting the screen must never be able to stop you
+    /// getting off it.
+    captures: IntentGate,
+    /// How long a capture waits for the compositor. Read once from config
+    /// rather than per call, like the other deadlines.
+    screenshot_timeout: std::time::Duration,
 }
 
 impl GamescopeCompositor {
@@ -49,11 +64,13 @@ impl GamescopeCompositor {
             }
         };
         Ok(Self {
+            screenshot_timeout: config.screenshot_timeout(),
             conn,
             config,
             scope_env,
             scope_error,
             intents: IntentGate::new(),
+            captures: IntentGate::new(),
         })
     }
 
@@ -258,6 +275,37 @@ impl Compositor for GamescopeCompositor {
                     protocol::resp_error(&e.to_string())
                 }
             })
+    }
+
+    fn screenshot(&self, dest: &str) -> String {
+        let timeout = self.screenshot_timeout;
+        // Held across the clear, the request AND the harvest — the whole thing
+        // is one transaction over a single shared output path.
+        self.captures.run(|| {
+            match screenshot::capture(
+                &self.conn,
+                &screenshot::GamescopeOutput::default(),
+                dest,
+                timeout,
+            ) {
+                Ok(captured) => {
+                    tracing::info!(
+                        path = %captured.path,
+                        bytes = captured.bytes,
+                        took_ms = captured.took_ms,
+                        "captured the screen",
+                    );
+                    protocol::resp_json(&captured)
+                }
+                // The same rule as a switch that did not take: a capture that
+                // produced nothing is an error and a log line, never a payload
+                // naming a file that is not there.
+                Err(e) => {
+                    tracing::error!(dest = %dest, error = %e, "screenshot failed");
+                    protocol::resp_error(&e.to_string())
+                }
+            }
+        })
     }
 
     fn launch(&self, app_id: AppId, command: &[String]) -> String {

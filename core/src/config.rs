@@ -258,6 +258,16 @@ pub struct SessionConfig {
     /// switch are different waits (see [`crate::baselayer`]). Sharing one bound
     /// made `show <id>` right after `launch <id>` fail on every working launch.
     pub map_timeout_ms: u64,
+    /// Bound on how long a `screenshot` waits for the compositor to finish.
+    ///
+    /// gamescope does not nudge its own repaint loop for a capture request, so
+    /// the wait is one vblank-gated repaint plus a detached encode-and-write.
+    /// A guess with headroom rather than a measurement — see
+    /// [`crate::screenshot::DEFAULT_SCREENSHOT_TIMEOUT`], which carries the
+    /// reasoning. Consumed by [`crate::compositor::GamescopeCompositor`], which
+    /// reads it once at connect and passes it to every
+    /// [`crate::screenshot::capture`].
+    pub screenshot_timeout_ms: u64,
     /// Bound on confirming that a launched process really is in its scope.
     ///
     /// [`crate::launch::launch`] polls `/proc/<pid>/cgroup` until the scope
@@ -359,6 +369,8 @@ impl Default for SessionConfig {
             switch_timeout_ms: crate::baselayer::DEFAULT_SWITCH_TIMEOUT.as_millis() as u64,
             map_timeout_ms: crate::baselayer::DEFAULT_MAP_TIMEOUT.as_millis() as u64,
             launch_confirm_ms: DEFAULT_LAUNCH_CONFIRM.as_millis() as u64,
+            // DERIVED, for the same reason as the two above it.
+            screenshot_timeout_ms: crate::screenshot::DEFAULT_SCREENSHOT_TIMEOUT.as_millis() as u64,
             // None. A default that started an app would make an all-defaults
             // config (a missing file) take over the television.
             boot_app: 0,
@@ -388,6 +400,14 @@ pub const MAX_SWITCH_TIMEOUT_MS: u64 = 5_000;
 pub const MAX_MAP_TIMEOUT_MS: u64 = 300_000;
 /// Upper bound on `launch_confirm_ms`.
 pub const MAX_LAUNCH_CONFIRM_MS: u64 = 60_000;
+/// Upper bound on `screenshot_timeout_ms`.
+///
+/// Bounded above for the same reason `switch_timeout_ms` is: a capture holds the
+/// capture gate for its whole wait, so an unbounded value makes every later
+/// screenshot queue behind one wedged compositor. Thirty seconds is far longer
+/// than any capture this hardware has taken (~1 s at 4K) and short enough that a
+/// stuck one is visible rather than indistinguishable from a hang.
+pub const MAX_SCREENSHOT_TIMEOUT_MS: u64 = 30_000;
 
 /// `[supervisor]` — stall detection and restart thresholds (§9).
 ///
@@ -440,6 +460,11 @@ impl CoreConfig {
     /// The bound on confirming a launch reached its scope.
     pub fn launch_confirm_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.session.launch_confirm_ms)
+    }
+
+    /// The bound on a screen capture completing.
+    pub fn screenshot_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.session.screenshot_timeout_ms)
     }
 
     /// The `[[app]]` entry for `app_id`, if one is configured.
@@ -591,6 +616,17 @@ impl CoreConfig {
                  sooner than an already-mapped switch",
                 self.session.map_timeout_ms,
                 self.session.switch_timeout_ms
+            );
+        }
+        if self.session.screenshot_timeout_ms == 0
+            || self.session.screenshot_timeout_ms > MAX_SCREENSHOT_TIMEOUT_MS
+        {
+            anyhow::bail!(
+                "config: [session] screenshot_timeout_ms must be between 1 and \
+                 {MAX_SCREENSHOT_TIMEOUT_MS} (got {}); a zero bound would report every \
+                 capture as failed before the compositor's next repaint, and an unbounded \
+                 one queues every later screenshot behind a wedged compositor",
+                self.session.screenshot_timeout_ms
             );
         }
         if self.session.launch_confirm_ms == 0
@@ -1291,6 +1327,10 @@ restart_window_secs = 120
             "session.switch_timeout_ms",
             "session.map_timeout_ms",
             "session.launch_confirm_ms",
+            // Read by `GamescopeCompositor::connect` via
+            // `CoreConfig::screenshot_timeout()`, and passed to every
+            // `screenshot::capture`.
+            "session.screenshot_timeout_ms",
             // Read by `crate::boot` via `CoreConfig::boot_app()`, which `main`
             // acts on after the socket is listening.
             "session.boot_app",
@@ -1349,6 +1389,7 @@ restart_window_secs = 120
             switch_timeout_ms,
             map_timeout_ms,
             launch_confirm_ms,
+            screenshot_timeout_ms,
             boot_app,
             boot_relaunch,
             boot_fast_exit_secs,
@@ -1375,6 +1416,7 @@ restart_window_secs = 120
             switch_timeout_ms,
             map_timeout_ms,
             launch_confirm_ms,
+            screenshot_timeout_ms,
             u64::from(boot_app),
             // The supervisor's tunables. `boot_relaunch` is an enum, so it is
             // counted via its discriminant rather than a numeric cast.

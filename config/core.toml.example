@@ -183,6 +183,37 @@
 # headroom for a loaded box, not an expected time.
 #launch_confirm_ms = 2000
 
+# Bound on how long `screenshot <path>` waits for the compositor to finish a
+# capture.
+#
+# THIS IS THE ONLY WAY TO SEE THE SCREEN UNDER V2. gamescope implements no
+# Wayland screen-capture protocol, so `grim` — and every v1 surface built on it
+# — cannot work here. The core instead sets gamescope's
+# GAMESCOPECTRL_REQUEST_SCREENSHOT root property and waits for the FILE
+# gamescope writes, then moves it to the path you named.
+#
+# It waits for the file and NOT for the request property, which clears long
+# before the frame exists. Measured on a live 4K HDR session (gamescope
+# 3.16.28): the property cleared at 32 ms, the complete PNG appeared at 712 ms.
+# This bound therefore governs the slow half — one vblank-gated repaint plus a
+# detached encode-and-write, with no repaint nudge from gamescope — and not the
+# compositor's acknowledgement, which would be wrong by a factor of 22.
+#
+# The default of 5000 is ~7x the measured 712 ms.
+#
+# A capture that does not complete in this window is an `error:`, never a
+# screenshot — and in particular never the PREVIOUS capture, which gamescope
+# leaves lying at its one hardcoded output path. The core clears that path
+# before every request precisely so a stale frame cannot be mistaken for a
+# fresh one, and only accepts a file that is a complete PNG, since gamescope
+# writes it in place and a poll can otherwise land mid-write.
+#
+# RANGE: 1..=30000. Raise it if captures on your hardware come back as
+# timeouts — 712 ms is one machine's figure, not a universal one. Bounded above
+# because a capture holds the capture lock for its whole wait, so a larger value
+# queues every later screenshot behind one wedged compositor.
+#screenshot_timeout_ms = 5000
+
 # The app class the core launches and shows once, on a FRESH session. 0 = none,
 # which is the default. Must name an [[app]] entry below, or the core refuses to
 # start — a boot_app pointing at nothing is a black television at the end of a

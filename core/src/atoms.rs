@@ -171,6 +171,14 @@ pub mod names {
     /// Flat app-id list of the focus candidates.
     pub const FOCUSABLE_APPS: &str = "GAMESCOPE_FOCUSABLE_APPS";
 
+    // --- root: screen capture (core writes, gamescope deletes) ---
+    /// Ask gamescope to capture the screen. The VALUE is the screenshot *type*
+    /// (`protocol/gamescope-control.xml:83-88`), not a flag word — see
+    /// [`crate::screenshot`]. gamescope reads it from the root, composites on
+    /// its next repaint, writes the file, and then DELETES this property, which
+    /// is the only completion signal the X path has.
+    pub const REQUEST_SCREENSHOT: &str = "GAMESCOPECTRL_REQUEST_SCREENSHOT";
+
     // --- root: display feedback (gamescope writes) ---
     /// `EDID HDR10 && hdr_enabled`. Zeroes for ~1 s across an HDMI hotplug (§6).
     pub const HDR_OUTPUT_FEEDBACK: &str = "GAMESCOPE_HDR_OUTPUT_FEEDBACK";
@@ -204,6 +212,7 @@ pub mod names {
         FOCUSED_APP,
         FOCUSABLE_WINDOWS,
         FOCUSABLE_APPS,
+        REQUEST_SCREENSHOT,
         HDR_OUTPUT_FEEDBACK,
         VRR_FEEDBACK,
         DISPLAY_SUPPORTS_HDR,
@@ -446,6 +455,30 @@ impl AtomConn {
         self.read_cardinal(self.root, names::FOCUSED_WINDOW)
     }
 
+    // -- typed root accessors: screen capture --------------------------------
+
+    /// Ask gamescope for a screenshot of `kind`. ONE write, like the base layer.
+    ///
+    /// `kind` is a `gamescope_control_screenshot_type`, not a bitfield; the only
+    /// value this crate ever passes is [`crate::screenshot::FULL_COMPOSITION`],
+    /// which is why that constant lives next to the reasoning for it rather than
+    /// here.
+    pub fn request_screenshot(&self, kind: u32) -> Result<()> {
+        self.write_cardinals(self.root, names::REQUEST_SCREENSHOT, &[kind])
+    }
+
+    /// Is a capture request still outstanding?
+    ///
+    /// `true` while the property exists. gamescope deletes it once the attempt
+    /// finishes — **on the failure path as well as the success path** — so this
+    /// answers "has the compositor stopped working on it", never "did it work".
+    /// See [`crate::screenshot`] for the rule that keeps those apart.
+    pub fn screenshot_requested(&self) -> Result<bool> {
+        Ok(self
+            .read_cardinal(self.root, names::REQUEST_SCREENSHOT)?
+            .is_some())
+    }
+
     // -- typed per-window accessors -----------------------------------------
 
     /// A window's `STEAM_GAME` tag, if it carries one.
@@ -647,6 +680,7 @@ mod tests {
             names::FOCUSED_APP,
             names::FOCUSABLE_WINDOWS,
             names::FOCUSABLE_APPS,
+            names::REQUEST_SCREENSHOT,
             names::HDR_OUTPUT_FEEDBACK,
             names::VRR_FEEDBACK,
             names::DISPLAY_SUPPORTS_HDR,
