@@ -492,9 +492,10 @@ And against `core/tests/input_uinput.rs`, which runs on a real kernel:
   `each_player_gets_its_own_presenter_device` must fail. **It did not, at first**
   — see survivor 4 below.
 
-Four mutations SURVIVED the first pass, and each exposed a test that proved
+Five mutations have SURVIVED a first pass, and each exposed a test that proved
 less than it claimed. They are recorded because the fixes are the interesting
-part:
+part — and because the five are genuinely different failure modes, not five
+instances of one:
 
 1. **`SlotAllocator::alloc` scanning up from the high-water mark instead of from
    zero.** The reconnect test frees the TOP slot, which both behaviours handle
@@ -518,6 +519,33 @@ part:
    an identity, not a property. It now asserts the two names DIFFER from each
    other, that each carries its own slot, and that both are recognisably ours —
    none of which reference `device_name`.
+5. **`screenshot`'s fake compositor writing the output file at the instant it
+   cleared the request property.** No mutation was needed to find this one: the
+   suite was green and the code was broken on hardware, because the fake
+   **encoded the premise the code was built on**. The code assumed the property
+   cleared only after the file was written; the fake made that true by
+   construction; so the two events could never disagree, and *no possible test
+   against that fake could have failed*. On the real compositor the property
+   clears at 32 ms and the file lands at 712 ms, and the verb would have
+   reported `NotWritten` for every successful capture.
+
+   **This is a distinct failure mode from 4, and worth naming separately.** A
+   self-referential test (4) asserts an identity instead of a property — the
+   assertion is weak, but the fake is honest. Here the *assertion* was fine and
+   the **double was dishonest**: it modelled the world the implementation
+   believed in rather than the world. A suite cannot disagree with the code when
+   its double is derived from the same assumption, which makes green
+   uninformative rather than merely weak — the two ordinary tells, a vacuous
+   assertion and a rule with no test at all, are both absent.
+
+   The fix is structural: the fake now schedules property-clear and
+   file-arrival **independently**, against a shared poll clock, so a test can
+   express a timeline the implementation did not expect. That is the general
+   rule for a double standing in for a multi-event interaction — **let the
+   events be ordered independently, and let at least one test order them the
+   way the code does not assume.** If a fake cannot express the timeline that
+   would break the code, it is not a test fixture, it is a restatement of the
+   code.
 
 - Drop the `self.emit_failures += 1` from `session::emit`, leaving the log line.
   `a_presenter_that_refuses_events_is_counted` must fail. `retire` documents that
