@@ -629,3 +629,25 @@ as what is settled.
   offscreen lane has no compositor.
 - **`Tokens.scale` has only ever been 1.** The scale path is unit-tested, but the
   shell has run at no resolution but the test harness's.
+
+One thing that is **not** on this list, because it was chased down rather than
+left as a suspicion: `main.cpp`'s non-xcb warning appeared not to print at all,
+which would have made the README's "the warning is the diagnosis" false. It fires
+correctly. Arch/CachyOS builds Qt with journald support and its default handler
+routes there, so a Qt application on this workstation prints **nothing** to
+stderr — not `qWarning`, not even Qt's own fatal messages — unless
+`QT_FORCE_STDERR_LOGGING=1` is set. With it set, both startup diagnostics appear.
+Worth knowing before someone debugs a black screen at the television and concludes
+the shell is silent.
+
+That also makes a real smoke test possible, and it passes: loading the actual
+entry point offscreen with a populated catalog
+
+```bash
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_FORCE_STDERR_LOGGING=1 \
+  TV_SHELL_SHELL_JSON=config/shell.json.example ./build/tv-shell-v2
+```
+
+emits the two expected platform diagnostics and **nothing else** — no QML
+binding errors, no undefined assignments. That covers `Main.qml`, which the test
+lanes do not instantiate (they build `HomeScreen` and `DrawerScreen` directly).
