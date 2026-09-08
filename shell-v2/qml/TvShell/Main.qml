@@ -72,6 +72,20 @@ QtObject {
 
     // ---- core conversation ------------------------------------------------
 
+    // The ONLY place screen state is fetched. Called from the three moments that
+    // can have changed it, and from nowhere on a timer.
+    //
+    // This is a deliberate constraint, not a missing subscription:
+    // jedwards1230/tv-shell#473. V2_DESIGN §4 and §7 SPECIFY an event stream the
+    // core is to own -- §7 rule 3 even fixes its semantics (full snapshots, not
+    // deltas, so broadcast lag stays safe) -- but `core/src/protocol.rs` has no
+    // subscribe verb and no `Event` type, so there is nothing to subscribe to
+    // yet. Fetch-on-known-change is the correct behaviour against what exists.
+    //
+    // Do NOT "fix" the staleness with a timer. The one visible symptom -- an app
+    // that exits on its own leaves a stale "Running" badge until the next of the
+    // three moments -- is #473's to close, and a poll here would hide the gap
+    // while making every screen pay for it.
     function refresh() {
         root.core.request("screen-state");
     }

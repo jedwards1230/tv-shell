@@ -17,6 +17,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <memory>
+
 using namespace tvshell;
 
 namespace {
@@ -299,6 +301,47 @@ private Q_SLOTS:
         QTRY_COMPARE(replies.count(), 1);
         QCOMPARE(replies.at(0).at(0).toString(), QStringLiteral("ping"));
         core2.dropConnection();
+    }
+
+    // ---- teardown ----------------------------------------------------------
+
+    // Destroying a CONNECTED client must be safe and quiet.
+    //
+    // This defends a fix, and the bug it defends against is worth stating because
+    // it is invisible by every other means. Qt destroys a connected QLocalSocket
+    // MEMBER by running its close path from inside ~CoreClient, at which point
+    // the derived object is already half-destroyed -- and its slots ran anyway.
+    // Without the explicit `m_socket.disconnect(this)` in the destructor this
+    // corrupts the heap, and it does NOT fail here: it surfaces later, as a glibc
+    // abort attributed to whichever test happens to run next. An
+    // AddressSanitizer build of this same suite reports ZERO errors, because the
+    // fault is in Qt's signal dispatch rather than in a heap access ASan
+    // instruments.
+    //
+    // So the test is a loop rather than a single destruction: one teardown can
+    // corrupt quietly and be tolerated, twenty cannot. Verified by mutation --
+    // removing the destructor's body fails this.
+    void destroyingAConnectedClientIsQuiet()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("core.sock"));
+        FakeCore core(path);
+        QVERIFY(core.isListening());
+
+        for (int i = 0; i < 20; ++i) {
+            auto client = std::make_unique<CoreClient>();
+            client->setSocketPath(path);
+            client->connectToCore();
+            QTRY_VERIFY(client->isConnected());
+            // In flight on purpose: a pending command is what gives the
+            // half-destroyed object something to do on the way out.
+            QVERIFY(client->request(QStringLiteral("screen-state")));
+            client.reset();
+        }
+        // Reaching here at all is the assertion; make it explicit so a reader
+        // does not mistake this for a test with no expectations.
+        QVERIFY(true);
+        core.dropConnection();
     }
 
     // A request with no connection is refused rather than silently queued: a

@@ -37,6 +37,22 @@
 //       cell. This rule is the model half of the stranding guarantee that
 //       focusGraph.js R4 is the router half of.
 //
+// FORWARD COMPATIBILITY WITH A CORE `list-apps` (jedwards1230/tv-shell#474)
+//
+// The catalog is an OVERLAY KEYED ON APP ID, never the source of truth for which
+// apps exist. That is what H2 buys beyond politeness: an id the catalog has
+// never heard of still renders, still says what it is, and is still activatable.
+//
+// So when the core grows a `list-apps` verb, the change is one line at the CALL
+// SITE -- where the id list comes from -- and not a rewrite here:
+//
+//   today   build(catalog.entries,         snapshot, shellAppId)
+//   after   build(merge(coreIds, catalog), snapshot, shellAppId)
+//
+// Keep it that way. Any change that makes a catalog row REQUIRED for an app to
+// appear would break the seam and turn #474 into a rewrite;
+// `test_an_unknown_running_app_is_shown_not_hidden` is what holds it.
+//
 // tests/qml/tst_homemodel.qml asserts each of these.
 .pragma library
 
