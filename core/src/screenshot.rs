@@ -136,17 +136,23 @@ pub const GAMESCOPE_OUTPUT: &str = "/tmp/gamescope.png";
 
 /// How long the compositor gets to complete a capture.
 ///
-/// **A guess. There is no measured number behind it yet.** gamescope stores the
-/// request and raises `hasRepaint`, but — unlike `force_repaint` — it does
-/// **not** call `nudge_steamcompmgr()`, so the capture waits for the next
-/// vblank-gated repaint and then for a detached thread to encode and write the
-/// PNG. That is an argument for "not instant", not a duration.
+/// **Measured: a complete file at 712 ms**, on the deploy box's live v2 session
+/// (gamescope 3.16.28, 4K HDR, an app streaming), under controlled conditions.
+/// Five seconds is ~7x that.
 ///
-/// Five seconds is chosen to be long enough that a loaded box cannot produce a
-/// false failure and short enough that a wedged compositor says so inside one
-/// interaction. [`Captured::took_ms`] exists to replace it with a real figure
-/// once one is taken under controlled conditions; until then, treat this as
-/// unvalidated and do not quote it as a bound anyone has checked.
+/// It is slow because gamescope stores the request and raises `hasRepaint` but
+/// — unlike `force_repaint` — does **not** call `nudge_steamcompmgr()`, so the
+/// capture waits for the next vblank-gated repaint and then for a detached
+/// thread to encode and write the PNG.
+///
+/// **This bound governs the FILE, which is the slow half.** The request
+/// property cleared at 32 ms in the same run; a timeout tied to that event
+/// would be measuring the wrong thing by a factor of 22. Five seconds is long
+/// enough that a loaded box cannot produce a false failure and short enough
+/// that a wedged compositor says so inside one interaction.
+/// [`Captured::took_ms`] and [`Captured::request_cleared_ms`] report both
+/// halves, so a deployment that drifts from these numbers is visible rather
+/// than inferred.
 ///
 /// The SINGLE source of the value: [`crate::config::SessionConfig`]'s default
 /// derives `screenshot_timeout_ms` from it rather than repeating the literal.

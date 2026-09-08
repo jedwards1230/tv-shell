@@ -193,10 +193,13 @@
 # gamescope writes, then moves it to the path you named.
 #
 # It waits for the file and NOT for the request property, which clears long
-# before the frame exists (measured: 32 ms vs 712 ms). This bound therefore
-# governs the slow half — one vblank-gated repaint plus a detached
-# encode-and-write, with no repaint nudge from gamescope — and not the
-# compositor's acknowledgement.
+# before the frame exists. Measured on a live 4K HDR session (gamescope
+# 3.16.28): the property cleared at 32 ms, the complete PNG appeared at 712 ms.
+# This bound therefore governs the slow half — one vblank-gated repaint plus a
+# detached encode-and-write, with no repaint nudge from gamescope — and not the
+# compositor's acknowledgement, which would be wrong by a factor of 22.
+#
+# The default of 5000 is ~7x the measured 712 ms.
 #
 # A capture that does not complete in this window is an `error:`, never a
 # screenshot — and in particular never the PREVIOUS capture, which gamescope
@@ -205,8 +208,8 @@
 # fresh one, and only accepts a file that is a complete PNG, since gamescope
 # writes it in place and a poll can otherwise land mid-write.
 #
-# RANGE: 1..=30000. The default is a guess with headroom, NOT a measurement —
-# raise it if captures on your hardware come back as timeouts. Bounded above
+# RANGE: 1..=30000. Raise it if captures on your hardware come back as
+# timeouts — 712 ms is one machine's figure, not a universal one. Bounded above
 # because a capture holds the capture lock for its whole wait, so a larger value
 # queues every later screenshot behind one wedged compositor.
 #screenshot_timeout_ms = 5000
