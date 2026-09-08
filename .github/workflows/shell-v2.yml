@@ -101,16 +101,6 @@ jobs:
         # check is about real defects rather than unresolved imports.
         run: cmake --build build --target all_qmllint
 
-      - name: qmllint (strict)
-        # `all_qmllint` runs qmllint with its DEFAULTS, which let an unqualified
-        # access through silently -- measured, not assumed. This re-runs the same
-        # response file with `unqualified` promoted and zero warnings tolerated.
-        # `missing-property` is deliberately NOT enabled: qmllint does not resolve
-        # the C++ `Surface` type out of this static module on the Qt pinned here,
-        # so it fails a correct Main.qml. That coverage comes from the `qml` ctest
-        # lane's QT_FATAL_WARNINGS=1 instead (docs/V2_SHELL.md §11.9).
-        run: cmake --build build --target qmllint_strict
-
       - name: Test
         # Software rendering throughout: the runner has no GPU, and forcing it
         # here keeps the premap lane's failures about ORDERING rather than about
@@ -119,10 +109,10 @@ jobs:
           QT_QUICK_BACKEND: software
         run: ctest --test-dir build --output-on-failure
 
-      - name: Assert all three lanes ran
+      - name: Assert all four lanes ran
         # An ignore-gated leg wired to nothing defends nothing
-        # (jedwards1230/tv-shell#469). ctest reports 2 tests when the premap lane
-        # was skipped at configure time and 3 when it was registered, so the count
+        # (jedwards1230/tv-shell#469). ctest reports 3 tests when the premap lane
+        # was skipped at configure time and 4 when it was registered, so the count
         # is the signal that the X leg genuinely executed.
         run: |
           names=$(ctest --test-dir build -N | sed -n 's/^ *Test *#[0-9]*: //p' | sort | tr '\n' ' ')

@@ -97,7 +97,6 @@ so a rename on either side fails loudly.
 cmake -S shell-v2 -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 cmake --build build --target all_qmllint
-cmake --build build --target qmllint_strict
 ctest --test-dir build --output-on-failure
 ```
 
@@ -118,21 +117,19 @@ cmake --build build && ctest --test-dir build --output-on-failure
 
 Without it `ctest` reports three lanes; with it, four. CI sets it.
 
-**Run `qmllint_strict`, not just `all_qmllint`.** The generated target runs
-qmllint with its defaults, and the defaults let an unqualified access through
-silently — measured, not assumed. `qmllint_strict` re-runs the same response file
-with `unqualified` promoted and zero warnings tolerated.
+**qmllint is weaker here than it looks, and the tests make up for it.** The
+generated `all_qmllint` target runs qmllint with its defaults, which let
+`Tokens.onlineTypo`, `card.titleTypo` and a plain unqualified access all pass. No
+category can be promoted, either: qmllint does not resolve the C++ `Surface` type
+out of this static module on the Qt 6.8 CI pins, and with `Surface` unresolved
+scope resolution inside a Surface block fails too, so a correct `Main.qml` reports
+the whole file as unqualified. The coverage comes from the `qml` lane instead,
+which runs under `QT_FATAL_WARNINGS=1` — an undefined binding is a *warning*,
+never an error, so this is what turns it into a test failure. Full account,
+including what was tried: `../docs/V2_SHELL.md` §11.9.
 
-`missing-property` is deliberately NOT enabled: qmllint does not resolve the C++
-`Surface` type out of this static module on the Qt 6.8 CI pins, so enabling it
-fails a correct `Main.qml` six times — and naming the qmltypes with `-i` makes it
-worse on 6.11. That coverage is provided instead by the `qml` lane running under
-`QT_FATAL_WARNINGS=1`, where an undefined binding (a *warning*, never an error)
-fails the test. See `../docs/V2_SHELL.md` §11.9.
-
-Both matter more here than in most Qt projects: there is no screenshot path on a
-v2 session, so a typo'd binding is a property that is simply never set, on a
-screen nobody can look at.
+A consequence for anyone adding tests: a test that deliberately provokes a
+warning must wrap it in `ignoreWarning()`, or the lane aborts.
 
 ## Running it
 

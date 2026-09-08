@@ -118,21 +118,17 @@ Unlike v1's `shell/`, this one BUILDS: the pre-map X11 tagging needs C++. See
 ```bash
 cmake -S shell-v2 -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cmake --build build --target all_qmllint     # module-resolving qmllint
-cmake --build build --target qmllint_strict  # AND this one — see below
+cmake --build build --target all_qmllint   # module-resolving qmllint
 ctest --test-dir build --output-on-failure
 ```
 
-**Run `qmllint_strict` too.** `all_qmllint` runs qmllint with its DEFAULTS, and
-the defaults let an unqualified access through silently. The strict target
-re-runs the same response file with `unqualified` promoted and `--max-warnings 0`.
-`missing-property` is deliberately left off — qmllint does not resolve the C++
-`Surface` type out of this static module on the Qt CI pins, so it fails a correct
-`Main.qml`; that coverage comes instead from the `qml` ctest lane running under
-`QT_FATAL_WARNINGS=1`, where an undefined binding fails the test. See
-[docs/V2_SHELL.md](docs/V2_SHELL.md) §11.9. It matters more here than in most Qt
-projects because there is no screenshot path on a v2 session, so a typo'd binding
-is a property that is simply never set on a screen nobody can look at.
+**qmllint's defaults are weak here, and no category can be promoted.** qmllint
+does not resolve the C++ `Surface` type out of this static module on the pinned
+Qt, and with it unresolved a correct `Main.qml` reports as unqualified from top
+to bottom. The coverage comes from the `qml` ctest lane running under
+`QT_FATAL_WARNINGS=1`, where an undefined binding — a *warning*, never an error —
+fails the test. See [docs/V2_SHELL.md](docs/V2_SHELL.md) §11.9. A test that
+deliberately provokes a warning must use `ignoreWarning()`.
 
 The X-backed lane (`premap`, which asserts the `STEAM_*` properties reach the
 server BEFORE the window maps) is opt-in behind `TV_SHELL_TEST_XVFB`, the same
