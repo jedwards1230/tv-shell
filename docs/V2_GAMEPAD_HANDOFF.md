@@ -116,11 +116,12 @@ result there means nothing.
 
 ### 2.2 M2 — what re-points X focus after an overlay is destroyed
 
-Partially observed while running M0: with the drawer opened and closed via XTEST, X
-input focus **remained on the base window** rather than going to `None`. This does not
-contradict jedwards1230/tv-shell#485, which was measured with a different close path;
-it does mean the dangling-focus reproduction needs re-establishing before the fix is
-designed. Carried on #485.
+**Not measured.** The M0 runs did read X input focus after a close, but only in a run
+where the drawer had never opened in the first place, so that reading is about a
+compositor state no overlay ever entered — it says nothing about focus after a destroy.
+Carried unchanged on jedwards1230/tv-shell#485, which still needs its own attended
+measurement: which *in-process* call re-points focus at the base surface once the
+overlay window is gone.
 
 ### 2.3 M1 — does an ungrabbed pad plus a permanent presenter show as two controllers?
 
