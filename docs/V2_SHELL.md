@@ -650,20 +650,25 @@ That has a cost worth stating: a future test that *deliberately* provokes a
 warning — `FocusRouter`'s malformed-graph `console.warn`, say — must wrap it in
 `ignoreWarning()` or the lane aborts.
 
-**The general lesson, because this section is one instance of it.** A green suite
-can be empty in three distinct ways, and they are caught by three different
-instruments:
+**The general lesson, because this section is one instance of it.** Every green
+check that defends nothing is the same failure:
 
-| The suite is green but | Caught by |
-|---|---|
-| **the rule is untested** | mutation — break the rule, watch it fail |
-| **the test runs nowhere** | reading the log's ran-count, not the exit code |
-| **the state is unreachable** | asking what input, *through the real entry point*, produces it |
+> **The thing you verified is not always the thing you changed** — a check whose
+> subject has drifted from its object.
 
-The third is the one that keeps getting through, and the reason is worth stating
-plainly: **mutation proves a test *can* fail; it says nothing about whether the
-state it fails on can occur.** A test that pokes a value directly rather than
-driving the real path will pass a mutation audit while defending nothing.
+That is the shape. The three ways it shows up in a test suite differ only in what
+the subject drifted *to*, and each needs a different instrument to notice:
+
+| The suite is green but | The subject drifted to | Caught by |
+|---|---|---|
+| **the rule is untested** | a different rule | mutation — break the rule, watch it fail |
+| **the test runs nowhere** | no execution at all | reading the log's ran-count, not the exit code |
+| **the state is unreachable** | a state the system cannot produce | asking what input, *through the real entry point*, produces it |
+
+The third keeps getting through, and the reason is worth stating plainly:
+**mutation proves a test *can* fail; it says nothing about whether the state it
+fails on can occur.** A test that pokes a value directly rather than driving the
+real path will pass a mutation audit while defending nothing.
 
 Two of those shipped in this tree before being caught. `tst_geometry` asserted
 `size() != QSize(160, 160)` — the number seen on hardware — while running on the
@@ -673,11 +678,18 @@ bug fully present. And `tst_tokens` asserted the `gridUnit` floor by setting
 it proved the floor works while proving nothing about any state the shell can
 produce. Both now drive the real entry point instead.
 
-That gives the third question a sharper form, which is the one to actually apply:
-not just *is this state reachable*, but **reachable here, on the platform this
-lane runs on** — because a lane's platform is an input you do not think of as an
-input. Offscreen Qt defaults to 1x1 and hardware to 160x160, and an assertion
-naming either is silently about the other.
+The first of those gives the third question its sharper form, which is the one to
+actually apply: not just *is this state reachable*, but **reachable here, on the
+platform this lane runs on** — because a lane's platform is an input you do not
+think of as an input. Offscreen Qt defaults to 1x1 and hardware to 160x160, and
+an assertion naming either is silently about the other.
+
+**And the shape is not confined to tests.** §11.9's own stale text was the same
+drift outside a suite: the `qmllint_strict` removal was verified in
+`CMakeLists.txt`, the workflow and three other docs, and the edit to *this* file
+never entered the commit. Five files were staged, this one was not, and nobody
+checked — a change verified against everything except the thing it missed. That
+is why the question is worth asking of a commit as readily as of an assertion.
 
 ### 11.9a It rendered on hardware, and the window was 160x160
 
