@@ -76,6 +76,72 @@ private Q_SLOTS:
                  "display");
     }
 
+    // ---- hiding an overlay destroys it -----------------------------------
+    //
+    // gamescope keeps compositing an overlay after it unmaps: on hardware,
+    // closing the drawer left the television showing it over a base surface that
+    // was provably still painting. Destroying the window is the event that
+    // actually drops it (the shell exiting is what dislodged the frame), so
+    // hiding an overlay has to destroy its platform window rather than just
+    // unmap it.
+    //
+    // That is asserted here as `handle()`, which is the closest thing to
+    // "does an X window exist for this" that is reachable without an X server —
+    // and it is the same predicate `applyVisibility()` branches on, so a
+    // re-show provably goes back through create() + applyTags() rather than
+    // re-mapping an untagged window.
+    void hidingAnOverlayDestroysItsPlatformWindow()
+    {
+        Surface overlay;
+        overlay.setRole(Surface::Overlay);
+        overlay.resize(720, 1080);
+
+        overlay.setVisible(true);
+        QVERIFY2(overlay.handle(), "showing an overlay should create a platform window");
+
+        overlay.setVisible(false);
+        QVERIFY2(!overlay.handle(),
+                 "hiding an overlay must DESTROY its platform window, not just unmap it — "
+                 "gamescope goes on compositing an unmapped overlay");
+
+        // And it comes back, through the create-and-tag path rather than a bare
+        // re-map. A drawer that opens once is not a drawer.
+        overlay.setVisible(true);
+        QVERIFY2(overlay.handle(), "re-showing an overlay should create a platform window again");
+    }
+
+    // A toast is an overlay too — same atom, same compositing path, no input
+    // focus. It was tempting to reason that it is unaffected because it never
+    // takes focus; the hardware measurement says the stale frame is NOT
+    // focus-related, so that reasoning was wrong and Toast is in scope. A
+    // notification that wedges the screen over a live game is worse than a
+    // drawer that does, because nobody opened it deliberately.
+    void hidingAToastDestroysItToo()
+    {
+        Surface toast;
+        toast.setRole(Surface::Toast);
+        toast.resize(880, 130);
+
+        toast.setVisible(true);
+        QVERIFY(toast.handle());
+        toast.setVisible(false);
+        QVERIFY2(!toast.handle(), "hiding a toast must destroy its platform window, as for any overlay");
+    }
+
+    // Base is exempt, and that is a role decision rather than an oversight:
+    // a base surface is never hidden, and destroying the shell's own root window
+    // is not what anyone would want if one ever were.
+    void hidingABaseSurfaceDoesNotDestroyIt()
+    {
+        Surface base;
+        base.setRole(Surface::Base);
+        base.setVisible(true);
+        QVERIFY(base.handle());
+
+        base.setVisible(false);
+        QVERIFY2(base.handle(), "a Base surface must keep its platform window when hidden");
+    }
+
     // The role decides, so the roles that legitimately have their own geometry
     // must NOT be overridden. A drawer is a side panel and a toast is small;
     // sizing either to the output would be a different bug with the same cause.

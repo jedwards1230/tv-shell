@@ -390,7 +390,6 @@ nothing changed.
 cmake -S shell-v2 -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 cmake --build build --target all_qmllint
-cmake --build build --target qmllint_strict   # see §11.9 -- the defaults miss things
 ctest --test-dir build --output-on-failure
 
 # with the X-backed lane (needs an X server):
@@ -603,7 +602,7 @@ beyond a pile of *"Unable to assign [undefined]"* warnings — and the property 
 to be set *before* the module is declared. Caught by the wired test failing, not
 by lint.
 
-### 11.9 The lint gate is weaker than it looks, and one category cannot be fixed
+### 11.9 qmllint cannot be made strict here, and what replaced it
 
 `all_qmllint` runs qmllint with its **defaults**, and the defaults are weaker than
 they look: `Tokens.onlineTypo`, `card.titleTypo` and a plain unqualified access
@@ -612,27 +611,33 @@ screenshot path on a v2 session, so a binding that resolves to `undefined` or to
 the wrong scope is a property that is simply never set, on a screen nobody can
 look at.
 
-**What was fixed.** `shell-v2/CMakeLists.txt` adds a **`qmllint_strict`** target
-that re-runs the same response file (same import paths, same resources, no second
-file list to drift) with `unqualified` promoted and `--max-warnings 0`, so any
-warning at all fails. It found two real unqualified accesses in `Main.qml` the
-first time it ran, and a mutation confirms it still catches one.
+**A stricter target was built, and then removed.** `shell-v2/CMakeLists.txt` has
+no `qmllint_strict`: **no category can be promoted here at all**, and the
+attempts are recorded rather than hidden because each one looked reasonable
+before it was run.
 
-**What could not be, and why it is recorded rather than hidden.**
-`missing-property` — the category that would catch `Tokens.onlineTypo` — is
-**not** enabled, because it cannot be made portable here:
+1. **`--missing-property error` is rejected outright on Qt 6.8**, which CI pins —
+   only `disable`, `info` and `warning` are accepted. Local Qt is 6.11 and took
+   it, so the target passed here and failed there with a usage message rather
+   than a lint result.
+2. With `warning` + `--max-warnings 0`, **Qt 6.8 does not resolve the C++
+   `Surface` type** out of this static QML module (`Type Surface is used but it
+   is not resolved`), so every property on a Surface reads as missing and
+   `Main.qml` fails six times while being correct.
+3. Suppressing `unresolved-type` does not help, and this is what settles it:
+   **with `Surface` unresolved, scope resolution inside a Surface block fails
+   too.** `root`, `Tokens`, `Viewport` and `HomeModel` all report as unqualified
+   access — the cascade is the whole file, so `unqualified` is no more promotable
+   than `missing-property`.
 
-- On the **Qt 6.8 that CI pins**, qmllint does not resolve the C++ `Surface` type
-  out of this static QML module (`Type Surface is used but it is not resolved`),
-  so every property on a Surface reads as missing and `Main.qml` fails six times
-  while being correct.
-- Naming the module's own qmltypes explicitly with `-i` does **not** fix that,
-  and makes it worse: on Qt 6.11, where discovery works unaided, `-i` breaks the
-  same resolution and adds a cascade of spurious `unqualified` warnings.
+Naming the module's own qmltypes with `-i` does not fix it and reproduces the
+same cascade on Qt 6.11, where discovery otherwise works unaided.
 
-Both were measured, in that order, at the cost of two CI rounds. A per-file
-exclusion for `Main.qml` was rejected — it would silently stop covering whatever
-file grows a Surface next.
+Three CI rounds, in that order. Two workarounds were rejected: a per-file
+exclusion for `Main.qml` would silently stop covering whatever file grows a
+`Surface` next, and a version-gated target that no-ops below Qt 6.9 would be a
+gate that does nothing on the machine enforcing it — jedwards1230/tv-shell#469
+exactly.
 
 **So the category was replaced rather than dropped.** The offscreen `qml` lane
 now runs with **`QT_FATAL_WARNINGS=1`**, which turns any QML warning into a test
@@ -644,6 +649,35 @@ obtained in a way that does not depend on qmllint resolving C++ types.
 That has a cost worth stating: a future test that *deliberately* provokes a
 warning — `FocusRouter`'s malformed-graph `console.warn`, say — must wrap it in
 `ignoreWarning()` or the lane aborts.
+
+**The general lesson, because this section is one instance of it.** A green suite
+can be empty in three distinct ways, and they are caught by three different
+instruments:
+
+| The suite is green but | Caught by |
+|---|---|
+| **the rule is untested** | mutation — break the rule, watch it fail |
+| **the test runs nowhere** | reading the log's ran-count, not the exit code |
+| **the state is unreachable** | asking what input, *through the real entry point*, produces it |
+
+The third is the one that keeps getting through, and the reason is worth stating
+plainly: **mutation proves a test *can* fail; it says nothing about whether the
+state it fails on can occur.** A test that pokes a value directly rather than
+driving the real path will pass a mutation audit while defending nothing.
+
+Two of those shipped in this tree before being caught. `tst_geometry` asserted
+`size() != QSize(160, 160)` — the number seen on hardware — while running on the
+offscreen platform, where an unsized window is **1x1**; it passed with the sizing
+bug fully present. And `tst_tokens` asserted the `gridUnit` floor by setting
+`Tokens.scale = 0.01`, a value `Viewport.scaleFor`'s clamp makes unreachable, so
+it proved the floor works while proving nothing about any state the shell can
+produce. Both now drive the real entry point instead.
+
+That gives the third question a sharper form, which is the one to actually apply:
+not just *is this state reachable*, but **reachable here, on the platform this
+lane runs on** — because a lane's platform is an input you do not think of as an
+input. Offscreen Qt defaults to 1x1 and hardware to 160x160, and an assertion
+naming either is silently about the other.
 
 ### 11.9a It rendered on hardware, and the window was 160x160
 
@@ -704,6 +738,102 @@ while the defect is live is precisely the failure this suite exists to avoid, so
 it was replaced by the relationship that holds on any platform: a base surface is
 never smaller than its output.
 
+### 11.9b gamescope keeps compositing an overlay after it unmaps
+
+Measured on htpc-1, 2026-09-08, and it is the reason closing the drawer left the
+television showing it (jedwards1230/tv-shell#481).
+
+**Two symptoms that look like one and are not.** After Escape the drawer unmaps
+correctly and `GAMESCOPE_FOCUSED_WINDOW` returns to the base — but
+`XGetInputFocus` returns None, *and* the display keeps showing the drawer.
+
+The measurements separate them:
+
+| Probe | Result |
+|---|---|
+| base window's own contents, twice, 32 s apart | **differ** — the clock advanced (1088 px, 0.013% of frame) |
+| base `Map State` | `IsViewable` |
+| `show 9001` (core base-layer write) | frame **identical** |
+| `show 9003` (base layer → Moonlight) | frame **identical** |
+| `xdotool windowfocus <base>` | **X focus restored** — frame **identical** |
+| `xdotool windowactivate <base>` | frame **identical** |
+| killing the shell | frame **changed immediately** |
+
+The base surface is painting the whole time; only the presented output is stale.
+And restoring X input focus *without* unfreezing anything is what proves the two
+symptoms are independent — the dangling focus is a separate, smaller bug, not the
+cause of the freeze.
+
+**The conclusion the levers force.** Every lever that addresses the layer
+*underneath* the overlay failed, including switching the base layer to a
+different app entirely. What did change the output was the shell's windows being
+**destroyed**. An overlay draws above everything, so while gamescope still
+composites it, whatever is beneath — the shell's base, or a running game — is
+invisible behind a retained buffer that nothing dislodges. Destruction is the
+event gamescope acts on; unmapping is not.
+
+**The fix, and why it is in `Surface`.** Hiding a non-Base surface now calls
+`destroy()`, which issues XDestroyWindow — the same X-level event as the process
+dying, without the process having to die. It sits with the role for the same
+reason the sizing does: an overlay's lifecycle is a property of being an overlay.
+`Base` is exempt, because a base surface is never hidden and destroying the
+shell's root window is not what anyone would want if one ever were.
+
+**The cost is smaller than it looks.** `QWindow::destroy()` releases the platform
+window and the scene graph's GPU resources and leaves the **QQuickItem tree
+alive** — every `FocusSlot`, and its registration with the router, survives. So
+re-opening costs a scene-graph rebuild, not a re-instantiation: nothing
+re-registers, and no focus state is lost. What *does* change is that each open
+creates a new X window, which makes the tag-before-map guarantee something that
+has to hold every time rather than once.
+
+**Toast is in scope, and the reasoning that said otherwise was wrong.** The first
+derivation was that a Toast carries no `STEAM_INPUT_FOCUS`, so it never takes
+focus, so it cannot strand it. True and irrelevant: the hardware showed the stale
+frame is not focus-related at all. A Toast is an overlay by the same atom on the
+same compositing path, so it has the same defect — and a notification that wedges
+the screen over a live game is worse than a drawer that does, because nobody
+opened it deliberately.
+
+**Tests.** The offscreen `geometry` lane asserts the mechanism through
+`handle()` — the same predicate `applyVisibility()` branches on, so a re-show
+provably goes back through create-and-tag. Mutation-confirmed both ways: removing
+the destroy fails exactly the two overlay assertions and leaves Base and the
+geometry ones passing; extending it to Base fails only the Base assertion. The
+X-backed `premap` lane asserts the same claim at protocol level — a real
+`DestroyNotify` on close, then `PropertyNotify` before `MapNotify` on the window
+that replaces it. That leg needs an X server, so it is CI-verified only.
+
+**Still open, and separate:** the dangling X input focus. Nothing re-points it at
+the base after the overlay goes, and the shell has no representation of input
+ownership to compute what it *should* be — by design, because the compositor
+decides. That design has no failure mode for "the compositor decided nothing".
+The pure decision module sketched in §11.9c is the right shape for it, and it is
+not what freezes the television.
+
+### 11.9c The seam the shell is missing
+
+Two hardware bugs now share a cause at the design level: the shell asserts nothing
+about presentation or input, because both were delegated to the compositor. That
+delegation is right, and it has no failure mode for **"the compositor decided
+nothing"** (dangling focus) or **"the compositor is still showing something that
+no longer exists"** (the stale overlay).
+
+The seam is a pure decision module of the same shape as `homeModel.js`: given the
+set of surfaces that are open, compute what should be presented and who should
+hold input — then assert it, rather than assume it. That is offscreen-testable
+against a double, and it would have caught the missing handback, because the
+handback becomes something the shell *computes* rather than something it inherits.
+
+Not built yet: its output type is "what to assert", and what asserting means
+depends on which lever restores focus — which, unlike the freeze, is still
+unmeasured.
+
+§11.9d is the same shape one layer down. A token was wrong because nothing
+asserted the relationship it should have held to the sizes around it, exactly as
+the screen was wrong because nothing asserted what should be presented. The seam
+above is that pattern applied to compositor state; the ratio tests are it applied
+to layout.
 ### 11.9d The tokens were too small, and it was measurable
 
 Seen on the television once the sizing and stale-frame bugs were out of the way

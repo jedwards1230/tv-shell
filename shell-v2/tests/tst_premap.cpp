@@ -132,6 +132,98 @@ private slots:
                                     .arg(mapAt)));
     }
 
+    // Closing an overlay must DESTROY its window, and re-opening must re-tag
+    // before it maps again.
+    //
+    // The offscreen lane asserts the first half through `handle()`, which is as
+    // close to "is there an X window" as it can get without a server. This is
+    // the same claim at the protocol level: a real DestroyNotify, and then a
+    // real PropertyNotify-before-MapNotify on the window that replaces it.
+    //
+    // Why it matters: gamescope goes on compositing an overlay after it unmaps
+    // (measured on hardware — closing the drawer left the television showing it
+    // over a base surface that was still painting), and destroying the window is
+    // the event that drops it. Re-opening therefore creates a NEW window, which
+    // means the tag-before-map guarantee has to hold every time a drawer opens,
+    // not just the first.
+    void closingAnOverlayDestroysItAndReopeningRetagsBeforeMapping()
+    {
+        const xcb_atom_t watched = intern(m_watch, "STEAM_OVERLAY");
+        QVERIFY(watched != XCB_ATOM_NONE);
+
+        Surface surface;
+        surface.setRole(Surface::Overlay);
+        surface.resize(120, 80);
+
+        // --- open ---------------------------------------------------------
+        surface.create();
+        const xcb_window_t first = static_cast<xcb_window_t>(surface.winId());
+        QVERIFY(first != 0);
+
+        const uint32_t mask = XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_STRUCTURE_NOTIFY;
+        xcb_change_window_attributes(m_watch, first, XCB_CW_EVENT_MASK, &mask);
+        free(xcb_get_input_focus_reply(m_watch, xcb_get_input_focus(m_watch), nullptr));
+
+        surface.setVisible(true);
+        QTest::qWait(200);
+        while (xcb_generic_event_t *ev = xcb_poll_for_event(m_watch))
+            free(ev); // drain the open; this case is about what CLOSING does
+
+        // --- close: expect the window to be destroyed, not merely unmapped --
+        surface.setVisible(false);
+        QTest::qWait(200);
+
+        bool destroyed = false;
+        while (xcb_generic_event_t *ev = xcb_poll_for_event(m_watch)) {
+            const uint8_t type = ev->response_type & ~0x80;
+            if (type == XCB_DESTROY_NOTIFY) {
+                auto *dn = reinterpret_cast<xcb_destroy_notify_event_t *>(ev);
+                if (dn->window == first)
+                    destroyed = true;
+            }
+            free(ev);
+        }
+        QVERIFY2(destroyed,
+                 "closing an overlay produced no DestroyNotify — the window was only unmapped, "
+                 "and gamescope goes on compositing an unmapped overlay");
+        QVERIFY2(!surface.handle(), "the platform window should be gone after closing");
+
+        // --- reopen: a NEW window, tagged before it maps -------------------
+        surface.create();
+        const xcb_window_t second = static_cast<xcb_window_t>(surface.winId());
+        QVERIFY(second != 0);
+        xcb_change_window_attributes(m_watch, second, XCB_CW_EVENT_MASK, &mask);
+        free(xcb_get_input_focus_reply(m_watch, xcb_get_input_focus(m_watch), nullptr));
+
+        surface.setVisible(true);
+        QVERIFY2(surface.tagged(), "applyTags() reported failure on reopen");
+        QTest::qWait(200);
+
+        int propertyAt = -1;
+        int mapAt = -1;
+        int seen = 0;
+        while (xcb_generic_event_t *ev = xcb_poll_for_event(m_watch)) {
+            const uint8_t type = ev->response_type & ~0x80;
+            if (type == XCB_PROPERTY_NOTIFY) {
+                auto *pn = reinterpret_cast<xcb_property_notify_event_t *>(ev);
+                if (pn->window == second && pn->atom == watched && propertyAt < 0)
+                    propertyAt = seen;
+            } else if (type == XCB_MAP_NOTIFY) {
+                auto *mn = reinterpret_cast<xcb_map_notify_event_t *>(ev);
+                if (mn->window == second && mapAt < 0)
+                    mapAt = seen;
+            }
+            ++seen;
+            free(ev);
+        }
+
+        QVERIFY2(propertyAt >= 0, "no PropertyNotify for STEAM_OVERLAY on the reopened window");
+        QVERIFY2(mapAt >= 0, "no MapNotify — the reopened window never mapped");
+        QVERIFY2(propertyAt < mapAt,
+                 "STEAM_OVERLAY was set AFTER the reopened window mapped — the tag-before-map "
+                 "guarantee holds on the first open but not on later ones");
+    }
+
     // The companion assertion: an overlay must NOT be carrying the shell's app
     // id on the wire. Checked against the server rather than the pure mapping,
     // so a shim that helpfully added it later would still be caught.
