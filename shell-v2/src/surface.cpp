@@ -88,6 +88,49 @@ void Surface::applyVisibility()
 {
     if (!m_wantVisible) {
         QQuickWindow::setVisible(false);
+
+        // AN OVERLAY MUST BE DESTROYED, NOT MERELY UNMAPPED.
+        //
+        // gamescope goes on compositing an overlay after it unmaps. Measured on
+        // hardware 2026-09-08: close the drawer and the television keeps showing
+        // it, over a base surface that is provably still painting (its own window
+        // contents advance — the clock ticks — while the output does not).
+        //
+        // Every lever that addresses the layer UNDERNEATH was tried and none of
+        // them helped, which is what makes this the overlay's own problem rather
+        // than a focus or base-layer one: the core's `show 9001` base-layer write,
+        // `show 9003` (switching the base layer to a different app entirely),
+        // `xdotool windowfocus` and `windowactivate` all left the frame byte for
+        // byte identical. `windowfocus` DID restore X input focus without
+        // unfreezing anything, which is what separates the two symptoms: the
+        // dangling focus and the stale frame are independent, and only the second
+        // one is this.
+        //
+        // What did change the output was the shell exiting — i.e. its windows
+        // being DESTROYED. So destruction is the event gamescope acts on, and
+        // unmapping is not. Qt's `destroy()` issues XDestroyWindow, which is the
+        // same X-level event without the process having to die.
+        //
+        // Base is exempt because a base surface is never hidden; if one ever is,
+        // destroying the shell's own root window is not the behaviour anyone
+        // wants.
+        //
+        // The QML scene is NOT destroyed by this: `QWindow::destroy()` releases
+        // the platform window and the scene graph's GPU resources, and leaves the
+        // QQuickItem tree — every FocusSlot, and its registration with the router
+        // — alive. Re-showing costs a scene-graph rebuild, not a re-instantiation,
+        // so nothing re-registers and no focus state is lost.
+        if (m_role != Base && handle()) {
+            destroy();
+            // The tags died with the window. Say so, rather than leaving a stale
+            // `tagged: true` claiming properties are on a window that is gone —
+            // the next show goes through create() + applyTags() again precisely
+            // because `handle()` is now null.
+            if (m_tagged) {
+                m_tagged = false;
+                Q_EMIT taggedChanged();
+            }
+        }
         return;
     }
 

@@ -29,6 +29,8 @@
 #include "surface.h"
 
 #include <QGuiApplication>
+#include <QPointer>
+#include <QQuickItem>
 #include <QScreen>
 #include <QTest>
 
@@ -74,6 +76,118 @@ private Q_SLOTS:
                  "the base surface is smaller than its output — under gamescope the "
                  "client's own size is honoured and this gets upscaled to fill the "
                  "display");
+    }
+
+    // ---- hiding an overlay destroys it -----------------------------------
+    //
+    // gamescope keeps compositing an overlay after it unmaps: on hardware,
+    // closing the drawer left the television showing it over a base surface that
+    // was provably still painting. Destroying the window is the event that
+    // actually drops it (the shell exiting is what dislodged the frame), so
+    // hiding an overlay has to destroy its platform window rather than just
+    // unmap it.
+    //
+    // That is asserted here as `handle()`, which is the closest thing to
+    // "does an X window exist for this" that is reachable without an X server —
+    // and it is the same predicate `applyVisibility()` branches on, so a
+    // re-show provably goes back through create() + applyTags() rather than
+    // re-mapping an untagged window.
+    void hidingAnOverlayDestroysItsPlatformWindow()
+    {
+        Surface overlay;
+        overlay.setRole(Surface::Overlay);
+        overlay.resize(720, 1080);
+
+        overlay.setVisible(true);
+        QVERIFY2(overlay.handle(), "showing an overlay should create a platform window");
+
+        overlay.setVisible(false);
+        QVERIFY2(!overlay.handle(),
+                 "hiding an overlay must DESTROY its platform window, not just unmap it — "
+                 "gamescope goes on compositing an unmapped overlay");
+
+        // And it comes back, through the create-and-tag path rather than a bare
+        // re-map. A drawer that opens once is not a drawer.
+        overlay.setVisible(true);
+        QVERIFY2(overlay.handle(), "re-showing an overlay should create a platform window again");
+    }
+
+    // A toast is an overlay too — same atom, same compositing path, no input
+    // focus. It was tempting to reason that it is unaffected because it never
+    // takes focus; the hardware measurement says the stale frame is NOT
+    // focus-related, so that reasoning was wrong and Toast is in scope. A
+    // notification that wedges the screen over a live game is worse than a
+    // drawer that does, because nobody opened it deliberately.
+    void hidingAToastDestroysItToo()
+    {
+        Surface toast;
+        toast.setRole(Surface::Toast);
+        toast.resize(880, 130);
+
+        toast.setVisible(true);
+        QVERIFY(toast.handle());
+        toast.setVisible(false);
+        QVERIFY2(!toast.handle(), "hiding a toast must destroy its platform window, as for any overlay");
+    }
+
+    // Destroying the platform window must NOT destroy the scene.
+    //
+    // The whole cost argument for destroy-on-close rests on this: `destroy()`
+    // releases the platform window and the scene graph's GPU resources and
+    // leaves the QQuickItem tree alive, so a re-opened drawer does not
+    // re-instantiate its content — no FocusSlot is destroyed, nothing
+    // re-registers with the router, and no focus state is lost.
+    //
+    // That was asserted in prose and reviewed as "a Qt-specific claim the
+    // offscreen tests cannot verify". They can: item lifetime is not a
+    // compositor question. A QPointer goes null the moment the item is deleted,
+    // so if a future Qt ever starts tearing down content on destroy(), this
+    // fails here rather than on a television as an un-navigable drawer.
+    void destroyingThePlatformWindowKeepsTheSceneAlive()
+    {
+        Surface overlay;
+        overlay.setRole(Surface::Overlay);
+        overlay.resize(720, 1080);
+
+        // A stand-in for the drawer's content. Parented into the scene exactly
+        // as QML content is.
+        auto *content = new QQuickItem(overlay.contentItem());
+        content->setObjectName(QStringLiteral("drawer-content"));
+        QPointer<QQuickItem> alive(content);
+
+        overlay.setVisible(true);
+        QVERIFY(overlay.handle());
+        QVERIFY(alive);
+
+        overlay.setVisible(false);
+        QVERIFY2(!overlay.handle(), "precondition: the platform window should be gone");
+
+        QVERIFY2(alive,
+                 "destroy() took the QQuickItem tree with it — re-opening would re-instantiate "
+                 "the drawer's content, so every FocusSlot would re-register and focus state "
+                 "would be lost");
+        QCOMPARE(alive->parentItem(), overlay.contentItem());
+
+        // And it is still there after the window comes back, which is the case
+        // that actually matters: the same items, in the same scene.
+        overlay.setVisible(true);
+        QVERIFY(overlay.handle());
+        QVERIFY(alive);
+        QCOMPARE(alive->parentItem(), overlay.contentItem());
+    }
+
+    // Base is exempt, and that is a role decision rather than an oversight:
+    // a base surface is never hidden, and destroying the shell's own root window
+    // is not what anyone would want if one ever were.
+    void hidingABaseSurfaceDoesNotDestroyIt()
+    {
+        Surface base;
+        base.setRole(Surface::Base);
+        base.setVisible(true);
+        QVERIFY(base.handle());
+
+        base.setVisible(false);
+        QVERIFY2(base.handle(), "a Base surface must keep its platform window when hidden");
     }
 
     // The role decides, so the roles that legitimately have their own geometry
