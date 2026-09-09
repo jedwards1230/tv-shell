@@ -15,8 +15,8 @@
 # `../target/release/...` from `working-directory: daemon`.
 #
 # One job runs OUTSIDE the container on the bare runner VM: `core-uinput`, which
-# needs a real /dev/uinput. It is advisory (continue-on-error) until the leg has
-# proved it can execute on a hosted runner — see the comment above that job.
+# needs a real /dev/uinput. It is blocking: the leg has proved it can execute on a
+# hosted runner — see the comment above that job.
 #
 # Invoked by the CI orchestrator (.github/workflows/ci.yml), which decides via
 # path-based change detection whether the daemon/protocol crates changed, so
@@ -311,14 +311,18 @@ jobs:
   # lives in this ignore-gated file. So this bug class — already hit once — had
   # zero automated defenders while the file sat unwired.
   #
-  # WHY IT IS NON-BLOCKING (continue-on-error) ON THIS FIRST PASS. Whether a
-  # GitHub runner can `modprobe uinput`, and whether the /dev/input/eventN node
-  # the kernel then publishes is readable by the process running the tests, has
-  # to be OBSERVED, not assumed. #466's author declined to wire it for precisely
-  # this reason and named the precedent: assuming it is how the Xvfb tests spent
-  # months compiled everywhere and run nowhere. Flip this to blocking once the
-  # leg has a run history — a green-by-assumption required check is worse than an
-  # honest advisory one.
+  # WHY IT IS BLOCKING NOW. Whether a GitHub runner can `modprobe uinput`, and
+  # whether the /dev/input/eventN node the kernel then publishes is readable by
+  # the process running the tests, had to be OBSERVED, not assumed — #466's
+  # author declined to wire it for precisely that reason, naming the precedent:
+  # assuming it is how the Xvfb tests spent months compiled everywhere and run
+  # nowhere. So this job landed in #469 as advisory (continue-on-error) with the
+  # instruction to flip it once it had a run history. The observation is in: the
+  # leg ran 8 times between 2026-09-08 and 2026-09-09, all green. `sudo modprobe
+  # uinput` succeeds on `ubuntu-latest`, and the compile-as-user /
+  # execute-under-sudo split below covers both permissions. It is therefore
+  # blocking, as that instruction said — the run history it was waiting on
+  # exists, so it is no longer a green-by-assumption check.
   #
   # WHY IT IS ITS OWN JOB AND NOT A STEP IN `core`. `core` runs inside the
   # `rust:1-bookworm` container. GitHub container jobs are neither privileged nor
@@ -328,7 +332,6 @@ jobs:
   # the bare runner VM (passwordless sudo, real kernel).
   core-uinput:
     runs-on: ubuntu-latest
-    continue-on-error: true
     defaults:
       run:
         working-directory: .
@@ -402,7 +405,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Rust CI — \`core/\` uinput (advisory)"
+            echo "## Rust CI — \`core/\` uinput"
             echo ""
             echo "| Step | Result |"
             echo "|------|--------|"
@@ -410,7 +413,7 @@ jobs:
             echo "| Build test binary | ${{ steps.build_test.outcome }} |"
             echo "| Test (uinput) | ${{ steps.test_uinput.outcome }} |"
             echo ""
-            echo "Non-blocking on purpose while the leg proves it can execute on a hosted runner."
+            echo "Blocking: this leg ran green on hosted runners before being made required."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Separate leg for the OPTIONAL `cec` and `mcp` features (#94). Together they

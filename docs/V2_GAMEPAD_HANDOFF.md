@@ -310,13 +310,15 @@ Against the three recorded ways a green suite can be empty:
 
 - **The rule is untested** → every new pure rule ships with a mutation note in its doc
   comment, the discipline already used in `mod.rs`.
-- **The test runs nowhere** → this is the live one. `core/tests/input_uinput.rs` is
-  compiled and run **nowhere** today — exactly `atoms_xvfb.rs`'s old shape. Phase 1 must
-  wire it into `rust.yml` **and assert the ran-count**, the way `shell-v2.yml` asserts
-  its five lanes; a `modprobe uinput` that silently fails on a hosted runner is
-  otherwise indistinguishable from a pass. If `/dev/uinput` genuinely cannot be had on a
-  runner, say so in the workflow and keep the panic-not-skip gate rather than leaving it
-  dangling.
+- **The test runs nowhere** → already closed, not outstanding.
+  `core/tests/input_uinput.rs` was wired into `rust.yml` by
+  jedwards1230/tv-shell#469 as the `core-uinput` job, which runs on the bare runner VM
+  and has since gone green on every execution; it is now a blocking leg. The gates that
+  make that meaningful are in place: `modprobe uinput` failing is an explicit `::error::`
+  rather than a silent skip, and the suite PANICS instead of skipping when
+  `TV_SHELL_TEST_UINPUT` is unset under `--ignored`, so the step cannot pass by running
+  nothing. Phase 1 inherits this rather than having to build it — keep the panic-not-skip
+  gate.
 - **The state is unreachable** → the transition states must be reachable from the
   session double, and owner/route/mask state must be in `InputReport` from phase 1, so a
   hardware session reads the decision instead of inferring it.

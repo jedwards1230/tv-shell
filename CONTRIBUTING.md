@@ -96,10 +96,12 @@ input "$USER"`, then log out and back in) or run the suite as root. The test's
 preflight checks both halves and fails naming the group, rather than letting the
 permission error surface as a confusing assertion deep inside a test.
 
-**Not wired into CI.** `/dev/uinput` is a kernel device, not an apt package, so
-whether a GitHub-hosted runner can `modprobe uinput` has to be *observed*, not
-assumed from the runner's shape — that assumption is how the Xvfb tests spent
-months compiled everywhere and run nowhere.
+**Wired into CI, as a blocking leg.** `/dev/uinput` is a kernel device, not an
+apt package, so whether a GitHub-hosted runner can `modprobe uinput` had to be
+*observed* rather than assumed from the runner's shape — that assumption is how
+the Xvfb tests spent months compiled everywhere and run nowhere. So the
+`core-uinput` job in `rust.yml` landed advisory, and was made blocking once it
+had a green run history on hosted runners.
 
 The default `cargo test` above also **runs `scripts/install-v2.sh`** into a
 scratch tree under `target/` and asserts on the files it writes (no leftover
