@@ -19,6 +19,7 @@
 import QtQuick
 import QtTest
 import TvShell
+import "qrc:/qt/qml/TvShell/viewport.js" as Viewport
 
 Item {
     id: harness
@@ -90,9 +91,31 @@ Item {
             Tokens.scale = 1.0;
         }
 
-        // The floor matters: at a degenerate scale the UI must still have a
-        // usable unit rather than collapsing to nothing.
-        function test_gridUnit_has_a_floor() {
+        // A degenerate screen height must still yield a usable unit — and this
+        // goes through `Viewport.scaleFor`, the path the shell actually uses,
+        // rather than poking `scale` directly.
+        //
+        // The distinction is the point. `gridUnit` carries v1's `max(8, …)`
+        // floor, but `scaleFor` already clamps to [0.5, 2.0], so through the
+        // real path the unit never falls below 27 and that floor is never
+        // reached. A test that sets `scale = 0.01` proves the floor works while
+        // proving nothing about any state the shell can produce; this one pins
+        // the property that matters, which is that the clamp and the floor
+        // agree about an unknown height instead of contradicting each other.
+        function test_a_degenerate_height_still_yields_a_usable_unit() {
+            const degenerate = [0, -1, NaN, Infinity, undefined, 1];
+            for (let i = 0; i < degenerate.length; ++i) {
+                Tokens.scale = Viewport.scaleFor(degenerate[i]);
+                verify(Tokens.gridUnit >= 27, "height " + JSON.stringify(degenerate[i]) + " gave gridUnit " + Tokens.gridUnit);
+                verify(Tokens.cardHeight > Tokens.fontCaption);
+            }
+            Tokens.scale = 1.0;
+        }
+
+        // The floor itself, for a caller that bypasses scaleFor and sets scale
+        // directly. Unreachable through the shell — kept as defence, and
+        // labelled so nobody mistakes it for a reachable state.
+        function test_gridUnit_has_a_floor_for_direct_callers() {
             Tokens.scale = 0.01;
             verify(Tokens.gridUnit >= 8);
             Tokens.scale = 1.0;

@@ -66,6 +66,18 @@ QtObject {
     // Keep new sizes as ratios of `gridUnit`. A raw pixel constant here is the
     // same mistake in a new place: it looks reasonable in a text editor and is
     // only wrong on a television.
+    // The `max(8, …)` floor is v1's, carried across — but note what it is and is
+    // not doing here. v1 needs it because `screenHeight` can be transiently 0 or
+    // unknown (it has a whole sticky filter, `screenScale.js`, for that). Here
+    // `Viewport.scaleFor` already clamps to [0.5, 2.0] and returns 1 for a
+    // degenerate height, so through the shell's own path `gridUnit` never falls
+    // below 27 and this floor is never reached.
+    //
+    // It stays as defence for a caller that sets `scale` directly, bypassing
+    // `scaleFor` — a test does exactly that. The clamp and the floor must not
+    // disagree about an unknown height: both answer "a usable unit", which is
+    // the property `tst_tokens.qml` pins through the real path rather than by
+    // poking `scale`.
     readonly property real gridUnit: Math.max(8, Math.round(54 * tokens.scale))
 
     // Convenience for the one caller: keeps `viewport.js` the only place the
@@ -105,6 +117,15 @@ QtObject {
     // Sized for three metres. These are the numbers not to shrink.
 
     // v1's ratios: fontHero, fontTitle, fontBody, fontCaption. 120/56/40/28 at 4K.
+    //
+    // ONE ASYMMETRY TO PRESERVE WHEN A TEXT-SIZE SETTING ARRIVES. In v1 every
+    // text tier is multiplied by an accessibility `textScale` EXCEPT fontHero,
+    // whose comment is "it owns the layout": enlarging body text must not
+    // reflow the clock. v2 has no such setting yet, so there is nothing to
+    // multiply and nothing here is currently wrong — but whoever adds one
+    // should apply it to fontTitle/fontBody/fontCaption and leave fontDisplay
+    // alone. Recorded now because it is invisible until someone adds the
+    // setting, and then it is a layout bug rather than a missing feature.
     readonly property int fontDisplay: Math.round(tokens.gridUnit * 2.22)  // the clock
     readonly property int fontTitle: Math.round(tokens.gridUnit * 1.04)    // rail headers
     readonly property int fontBody: Math.round(tokens.gridUnit * 0.74)     // card titles
