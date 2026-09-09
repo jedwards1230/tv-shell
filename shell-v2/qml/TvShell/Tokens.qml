@@ -6,8 +6,12 @@
 // The DECISIONS in `config/palette.md` and v1's `Theme.qml` are real and were
 // made against an OLED television at couch distance, so they are carried:
 // crimson for focus and active states, ember for secondary interaction, gold as
-// decoration and NEVER as text, near-black rather than pure black for an OLED
-// panel, and type sized so it reads from three metres.
+// decoration and NEVER as text, and near-black rather than pure black for an
+// OLED panel.
+//
+// The SIZING decisions are carried too, now — as v1's ratios of `gridUnit`
+// rather than as numbers retyped by eye. They were not, at first, and the
+// difference was visible on the television; see `gridUnit` below.
 //
 // The CODE is not carried. v1's Theme.qml is an `Item` hosting Processes and
 // Timers because it also owns theme-mode polling; this is a plain QtObject that
@@ -41,6 +45,53 @@ QtObject {
     // Set once by Main.qml. 1.0 is the 4K reference.
     property real scale: 1.0
 
+    // THE UNIT EVERY SIZE IS A MULTIPLE OF.
+    //
+    // 54 at 4K, which is v1's `Units.gridUnit` — `screenHeight / 40` — expressed
+    // through the scale this file already had. Sizes below are v1's ratios of it.
+    //
+    // This is not decoration, it is the fix for a measured defect. The first
+    // version of this file used fresh 4K constants, and they came out well under
+    // v1's calibrated values: the clock 80%, card titles 85%, and card HEIGHT
+    // 54% — a card of 40% the area. On the television the home screen occupied
+    // roughly the top-left fifth of a 4K panel (observed 2026-09-08), and the
+    // arithmetic matched: ~39% of the width and ~42% of the height.
+    //
+    // Nothing was scaled wrong and no window was mis-sized — the content simply
+    // was that small. `CLAUDE.md` says "10-foot UI at 4K … Don't shrink them",
+    // and it had been shrunk. v1's numbers are calibrated against the same panel
+    // at the same viewing distance, so adopting its ratios restores a
+    // calibration rather than inventing a new one.
+    //
+    // Keep new sizes as ratios of `gridUnit`. A raw pixel constant here is the
+    // same mistake in a new place: it looks reasonable in a text editor and is
+    // only wrong on a television.
+    // ONE DIVERGENCE FROM v1, SO NOBODY LATER READS IT AS A BUG. v1's gridUnit is
+    // `screenHeight / 40`, unclamped. This is `54 * scale`, and `scale` is
+    // clamped to [0.5, 2.0] by `Viewport.scaleFor`. The two agree EXACTLY from
+    // 1080p through 8K — 27, 36, 54, 108 — and part outside that range: below
+    // 1080p v1 keeps shrinking while this floors at 27, and above 8K v1 keeps
+    // growing while this caps at 108.
+    //
+    // For a television shell those are the safer ends to be wrong on, and the
+    // clamp predates the ratios, so it stays. But the ratios are v1's and the
+    // clamping is not, which is worth knowing before assuming this file is v1
+    // everywhere. `tst_tokens.qml` pins the agreement range.
+    //
+    // The `max(8, …)` floor is v1's, carried across — but note what it is and is
+    // not doing here. v1 needs it because `screenHeight` can be transiently 0 or
+    // unknown (it has a whole sticky filter, `screenScale.js`, for that). Here
+    // `Viewport.scaleFor` already clamps to [0.5, 2.0] and returns 1 for a
+    // degenerate height, so through the shell's own path `gridUnit` never falls
+    // below 27 and this floor is never reached.
+    //
+    // It stays as defence for a caller that sets `scale` directly, bypassing
+    // `scaleFor` — a test does exactly that. The clamp and the floor must not
+    // disagree about an unknown height: both answer "a usable unit", which is
+    // the property `tst_tokens.qml` pins through the real path rather than by
+    // poking `scale`.
+    readonly property real gridUnit: Math.max(8, Math.round(54 * tokens.scale))
+
     // Convenience for the one caller: keeps `viewport.js` the only place the
     // clamping rule lives, rather than duplicating it at the assignment site.
     function scaleForHeight(height: real): real {
@@ -66,7 +117,9 @@ QtObject {
     // its own focus treatment is a component that will disagree with the one
     // next to it.
     readonly property color focusRing: crimson
-    readonly property real focusRingWidth: 4 * tokens.scale
+    // v1's borderThick ratio, floored the way v1 floors it: a focus ring that
+    // rounds to a hairline is a focus ring you cannot see from the couch.
+    readonly property real focusRingWidth: Math.max(3, Math.round(tokens.gridUnit * 0.11))
 
     // Every scrim in the shell. v1's palette rule is 0.7–0.85; one value, so two
     // overlays never look like different products.
@@ -75,26 +128,48 @@ QtObject {
     // ---- type -------------------------------------------------------------
     // Sized for three metres. These are the numbers not to shrink.
 
-    readonly property int fontDisplay: Math.round(96 * tokens.scale)   // the clock
-    readonly property int fontTitle: Math.round(52 * tokens.scale)     // rail headers
-    readonly property int fontBody: Math.round(34 * tokens.scale)      // card titles
-    readonly property int fontCaption: Math.round(26 * tokens.scale)   // subtitles, status
+    // v1's ratios: fontHero, fontTitle, fontBody, fontCaption. 120/56/40/28 at 4K.
+    //
+    // ONE ASYMMETRY TO PRESERVE WHEN A TEXT-SIZE SETTING ARRIVES. In v1 every
+    // text tier is multiplied by an accessibility `textScale` EXCEPT fontHero,
+    // whose comment is "it owns the layout": enlarging body text must not
+    // reflow the clock. v2 has no such setting yet, so there is nothing to
+    // multiply and nothing here is currently wrong — but whoever adds one
+    // should apply it to fontTitle/fontBody/fontCaption and leave fontDisplay
+    // alone. Recorded now because it is invisible until someone adds the
+    // setting, and then it is a layout bug rather than a missing feature.
+    readonly property int fontDisplay: Math.round(tokens.gridUnit * 2.22)  // the clock
+    readonly property int fontTitle: Math.round(tokens.gridUnit * 1.04)    // rail headers
+    readonly property int fontBody: Math.round(tokens.gridUnit * 0.74)     // card titles
+    readonly property int fontCaption: Math.round(tokens.gridUnit * 0.52)  // subtitles, status
 
     // ---- space ------------------------------------------------------------
 
-    readonly property real spaceXS: Math.round(8 * tokens.scale)
-    readonly property real spaceS: Math.round(16 * tokens.scale)
-    readonly property real spaceM: Math.round(32 * tokens.scale)
-    readonly property real spaceL: Math.round(56 * tokens.scale)
-    readonly property real spaceXL: Math.round(96 * tokens.scale)
+    // v1's spacingXS..XL. 8/16/24/32/48 at 4K.
+    //
+    // Note these went DOWN where the type and cards went up, and that is the
+    // other half of the same defect: the gaps were larger than v1's while the
+    // content was half its size, so the screen read as a small UI floating in
+    // empty space rather than as a dense one.
+    readonly property real spaceXS: Math.round(tokens.gridUnit * 0.15)
+    readonly property real spaceS: Math.round(tokens.gridUnit * 0.30)
+    readonly property real spaceM: Math.round(tokens.gridUnit * 0.44)
+    readonly property real spaceL: Math.round(tokens.gridUnit * 0.59)
+    readonly property real spaceXL: Math.round(tokens.gridUnit * 0.89)
 
-    readonly property real radius: Math.round(14 * tokens.scale)
+    // v1's cardRadius. 24 at 4K.
+    readonly property real radius: Math.round(tokens.gridUnit * 0.44)
 
     // ---- components -------------------------------------------------------
 
-    readonly property real cardWidth: Math.round(440 * tokens.scale)
-    readonly property real cardHeight: Math.round(260 * tokens.scale)
-    readonly property real drawerWidth: Math.round(720 * tokens.scale)
+    // v1's cardWidth/cardHeight. 600x480 at 4K, against the 440x260 that shipped
+    // — the single biggest contributor to the shrunken home screen.
+    readonly property real cardWidth: Math.round(tokens.gridUnit * 11.11)
+    readonly property real cardHeight: Math.round(tokens.gridUnit * 8.89)
+    // Unchanged in size (720 at 4K), only re-expressed in gridUnit. The drawer
+    // was never measured against a television, so this is not a place to invent
+    // a correction.
+    readonly property real drawerWidth: Math.round(tokens.gridUnit * 13.33)
 
     // One duration for every transition in the shell. Slower than a desktop's
     // because the eye is further away and there is no cursor to follow.
