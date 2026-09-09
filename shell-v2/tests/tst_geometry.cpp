@@ -29,6 +29,8 @@
 #include "surface.h"
 
 #include <QGuiApplication>
+#include <QPointer>
+#include <QQuickItem>
 #include <QScreen>
 #include <QTest>
 
@@ -126,6 +128,52 @@ private Q_SLOTS:
         QVERIFY(toast.handle());
         toast.setVisible(false);
         QVERIFY2(!toast.handle(), "hiding a toast must destroy its platform window, as for any overlay");
+    }
+
+    // Destroying the platform window must NOT destroy the scene.
+    //
+    // The whole cost argument for destroy-on-close rests on this: `destroy()`
+    // releases the platform window and the scene graph's GPU resources and
+    // leaves the QQuickItem tree alive, so a re-opened drawer does not
+    // re-instantiate its content — no FocusSlot is destroyed, nothing
+    // re-registers with the router, and no focus state is lost.
+    //
+    // That was asserted in prose and reviewed as "a Qt-specific claim the
+    // offscreen tests cannot verify". They can: item lifetime is not a
+    // compositor question. A QPointer goes null the moment the item is deleted,
+    // so if a future Qt ever starts tearing down content on destroy(), this
+    // fails here rather than on a television as an un-navigable drawer.
+    void destroyingThePlatformWindowKeepsTheSceneAlive()
+    {
+        Surface overlay;
+        overlay.setRole(Surface::Overlay);
+        overlay.resize(720, 1080);
+
+        // A stand-in for the drawer's content. Parented into the scene exactly
+        // as QML content is.
+        auto *content = new QQuickItem(overlay.contentItem());
+        content->setObjectName(QStringLiteral("drawer-content"));
+        QPointer<QQuickItem> alive(content);
+
+        overlay.setVisible(true);
+        QVERIFY(overlay.handle());
+        QVERIFY(alive);
+
+        overlay.setVisible(false);
+        QVERIFY2(!overlay.handle(), "precondition: the platform window should be gone");
+
+        QVERIFY2(alive,
+                 "destroy() took the QQuickItem tree with it — re-opening would re-instantiate "
+                 "the drawer's content, so every FocusSlot would re-register and focus state "
+                 "would be lost");
+        QCOMPARE(alive->parentItem(), overlay.contentItem());
+
+        // And it is still there after the window comes back, which is the case
+        // that actually matters: the same items, in the same scene.
+        overlay.setVisible(true);
+        QVERIFY(overlay.handle());
+        QVERIFY(alive);
+        QCOMPARE(alive->parentItem(), overlay.contentItem());
     }
 
     // Base is exempt, and that is a role decision rather than an oversight:

@@ -779,11 +779,21 @@ reason the sizing does: an overlay's lifecycle is a property of being an overlay
 `Base` is exempt, because a base surface is never hidden and destroying the
 shell's root window is not what anyone would want if one ever were.
 
-**The cost is smaller than it looks.** `QWindow::destroy()` releases the platform
-window and the scene graph's GPU resources and leaves the **QQuickItem tree
-alive** — every `FocusSlot`, and its registration with the router, survives. So
-re-opening costs a scene-graph rebuild, not a re-instantiation: nothing
-re-registers, and no focus state is lost. What *does* change is that each open
+**The cost is smaller than it looks, and this is tested rather than asserted.**
+`QWindow::destroy()` releases the platform window and the scene graph's GPU
+resources and leaves the **QQuickItem tree alive** — every `FocusSlot`, and its
+registration with the router, survives. So re-opening costs a scene-graph
+rebuild, not a re-instantiation: nothing re-registers, and no focus state is
+lost.
+
+Review flagged that as "a Qt-specific claim the offscreen tests cannot verify".
+They can — item lifetime is not a compositor question. `destroyingThePlatformWindowKeepsTheSceneAlive`
+holds a `QPointer` to a child of the surface's `contentItem`, hides the surface,
+and asserts the item is still alive and still parented, then again after the
+window comes back. Confirmed non-vacuous by deleting the content on the hide
+path, which fails that assertion and nothing else. If a future Qt ever starts
+tearing down content on `destroy()`, it fails here rather than on a television
+as a drawer that will not navigate. What *does* change is that each open
 creates a new X window, which makes the tag-before-map guarantee something that
 has to hold every time rather than once.
 
