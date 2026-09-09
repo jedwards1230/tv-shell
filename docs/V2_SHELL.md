@@ -704,17 +704,74 @@ while the defect is live is precisely the failure this suite exists to avoid, so
 it was replaced by the relationship that holds on any platform: a base surface is
 never smaller than its output.
 
+### 11.9d The tokens were too small, and it was measurable
+
+Seen on the television once the sizing and stale-frame bugs were out of the way
+(2026-09-08): at 4K the home screen occupied roughly the **top-left fifth** of
+the display.
+
+Nothing was scaled wrong and no window was mis-sized — the base surface filled
+the output and `Tokens.scale` was 1.0. **The content really was that small.**
+Against v1's calibrated `Units.gridUnit` (`screenHeight / 40`, so 54 at 4K):
+
+| | v1 at 4K | as shipped | |
+|---|---|---|---|
+| clock / hero | 120 | 96 | 80% |
+| rail header | 56 | 52 | 93% |
+| card title | 40 | 34 | 85% |
+| caption | 28 | 26 | 93% |
+| card width | 600 | 440 | 73% |
+| **card height** | **480** | **260** | **54%** |
+
+Card *area* was **40%** of v1's, and the occupancy arithmetic lands exactly where
+the observation did: three cards at 440 plus spacing and margin ≈ 1480 of 3840
+(**39% wide**); clock plus two rails ≈ 904 of 2160 (**42% tall**) — about a sixth
+of the screen.
+
+**The gaps were the other half of it, in the opposite direction.** `spaceXL` was
+96 against v1's largest spacing of 48. So the margins were *twice* v1's while the
+content was *half* — which is why it read as a small UI floating in empty space
+rather than merely as a small UI.
+
+This was a defect against a rule this repo states outright — `CLAUDE.md`'s "10-foot
+UI at 4K … Don't shrink them" — and §11.2's claim that Tokens carried v1's
+sizing decisions was **wrong**. It carried the palette decisions (crimson focus,
+ember secondary, never gold for text, near-black for OLED) and not the sizing
+ones; those were retyped by eye and came out smaller.
+
+**The fix is structural, not a constant bump.** v1's sizes are ratios of screen
+height, so they are proportional to the display by construction. The shipped
+version was 4K-reference constants times a scale factor — equivalent arithmetic
+at 4K, and the form is what allowed small numbers to look reasonable. `Tokens`
+now derives a `gridUnit` and every size is v1's ratio of it, which restores a
+calibration made against this panel at this viewing distance rather than
+inventing a new one. `drawerWidth` is re-expressed but deliberately unchanged in
+size: it has never been measured against a television, so it is not a place to
+invent a correction.
+
+**Pinned by `tst_tokens.qml`**, at the one resolution the couch runs, against the
+values v1's ratios produce. Mutation: restoring the exact shipped constants fails
+four assertions — the type scale, the card size, the scaling behaviour, and the
+content-versus-gaps relationship. A future change wanting different sizes is
+entirely legitimate and has to edit that file, which makes it a decision rather
+than a drift.
+
+A number typed by eye reads as reasonable in an editor and is only wrong on a
+television, which is the worst available place to discover it. That is the
+general lesson, and it is why the test pins ratios rather than trusting review.
+
 ### 11.10 What this does not prove
 
 The same discipline as §8: what follows is what remains open, at the same length
 as what is settled.
 
-- **It has now been seen rendering (§11.9a), but only once and only to find a
-  sizing bug.** Layout, spacing, colour, legibility at three metres and the
-  readability of the focus ring on an OLED panel remain **unverified** — the one
-  capture was of a 24x-upscaled 160x160 window, so it proved the shell maps,
-  tags and reads live core state, and proved nothing whatsoever about how any of
-  it looks. A capture at the correct size has not been taken yet.
+- **It renders correctly at native 4K (§11.9a), and the drawer opens and closes
+  cleanly (§11.9b) — both confirmed on hardware.** What is still unverified is
+  how it *reads*: colour, legibility at three metres, and the visibility of the
+  focus ring on an OLED panel have had no judgement passed on them. The token
+  rescale in §11.9d is calibrated against v1's numbers rather than against a
+  fresh look at the screen, so it restores a known-good scale — it does not
+  establish that the result is right.
 - **The shell has never talked to a running core.** `CoreClient` is tested against
   a fake core speaking the real framing over a real Unix socket, which pins the
   queue discipline but not the core's actual replies. The first live
