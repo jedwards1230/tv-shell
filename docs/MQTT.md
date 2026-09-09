@@ -204,16 +204,24 @@ Neither binary has a reload path. Any change, credential rotation included, need
 a restart — and restarting the daemon hands the CEC adapter to whatever grabs it
 next, so rotating the MQTT password is outage-adjacent rather than a config edit.
 
-### TLS transport and the rustls-webpki advisories
+### TLS transport and the rustls-webpki pin
 
 A broker URL of `mqtts://` wraps the connection in TLS; `mqtt://` is plain TCP.
-Both binaries reach TLS the same way — `rumqttc` with `default-features = false`
-and only `use-rustls-no-provider`, with `ring` installed once by hand (the
-reasoning is in the comment block above each `rumqttc` line, and it is
-load-bearing: the default feature would drag in `aws-lc-rs`, a C + cmake build).
+The deployed daemon uses `mqtts://` against a broker serving a public Let's
+Encrypt certificate and no `ca_file`, so it verifies a real chain against the
+system trust store on **every connection**. TLS here is exercised, not
+decorative — which is why the pin below is patched rather than accepted.
 
-**Four Dependabot advisories against `rustls-webpki` 0.102.8 are open by
-decision, and will stay open.** They are:
+Both binaries reach TLS the same way: `rumqttc` with `default-features = false`
+and only `use-rustls-no-provider`, with `ring` installed once by hand. That part
+is load-bearing and is explained in the comment block above each `rumqttc` line
+— the default feature would drag in `aws-lc-rs`, a C + cmake build, and a second
+registered crypto provider makes `CryptoProvider::install_default()` ambiguous.
+
+#### Why the workspace patches `rumqttc`
+
+`rumqttc` 0.25.1 declares `rustls-webpki = "0.102.8"` **directly** — not through
+`rustls`. That version carries four open advisories:
 
 | Severity | Advisory | Issue |
 |---|---|---|
@@ -222,45 +230,57 @@ decision, and will stay open.** They are:
 | low | GHSA-xgp8-3hg3-c2mh | Name constraints accepted for a wildcard-name certificate |
 | low | GHSA-965h-392x-2mh5 | Name constraints for URI names incorrectly accepted |
 
-They cannot be fixed from this repo, and the vulnerable code cannot execute here.
-Both halves of that were checked rather than assumed:
+All four are fixed in 0.103.13. The workspace `Cargo.toml` therefore carries a
+`[patch.crates-io]` entry pointing `rumqttc` at a fork pinned to a commit SHA,
+whose only change is that one-line version bump. With it, `rustls-webpki`
+0.102.8 is **gone** from `Cargo.lock` — one copy remains, 0.103.13.
 
-- **No release fixes it.** `rumqttc` 0.25.1 is the latest published version and
-  pins `rustls-webpki = "0.102.8"`. Upstream `main` (bytebeamio/rumqtt) still
-  pins the same. There is nothing to bump to.
-- **The resolution cannot be forced.** `^0.102.8` does not admit 0.103.x, so a
-  `[patch.crates-io]` entry for `rustls-webpki` is applied to the *other*,
-  already-patched edge and leaves this one untouched. Tried and confirmed: after
-  patching to the 0.103.13 tag, `cargo tree -i rustls-webpki@0.102.8` still
-  reports `rustls-webpki v0.102.8 → rumqttc v0.25.1`. The lockfile ends up with
-  three copies instead of two. Forcing it would mean forking `rumqttc` or
-  vendoring a `rustls-webpki` that lies about its version — real maintenance
-  burden for no risk reduction, given the next point.
-- **`rumqttc` never calls into it.** Grep the whole 0.25.1 crate for `webpki`
-  and the only Rust-source hit is `WebPki(#[from] webpki::Error)` — one variant
-  of the error enum in `src/tls.rs`, vestigial from 0.24 when `rumqttc` did parse
-  trust anchors itself. It now builds its root store through
-  `rustls::RootCertStore::add_parsable_certificates`. So no CRL is ever parsed
-  and no name constraint is ever evaluated by that copy; nothing in `rumqttc` can
-  even construct the variant.
-- **Real verification runs on the patched copy.** The `mqtts://` handshake goes
-  `rumqttc → tokio-rustls → rustls 0.23.43 → rustls-webpki 0.103.13`, which is at
-  or above the fixed version for all four advisories. The 0.102.8 crate sits
-  beside that path contributing a type definition, not a code path.
+Three cheaper routes were tried first and none of them work:
 
-What would change this assessment: a `rumqttc` release that starts calling
-`webpki` functions again (chiefly if it grows CRL support or does its own chain
-verification), or a `rumqttc` release that bumps the pin — which is the actual
-fix and should be taken as soon as it exists. Re-check on every `rumqttc`
-release with:
+- **Bump `rumqttc`.** 0.25.1 is the latest release on crates.io and upstream
+  `main` carries the same pin. There is nothing to bump to.
+- **Stop enabling the feature that pulls it.** `rustls-webpki` is not separable:
+  `use-rustls-no-provider = ["dep:tokio-rustls", "dep:rustls-webpki",
+  "dep:rustls-pemfile", "dep:rustls-native-certs"]` is the *only* feature that
+  gives `rumqttc` rustls TLS at all, and everything in `src/tls.rs` is gated on
+  it. Dropping it means dropping `mqtts://`, and the alternative
+  (`use-native-tls`) drags in the system C TLS stack — explicitly rejected.
+- **`[patch.crates-io]` on `rustls-webpki` itself.** `^0.102.8` does not admit
+  0.103.x, so the patch is applied to the *other*, already-patched edge and this
+  one is left untouched. Confirmed empirically: after patching to the 0.103.13
+  tag, `cargo tree -i rustls-webpki@0.102.8` still reported
+  `rustls-webpki v0.102.8 → rumqttc v0.25.1`, and the lockfile grew to three
+  copies. The pin has to move *inside* `rumqttc`, which is why the patch targets
+  `rumqttc` and not `rustls-webpki`.
+
+#### Why the fork is safe to carry
+
+It is a one-line `Cargo.toml` change with no source edits. `rumqttc` uses
+exactly one item from the crate — `webpki::Error`, in the `Error::WebPki`
+variant of `src/tls.rs` — and that type is unchanged between 0.102 and 0.103.
+Everything `rumqttc` actually calls comes from `rustls` via
+`tokio_rustls::rustls::{...}`; it builds its root store through
+`rustls::RootCertStore::add_parsable_certificates`. Both feature legs
+(`use-rustls-no-provider` and the default `use-rustls`) were built against
+0.103 before the fork was pushed.
+
+The patch pins a **commit SHA, not a branch**, so the fork cannot move under CI
+and the build stays reproducible.
+
+#### Removing the patch
+
+This is temporary. Upstream PR: bytebeamio/rumqtt#1072. Once a `rumqttc`
+release carries the bump, delete the whole `[patch.crates-io]` block from the
+workspace `Cargo.toml`, run `cargo update -p rumqttc`, and confirm:
 
 ```bash
-# Is the vulnerable copy still in the graph at all?
+# Must find nothing, in both crates that declare rumqttc:
 cargo tree -p tv-shell-input -i rustls-webpki@0.102.8
 cargo tree -p tv-shell-host  -i rustls-webpki@0.102.8
 
-# Is it still only the error variant? (expect exactly one .rs hit)
-grep -rn webpki ~/.cargo/registry/src/*/rumqttc-*/src/
+# And the provider invariant must still hold:
+cargo tree -p tv-shell-input -i aws-lc-rs   # must find nothing
+cargo tree -p tv-shell-input -i ring        # must find exactly one
 ```
 
 ## Failure behaviour

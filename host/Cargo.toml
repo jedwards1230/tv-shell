@@ -40,21 +40,16 @@ keyvalues-parser = { workspace = true }
 # cross-compiles clean on Windows and macOS). NEVER `use-native-tls` either: that
 # drags in the system C TLS stack. The provider is supplied explicitly below.
 #
-# KNOWN, ACCEPTED: rumqttc 0.25.1 pins `rustls-webpki = "0.102.8"`, which carries
-# four open advisories (GHSA-82j2-j2ch-gfr8 high, GHSA-pwjx-qhcg-rvj4 medium,
-# GHSA-xgp8-3hg3-c2mh + GHSA-965h-392x-2mh5 low). They are NOT fixable here and
-# they are NOT reachable. Do not "fix" this by bumping or patching — that was
-# tried; see docs/MQTT.md § TLS transport and the rustls-webpki advisories for
-# the evidence. In short: 0.25.1 is the latest release AND upstream `main` still
-# pins 0.102.8; `^0.102.8` cannot resolve to 0.103.x, so `[patch.crates-io]`
-# silently re-points the *already-patched* 0.103 edge and leaves this one alone.
-# And rumqttc names `rustls-webpki` in exactly one place — the `Error::WebPki`
-# variant in its tls.rs — calling no function from it, so the vulnerable CRL and
-# name-constraint code cannot run. Real `mqtts://` chain verification goes
-# through rustls 0.23's own rustls-webpki 0.103.13, which is patched.
-# Re-check on every rumqttc release: grep the crate for `webpki` and confirm it
-# is still only the error variant, and re-run
-#   cargo tree -p tv-shell-host -i rustls-webpki@0.102.8
+# NOTE: rumqttc 0.25.1 pins `rustls-webpki = "0.102.8"` DIRECTLY (not via
+# rustls), and that version carries four open advisories — GHSA-82j2-j2ch-gfr8
+# (high), GHSA-pwjx-qhcg-rvj4 (medium), GHSA-xgp8-3hg3-c2mh and
+# GHSA-965h-392x-2mh5 (low). The sidecar speaks `mqtts://` too, so certificate
+# verification runs on every connection and this is not academic. The workspace
+# Cargo.toml carries a `[patch.crates-io]` entry pointing rumqttc at a
+# SHA-pinned fork whose only change is bumping that pin to 0.103; the version
+# requirement here stays "0.25" and does not need to change.
+# Full reasoning, the routes that do NOT work, and the removal procedure:
+# docs/MQTT.md § TLS transport and the rustls-webpki pin.
 rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider"] }
 # The crypto provider for the above, pinned to `ring` — the same provider the
 # workspace already resolves via reqwest's `rustls-tls`, so there is exactly one

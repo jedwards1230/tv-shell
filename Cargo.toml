@@ -53,3 +53,37 @@ tv-shell-protocol = { path = "protocol" }
 [profile.release]
 strip = "debuginfo"
 lto = "thin"
+
+# ---------------------------------------------------------------------------
+# TEMPORARY: rumqttc's rustls-webpki pin, bumped off the vulnerable 0.102.8.
+#
+# rumqttc 0.25.1 (the latest release, and upstream `main`) declares
+# `rustls-webpki = "0.102.8"` DIRECTLY — not through rustls. That copy carries
+# four open advisories: GHSA-82j2-j2ch-gfr8 (high, DoS via panic on a malformed
+# CRL BIT STRING), GHSA-pwjx-qhcg-rvj4 (medium), and GHSA-xgp8-3hg3-c2mh +
+# GHSA-965h-392x-2mh5 (low, name-constraint handling). This matters because the
+# deployed daemon connects with `mqtts://`, so TLS certificate verification is
+# genuinely exercised on every connection.
+#
+# It cannot be fixed from a manifest here: `^0.102.8` does not admit 0.103.x, so
+# a `[patch.crates-io]` on rustls-webpki ITSELF silently re-points the
+# already-patched 0.103 edge and leaves this one alone (tried; confirmed). The
+# pin has to move inside rumqttc, so this patches rumqttc.
+#
+# The fork is one line — rumqttc uses exactly one item from the crate,
+# `webpki::Error` in the `Error::WebPki` variant of its src/tls.rs, and that
+# type is unchanged across 0.102 -> 0.103, so it needs no source changes.
+#
+# Upstream PR (the real fix): bytebeamio/rumqtt#1072
+#
+# REMOVE THIS ENTIRE BLOCK once a rumqttc release carries the bump: drop the
+# `[patch.crates-io]` table, run `cargo update -p rumqttc`, and confirm with
+#   cargo tree -p tv-shell-input -i rustls-webpki@0.102.8   (must find nothing)
+# The pin is a commit SHA, not a branch, so the build is reproducible and the
+# fork cannot move under CI.
+#
+# Full reasoning, and the evidence for each dead end: docs/MQTT.md
+# § TLS transport and the rustls-webpki pin.
+# ---------------------------------------------------------------------------
+[patch.crates-io]
+rumqttc = { git = "https://github.com/jedwards1230/rumqtt", rev = "6aa9f85ce286881109c67ce716cfb2facdbbfc40" }
