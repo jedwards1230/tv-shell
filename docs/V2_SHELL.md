@@ -670,6 +670,15 @@ The third keeps getting through, and the reason is worth stating plainly:
 fails on can occur.** A test that pokes a value directly rather than driving the
 real path will pass a mutation audit while defending nothing.
 
+**When the answer to "what input produces this state" is *none*, the fix is not
+to delete the test.** It is to drive the real entry point and assert the property
+that survives being driven — usually a relationship rather than a value.
+`tst_tokens` is the worked example: `gridUnit`'s floor is unreachable because
+`Viewport.scaleFor` clamps before it, so the test now feeds degenerate *heights*
+through `scaleFor` and asserts that the clamp and the floor **agree** about an
+unknown one. That is a claim the shell can actually violate, where "the floor
+returns 8" was not.
+
 Two of those shipped in this tree before being caught. `tst_geometry` asserted
 `size() != QSize(160, 160)` — the number seen on hardware — while running on the
 offscreen platform, where an unsized window is **1x1**; it passed with the sizing
@@ -684,12 +693,20 @@ platform this lane runs on** — because a lane's platform is an input you do no
 think of as an input. Offscreen Qt defaults to 1x1 and hardware to 160x160, and
 an assertion naming either is silently about the other.
 
-**And the shape is not confined to tests.** §11.9's own stale text was the same
-drift outside a suite: the `qmllint_strict` removal was verified in
-`CMakeLists.txt`, the workflow and three other docs, and the edit to *this* file
-never entered the commit. Five files were staged, this one was not, and nobody
-checked — a change verified against everything except the thing it missed. That
-is why the question is worth asking of a commit as readily as of an assertion.
+**And the shape is not confined to tests.** This section's own text was the same
+drift outside a suite. Commit **`54391df`** removed the `qmllint_strict` target
+and updated `CMakeLists.txt`, `.github/workflows/shell-v2.yml`, `CONTRIBUTING.md`,
+`CLAUDE.md` and `shell-v2/README.md` — five files — while the edit to *this* file
+was written and never staged. So §11.9 went on describing a build target with
+zero occurrences in any `CMakeLists.txt`, through four merges, until a rebase
+conflict surfaced it. A change verified against everything except the thing it
+missed.
+
+The commit is named rather than the surrounding prose deliberately: `git show
+54391df --stat` settles it for anyone with the repo, and keeps doing so after
+this section is next rewritten and the stale text it refers to is gone. A
+self-citation that depends on the reader seeing the error above it is itself a
+claim whose subject can drift from its object.
 
 ### 11.9a It rendered on hardware, and the window was 160x160
 
