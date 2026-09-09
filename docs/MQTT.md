@@ -204,6 +204,85 @@ Neither binary has a reload path. Any change, credential rotation included, need
 a restart — and restarting the daemon hands the CEC adapter to whatever grabs it
 next, so rotating the MQTT password is outage-adjacent rather than a config edit.
 
+### TLS transport and the rustls-webpki pin
+
+A broker URL of `mqtts://` wraps the connection in TLS; `mqtt://` is plain TCP.
+The deployed daemon uses `mqtts://` against a broker serving a public Let's
+Encrypt certificate and no `ca_file`, so it verifies a real chain against the
+system trust store on **every connection**. TLS here is exercised, not
+decorative — which is why the pin below is patched rather than accepted.
+
+Both binaries reach TLS the same way: `rumqttc` with `default-features = false`
+and only `use-rustls-no-provider`, with `ring` installed once by hand. That part
+is load-bearing and is explained in the comment block above each `rumqttc` line
+— the default feature would drag in `aws-lc-rs`, a C + cmake build, and a second
+registered crypto provider makes `CryptoProvider::install_default()` ambiguous.
+
+#### Why the workspace patches `rumqttc`
+
+`rumqttc` 0.25.1 declares `rustls-webpki = "0.102.8"` **directly** — not through
+`rustls`. That version carries four open advisories:
+
+| Severity | Advisory | Issue |
+|---|---|---|
+| high | GHSA-82j2-j2ch-gfr8 | DoS via panic on a malformed CRL BIT STRING |
+| medium | GHSA-pwjx-qhcg-rvj4 | CRLs not considered authoritative by distribution point |
+| low | GHSA-xgp8-3hg3-c2mh | Name constraints accepted for a wildcard-name certificate |
+| low | GHSA-965h-392x-2mh5 | Name constraints for URI names incorrectly accepted |
+
+All four are fixed in 0.103.13. The workspace `Cargo.toml` therefore carries a
+`[patch.crates-io]` entry pointing `rumqttc` at a fork pinned to a commit SHA,
+whose only change is that one-line version bump. With it, `rustls-webpki`
+0.102.8 is **gone** from `Cargo.lock` — one copy remains, 0.103.13.
+
+Three cheaper routes were tried first and none of them work:
+
+- **Bump `rumqttc`.** 0.25.1 is the latest release on crates.io and upstream
+  `main` carries the same pin. There is nothing to bump to.
+- **Stop enabling the feature that pulls it.** `rustls-webpki` is not separable:
+  `use-rustls-no-provider = ["dep:tokio-rustls", "dep:rustls-webpki",
+  "dep:rustls-pemfile", "dep:rustls-native-certs"]` is the *only* feature that
+  gives `rumqttc` rustls TLS at all, and everything in `src/tls.rs` is gated on
+  it. Dropping it means dropping `mqtts://`, and the alternative
+  (`use-native-tls`) drags in the system C TLS stack — explicitly rejected.
+- **`[patch.crates-io]` on `rustls-webpki` itself.** `^0.102.8` does not admit
+  0.103.x, so the patch is applied to the *other*, already-patched edge and this
+  one is left untouched. Confirmed empirically: after patching to the 0.103.13
+  tag, `cargo tree -i rustls-webpki@0.102.8` still reported
+  `rustls-webpki v0.102.8 → rumqttc v0.25.1`, and the lockfile grew to three
+  copies. The pin has to move *inside* `rumqttc`, which is why the patch targets
+  `rumqttc` and not `rustls-webpki`.
+
+#### Why the fork is safe to carry
+
+It is a one-line `Cargo.toml` change with no source edits. `rumqttc` uses
+exactly one item from the crate — `webpki::Error`, in the `Error::WebPki`
+variant of `src/tls.rs` — and that type is unchanged between 0.102 and 0.103.
+Everything `rumqttc` actually calls comes from `rustls` via
+`tokio_rustls::rustls::{...}`; it builds its root store through
+`rustls::RootCertStore::add_parsable_certificates`. Both feature legs
+(`use-rustls-no-provider` and the default `use-rustls`) were built against
+0.103 before the fork was pushed.
+
+The patch pins a **commit SHA, not a branch**, so the fork cannot move under CI
+and the build stays reproducible.
+
+#### Removing the patch
+
+This is temporary. Upstream PR: bytebeamio/rumqtt#1072. Once a `rumqttc`
+release carries the bump, delete the whole `[patch.crates-io]` block from the
+workspace `Cargo.toml`, run `cargo update -p rumqttc`, and confirm:
+
+```bash
+# Must find nothing, in both crates that declare rumqttc:
+cargo tree -p tv-shell-input -i rustls-webpki@0.102.8
+cargo tree -p tv-shell-host  -i rustls-webpki@0.102.8
+
+# And the provider invariant must still hold:
+cargo tree -p tv-shell-input -i aws-lc-rs   # must find nothing
+cargo tree -p tv-shell-input -i ring        # must find exactly one
+```
+
 ## Failure behaviour
 
 A misconfigured MQTT setup logs at `error` naming the offending field and is

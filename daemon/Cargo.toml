@@ -138,6 +138,17 @@ schemars = { version = "1", optional = true }
 # itself exactly once before building any TLS config (see `install_crypto_provider`).
 # Verify with: cargo tree -p tv-shell-input -i aws-lc-rs   (must find nothing)
 #              cargo tree -p tv-shell-input -i ring        (must find exactly one)
+#
+# NOTE: rumqttc 0.25.1 pins `rustls-webpki = "0.102.8"` DIRECTLY (not via
+# rustls), and that version carries four open advisories — GHSA-82j2-j2ch-gfr8
+# (high), GHSA-pwjx-qhcg-rvj4 (medium), GHSA-xgp8-3hg3-c2mh and
+# GHSA-965h-392x-2mh5 (low). The deployed daemon connects with `mqtts://`, so
+# certificate verification runs on every connection and this is not academic.
+# The workspace Cargo.toml carries a `[patch.crates-io]` entry pointing rumqttc
+# at a SHA-pinned fork whose only change is bumping that pin to 0.103; the
+# version requirement here stays "0.25" and does not need to change.
+# Full reasoning, the routes that do NOT work, and the removal procedure:
+# docs/MQTT.md § TLS transport and the rustls-webpki pin.
 rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider"] }
 # Declared directly (not just transitively through rumqttc) so the `ring`
 # provider feature is switched on explicitly and `rustls::crypto::ring` is in

@@ -39,6 +39,17 @@ keyvalues-parser = { workspace = true }
 # would break this crate's whole reason to exist (a pure-Rust graph that
 # cross-compiles clean on Windows and macOS). NEVER `use-native-tls` either: that
 # drags in the system C TLS stack. The provider is supplied explicitly below.
+#
+# NOTE: rumqttc 0.25.1 pins `rustls-webpki = "0.102.8"` DIRECTLY (not via
+# rustls), and that version carries four open advisories — GHSA-82j2-j2ch-gfr8
+# (high), GHSA-pwjx-qhcg-rvj4 (medium), GHSA-xgp8-3hg3-c2mh and
+# GHSA-965h-392x-2mh5 (low). The sidecar speaks `mqtts://` too, so certificate
+# verification runs on every connection and this is not academic. The workspace
+# Cargo.toml carries a `[patch.crates-io]` entry pointing rumqttc at a
+# SHA-pinned fork whose only change is bumping that pin to 0.103; the version
+# requirement here stays "0.25" and does not need to change.
+# Full reasoning, the routes that do NOT work, and the removal procedure:
+# docs/MQTT.md § TLS transport and the rustls-webpki pin.
 rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider"] }
 # The crypto provider for the above, pinned to `ring` — the same provider the
 # workspace already resolves via reqwest's `rustls-tls`, so there is exactly one
