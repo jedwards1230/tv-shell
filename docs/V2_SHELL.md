@@ -180,7 +180,7 @@ is reachable only when there is nothing at all to focus.
 
 ### The rules, and the mutations that confirm each is defended
 
-Stated in `focusGraph.js` and asserted in `tests/qml/tst_focusgraph.qml`. Each was
+Stated in `focusGraph.js` and asserted in `shell-v2/tests/qml/tst_focusgraph.qml`. Each was
 verified by **breaking the rule and watching the suite go red** — a green suite
 proves nothing until you have seen it fail.
 
@@ -753,7 +753,7 @@ output's, and it now says so.
 **The lane that was missing.** Every other lane builds `HomeScreen` and
 `DrawerScreen` directly; nothing instantiated a window, and §11.10's own
 `Main.qml` smoke test loads clean because *loading clean and being correctly
-sized are different questions*. `tests/tst_geometry.cpp` is now the one lane that
+sized are different questions*. `shell-v2/tests/tst_geometry.cpp` is now the one lane that
 creates a real `Surface`, and it asserts both that a Base fills its output and
 that an Overlay/Toast keeps the size it was given. Mutation-confirmed: removing
 the sizing fails both Base assertions and leaves the Overlay one passing.
