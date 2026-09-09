@@ -749,6 +749,16 @@ inventing a new one. `drawerWidth` is re-expressed but deliberately unchanged in
 size: it has never been measured against a television, so it is not a place to
 invent a correction.
 
+**One divergence from v1, deliberate and stated so nobody reads it as a bug.**
+v1's `gridUnit` is `screenHeight / 40`, unclamped; this is `54 * scale` with
+`scale` clamped to [0.5, 2.0]. The two agree **exactly from 1080p through 8K** —
+27, 36, 54, 108 — and part outside it: below 1080p v1 keeps shrinking while this
+floors at 27, above 8K v1 keeps growing while this caps at 108. For a television
+shell those are the safer ends to be wrong on, and the clamp predates the ratios.
+The ratios are v1's; the clamping is not. Both the agreement range and the
+divergence are pinned by tests, so the calibration claim above fails loudly if it
+ever stops holding.
+
 **Pinned by `tst_tokens.qml`**, at the one resolution the couch runs, against the
 values v1's ratios produce. Mutation: restoring the exact shipped constants fails
 four assertions — the type scale, the card size, the scaling behaviour, and the

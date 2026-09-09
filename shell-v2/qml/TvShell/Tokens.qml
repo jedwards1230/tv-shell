@@ -66,6 +66,18 @@ QtObject {
     // Keep new sizes as ratios of `gridUnit`. A raw pixel constant here is the
     // same mistake in a new place: it looks reasonable in a text editor and is
     // only wrong on a television.
+    // ONE DIVERGENCE FROM v1, SO NOBODY LATER READS IT AS A BUG. v1's gridUnit is
+    // `screenHeight / 40`, unclamped. This is `54 * scale`, and `scale` is
+    // clamped to [0.5, 2.0] by `Viewport.scaleFor`. The two agree EXACTLY from
+    // 1080p through 8K — 27, 36, 54, 108 — and part outside that range: below
+    // 1080p v1 keeps shrinking while this floors at 27, and above 8K v1 keeps
+    // growing while this caps at 108.
+    //
+    // For a television shell those are the safer ends to be wrong on, and the
+    // clamp predates the ratios, so it stays. But the ratios are v1's and the
+    // clamping is not, which is worth knowing before assuming this file is v1
+    // everywhere. `tst_tokens.qml` pins the agreement range.
+    //
     // The `max(8, …)` floor is v1's, carried across — but note what it is and is
     // not doing here. v1 needs it because `screenHeight` can be transiently 0 or
     // unknown (it has a whole sticky filter, `screenScale.js`, for that). Here

@@ -91,6 +91,39 @@ Item {
             Tokens.scale = 1.0;
         }
 
+        // The equivalence claim, pinned across the range where it holds.
+        //
+        // v1's gridUnit is `screenHeight / 40` unclamped; this is `54 * scale`
+        // with scale clamped to [0.5, 2.0]. They agree EXACTLY from 1080p
+        // through 8K, which covers every display this ships to, and that
+        // agreement is the entire basis for calling these ratios "v1's". If it
+        // ever stops holding, the calibration claim in the docs becomes false
+        // and this is where that shows up.
+        function test_gridUnit_agrees_with_v1_from_1080p_to_8k() {
+            const heights = [1080, 1440, 2160, 2880, 4320];
+            for (let i = 0; i < heights.length; ++i) {
+                Tokens.scale = Viewport.scaleFor(heights[i]);
+                compare(Tokens.gridUnit, Math.max(8, Math.round(heights[i] / 40)), "gridUnit disagrees with v1's screenHeight/40 at " + heights[i]);
+            }
+            Tokens.scale = 1.0;
+        }
+
+        // And the documented divergence OUTSIDE that range, asserted so it is a
+        // stated property rather than an accident. Below 1080p v1 keeps
+        // shrinking and this floors; above 8K v1 keeps growing and this caps.
+        // For a television that is the safer end to be wrong on.
+        function test_gridUnit_diverges_from_v1_outside_that_range() {
+            Tokens.scale = Viewport.scaleFor(720);
+            compare(Tokens.gridUnit, 27);
+            verify(Tokens.gridUnit > Math.round(720 / 40));
+
+            Tokens.scale = Viewport.scaleFor(8640);
+            compare(Tokens.gridUnit, 108);
+            verify(Tokens.gridUnit < Math.round(8640 / 40));
+
+            Tokens.scale = 1.0;
+        }
+
         // A degenerate screen height must still yield a usable unit — and this
         // goes through `Viewport.scaleFor`, the path the shell actually uses,
         // rather than poking `scale` directly.
