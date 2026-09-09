@@ -204,6 +204,65 @@ Neither binary has a reload path. Any change, credential rotation included, need
 a restart — and restarting the daemon hands the CEC adapter to whatever grabs it
 next, so rotating the MQTT password is outage-adjacent rather than a config edit.
 
+### TLS transport and the rustls-webpki advisories
+
+A broker URL of `mqtts://` wraps the connection in TLS; `mqtt://` is plain TCP.
+Both binaries reach TLS the same way — `rumqttc` with `default-features = false`
+and only `use-rustls-no-provider`, with `ring` installed once by hand (the
+reasoning is in the comment block above each `rumqttc` line, and it is
+load-bearing: the default feature would drag in `aws-lc-rs`, a C + cmake build).
+
+**Four Dependabot advisories against `rustls-webpki` 0.102.8 are open by
+decision, and will stay open.** They are:
+
+| Severity | Advisory | Issue |
+|---|---|---|
+| high | GHSA-82j2-j2ch-gfr8 | DoS via panic on a malformed CRL BIT STRING |
+| medium | GHSA-pwjx-qhcg-rvj4 | CRLs not considered authoritative by distribution point |
+| low | GHSA-xgp8-3hg3-c2mh | Name constraints accepted for a wildcard-name certificate |
+| low | GHSA-965h-392x-2mh5 | Name constraints for URI names incorrectly accepted |
+
+They cannot be fixed from this repo, and the vulnerable code cannot execute here.
+Both halves of that were checked rather than assumed:
+
+- **No release fixes it.** `rumqttc` 0.25.1 is the latest published version and
+  pins `rustls-webpki = "0.102.8"`. Upstream `main` (bytebeamio/rumqtt) still
+  pins the same. There is nothing to bump to.
+- **The resolution cannot be forced.** `^0.102.8` does not admit 0.103.x, so a
+  `[patch.crates-io]` entry for `rustls-webpki` is applied to the *other*,
+  already-patched edge and leaves this one untouched. Tried and confirmed: after
+  patching to the 0.103.13 tag, `cargo tree -i rustls-webpki@0.102.8` still
+  reports `rustls-webpki v0.102.8 → rumqttc v0.25.1`. The lockfile ends up with
+  three copies instead of two. Forcing it would mean forking `rumqttc` or
+  vendoring a `rustls-webpki` that lies about its version — real maintenance
+  burden for no risk reduction, given the next point.
+- **`rumqttc` never calls into it.** Grep the whole 0.25.1 crate for `webpki`
+  and the only Rust-source hit is `WebPki(#[from] webpki::Error)` — one variant
+  of the error enum in `src/tls.rs`, vestigial from 0.24 when `rumqttc` did parse
+  trust anchors itself. It now builds its root store through
+  `rustls::RootCertStore::add_parsable_certificates`. So no CRL is ever parsed
+  and no name constraint is ever evaluated by that copy; nothing in `rumqttc` can
+  even construct the variant.
+- **Real verification runs on the patched copy.** The `mqtts://` handshake goes
+  `rumqttc → tokio-rustls → rustls 0.23.43 → rustls-webpki 0.103.13`, which is at
+  or above the fixed version for all four advisories. The 0.102.8 crate sits
+  beside that path contributing a type definition, not a code path.
+
+What would change this assessment: a `rumqttc` release that starts calling
+`webpki` functions again (chiefly if it grows CRL support or does its own chain
+verification), or a `rumqttc` release that bumps the pin — which is the actual
+fix and should be taken as soon as it exists. Re-check on every `rumqttc`
+release with:
+
+```bash
+# Is the vulnerable copy still in the graph at all?
+cargo tree -p tv-shell-input -i rustls-webpki@0.102.8
+cargo tree -p tv-shell-host  -i rustls-webpki@0.102.8
+
+# Is it still only the error variant? (expect exactly one .rs hit)
+grep -rn webpki ~/.cargo/registry/src/*/rumqttc-*/src/
+```
+
 ## Failure behaviour
 
 A misconfigured MQTT setup logs at `error` naming the offending field and is
