@@ -21,8 +21,15 @@ set_tests_properties(coreclient PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscree
 qt_add_executable(tst_geometry tst_geometry.cpp)
 target_link_libraries(tst_geometry PRIVATE Qt6::Test Qt6::Quick tvshell-qml)
 add_test(NAME geometry COMMAND tst_geometry)
+# QT_FATAL_WARNINGS here too, and for a reason specific to this lane: it is the
+# only one that builds a real Surface, so it is the only one positioned to catch
+# the C++ side's own silent-degradation warnings ("base surface has no QScreen",
+# "ignoring role change: surface already created") -- each of which describes a
+# window that renders, looks plausible, and is wrong. The `coreclient` lane is
+# deliberately NOT included: it provokes a warning on purpose, and see below for
+# why that cannot be ignored away.
 set_tests_properties(geometry PROPERTIES ENVIRONMENT
-    "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1")
 
 # --- lane 2: the focus graph + the QML types, offscreen. -------------------
 # Imports the SAME TvShell module the shell ships (linked, not copied), so there
@@ -30,8 +37,21 @@ set_tests_properties(geometry PROPERTIES ENVIRONMENT
 qt_add_executable(tst_qml qml_main.cpp)
 target_link_libraries(tst_qml PRIVATE Qt6::QuickTest Qt6::Qml tvshell-qmlplugin)
 add_test(NAME qml COMMAND tst_qml -input ${CMAKE_CURRENT_SOURCE_DIR}/qml)
+# QT_FATAL_WARNINGS is the compensating control for the qmllint gap above: an
+# undefined QML binding is a *warning*, never an error, so without this a typo
+# like `Tokens.radiusTypo` renders wrong and the lane still reports green.
+# Mutation-confirmed both ways -- see jedwards1230/tv-shell#491, where it was
+# documented in five places and set in none.
+#
+# IT IS NOT COMPATIBLE WITH ignoreWarning(). The fatal check lives in
+# QMessageLogger::warning AFTER the installed handler has run, so QTest's ignore
+# list suppresses the log line and the process still aborts. A lane that runs
+# under this variable must therefore emit no warnings at all -- which is why the
+# tagger reports "no X connection" at info level on a non-xcb platform, where
+# the offscreen tests provoke it by construction and main() has already warned
+# once at startup.
 set_tests_properties(qml PROPERTIES ENVIRONMENT
-    "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1")
 
 # --- lane 3: the ordering assertion, against a real X server. --------------
 # Needs an X display, so it is registered only when TV_SHELL_TEST_XVFB names one.
