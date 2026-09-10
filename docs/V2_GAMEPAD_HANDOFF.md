@@ -32,9 +32,9 @@ Two consequences, and they are the spine of the plan:
    holds `EVIOCGRAB`, owns the base layer, owns `launch`, and is the only process still
    alive when the shell is wedged. v1 put the decision partly in the shell, and its
    escape hatch consequently failed in exactly the situation it existed for.
-2. **Whether the shell can *see* a key is a compositor question.** §2 shows a physical
-   keyboard does reach the shell and a synthesised one does not — which is the crux,
-   because everything the core sends is synthesised.
+2. **Whether the shell can *see* a key is a compositor question**, and it is answered:
+   §2.1 shows a synthesised key reaches the shell just as a physical one does — but that
+   gamescope silently drops `KEY_MENU`, which is the drawer's only binding.
 
 ---
 
@@ -50,35 +50,44 @@ only over SSH). Frames come from gamescope's own `GAMESCOPECTRL_REQUEST_SCREENSH
 waiting on the **file**, since the request property clears at ~32 ms and the PNG lands
 at ~712 ms.
 
-### 2.1 M0 — does a real key reach the shell? **Yes, if it is physical.**
+### 2.1 M0 — does a real key reach the shell? **Yes. The drawer key was the problem.**
 
-**Measured 2026-09-10, observed directly at the television:** pressing **Enter** on the
-K400 activated the focused card, and the core switched to app 9003 — Moonlight opened
-immediately. Real keyboard input reaches the v2 shell.
+**Resolved 2026-09-10.** A uinput keyboard drives the v2 shell exactly as a physical one
+does. The long-running negative was never about routing, devices, or seats — it was the
+one key being probed.
 
-But the virtual keyboard still does not, and that contrast is now isolated to one
-variable:
-
-| Device | Reaches the shell? |
-|---|---|
-| XTEST (`xdotool`) | yes — but it is injected *inside* Xwayland and never passes through gamescope, so it proves nothing about routing |
-| **Physical K400** | **yes** |
-| **uinput virtual keyboard** | **no** |
-
-Same gamescope, same shell, same focus, same key codes. Only the device differs. The
-following were each ruled out for the virtual device:
-
-| Hypothesis | Verdict | Evidence |
+| Probe | Device | Result |
 |---|---|---|
-| Not classified as a keyboard | **rejected** | after §2.1.1's fix it carries `ID_INPUT_KEYBOARD=1` and a `sysrq` handler, exactly as the K400 does |
-| Not visible to gamescope | **rejected** | gamescope holds an open fd on the node (`fuser` names pid 900 `gamescope-wl`) |
-| gamescope focuses something else | **rejected** | `GAMESCOPE_FOCUSED_WINDOW`, `GAMESCOPE_FOCUSED_APP` (9001), `GAMESCOPECTRL_BASELAYER_APPID` and X input focus **all** name the shell |
-| Moonlight was eating the keys | **rejected** | the physical key worked *with Moonlight running* |
+| `KEY_ENTER` | uinput, Moonlight suspended | **reacts** (9001 → 9003) |
+| `KEY_ENTER` | uinput, Moonlight running | **reacts** |
+| `Return` | XTEST, Moonlight running | reacts |
+| `Menu` | XTEST | **opens the drawer** |
+| **`KEY_MENU`** | **uinput** | **nothing** |
 
-**The remaining suspect is seat assignment.** A hotplugged bare uinput node carries no
-`ID_SEAT` and no `uaccess` tag, where the K400 does. That is the next thing to chase,
-and **phase 1 under option (a) depends on resolving it** — the core's synthesised
-keyboard is a uinput device, and today uinput devices are the ones that do not work.
+Enter and the arrows arrive from a synthesised device under every condition tested.
+`KEY_MENU` does not arrive at all, while XTEST `Menu` does — and XTEST is injected
+*inside* Xwayland, bypassing gamescope entirely. So **gamescope does not deliver
+`KEY_MENU` to the client.**
+
+**This is a live bug, not a curiosity.** `Keys.onMenuPressed` (`Main.qml:174`) is the
+*only* binding that opens the drawer, so **the drawer is unreachable from any real input
+device** — keyboard today, and gamepad once phase 1 exists. Everything that ever appeared
+to work on it was XTEST driven from an SSH session.
+
+**Required fix:** bind the drawer to a key gamescope actually routes. v1 used **Tab** for
+the same surface, which is the natural candidate and should be verified the same way
+before being relied on. `Menu` may remain as an additional binding; it simply cannot be
+the only one.
+
+**Consequences for the plan:**
+
+- **Q2 resolves to option (a).** The core can drive the shell with a uinput keyboard, and
+  no seat work is needed — a udev rule tagging the device `uaccess` + `ID_SEAT=seat0` was
+  tried and changed nothing in either direction, because nothing was wrong with the seat.
+- Phase 1 is unblocked, with one addition: **the shell's drawer binding must change**, and
+  the keymap must not emit a code gamescope drops.
+- Any key the core intends to emit should be **verified to arrive**, not assumed.
+  `KEY_MENU` looked entirely reasonable on paper.
 
 #### 2.1.1 A real trap found on the way, worth keeping
 
@@ -177,10 +186,9 @@ the pads under the same permanence rule; routing hard-wired to `Shell` behind a 
 `owner` / `route` / `masked_keys` / `masked_axes` added to `InputReport` from the
 start, so a hardware session reads what the core decided instead of inferring it.
 
-**Gated on §2.1's open contrast.** A physical key drives the shell; a uinput key does
-not, and the core's keyboard would be a uinput device. Resolve the seat/`ID_SEAT`
-question before building option (a). Under option (b) this phase instead grows an event
-subscription on the core and an in-process injector in the shell.
+**Unblocked** by §2.1, with one addition: the shell's drawer binding must move off
+`KEY_MENU`, which gamescope does not deliver, and the keymap must emit only codes
+verified to arrive.
 
 **The honest cost, stated loudly:** with routing forced to `Shell` the pad is grabbed
 unconditionally, so **Moonlight loses the pad the whole time the flag is on**. That is
@@ -294,10 +302,9 @@ or the shell grows a private pad path.
   gamescope routing and to #485; makes drawer-vs-home routing an offscreen-testable
   pure decision. But it only works for our own shell and adds a second nav mechanism.
 
-**Not yet decided, and §2.1 says why.** A *physical* key reaches the shell, so gamescope
-does route real keys to it — (a) is not dead. But a *uinput* key does not, and that is
-precisely what (a) would send. Option (a) becomes viable only if the virtual device can
-be made acceptable to libinput's seat (the `ID_SEAT`/`uaccess` question); otherwise (b).
+**Resolved to (a)** by §2.1: a uinput keyboard drives the shell under every condition
+tested, with Moonlight running or suspended, and needs no seat tagging. The one caveat is
+per-key, not per-device — `KEY_MENU` never arrives, so emitted codes must be verified.
 
 ### Q3 — Guide tap: pass through to the game, or always swallow?
 
