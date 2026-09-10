@@ -245,9 +245,25 @@ every key or button the target still believes is held. `presenter.rs::quiesce` d
 this for pads; the keyboard needs the same, or the shell (or Plex) is left with a stuck
 key nothing will ever release.
 
-Also ships the Guide hold → a core-side `home` performed as a base-layer write directly,
-with the shell dead or alive; and the force-quit combo, gated on v1's
-`presenter_owns_app` rule.
+Also ships the force-quit combo, gated on v1's `presenter_owns_app` rule.
+
+**The Guide hold shipped early, out of this phase** (jedwards1230/tv-shell#496,
+`core/src/input/escape.rs`). Using phase 1 on hardware showed the ordering was wrong:
+launching an app worked and there was then **no way back with the controller**, which is
+the failure that makes the shell unusable, so the escape had to land before any further
+navigation work. It is what §5 says it must be — the core performs the base-layer write
+itself, with the shell dead, hung or never started — and it is active on **both** routes,
+because the route it is most needed on is the app one. A tap still reaches whatever is on
+screen (v1's behaviour, and its 500 ms threshold, ported as `[input].guide_hold_ms`);
+only a hold escapes. `input-state` carries an `escape` block: `armed`, `fires`,
+`failures`, `last_fire_unix_ms`.
+
+One thing it does NOT do, reported rather than worked around: it fills neither
+`masked_keys` nor `masked_axes`. Routing is still pinned, so the escape changes what is
+*on screen* without changing where pad events *go* — Guide itself is buffered and never
+crosses, and every other button keeps forwarding to the same target, so its real release
+still arrives. There is nothing held across a change to mask. Those fields become live
+when phase 2 makes the route a decision.
 
 ### Phase 4 — contracts, then "proven", then default-on
 
@@ -328,12 +344,12 @@ Proposed: after §3 phase 4's acceptance list, as a change with nothing else in 
 |---|---|---|
 | `mask_forward_decision` / `mask_axis_forward_decision` / `abs_in_neutral_zone` | **Port verbatim** | Hard-won from #295 on this hardware; already pure and tested |
 | `FOCUS_SETTLE_MS = 300` debounce | **Port** | Launch flaps focus; v2 will flap identically |
-| Per-pad-complete combo detection | **Port** | Stops two pads each holding half a combo from firing it |
+| Per-pad-complete combo detection | **Ported** | Stops two pads each holding half a combo from firing it. In `escape.rs`: the hold state is per pad, and one pad cannot satisfy or cancel another one's |
 | `check_grab_invariant` | **Port as assert-and-log** | Cheap; catches routing drift the report cannot |
 | Stable player slots, DB-match discovery, hot join/leave | **Already in v2** | `identity.rs` / `fleet.rs` / `discovery.rs` |
 | Presenter switching by create/destroy | **Redesign** | Forbidden by #402 / §7 — a hotplug event Moonlight forwards to the host. Route, never rebuild |
 | `shell_focus` + `overlay_focus`, both shell-declared | **Redesign** | The core derives shell-on-screen from the base layer; the shell declares only its overlay |
-| Shell-delivered escape (`intent home-hold`) | **Drop** | Failed exactly when it was needed. The core performs the base-layer write itself |
+| Shell-delivered escape (`intent home-hold`) | **Dropped; replaced** | Failed exactly when it was needed. The core now performs the base-layer write itself — shipped in jedwards1230/tv-shell#496, `core/src/input/escape.rs` |
 | Rumble / battery / LED | **Defer** | Not on the handoff path. Under option A it becomes a real follow-up; name it, don't build it here |
 | Mouse emulation, capture mode, remap table | **Drop for now** | None is on the handoff path |
 

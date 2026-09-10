@@ -45,6 +45,7 @@
 use tokio::sync::{oneshot, watch};
 
 use super::config::ResolvedInput;
+use super::escape::EscapeSink;
 use super::evdev_backend::EvdevBackend;
 use super::session::{InputReport, InputSession};
 use super::InputHandle;
@@ -54,7 +55,10 @@ use super::InputHandle;
 /// Blocks until the session has been constructed — that is, until every
 /// presenter exists — so a caller that gets an `Ok` back knows the fleet has
 /// somewhere to present to. Everything after that is asynchronous.
-pub fn spawn(resolved: ResolvedInput) -> anyhow::Result<InputHandle> {
+pub fn spawn(
+    resolved: ResolvedInput,
+    escape: Box<dyn EscapeSink + Send>,
+) -> anyhow::Result<InputHandle> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (report_tx, report_rx) = watch::channel(InputReport::disabled());
     // Carries the outcome of constructing the session, so a failure to create
@@ -75,7 +79,7 @@ pub fn spawn(resolved: ResolvedInput) -> anyhow::Result<InputHandle> {
                     return;
                 }
             };
-            rt.block_on(run(resolved, started_tx, report_tx, shutdown_rx));
+            rt.block_on(run(resolved, escape, started_tx, report_tx, shutdown_rx));
         })
         .map_err(|e| anyhow::anyhow!("spawning the input thread: {e}"))?;
 
@@ -107,19 +111,20 @@ pub fn spawn(resolved: ResolvedInput) -> anyhow::Result<InputHandle> {
 enum Wake {
     /// The discovery interval elapsed.
     Poll,
-    /// A stick auto-repeat is due.
-    Repeat,
+    /// A stick auto-repeat, or a Guide hold, is due.
+    Timer,
     /// A claimed pad produced an event, or its stream failed.
     Event((std::path::PathBuf, std::io::Result<evdev::InputEvent>)),
 }
 
 async fn run(
     resolved: ResolvedInput,
+    escape: Box<dyn EscapeSink + Send>,
     started: std::sync::mpsc::Sender<Result<(), String>>,
     reports: watch::Sender<InputReport>,
     mut shutdown: oneshot::Receiver<()>,
 ) {
-    let mut session = match InputSession::start(EvdevBackend::new(), &resolved) {
+    let mut session = match InputSession::start(EvdevBackend::new(), &resolved, escape) {
         Ok(s) => {
             let _ = started.send(Ok(()));
             s
@@ -140,13 +145,13 @@ async fn run(
     loop {
         // Copied out BEFORE the select, so the sleep future borrows nothing from
         // the session and the pad-read arm can borrow it mutably.
-        let repeat_at = session.next_key_deadline();
+        let repeat_at = session.next_deadline();
         let repeat = async move {
             match repeat_at {
                 Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
-                // No stick is deflected, so there is nothing to repeat and this
-                // arm simply never fires. Pending rather than a busy interval:
-                // the common case is no deflection at all.
+                // Nothing is deflected and no Guide is held, so this arm
+                // simply never fires. Pending rather than a busy interval: the
+                // common case is that neither is armed.
                 None => std::future::pending().await,
             }
         };
@@ -155,16 +160,18 @@ async fn run(
         // the arms below are free to use `session` mutably afterwards.
         let event = tokio::select! {
             _ = tick.tick() => Wake::Poll,
-            _ = repeat => Wake::Repeat,
+            _ = repeat => Wake::Timer,
             next = session.backend_mut().next_event() => Wake::Event(next),
             _ = &mut shutdown => break,
         };
 
         match event {
-            Wake::Repeat => {
-                // The stick auto-repeat, on the shell route. A no-op on the app
-                // route, where no keymap exists to have armed a deadline.
-                session.tick_keys(std::time::Instant::now());
+            Wake::Timer => {
+                // A stick auto-repeat (shell route only) or a Guide hold that
+                // reached its threshold (either route). A no-op when neither is
+                // armed — nothing armed the deadline that woke us.
+                session.tick(std::time::Instant::now());
+                let _ = reports.send(session.report());
             }
             Wake::Poll => {
                 for joined in session.poll() {
@@ -173,7 +180,12 @@ async fn run(
                 let _ = reports.send(session.report());
             }
             Wake::Event((path, Ok(ev))) => {
-                session.forward(&path, ev.event_type().0, ev.code(), ev.value());
+                let now = std::time::Instant::now();
+                if session.forward(&path, ev.event_type().0, ev.code(), ev.value(), now) {
+                    // A Guide press or release. Republished so `escape.armed` is
+                    // readable during the hold, not only once it resolves.
+                    let _ = reports.send(session.report());
+                }
             }
             Wake::Event((path, Err(e))) => {
                 // The usual cause is the pad being unplugged. Retire it now

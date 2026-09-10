@@ -114,17 +114,31 @@ async fn serve() -> ExitCode {
         }),
     );
 
+    // Shared BEFORE the input layer starts, because the Guide escape writes the
+    // base layer through this same object — and through the same `IntentGate`,
+    // so an escape serialises against an operator's `show` rather than racing
+    // one. This is the whole of "the core performs the write itself": the path
+    // from a held button to `baselayer::home` never leaves this process and
+    // never involves the shell (jedwards1230/tv-shell#496).
+    let compositor = tv_shell_core::compositor::shared(compositor);
+
     // The input layer, if an operator turned it on. `None` — the default —
     // means nothing was enumerated, opened or grabbed, and `input-state` still
     // answers, reporting exactly that.
-    let mut input = tv_shell_core::input::start(&input_config);
+    //
+    // The escape worker is passed as a THUNK, not a value, so the default-off
+    // promise stays literal — `start`'s gate short-circuits before this runs,
+    // and a core nobody reconfigured spawns no thread for this either.
+    let escape_compositor = Arc::clone(&compositor);
+    let mut input = tv_shell_core::input::start(&input_config, move || {
+        Ok(Box::new(tv_shell_core::input::escape::spawn(escape_compositor)?) as Box<_>)
+    });
     let input_reports = input
         .as_ref()
         .map(|h| h.reports())
         .unwrap_or_else(tv_shell_core::input::InputReports::disabled);
 
     let sock_path = config::socket_path();
-    let compositor = tv_shell_core::compositor::shared(compositor);
     let server = ipc::serve(sock_path.clone(), Arc::clone(&compositor), input_reports);
 
     // AFTER the listener exists, and off the reactor. A cold app start can take
