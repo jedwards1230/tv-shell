@@ -129,8 +129,18 @@ does not resolve the C++ `Surface` type out of this static module on the pinned
 Qt, and with it unresolved a correct `Main.qml` reports as unqualified from top
 to bottom. The coverage comes from the `qml` ctest lane running under
 `QT_FATAL_WARNINGS=1`, where an undefined binding — a *warning*, never an error —
-fails the test. See [docs/V2_SHELL.md](docs/V2_SHELL.md) §11.9. A test that
-deliberately provokes a warning must use `ignoreWarning()`.
+fails the test. The `geometry` lane runs under it too — it is the only lane
+that builds a real `Surface`, so it is the only one placed to catch that type's
+own silent-degradation warnings. See [docs/V2_SHELL.md](docs/V2_SHELL.md) §11.9.
+
+**`ignoreWarning()` does not rescue a lane running under this variable.** The
+fatal check sits in `QMessageLogger::warning` *after* the installed message
+handler has run, so QTest's ignore list suppresses the printed line and the
+process still aborts. A lane under `QT_FATAL_WARNINGS=1` must emit no warnings at
+all. A test that deliberately provokes one — `coreclient` does — belongs in a
+lane without the variable, and code that warns about a condition the offscreen
+tests create by construction must report it below warning level (the tagger's
+"no X connection" is `qCInfo` on a non-xcb platform for exactly this reason).
 
 The X-backed lane (`premap`, which asserts the `STEAM_*` properties reach the
 server BEFORE the window maps) is opt-in behind `TV_SHELL_TEST_XVFB`, the same

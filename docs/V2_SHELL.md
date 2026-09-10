@@ -646,9 +646,30 @@ to QColor"), never an error. Mutating `Tokens.online` to `Tokens.onlineTypo` now
 fails the lane, which is the coverage `missing-property` would have given,
 obtained in a way that does not depend on qmllint resolving C++ types.
 
-That has a cost worth stating: a future test that *deliberately* provokes a
-warning — `FocusRouter`'s malformed-graph `console.warn`, say — must wrap it in
-`ignoreWarning()` or the lane aborts.
+That has a cost worth stating, and the obvious mitigation is not available:
+`ignoreWarning()` does **not** work here. `QT_FATAL_WARNINGS` is checked inside
+`QMessageLogger::warning` *after* the installed handler runs, so QTest's ignore
+list suppresses the printed `QWARN` line and the process aborts regardless —
+measured, not reasoned: an `ignoreWarning(/no X connection/)` in
+`tst_mainkeys.qml` removed the log line and left the SIGABRT in place, with the
+stack landing in `applyTags()`.
+
+So a lane under this variable must emit **no** warnings at all, and there are two
+consequences. A test that deliberately provokes one belongs in a lane without the
+variable — `coreclient` provokes "unsolicited reply line dropped" and is
+deliberately excluded for that reason. And code that warns about a condition the
+offscreen lanes create *by construction* has to report it below warning level:
+`applyTags()` reports "no X connection" at `qCInfo` on a non-xcb platform, where
+`main()` has already warned once, loudly, at startup — and keeps it a `qCWarning`
+under xcb, where a missing connection is a genuine anomaly.
+
+**This was documented before it was true.** From the round that wrote this
+section until jedwards1230/tv-shell#491, `QT_FATAL_WARNINGS=1` was asserted in
+five places and set in none — not in `tests/CMakeLists.txt`, not in
+`shell-v2.yml`. Neither control was in force: qmllint could not be promoted, and
+the variable that was supposed to compensate was absent, so `Tokens.radiusTypo`
+rendered wrong and the lane reported green. It is now set on the `qml` and
+`geometry` lanes and mutation-confirmed in both directions.
 
 **The general lesson, because this section is one instance of it.** Every green
 check that defends nothing is the same failure:

@@ -63,11 +63,33 @@ bool applyTags(std::uint32_t xid, const std::vector<SurfaceTag> &tags)
 {
     xcb_connection_t *conn = qtConnection();
     if (!conn) {
-        // Expected under QT_QPA_PLATFORM=offscreen (the headless QML tests) and
-        // on a Wayland session. Not fatal: the window still works, it is simply
-        // untagged, which under gamescope means it is not a focus candidate.
-        qCWarning(lcTag, "no X connection (platform=%s); window 0x%x left untagged",
-                  qPrintable(QGuiApplication::platformName()), xid);
+        // Not fatal: the window still works, it is simply untagged, which under
+        // gamescope means it is not a focus candidate.
+        //
+        // THE SEVERITY IS DECIDED BY THE PLATFORM, and that is load-bearing.
+        // On a non-xcb platform there is nothing anomalous to report here --
+        // main() already said so once, loudly, at startup, and repeating it per
+        // surface (and again on every drawer re-open, since hiding an overlay
+        // destroys its window) is the same sentence at higher volume. It is
+        // reported at info level there, so the fact stays on the record.
+        //
+        // Under xcb a missing connection IS an anomaly, and stays a warning.
+        //
+        // This is not cosmetic. The `qml` lane runs under QT_FATAL_WARNINGS=1
+        // (tests/CMakeLists.txt), and that aborts on the warning ITSELF: the
+        // fatal check sits in QMessageLogger::warning AFTER the message handler
+        // has run, so QTest's ignoreWarning() suppresses the log line and does
+        // not prevent the abort. A warning the offscreen tests provoke by
+        // construction therefore cannot be ignored away -- it has to not be a
+        // warning.
+        const QString platform = QGuiApplication::platformName();
+        if (platform.startsWith(QLatin1String("xcb"))) {
+            qCWarning(lcTag, "no X connection (platform=%s); window 0x%x left untagged",
+                      qPrintable(platform), xid);
+        } else {
+            qCInfo(lcTag, "no X connection (platform=%s); window 0x%x left untagged",
+                   qPrintable(platform), xid);
+        }
         return false;
     }
     if (xid == 0) {

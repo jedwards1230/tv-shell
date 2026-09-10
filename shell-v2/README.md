@@ -129,8 +129,22 @@ which runs under `QT_FATAL_WARNINGS=1` — an undefined binding is a *warning*,
 never an error, so this is what turns it into a test failure. Full account,
 including what was tried: `../docs/V2_SHELL.md` §11.9.
 
-A consequence for anyone adding tests: a test that deliberately provokes a
-warning must wrap it in `ignoreWarning()`, or the lane aborts.
+The `geometry` lane carries the same variable: it is the only lane that builds
+a real `Surface`, so it is the only one that can catch that type's own
+silent-degradation warnings ("base surface has no QScreen", "ignoring role
+change: surface already created") — each of which describes a window that
+renders, looks plausible, and is wrong.
+
+A consequence for anyone adding tests, and it is not the obvious one:
+`ignoreWarning()` does **not** save a lane running under this variable. The fatal
+check is in `QMessageLogger::warning`, after the message handler, so QTest's
+ignore list drops the printed line and the abort happens anyway. A test that
+deliberately provokes a warning belongs in a lane without the variable — which is
+where `coreclient` (whose "unsolicited reply line dropped" is deliberate) stays.
+Code that warns about a condition the offscreen lanes create by construction has
+to report it below warning level instead; that is why `applyTags()` says "no X
+connection" at info level on a non-xcb platform, where `main()` has already
+warned once at startup.
 
 ## Running it
 
