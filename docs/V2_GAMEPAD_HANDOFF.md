@@ -32,45 +32,53 @@ Two consequences, and they are the spine of the plan:
    holds `EVIOCGRAB`, owns the base layer, owns `launch`, and is the only process still
    alive when the shell is wedged. v1 put the decision partly in the shell, and its
    escape hatch consequently failed in exactly the situation it existed for.
-2. **Whether the shell can *see* a key is a compositor question**, and §2 shows it is
-   not yet answered on this hardware.
+2. **Whether the shell can *see* a key is a compositor question.** §2 shows a physical
+   keyboard does reach the shell and a synthesised one does not — which is the crux,
+   because everything the core sends is synthesised.
 
 ---
 
 ## 2. Measurements — phase 0
 
-The plan deliberately refuses to design past these. §2.1 and §2.2 have been run;
-§2.3 and §2.4 have not, and cannot be until a controller is physically connected.
+All four have now been run on htpc-1 (2026-09-09/10). Two settle open questions; one
+found a sharp, unexplained contrast that phase 1 depends on.
 
-Method notes that apply throughout: the shell runs as an ordinary client beside
-Moonlight, launched by hand; the session unit is never touched (Moonlight is the boot
-app with `boot_relaunch = "always"`, and an empty compositor is a black television
-recoverable only over SSH). Frames come from gamescope's own
-`GAMESCOPECTRL_REQUEST_SCREENSHOT`, waiting on the **file**, since the request property
-clears at ~32 ms and the PNG lands at ~712 ms.
+Method notes: the shell runs as an ordinary client beside Moonlight, launched by hand;
+the session unit is never touched (Moonlight is the boot app with
+`boot_relaunch = "always"`, and an empty compositor is a black television recoverable
+only over SSH). Frames come from gamescope's own `GAMESCOPECTRL_REQUEST_SCREENSHOT`,
+waiting on the **file**, since the request property clears at ~32 ms and the PNG lands
+at ~712 ms.
 
-### 2.1 M0 — does a real evdev key reach the shell? **Measured 2026-09-09: no.**
+### 2.1 M0 — does a real key reach the shell? **Yes, if it is physical.**
 
-This is the riskiest assumption in the whole plan, and it does not hold as hoped.
-**Every keypress ever tested on this box was `xdotool`, i.e. XTEST**, which is injected
-*inside* Xwayland and never passes through gamescope at all. `V2_DESIGN.md` §13 Q1
-warned that a real evdev event may take a different route. It does.
+**Measured 2026-09-10, observed directly at the television:** pressing **Enter** on the
+K400 activated the focused card, and the core switched to app 9003 — Moonlight opened
+immediately. Real keyboard input reaches the v2 shell.
 
-| Probe | Result |
+But the virtual keyboard still does not, and that contrast is now isolated to one
+variable:
+
+| Device | Reaches the shell? |
 |---|---|
-| XTEST `Menu` (the known-good path) | **drawer opens** — control passes |
-| Real evdev `KEY_MENU` from a uinput keyboard | **nothing** — no drawer window, no tag lines in the shell log |
+| XTEST (`xdotool`) | yes — but it is injected *inside* Xwayland and never passes through gamescope, so it proves nothing about routing |
+| **Physical K400** | **yes** |
+| **uinput virtual keyboard** | **no** |
 
-The negative was then narrowed by elimination, because a bare "it did not work" would
-have been unattributable:
+Same gamescope, same shell, same focus, same key codes. Only the device differs. The
+following were each ruled out for the virtual device:
 
 | Hypothesis | Verdict | Evidence |
 |---|---|---|
-| The probe key does nothing here | **rejected** | XTEST `Menu` opens the drawer in the same run |
-| Device not classified as a keyboard | **rejected** | see below — fixed, still no delivery |
-| Device not visible to gamescope | **rejected** | gamescope holds an open fd on the node (`fuser` names pid 900 `gamescope-wl`) |
+| Not classified as a keyboard | **rejected** | after §2.1.1's fix it carries `ID_INPUT_KEYBOARD=1` and a `sysrq` handler, exactly as the K400 does |
+| Not visible to gamescope | **rejected** | gamescope holds an open fd on the node (`fuser` names pid 900 `gamescope-wl`) |
 | gamescope focuses something else | **rejected** | `GAMESCOPE_FOCUSED_WINDOW`, `GAMESCOPE_FOCUSED_APP` (9001), `GAMESCOPECTRL_BASELAYER_APPID` and X input focus **all** name the shell |
-| The shell being an Xwayland client is the problem | **untested** | see §2.1.2 |
+| Moonlight was eating the keys | **rejected** | the physical key worked *with Moonlight running* |
+
+**The remaining suspect is seat assignment.** A hotplugged bare uinput node carries no
+`ID_SEAT` and no `uaccess` tag, where the K400 does. That is the next thing to chase,
+and **phase 1 under option (a) depends on resolving it** — the core's synthesised
+keyboard is a uinput device, and today uinput devices are the ones that do not work.
 
 #### 2.1.1 A real trap found on the way, worth keeping
 
@@ -80,8 +88,6 @@ keyboard. systemd's `input_id` sets that property only when key codes **1..31 ar
 advertised** — which includes `KEY_MINUS`, `KEY_EQUAL`, `KEY_LEFTBRACE`,
 `KEY_RIGHTBRACE` and `KEY_LEFTCTRL`, none of which the shell will ever send.
 
-Compared against the K400 (`event1`), a device known to be accepted:
-
 ```
 K400  : ID_INPUT=1 ID_INPUT_KEY=1 ID_INPUT_KEYBOARD=1   Handlers=sysrq kbd event1
 first : ID_INPUT=1 ID_INPUT_KEY=1                        Handlers=kbd event14
@@ -89,50 +95,69 @@ fixed : ID_INPUT=1 ID_INPUT_KEY=1 ID_INPUT_KEYBOARD=1   Handlers=sysrq kbd event
 ```
 
 **Whatever creates the core's uinput keyboard must advertise the full 1..31 block**, or
-it is silently not a keyboard as far as libinput is concerned. Advertising only the
-keys you intend to send is the intuitive thing to do and it is wrong. This is a
-prerequisite for M0 succeeding by any route, and it cost a full measurement cycle to
-find.
+it is silently not a keyboard as far as libinput is concerned. Advertising only the keys
+you intend to send is the intuitive thing to do and it is wrong.
 
-#### 2.1.2 What is still unknown, and it is the important part
+#### 2.1.2 How this measurement kept going wrong, and what fixed it
 
-Everything measured so far used a **virtual** keyboard. The open question is whether a
-**physical** keyboard drives the v2 shell — and there is no evidence either way,
-because every key ever tested on this box was XTEST.
+Three consecutive runs produced negatives that were **not evidence**, and the failures
+are worth recording because they generalise:
 
-- If the K400 **does** drive the shell, the problem is specific to uinput devices under
-  this gamescope (a seat/`ID_SEAT` or libinput-acceptance question), and Q4 option (a)
-  is still viable once that is understood.
-- If the K400 **does not**, then real keyboard input has never worked in the v2 session
-  at all. That is a larger finding than this plan, and it forces Q4 to option (b).
-
-**This needs one keypress from a person at the television.** It is the single highest-
-value unmeasured fact in the document.
-
-An attempted shortcut — running the shell as a native Wayland client instead of an
-Xwayland one — does **not** answer it: without X tagging the shell logs
-*"not a gamescope focus candidate"* and is never eligible for focus, so a negative
-result there means nothing.
+- **The probe key did not exist.** The only binding that opens the drawer is
+  `Keys.onMenuPressed` (`Main.qml:174`), and **a Logitech K400 Plus has no Menu key**.
+  Every "the shell did not react" result was asking for an impossible press. The probe
+  became **Enter**, which activates the focused card.
+- **The home screen has one card**, so Left/Right are legitimate no-ops — the first run
+  used them as the probe *and as the control*, so both failed and the run could not
+  distinguish "keys do not work" from "this key does nothing here".
+- **The success signal was a whole-frame hash**, and the home screen has a live clock.
+  The frame differs after 30 s regardless of input, which is a guaranteed false positive.
+  The signal became `GAMESCOPE_FOCUSED_APP` changing.
+- **Zero input events were indistinguishable from ignored input events.** The device
+  node is now read on a separate channel, so "nobody pressed anything" and "the shell
+  ignored it" are different findings.
 
 ### 2.2 M2 — what re-points X focus after an overlay is destroyed
 
 **Not measured.** The M0 runs did read X input focus after a close, but only in a run
-where the drawer had never opened in the first place, so that reading is about a
-compositor state no overlay ever entered — it says nothing about focus after a destroy.
-Carried unchanged on jedwards1230/tv-shell#485, which still needs its own attended
-measurement: which *in-process* call re-points focus at the base surface once the
-overlay window is gone.
+where the drawer had never opened, so that reading is about a compositor state no
+overlay ever entered. Carried unchanged on jedwards1230/tv-shell#485, which still needs
+its own attended measurement: which *in-process* call re-points focus at the base
+surface once the overlay window is gone.
 
-### 2.3 M1 — does an ungrabbed pad plus a permanent presenter show as two controllers?
+### 2.3 M1 — does an idle presenter show up as a second controller? **Yes.**
 
-**Not measured — blocked.** No controller and no dongle is connected to htpc-1: no
-`/dev/input/js*`, nothing in `/proc/bus/input/devices` beyond the K400, the CEC
-adapter and a POROSVOC receiver, and `lsusb` shows no pad dongle. Decides §4 Q3.
+**Measured 2026-09-10.** With Moonlight running and the physical pad **ungrabbed**, a
+permanent virtual pad was created. Moonlight opened its `/dev/input/event15` within
+**2 seconds** and held it alongside the real pad's `event3` for the rest of the probe.
 
-### 2.4 M3 — does `EVIOCGRAB` actually stop Moonlight reading the pad here?
+**The idle presenter is enumerated, so the app sees two controllers.** This settles §4
+Q1 in favour of **option A (grab always)**, and means **`V2_DESIGN.md` §7's ungrab
+bullet does not survive** — under it, every game would see a phantom second pad.
 
-**Not measured — blocked**, same reason. This is the premise of all routing and is
-currently verified by nobody; `core/tests/input_uinput.rs` says as much explicitly.
+### 2.4 M3 — does `EVIOCGRAB` take the pad from a running app? **Yes.**
+
+**Measured 2026-09-10.** Established read-only first: Moonlight reads
+`/dev/input/event3` (**evdev**, not `js0`) and is its only holder. Then, with the user
+driving the pad continuously:
+
+| Phase | Events we received |
+|---|---|
+| reading ungrabbed (10 s) | 2899 |
+| **reading grabbed (12 s)** | **4015** |
+
+The grab succeeds and every event in the second row is one Moonlight did not get. **The
+premise of the entire routing design holds.** The two-phase shape is deliberate: without
+the ungrabbed phase, a zero count could not be told apart from nobody touching the pad —
+which is exactly how the first two attempts wasted a cycle.
+
+The controller itself is a **Vader 4 Pro whose dongle presents as `045e:028e`
+"Microsoft X-Box 360 pad"** (XInput mode). Three consequences: it is already the core's
+canonical known device, so the DB-match-or-reject discovery gate accepts it with no
+work; its identity resolves on the stable `phys:` tier (empty `Uniq`, real `Phys`), so
+player slots survive a replug into the same port; and in XInput mode it exposes **no
+companion touchpad or motion nodes**, so §7's inhibition concern does not arise here —
+at the cost of the gyro being unreachable by this path.
 
 ---
 
@@ -152,8 +177,10 @@ the pads under the same permanence rule; routing hard-wired to `Shell` behind a 
 `owner` / `route` / `masked_keys` / `masked_axes` added to `InputReport` from the
 start, so a hardware session reads what the core decided instead of inferring it.
 
-**Gated on §2.1.2.** Under option (b) this phase instead grows an event subscription on
-the core and an in-process injector in the shell.
+**Gated on §2.1's open contrast.** A physical key drives the shell; a uinput key does
+not, and the core's keyboard would be a uinput device. Resolve the seat/`ID_SEAT`
+question before building option (a). Under option (b) this phase instead grows an event
+subscription on the core and an in-process injector in the shell.
 
 **The honest cost, stated loudly:** with routing forced to `Shell` the pad is grabbed
 unconditionally, so **Moonlight loses the pad the whole time the flag is on**. That is
@@ -250,8 +277,10 @@ the base window, so the game sees the real pad and no virtual twin double-fires.
   **masking becomes impossible**: the button held at launch reaches the real device and
   nothing can swallow it. That is #295 reintroduced by construction.
 
-**Recommendation: A**, pending M1 (§2.3). Choosing A means amending §7 and recording
-the reversal there rather than diverging from it quietly.
+**Settled: A.** M1 (§2.3) measured the second controller directly — Moonlight opened the
+idle presenter within 2 s. Option B would hand every game a phantom pad, so §7's ungrab
+bullet must be amended and the reversal recorded there rather than left to diverge
+quietly.
 
 ### Q2 — how do keys reach QML?
 
@@ -265,8 +294,10 @@ or the shell grows a private pad path.
   gamescope routing and to #485; makes drawer-vs-home routing an offscreen-testable
   pure decision. But it only works for our own shell and adds a second nav mechanism.
 
-**Decided by §2.1.2, not by argument.** As measured, (a) does not currently work on
-this hardware for a virtual keyboard.
+**Not yet decided, and §2.1 says why.** A *physical* key reaches the shell, so gamescope
+does route real keys to it — (a) is not dead. But a *uinput* key does not, and that is
+precisely what (a) would send. Option (a) becomes viable only if the virtual device can
+be made acceptable to libinput's seat (the `ID_SEAT`/`uaccess` question); otherwise (b).
 
 ### Q3 — Guide tap: pass through to the game, or always swallow?
 
