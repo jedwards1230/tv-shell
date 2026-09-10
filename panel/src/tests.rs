@@ -40,7 +40,7 @@ fn hermetic_state() -> Arc<AppState> {
         node: Arc::new(IpcTransport::new(sock)),
         bridge: Arc::new(BridgeClient::new(None, None)),
         recovery: Recovery::new(),
-        updates: crate::updates::UpdatesState::default(),
+        updates: crate::updates::UpdatesState::with_seeded_cache(),
     })
 }
 
@@ -342,7 +342,7 @@ fn state_for_socket_with_caps(sock: std::path::PathBuf, caps: CapabilitySnapshot
         node: Arc::new(IpcTransport::new(sock)),
         bridge: Arc::new(BridgeClient::new(None, None)),
         recovery: Recovery::new(),
-        updates: crate::updates::UpdatesState::default(),
+        updates: crate::updates::UpdatesState::with_seeded_cache(),
     })
 }
 
@@ -3412,7 +3412,7 @@ fn state_with_caps(cfg: AppConfig, caps: CapabilitySnapshot) -> SharedState {
         node: Arc::new(IpcTransport::new(sock)),
         bridge,
         recovery: Recovery::new(),
-        updates: crate::updates::UpdatesState::default(),
+        updates: crate::updates::UpdatesState::with_seeded_cache(),
     })
 }
 

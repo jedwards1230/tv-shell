@@ -334,6 +334,34 @@ impl UpdatesState {
             apply_command: argv.into_iter().map(Into::into).collect(),
         }
     }
+
+    /// Test-only constructor whose [`snapshot`] cache starts PRE-SEEDED, so a
+    /// non-forced read answers out of it and never spawns `checkupdates`.
+    ///
+    /// The read side's counterpart to [`UpdatesState::with_apply_command`],
+    /// and it exists for a related reason. Unlike the apply argv, *running*
+    /// `checkupdates` is harmless — the hazard is that it is **slow**: it
+    /// syncs a temporary pacman database over the network and is bounded only
+    /// by [`CHECK_TIMEOUT`] (30s), which outlives the router tests' 10s HTTP
+    /// client timeout. Any test that fetches a route reaching [`snapshot`]
+    /// (`/overview/updates-tile`, `/system/updates`, `/system/updates/job`)
+    /// therefore hangs to a timeout on a host that HAS pacman — a deploy box
+    /// or an Arch dev box, i.e. the panel's actual target platform. CI never
+    /// sees it: `ubuntu-latest` has no `checkupdates`, so the spawn fails
+    /// instantly there and every one of those tests passes.
+    #[cfg(test)]
+    pub fn with_seeded_cache() -> Self {
+        Self {
+            cache: Mutex::new(Some(CachedCheck {
+                pending: Vec::new(),
+                reboot: RebootStatus::NotNeeded,
+                checked_at: Instant::now(),
+                error: None,
+            })),
+            job: Mutex::new(UpdateJob::Idle),
+            apply_command: default_apply_command(),
+        }
+    }
 }
 
 /// Read the current (cached, unless `force` or the cache is stale/absent)
@@ -738,6 +766,46 @@ mod tests {
                 "`{name}` builds UpdatesState::default() AND calls start_apply — \
                  that runs a real `sudo -n pacman -Syu --noconfirm`. Use \
                  UpdatesState::with_apply_command([...]) to point it at a fake."
+            );
+        }
+    }
+
+    /// The read-side hazard, guarded the same way: **no panel test state may
+    /// be able to reach the real `checkupdates`.**
+    ///
+    /// `snapshot(_, false)` only spawns on a cache miss, and
+    /// `UpdatesState::default()` starts empty — so an `AppState` built with it
+    /// makes `/overview/updates-tile`, `/system/updates` and
+    /// `/system/updates/job` each run a network-bound `checkupdates` the first
+    /// time they are fetched. That is bounded by [`CHECK_TIMEOUT`] (30s) and
+    /// the router tests' HTTP client gives up at 10s, so on any host with
+    /// pacman the fetch fails as a client timeout rather than a useful
+    /// assertion (jedwards1230/tv-shell#493). CI cannot catch it —
+    /// `ubuntu-latest` has no `checkupdates`, so the spawn fails in
+    /// milliseconds and the tests pass there — which is exactly why the rule
+    /// is pinned here instead of being left to review.
+    ///
+    /// Scoped to the two modules that build a panel-wide `AppState` for tests.
+    /// This module's own tests legitimately construct the default (they assert
+    /// on the caching contract and the production argv), so it is not banned
+    /// outright.
+    #[test]
+    fn no_panel_test_state_can_reach_the_real_checkupdates() {
+        for (name, src) in [
+            ("tests.rs", include_str!("tests.rs")),
+            ("pages/dev.rs", include_str!("pages/dev.rs")),
+        ] {
+            let code: String = src
+                .lines()
+                .map(|l| l.split("//").next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                !code.contains("UpdatesState::default()"),
+                "`{name}` builds a test AppState with UpdatesState::default() — its \
+                 empty cache makes the first fetch of an updates route spawn the real \
+                 `checkupdates` and time the client out on any host with pacman. Use \
+                 UpdatesState::with_seeded_cache()."
             );
         }
     }

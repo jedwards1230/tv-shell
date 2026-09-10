@@ -268,7 +268,7 @@ mod tests {
             node: Arc::new(IpcTransport::new(sock)),
             bridge: Arc::new(BridgeClient::new(None, None)),
             recovery: Recovery::new(),
-            updates: crate::updates::UpdatesState::default(),
+            updates: crate::updates::UpdatesState::with_seeded_cache(),
         })
     }
 
