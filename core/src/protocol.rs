@@ -56,6 +56,18 @@ pub enum Command {
     Screenshot(String),
     /// `screenshot` with no destination.
     ScreenshotUsage,
+    /// The shell declaring that it has (or no longer has) an input-taking
+    /// overlay up — a drawer, the QAM.
+    ///
+    /// **A declaration of the shell's own state, never a command about
+    /// routing.** The core folds it into a decision it makes itself, so a shell
+    /// that dies without sending `release` self-heals as soon as the watcher
+    /// sees something else on screen. That is v1's `set_overlay_focus` with its
+    /// failure mode removed — v1 took the shell's word for it and stayed wrong
+    /// until the shell corrected itself, which a dead shell never does.
+    InputFocus { taken: bool },
+    /// `input-focus` with a missing or unknown argument.
+    InputFocusUsage,
     /// Not a verb this core knows.
     Unknown,
 }
@@ -75,6 +87,7 @@ impl Command {
             "show" => return Command::ShowUsage,
             "launch" => return Command::LaunchUsage,
             "screenshot" => return Command::ScreenshotUsage,
+            "input-focus" => return Command::InputFocusUsage,
             _ => {}
         }
         if let Some(body) = command_body(cmd, "show") {
@@ -93,6 +106,13 @@ impl Command {
             return match (parts.next(), parts.next()) {
                 (Some(dest), None) => Command::Screenshot(dest.to_string()),
                 _ => Command::ScreenshotUsage,
+            };
+        }
+        if let Some(body) = command_body(cmd, "input-focus") {
+            return match body {
+                "take" => Command::InputFocus { taken: true },
+                "release" => Command::InputFocus { taken: false },
+                _ => Command::InputFocusUsage,
             };
         }
         if let Some(body) = command_body(cmd, "launch") {
@@ -199,6 +219,31 @@ mod tests {
         assert_eq!(Command::parse("  input-state "), Command::InputState);
         assert_eq!(Command::parse("input-stateX"), Command::Unknown);
         assert_eq!(Command::parse("input-state 1"), Command::Unknown);
+    }
+
+    /// `input-focus` takes exactly one of two words, and nothing else.
+    ///
+    /// A typo must be a usage error rather than a silent `release`: a shell that
+    /// misspells `take` and gets "you no longer have an overlay" back as `ok`
+    /// would open a drawer the pad cannot drive, with nothing saying why.
+    #[test]
+    fn input_focus_takes_one_of_two_words() {
+        assert_eq!(
+            Command::parse("input-focus take"),
+            Command::InputFocus { taken: true }
+        );
+        assert_eq!(
+            Command::parse("input-focus release"),
+            Command::InputFocus { taken: false }
+        );
+        assert_eq!(Command::parse("input-focus"), Command::InputFocusUsage);
+        assert_eq!(Command::parse("input-focus grab"), Command::InputFocusUsage);
+        assert_eq!(
+            Command::parse("input-focus take me"),
+            Command::InputFocusUsage
+        );
+        // Word boundary, as every other verb has one.
+        assert_eq!(Command::parse("input-focusX"), Command::Unknown);
     }
 
     #[test]

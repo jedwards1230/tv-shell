@@ -48,6 +48,8 @@
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
+use super::watcher::Nudge;
+
 /// v1's `DEFAULT_META_HOLD_MS`, ported unchanged.
 ///
 /// 500 ms is a comfortable press-and-hold that a deliberate long-press clears
@@ -220,11 +222,11 @@ impl EscapeSink for ChannelEscape {
 /// The queue holds ONE request. Depth is not throughput here: every request is
 /// identical ("put the shell on screen"), so a backlog would only replay a
 /// switch that already happened.
-pub fn spawn(writer: impl HomeWriter + 'static) -> std::io::Result<ChannelEscape> {
+pub fn spawn(writer: impl HomeWriter + 'static, nudge: Nudge) -> std::io::Result<ChannelEscape> {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("tv-shell-escape".into())
-        .spawn(move || run_worker(&rx, &writer))?;
+        .spawn(move || run_worker(&rx, &writer, &nudge))?;
     Ok(ChannelEscape { tx })
 }
 
@@ -233,7 +235,23 @@ pub fn spawn(writer: impl HomeWriter + 'static) -> std::io::Result<ChannelEscape
 /// Separate from [`spawn`] so the "a fired escape writes the base layer" rule is
 /// testable against a recording [`HomeWriter`] with no thread, no compositor and
 /// no X server.
-pub fn run_worker(rx: &Receiver<()>, writer: &impl HomeWriter) {
+///
+/// # The nudge is not optional
+///
+/// Every write is followed by a [`Nudge`], which is what makes the escape flip
+/// **routing** and not merely what is on screen. Without it, holding Guide over
+/// an app returns you to the shell and leaves the pad forwarding to the app —
+/// which is precisely what was measured on hardware before this phase: the home
+/// screen came back and was completely inert. The nudge is sent here, at the
+/// site of the write, rather than left to the watcher's poll to notice, because
+/// a third of a second of dead controller after asking to get out of an app is
+/// the symptom, not an acceptable margin.
+///
+/// It is sent whether the write succeeded or not, deliberately. A failed `home`
+/// may still have moved the screen (the write can land and the verify time out),
+/// and a recompute costs one X read; refusing to look after a failure is how a
+/// core ends up confidently routing to a shell that is not there.
+pub fn run_worker(rx: &Receiver<()>, writer: &impl HomeWriter, nudge: &Nudge) {
     while rx.recv().is_ok() {
         let reply = writer.home();
         if reply.starts_with("error") {
@@ -244,6 +262,7 @@ pub fn run_worker(rx: &Receiver<()>, writer: &impl HomeWriter) {
         } else {
             tracing::info!("Guide escape: returned to the shell ({reply})");
         }
+        nudge.now();
     }
     tracing::debug!("escape worker stopping; its sink was dropped");
 }
@@ -369,8 +388,59 @@ mod tests {
         tx.send(()).unwrap();
         drop(tx);
         let writer = RecordingHome::default();
-        run_worker(&rx, &writer);
+        let (nudge, _nudges) = super::super::watcher::nudge_channel();
+        run_worker(&rx, &writer, &nudge);
         assert_eq!(*writer.calls.borrow(), 2);
+    }
+
+    /// **Rule: every escape write NUDGES the screen watcher.**
+    ///
+    /// This is what makes a held Guide flip **routing** and not merely what is
+    /// on screen. Measured on hardware before phase 2: the escape returned the
+    /// screen to the shell and the home screen was completely inert, because the
+    /// pad was still forwarding to the app. The write and the recompute have to
+    /// be the same act.
+    ///
+    /// **Mutation note — the "escape does not trigger a recompute" mutation.**
+    /// Delete the `nudge.now()` from `run_worker` and this fails: the channel is
+    /// empty. The first assertion proves the probe is live rather than the
+    /// channel being pre-filled by construction.
+    #[test]
+    fn every_escape_write_asks_the_watcher_to_recompute() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4);
+        let (nudge, nudges) = super::super::watcher::nudge_channel();
+        assert!(
+            nudges.try_recv().is_err(),
+            "the probe is live: nothing has nudged yet"
+        );
+        tx.send(()).unwrap();
+        drop(tx);
+        let writer = RecordingHome::default();
+        run_worker(&rx, &writer, &nudge);
+        assert_eq!(*writer.calls.borrow(), 1);
+        assert!(nudges.try_recv().is_ok(), "the write asked for a recompute");
+    }
+
+    /// **Rule: a FAILED write still nudges.**
+    ///
+    /// A `home` can land and still fail its verify, so the screen may have moved
+    /// even though the reply says `error:`. Not looking after a failure is how a
+    /// core ends up confidently routing to a shell that is not there.
+    ///
+    /// **Mutation note.** Move `nudge.now()` inside the success branch and this
+    /// fails.
+    #[test]
+    fn a_failed_write_still_asks_the_watcher_to_recompute() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4);
+        let (nudge, nudges) = super::super::watcher::nudge_channel();
+        tx.send(()).unwrap();
+        drop(tx);
+        let writer = RecordingHome {
+            fail: true,
+            ..RecordingHome::default()
+        };
+        run_worker(&rx, &writer, &nudge);
+        assert!(nudges.try_recv().is_ok());
     }
 
     /// **Rule: a failed write does not stop the worker.**
@@ -390,7 +460,8 @@ mod tests {
             fail: true,
             ..RecordingHome::default()
         };
-        run_worker(&rx, &writer);
+        let (nudge, _nudges) = super::super::watcher::nudge_channel();
+        run_worker(&rx, &writer, &nudge);
         assert_eq!(*writer.calls.borrow(), 2);
     }
 

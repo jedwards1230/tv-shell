@@ -19,7 +19,7 @@ its relationship to `daemon/`.
 | `protocol` | The IPC grammar, carried over from v1 unchanged in contract (§4): newline framing, 4096-byte lines, `ok` / `unknown` / `error:<msg>` / a bare JSON document |
 | `ipc` | The Unix-socket server — `LinesCodec`, one task per connection, socket bound 0600 under a tightened umask. Compositor work sits behind a `Compositor` trait so the whole request/reply surface is testable with no X server |
 | `compositor` | The seam between the two: IPC verbs → the §5 X primitives |
-| `input` | The pad fleet (§7): DB-match-or-reject discovery, stable per-player slots, hot join/leave, `EVIOCGRAB`, and **permanent** per-player uinput presenters — plus, behind `[input].shell_keys`, the pad→key route that drives the v2 shell. **Off unless `[input].enabled` is set** — with it off nothing is enumerated, opened or grabbed. Every rule is in a pure submodule; only `evdev_backend` and `runtime` touch hardware |
+| `input` | The pad fleet (§7): DB-match-or-reject discovery, stable per-player slots, hot join/leave, `EVIOCGRAB`, and **permanent** per-player uinput presenters and shell keyboard — plus the **owner arbitration** that decides, from what is on screen, whether the pad drives the shell as keys or an app through its presenter. `[input].shell_keys` now PINS that decision to the shell instead of being the only way to reach it. **Off unless `[input].enabled` is set** — with it off nothing is enumerated, opened or grabbed. Every rule is in a pure submodule; only `evdev_backend`, `runtime` and `watcher` touch hardware or X |
 
 `units/` holds the v2 session units (§4's `tv-shell-session.target` shape, taken
 from the ChimeraOS `gamescope-session` files rather than written from scratch).

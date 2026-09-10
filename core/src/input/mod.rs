@@ -61,7 +61,9 @@ pub mod fleet;
 pub mod identity;
 pub mod keymap;
 pub mod presenter;
+pub mod routing;
 pub mod session;
+pub mod watcher;
 
 /// Public so `core/tests/input_uinput.rs` can drive it against a real kernel.
 /// That file is the ONLY place the hardware claims are checked, so the module
@@ -73,6 +75,7 @@ mod runtime;
 
 pub use config::{InputConfig, ResolvedInput};
 pub use escape::EscapeSink;
+pub use routing::{InputOwner, Route};
 pub use session::InputReport;
 
 use tokio::sync::watch;
@@ -94,6 +97,7 @@ use tokio::sync::watch;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub struct InputHandle {
     reports: watch::Receiver<InputReport>,
+    control: InputControl,
     /// Dropped on shutdown; the runtime's loop selects on its closure.
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     join: Option<std::thread::JoinHandle<()>>,
@@ -103,6 +107,15 @@ impl InputHandle {
     /// A cloneable read-only view, for the IPC surface.
     pub fn reports(&self) -> InputReports {
         InputReports(Some(self.reports.clone()))
+    }
+
+    /// A cloneable WRITE path into the input thread, for the screen watcher.
+    ///
+    /// The counterpart of [`Self::reports`], and the reason phase 2 needed a
+    /// second channel at all: `watch` is read-only, so the owner decision had
+    /// nowhere to go. See [`InputControl`].
+    pub fn control(&self) -> InputControl {
+        self.control.clone()
     }
 
     /// The most recent report.
@@ -146,6 +159,54 @@ impl InputReports {
             Some(rx) => rx.borrow().clone(),
             None => InputReport::disabled(),
         }
+    }
+}
+
+/// A message into the input thread.
+///
+/// Deliberately tiny, and deliberately one-way. Nothing here asks the input
+/// thread a question: a request/reply channel would let the compositor half
+/// block on the pad path, which is the one thing this split exists to prevent.
+#[derive(Debug, Clone, Copy)]
+pub enum Control {
+    /// Route the pad according to this owner. Computed by
+    /// [`watcher`] from a screen read that happened on another thread.
+    SetOwner(InputOwner),
+}
+
+/// The write side of the input layer, held by the screen watcher.
+///
+/// `None` inside means the layer is disabled or failed to start; every send is
+/// then a no-op and [`InputControl::is_closed`] answers `true`, so a watcher
+/// handed a disabled control stops instead of computing decisions for nobody.
+#[derive(Clone)]
+pub struct InputControl(Option<tokio::sync::mpsc::UnboundedSender<Control>>);
+
+impl InputControl {
+    /// The control a core with no input layer hands out.
+    pub fn disabled() -> InputControl {
+        InputControl(None)
+    }
+
+    /// Has the input thread gone?
+    pub fn is_closed(&self) -> bool {
+        match &self.0 {
+            Some(tx) => tx.is_closed(),
+            None => true,
+        }
+    }
+}
+
+impl watcher::OwnerSink for InputControl {
+    fn set_owner(&self, owner: InputOwner) -> bool {
+        match &self.0 {
+            Some(tx) => tx.send(Control::SetOwner(owner)).is_ok(),
+            None => false,
+        }
+    }
+
+    fn alive(&self) -> bool {
+        !self.is_closed()
     }
 }
 

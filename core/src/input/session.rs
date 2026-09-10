@@ -35,6 +35,7 @@ use super::fleet::{Fleet, FleetFull};
 use super::identity::ControllerDb;
 use super::keymap::{key, KeyEmit, KeyMap, KeyboardProfile};
 use super::presenter::{btn, ev, quiesce, translate, DropReason, Forward, PadProfile};
+use super::routing::{self, InputOwner, Route};
 
 /// A pad newly taken into the fleet.
 ///
@@ -45,37 +46,6 @@ use super::presenter::{btn, ev, quiesce, translate, DropReason, Forward, PadProf
 pub struct Joined {
     pub path: PathBuf,
     pub slot: u8,
-}
-
-/// Who the core believes owns the pad right now.
-///
-/// **Phase 1 does not compute this** — it is fixed at session start from
-/// `[input].shell_keys`, and the arbitration that makes it a decision is phase 2
-/// (`V2_GAMEPAD_HANDOFF.md` §3). It is in the report from the start anyway, so a
-/// hardware session READS what the core decided instead of inferring it from
-/// behaviour, which is how phase 2 becomes verifiable rather than plausible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum InputOwner {
-    /// The v2 shell owns the screen and the pad drives it.
-    Shell,
-    /// An app owns the screen; the pad reaches it through its presenter.
-    App,
-    /// Not known. **Routes to the app**, never to the shell: trapping the pad in
-    /// an invisible shell is the worse failure — a game on screen and a dead
-    /// controller (§3 phase 2).
-    Unknown,
-}
-
-/// Where pad events actually go.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Route {
-    /// Translated to keys on the core's uinput keyboard, which gamescope routes
-    /// to the focused client.
-    Shell,
-    /// Forwarded 1:1 onto the player's presenter, as they always were.
-    App,
 }
 
 /// The shell keyboard, as reported.
@@ -187,11 +157,12 @@ pub struct InputReport {
     /// Buttons held across a route change, whose press/release must not reach
     /// the new target (jedwards1230/tv-shell#295).
     ///
-    /// **Always empty in phase 1**: routing is fixed at start, so there is no
-    /// change to mask across. The field is here from the start for the same
-    /// reason `owner` is — phase 3's masking must be readable, not inferred.
+    /// **Still always empty.** Phase 2 makes the route a decision and quiesces
+    /// each transition, which releases what the OLD target holds — but nothing
+    /// yet suppresses the physical release that lands on the NEW one. That is
+    /// phase 3. Reported rather than omitted so the gap is readable.
     pub masked_keys: Vec<u16>,
-    /// Axes held across a route change. Empty in phase 1, as above.
+    /// Axes held across a route change. Empty, as above.
     pub masked_axes: Vec<u16>,
     /// The Guide escape (jedwards1230/tv-shell#496). See [`EscapeReport`].
     pub escape: EscapeReport,
@@ -224,9 +195,11 @@ impl InputReport {
             emit_failures: 0,
             last_poll_unix_ms: None,
             polls_completed: 0,
-            // Nothing is grabbed, so the pad reaches the app directly — which
-            // is `App`, honestly, and not `Unknown`.
-            owner: InputOwner::App,
+            // Nothing is grabbed, so the pad reaches whatever is on screen
+            // directly. That is honestly `Unknown` — the core is deciding
+            // nothing — and `Unknown` routes to the app, which is exactly what
+            // is happening.
+            owner: InputOwner::Unknown,
             route: Route::App,
             keyboard: None,
             masked_keys: Vec::new(),
@@ -271,9 +244,21 @@ pub struct InputSession<B: InputBackend> {
     emit_failures: u64,
     last_poll_unix_ms: Option<u64>,
     polls_completed: u64,
-    /// Fixed at start in this phase; phase 2 makes it a decision.
+    /// Who the core currently believes owns the pad.
+    ///
+    /// **A decision, recomputed by [`super::watcher`] and pushed in over the
+    /// control channel** — never read from the compositor on this thread. See
+    /// [`Self::set_owner`].
     owner: InputOwner,
     route: Route,
+    /// `[input].shell_keys`: the owner is PINNED to the shell and arbitration is
+    /// refused outright.
+    ///
+    /// The operator override, kept from phase 1. It exists so a session can be
+    /// forced onto the shell route for a measurement even when the screen says
+    /// otherwise — and so the flag someone already has in `core.toml` keeps
+    /// doing what its documentation said it did.
+    pinned: bool,
     keyboard: Option<KeyboardReport>,
     /// One translator per claimed pad, so two players keep independent repeat
     /// timers. Present only on the shell route.
@@ -343,38 +328,46 @@ impl<B: InputBackend> InputSession<B> {
         // a device that appeared and vanished with a route change would be a
         // hotplug event apps forward to the streaming host.
         //
-        // It is created only when the shell route is configured. That is still
-        // "once, in start, or never": `shell_keys` is fixed for the life of a
-        // session, so no route change can ever want a keyboard that does not
-        // exist. And it keeps the default-off promise literal at the device
-        // layer — with the flag off, this session creates no keyboard at all.
-        let (owner, route, keyboard) = if config.shell_keys {
-            let devnodes = backend.create_keyboard(&KeyboardProfile)?;
-            if devnodes.is_empty() {
-                return Err(InputError::Keyboard(
-                    "the backend reported no devnode for the keyboard, so discovery could \
-                     not be taught to skip it"
-                        .into(),
-                ));
-            }
-            for node in &devnodes {
-                owned.register(node.clone());
-            }
+        // **It is created unconditionally now, and that is a phase-2 change.**
+        // Phase 1 created it only under `shell_keys`, which was correct while
+        // the route was fixed for the life of the session. It is not correct
+        // once the owner is arbitrated: any session may be handed the shell
+        // route at any moment, and the one thing that must never happen is
+        // creating the device at that moment. The default-off promise is
+        // unaffected — `[input].enabled` gates `start` itself, so a session that
+        // creates a keyboard is one an operator asked for.
+        let devnodes = backend.create_keyboard(&KeyboardProfile)?;
+        if devnodes.is_empty() {
+            return Err(InputError::Keyboard(
+                "the backend reported no devnode for the keyboard, so discovery could \
+                 not be taught to skip it"
+                    .into(),
+            ));
+        }
+        for node in &devnodes {
+            owned.register(node.clone());
+        }
+        let keyboard = Some(KeyboardReport {
+            name: KeyboardProfile::device_name(),
+            devnodes: devnodes.iter().map(|p| p.display().to_string()).collect(),
+        });
+
+        // The starting owner. With `shell_keys` the session is pinned to the
+        // shell for its whole life, exactly as phase 1 behaved. Without it the
+        // owner is `Unknown` — the honest answer before anything has looked at
+        // the screen — which routes to the app, so a core that comes up while a
+        // game is running does not steal the pad in the window before the
+        // watcher's first decision arrives.
+        let (owner, pinned) = if config.shell_keys {
             tracing::warn!(
-                "[input].shell_keys is ON: every pad is routed to the SHELL as keys, so no \
-                 app or game receives pad input while this core runs"
+                "[input].shell_keys is ON: the owner is PINNED to the SHELL and arbitration \
+                 is disabled, so no app or game receives pad input while this core runs"
             );
-            (
-                InputOwner::Shell,
-                Route::Shell,
-                Some(KeyboardReport {
-                    name: KeyboardProfile::device_name(),
-                    devnodes: devnodes.iter().map(|p| p.display().to_string()).collect(),
-                }),
-            )
+            (InputOwner::Shell, true)
         } else {
-            (InputOwner::App, Route::App, None)
+            (InputOwner::Unknown, false)
         };
+        let route = owner.route();
 
         Ok(InputSession {
             backend,
@@ -392,6 +385,7 @@ impl<B: InputBackend> InputSession<B> {
             polls_completed: 0,
             owner,
             route,
+            pinned,
             keyboard,
             keymaps: BTreeMap::new(),
             escape,
@@ -653,6 +647,84 @@ impl<B: InputBackend> InputSession<B> {
         }
     }
 
+    /// Apply an owner decision computed by [`super::watcher`].
+    ///
+    /// **The only thing that changes the route.** It is a decision handed in,
+    /// never one taken here: the screen read that produced it happened on
+    /// another thread, because an X round trip on the pad path would make
+    /// controller latency a function of how busy the compositor is.
+    ///
+    /// The order is the rule, and it is [`routing::plan`] that states it:
+    /// **quiesce the route being left, THEN switch.** Leaving a target still
+    /// holding a button leaves one nothing downstream will correct — a game
+    /// sees no disconnect and the shell sees no key-up — so the release has to
+    /// go to the target that believes it has the button, which is only true
+    /// before the switch.
+    ///
+    /// Returns whether anything changed, so the runtime republishes the report
+    /// on a transition and not on every poll.
+    ///
+    /// # What this does NOT do yet
+    ///
+    /// It does not **mask**. Quiesce releases what the old target holds; it
+    /// cannot suppress the physical release that arrives *afterwards* and
+    /// crosses to the new one. So a button held across a transition still
+    /// delivers a lone release to the target it did not press on — which is
+    /// jedwards1230/tv-shell#295's shape, and is phase 3's job
+    /// (`mask_forward_decision`, ported verbatim from v1). `masked_keys` and
+    /// `masked_axes` stay empty for exactly that reason, and this is a stated
+    /// gap rather than a solved problem.
+    pub fn set_owner(&mut self, owner: InputOwner) -> bool {
+        if self.pinned {
+            // `[input].shell_keys` is an operator override, so it outranks the
+            // arbitration rather than racing it. Logged at debug because the
+            // watcher will keep offering: it is doing its job, and this is the
+            // pin doing its own.
+            tracing::debug!(?owner, "ignoring an owner decision: the route is pinned");
+            return false;
+        }
+        let Some(transition) = routing::plan(self.owner, owner) else {
+            return false;
+        };
+        tracing::info!(
+            from = ?transition.from,
+            to = ?transition.to,
+            route = ?transition.route,
+            "input owner transition"
+        );
+        self.quiesce_route(transition.quiesce);
+        self.owner = transition.to;
+        self.route = transition.route;
+        true
+    }
+
+    /// Release everything the given route's target believes is held.
+    ///
+    /// Both halves exist for the same reason and neither is optional: the
+    /// presenters and the keyboard both OUTLIVE any one route, by design (§7 /
+    /// jedwards1230/tv-shell#402), so nothing about a route change tells the
+    /// thing downstream to let go.
+    fn quiesce_route(&mut self, route: Route) {
+        match route {
+            Route::App => {
+                for (slot, held) in self.fleet.take_held() {
+                    for forward in quiesce(&held, &self.profile) {
+                        self.emit(slot, forward);
+                    }
+                }
+            }
+            Route::Shell => {
+                let mut emits = Vec::new();
+                for map in self.keymaps.values_mut() {
+                    emits.extend(map.quiesce());
+                }
+                for emit in emits {
+                    self.emit_key(emit);
+                }
+            }
+        }
+    }
+
     /// A pad's event stream failed — a USB unplug, usually. Retire it now rather
     /// than waiting for the next poll to notice its absence.
     pub fn on_stream_error(&mut self, path: &Path) {
@@ -789,14 +861,20 @@ impl<B: InputBackend> InputSession<B> {
             owner: self.owner,
             route: self.route,
             keyboard: self.keyboard.clone(),
-            // Phase 1 has no route change to mask across; phase 3 fills these.
+            // STILL EMPTY, and now for a sharper reason than in phase 1.
             //
-            // The Guide escape does NOT fill them either, and that is a finding
-            // rather than an omission: routing is still pinned, so the escape
-            // changes what is on screen without changing where pad events go.
-            // Guide itself is buffered and never crosses, and every other button
-            // keeps forwarding to the same target, so its real release still
-            // arrives. There is nothing held across a change to mask.
+            // There ARE route changes to mask across now — that is the whole of
+            // this phase — and `set_owner` quiesces each one. Quiesce is only
+            // half the fix: it releases what the target being LEFT is holding,
+            // and cannot suppress the physical release that arrives afterwards
+            // and crosses to the NEW target. A button held across a transition
+            // therefore still delivers a lone release to something that never
+            // saw the press, which is jedwards1230/tv-shell#295's shape.
+            //
+            // Masking is phase 3 (`mask_forward_decision` and its axis sibling,
+            // ported verbatim from v1 with their tests). Reported as empty
+            // rather than omitted so the gap is readable at the television
+            // instead of inferred from a bug.
             masked_keys: Vec::new(),
             masked_axes: Vec::new(),
             escape: EscapeReport {
@@ -865,6 +943,13 @@ mod tests {
         device_creations: Vec<String>,
         /// Everything emitted on the shell keyboard, in order.
         keys: Vec<KeyEmit>,
+        /// For each keyboard emit, how many presenter events had been emitted
+        /// when it happened.
+        ///
+        /// The same trick `released_at_emit_count` uses, for the same reason:
+        /// two independent lists record that both happened but never in which
+        /// order, and with a route transition the ORDER is the rule.
+        keys_at_emit_count: Vec<usize>,
     }
 
     /// A recording backend.
@@ -980,7 +1065,10 @@ mod tests {
                     detail: "the keyboard refused the event".into(),
                 });
             }
-            self.log.borrow_mut().keys.push(emit);
+            let mut log = self.log.borrow_mut();
+            let emitted = log.emitted.len();
+            log.keys.push(emit);
+            log.keys_at_emit_count.push(emitted);
             Ok(())
         }
     }
@@ -1160,23 +1248,27 @@ mod tests {
         );
     }
 
-    /// **Rule: with `shell_keys` off — the default — no keyboard exists at
-    /// all, and the pad still reaches its presenter.**
+    /// **Rule: an arbitrating session starts `Unknown`, which routes to the APP.**
     ///
-    /// The default-off promise, stated at the device layer rather than at the
-    /// flag: not "the route is App" (which a test could read off the same field
-    /// it set) but "the backend was never asked to create a keyboard".
+    /// The safe default at the one moment it is most load-bearing: a core
+    /// restarting under a live game must not take the pad in the window before
+    /// the watcher's first decision arrives. Stated at the device layer — the
+    /// pad crosses onto its presenter and no key is synthesised — rather than by
+    /// reading back the field that was set.
     ///
-    /// **Mutation note.** Make `start` create the keyboard unconditionally and
-    /// this fails on `device_creations`, not on the report.
+    /// **This reverses a phase-1 test deliberately.** That test asserted no
+    /// keyboard is created without `shell_keys`; phase 2 creates it always,
+    /// because the route can now become the shell's at any moment and the one
+    /// thing that must never happen is creating the device at that moment
+    /// (§7 / jedwards1230/tv-shell#402). The permanence rule is asserted by
+    /// `every_permanent_device_is_created_once_in_start` below.
+    ///
+    /// **Mutation note.** Make the arbitrating branch of `start` choose
+    /// `InputOwner::Shell` and both the owner assertion and the "no key was
+    /// synthesised" assertion fail.
     #[test]
-    fn with_shell_keys_off_no_keyboard_is_ever_created() {
+    fn an_arbitrating_session_starts_routed_to_the_app() {
         let mut h = harness(2);
-        assert_eq!(
-            h.log.borrow().device_creations,
-            vec!["presenter-0", "presenter-1"],
-            "a default session creates presenters and nothing else"
-        );
 
         let p = pad("/dev/input/event3", "port-a");
         *h.devices.borrow_mut() = vec![p.clone()];
@@ -1185,7 +1277,7 @@ mod tests {
 
         assert!(
             h.log.borrow().keys.is_empty(),
-            "no key may be synthesised on the app route"
+            "no key may be synthesised while the owner is unknown"
         );
         assert!(
             h.log.borrow().emitted.contains(&(
@@ -1195,13 +1287,256 @@ mod tests {
                     value: 1
                 }
             )),
-            "and the pad still crosses onto its presenter, unchanged"
+            "and the pad crosses onto its presenter, which is where an unknown owner routes"
         );
 
         let report = h.session.report();
+        assert_eq!(report.owner, InputOwner::Unknown);
         assert_eq!(report.route, Route::App);
-        assert_eq!(report.owner, InputOwner::App);
-        assert!(report.keyboard.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2: the owner decision, applied.
+    // -----------------------------------------------------------------------
+
+    const MOONLIGHT: crate::atoms::AppId = crate::atoms::AppId::new(9003);
+    const STEAM: crate::atoms::AppId = crate::atoms::AppId::new(769);
+
+    /// A claimed pad on an arbitrating session, holding A.
+    fn holding_a() -> (Harness, Candidate) {
+        let mut h = harness(2);
+        let p = pad("/dev/input/event3", "port-a");
+        *h.devices.borrow_mut() = vec![p.clone()];
+        h.session.poll();
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
+        (h, p)
+    }
+
+    /// **Rule: a transition releases the held button on the target it is
+    /// LEAVING — which is only possible if it quiesces BEFORE it switches.**
+    ///
+    /// This is the ordering assertion, and it is stated as an observable rather
+    /// than as a sequence of two lists: a `set_owner` that switched first would
+    /// send the release to the KEYBOARD, because the route would already be the
+    /// shell's. So "the presenter got the release and the keyboard got nothing"
+    /// is exactly "quiesce came first".
+    ///
+    /// **Mutation note — two of them.** Delete the `quiesce_route` call and the
+    /// presenter never sees the release. Move it AFTER the two assignments and
+    /// the release lands on the keyboard instead, failing both assertions.
+    #[test]
+    fn a_transition_quiesces_the_route_it_is_leaving_before_it_switches() {
+        let (mut h, _p) = holding_a();
+        let before = h.log.borrow().emitted.len();
+
+        assert!(h.session.set_owner(InputOwner::Shell), "the owner changed");
+
+        let log = h.log.borrow();
+        assert!(
+            log.emitted[before..].contains(&(
+                0,
+                Forward::Key {
+                    code: btn::SOUTH,
+                    value: 0
+                }
+            )),
+            "the presenter must be told the button it believes is held has come up"
+        );
+        assert!(
+            log.keys.is_empty(),
+            "and nothing may reach the keyboard, which had not been handed the route yet"
+        );
+    }
+
+    /// **Rule: leaving the SHELL releases the key it is holding.**
+    ///
+    /// The mirror image, and it matters just as much: the keyboard outlives the
+    /// route (§7), so a shell left with a key down navigates in one direction
+    /// forever with nothing downstream able to correct it.
+    ///
+    /// **Mutation note.** Make `quiesce_route` a no-op for `Route::Shell` (keep
+    /// only the `App` arm) and the key-up disappears.
+    #[test]
+    fn leaving_the_shell_releases_the_key_it_is_holding() {
+        let (mut h, p) = holding_a();
+        h.session.set_owner(InputOwner::Shell);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
+        assert_eq!(
+            *h.log.borrow().keys.last().unwrap(),
+            KeyEmit {
+                code: keymap::key::ENTER,
+                value: 1
+            },
+            "A is down on the shell route"
+        );
+        let keys_before = h.log.borrow().keys.len();
+        let emitted_before = h.log.borrow().emitted.len();
+
+        assert!(h.session.set_owner(InputOwner::App { id: MOONLIGHT }));
+
+        let log = h.log.borrow();
+        assert!(
+            log.keys[keys_before..].contains(&KeyEmit {
+                code: keymap::key::ENTER,
+                value: 0
+            }),
+            "the shell must be told the key came up"
+        );
+        assert_eq!(
+            log.emitted.len(),
+            emitted_before,
+            "and the release went to the keyboard, not to the presenter it was switching TO"
+        );
+    }
+
+    /// **Rule: an owner change with no route change still quiesces.**
+    ///
+    /// App-to-app is a launch from inside an app, and the button held at the
+    /// moment of the switch must not be inherited by the new one. The route is
+    /// unchanged, so a `set_owner` that only acted on route changes would do
+    /// nothing here — and this is the case where doing nothing is a stuck
+    /// button in a game the user just started.
+    ///
+    /// **Mutation note.** Have `routing::plan` return `None` when the routes
+    /// match and the release disappears.
+    #[test]
+    fn an_app_to_app_switch_still_releases_the_held_button() {
+        let (mut h, p) = holding_a();
+        // Settle on one app first. That transition consumes the button
+        // `holding_a` pressed — correctly — so press it again to be holding one
+        // at the moment of the app-to-app switch this test is about.
+        h.session.set_owner(InputOwner::App { id: MOONLIGHT });
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
+        let before = h.log.borrow().emitted.len();
+
+        assert!(h.session.set_owner(InputOwner::App { id: STEAM }));
+
+        assert!(
+            h.log.borrow().emitted[before..].contains(&(
+                0,
+                Forward::Key {
+                    code: btn::SOUTH,
+                    value: 0
+                }
+            )),
+            "the button held across an app switch must not be inherited"
+        );
+    }
+
+    /// **Rule: an unchanged owner is not a transition.**
+    ///
+    /// The watcher settles and re-asserts; a `set_owner` that quiesced on every
+    /// call would release a button the user is still holding, which is a game
+    /// that stops responding while you press it.
+    ///
+    /// **Mutation note.** Drop the `from == to` guard in `routing::plan` and
+    /// this fails on both halves.
+    #[test]
+    fn re_applying_the_same_owner_changes_nothing() {
+        let (mut h, p) = holding_a();
+        h.session.set_owner(InputOwner::App { id: MOONLIGHT });
+        // Hold a button across the repeated decision, so "nothing was emitted"
+        // means "the hold survived" and not merely "nothing was held".
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
+        let before = h.log.borrow().emitted.len();
+
+        assert!(!h.session.set_owner(InputOwner::App { id: MOONLIGHT }));
+        assert_eq!(
+            h.log.borrow().emitted.len(),
+            before,
+            "a repeated decision must not release a button the user is holding"
+        );
+    }
+
+    /// **Rule: no device is created or destroyed by a transition.**
+    ///
+    /// §7 / jedwards1230/tv-shell#402: create/destroy is a hotplug event every
+    /// game and Moonlight forward to the streaming host. Routing changes where
+    /// events go and never what devices exist — which is the whole reason the
+    /// keyboard is created in `start` even for a session that may never use it.
+    ///
+    /// **Mutation note.** Have `set_owner` create the keyboard lazily on the
+    /// first shell transition and `device_creations` grows.
+    #[test]
+    fn a_transition_creates_and_destroys_no_device() {
+        let (mut h, _p) = holding_a();
+        let devices = h.log.borrow().device_creations.clone();
+        assert_eq!(devices, vec!["presenter-0", "presenter-1", "keyboard"]);
+
+        for owner in [
+            InputOwner::Shell,
+            InputOwner::ShellOverlay,
+            InputOwner::App { id: MOONLIGHT },
+            InputOwner::Unknown,
+            InputOwner::Shell,
+        ] {
+            h.session.set_owner(owner);
+        }
+
+        assert_eq!(
+            h.log.borrow().device_creations,
+            devices,
+            "five transitions, and the device list is byte-identical"
+        );
+        assert!(
+            h.log.borrow().released.is_empty(),
+            "and no pad was handed back either — routing never re-claims"
+        );
+    }
+
+    /// **Rule: `shell_keys` PINS the route, and arbitration cannot move it.**
+    ///
+    /// The operator override kept from phase 1. Someone who set that flag to
+    /// take a measurement must not have the route pulled out from under them by
+    /// whatever happens to be on screen.
+    ///
+    /// **Mutation note.** Delete the `self.pinned` guard in `set_owner` and the
+    /// route follows the decision.
+    #[test]
+    fn a_pinned_session_refuses_every_owner_decision() {
+        let mut h = shell_harness(2);
+        assert_eq!(h.session.report().owner, InputOwner::Shell);
+
+        assert!(!h.session.set_owner(InputOwner::App { id: MOONLIGHT }));
+
+        let report = h.session.report();
+        assert_eq!(report.owner, InputOwner::Shell);
+        assert_eq!(report.route, Route::Shell);
+    }
+
+    /// **Rule: the route a transition switched TO is where the next event
+    /// goes.**
+    ///
+    /// The point of the whole phase, and the symptom it fixes: measured on
+    /// hardware, a held Guide returned the screen to the shell and the home
+    /// screen was completely inert, because the pad kept forwarding to the app.
+    /// Asserted at the device layer — a pad press becomes a KEY on the keyboard
+    /// and reaches no presenter — rather than by reading back `report.route`.
+    ///
+    /// **Mutation note.** Drop the `self.route = transition.route` assignment
+    /// and the press still goes to the presenter.
+    #[test]
+    fn after_a_transition_the_pad_drives_the_new_target() {
+        let (mut h, p) = holding_a();
+        h.session.set_owner(InputOwner::Shell);
+        let emitted_before = h.log.borrow().emitted.len();
+
+        h.session.forward(&p.path, ev::KEY, btn::EAST, 1, t0());
+
+        let log = h.log.borrow();
+        assert_eq!(
+            log.keys.last(),
+            Some(&KeyEmit {
+                code: keymap::key::ESC,
+                value: 1
+            }),
+            "B goes back, as a key, to the shell"
+        );
+        assert_eq!(
+            log.emitted.len(),
+            emitted_before,
+            "and nothing reached the presenter, so a game behind the shell sees a still pad"
+        );
     }
 
     /// **Rule (§7 / jedwards1230/tv-shell#402, extended to the keyboard): every

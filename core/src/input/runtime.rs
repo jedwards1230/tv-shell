@@ -48,7 +48,7 @@ use super::config::ResolvedInput;
 use super::escape::EscapeSink;
 use super::evdev_backend::EvdevBackend;
 use super::session::{InputReport, InputSession};
-use super::InputHandle;
+use super::{Control, InputControl, InputHandle};
 
 /// Start the input runtime on its own thread.
 ///
@@ -65,6 +65,12 @@ pub fn spawn(
     // the presenters is reported to the caller rather than logged on a thread
     // nobody is watching.
     let (started_tx, started_rx) = std::sync::mpsc::channel();
+    // The WRITE path phase 2 needed: `report_rx` is read-only, so an owner
+    // decision made on the watcher thread had nowhere to go. Unbounded because
+    // the sender is a watcher that must never block on the pad loop, and the
+    // traffic is one message per settled transition — a couch produces a few an
+    // hour, not a stream.
+    let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let join = std::thread::Builder::new()
         .name("tv-shell-input".into())
@@ -79,13 +85,21 @@ pub fn spawn(
                     return;
                 }
             };
-            rt.block_on(run(resolved, escape, started_tx, report_tx, shutdown_rx));
+            rt.block_on(run(
+                resolved,
+                escape,
+                started_tx,
+                report_tx,
+                control_rx,
+                shutdown_rx,
+            ));
         })
         .map_err(|e| anyhow::anyhow!("spawning the input thread: {e}"))?;
 
     match started_rx.recv() {
         Ok(Ok(())) => Ok(InputHandle {
             reports: report_rx,
+            control: InputControl(Some(control_tx)),
             shutdown: Some(shutdown_tx),
             join: Some(join),
         }),
@@ -115,6 +129,8 @@ enum Wake {
     Timer,
     /// A claimed pad produced an event, or its stream failed.
     Event((std::path::PathBuf, std::io::Result<evdev::InputEvent>)),
+    /// The screen watcher decided who owns the pad.
+    Control(Control),
 }
 
 async fn run(
@@ -122,6 +138,7 @@ async fn run(
     escape: Box<dyn EscapeSink + Send>,
     started: std::sync::mpsc::Sender<Result<(), String>>,
     reports: watch::Sender<InputReport>,
+    mut control: tokio::sync::mpsc::UnboundedReceiver<Control>,
     mut shutdown: oneshot::Receiver<()>,
 ) {
     let mut session = match InputSession::start(EvdevBackend::new(), &resolved, escape) {
@@ -162,6 +179,11 @@ async fn run(
             _ = tick.tick() => Wake::Poll,
             _ = repeat => Wake::Timer,
             next = session.backend_mut().next_event() => Wake::Event(next),
+            // A closed control channel is not a reason to stop: the watcher can
+            // be gone (it never started, or the compositor half went away) while
+            // the pad still needs forwarding. `recv` then returns `None`
+            // forever, so this arm is disabled rather than looping hot.
+            Some(msg) = control.recv() => Wake::Control(msg),
             _ = &mut shutdown => break,
         };
 
@@ -172,6 +194,14 @@ async fn run(
                 // armed — nothing armed the deadline that woke us.
                 session.tick(std::time::Instant::now());
                 let _ = reports.send(session.report());
+            }
+            Wake::Control(Control::SetOwner(owner)) => {
+                // The transition — quiesce, then switch — happens HERE, on the
+                // input thread, from a decision made elsewhere. No X call is on
+                // this path.
+                if session.set_owner(owner) {
+                    let _ = reports.send(session.report());
+                }
             }
             Wake::Poll => {
                 for joined in session.poll() {

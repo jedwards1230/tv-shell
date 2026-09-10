@@ -25,6 +25,7 @@ use std::sync::Arc;
 use tv_shell_core::boot;
 use tv_shell_core::compositor::GamescopeCompositor;
 use tv_shell_core::config::{self, CoreConfig};
+use tv_shell_core::input;
 use tv_shell_core::ipc;
 
 #[tokio::main]
@@ -91,6 +92,10 @@ async fn serve() -> ExitCode {
     // Read before `config` moves into the compositor.
     let boot_app = config.boot_app();
     let input_config = config.input.clone();
+    // Read before `config` moves into the compositor, like the two above: the
+    // watcher compares what is on screen against this to decide whether the
+    // shell owns the pad.
+    let shell_app_id_for_watch = config.shell_app_id();
     let restart_policy = boot::RestartPolicy::from_config(&config);
 
     let compositor = match GamescopeCompositor::connect(config, None) {
@@ -129,17 +134,63 @@ async fn serve() -> ExitCode {
     // The escape worker is passed as a THUNK, not a value, so the default-off
     // promise stays literal — `start`'s gate short-circuits before this runs,
     // and a core nobody reconfigured spawns no thread for this either.
+    //
+    // The nudge channel is created BEFORE the layer starts, because two of the
+    // three things that write the base layer are wired at construction time —
+    // the escape worker below, and the IPC surface — and neither can be handed a
+    // sender that does not exist yet.
+    let (nudge, nudges) = input::watcher::nudge_channel();
+    let overlay = input::watcher::OverlayFlag::new();
+    let watch = input::watcher::WatchHandle::new(overlay.clone(), nudge);
+
     let escape_compositor = Arc::clone(&compositor);
+    let escape_nudge = watch.nudge();
     let mut input = tv_shell_core::input::start(&input_config, move || {
-        Ok(Box::new(tv_shell_core::input::escape::spawn(escape_compositor)?) as Box<_>)
+        Ok(Box::new(tv_shell_core::input::escape::spawn(
+            escape_compositor,
+            escape_nudge,
+        )?) as Box<_>)
     });
     let input_reports = input
         .as_ref()
         .map(|h| h.reports())
         .unwrap_or_else(tv_shell_core::input::InputReports::disabled);
 
+    // The screen watcher: it recomputes who owns the pad and pushes the decision
+    // into the input thread (phase 2 of docs/V2_GAMEPAD_HANDOFF.md). Started
+    // only when there IS an input layer — with input off there is nothing to
+    // route, and a thread reading the screen four times a second on behalf of
+    // nobody is exactly the "a disabled core does no work at all" promise being
+    // quietly broken.
+    //
+    // NOT joined at shutdown. It parks in a bounded `recv_timeout` and stops on
+    // its own as soon as the input thread's receiver is gone; waiting for it
+    // would add up to a poll interval to every stop for no benefit, and it holds
+    // nothing that needs releasing (the grabs live on the input thread's
+    // descriptors).
+    if let Some(handle) = input.as_ref() {
+        let shell_app_id = shell_app_id_for_watch;
+        if let Err(e) = input::watcher::spawn(
+            Arc::clone(&compositor),
+            handle.control(),
+            shell_app_id,
+            overlay,
+            nudges,
+        ) {
+            // Not fatal, and loudly so: the pad still works, pinned to whatever
+            // the session started with. A core that refused to run because a
+            // thread would not spawn would be a black television.
+            tracing::error!("the screen watcher did not start, so the pad route is fixed: {e}");
+        }
+    }
+
     let sock_path = config::socket_path();
-    let server = ipc::serve(sock_path.clone(), Arc::clone(&compositor), input_reports);
+    let server = ipc::serve(
+        sock_path.clone(),
+        Arc::clone(&compositor),
+        input_reports,
+        watch,
+    );
 
     // AFTER the listener exists, and off the reactor. A cold app start can take
     // seconds — the map bound alone is 30 s — and §9 makes the control surface
