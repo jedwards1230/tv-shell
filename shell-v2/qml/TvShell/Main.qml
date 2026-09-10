@@ -171,6 +171,11 @@ QtObject {
             Keys.onRightPressed: root.homeRouter.move("right")
             Keys.onUpPressed: root.homeRouter.move("up")
             Keys.onDownPressed: root.homeRouter.move("down")
+            // Tab is the binding a real key can reach: gamescope does not deliver
+            // KEY_MENU to its clients, so a Menu-only binding is unreachable from
+            // any input device on the couch (jedwards1230/tv-shell#489). Menu stays
+            // because it is correct under other compositors, not because it fires here.
+            Keys.onTabPressed: root.drawerOpen = true
             Keys.onMenuPressed: root.drawerOpen = true
 
             onActivated: entry => root.activate(entry)
@@ -209,6 +214,9 @@ QtObject {
             Keys.onDownPressed: root.drawerRouter.move("down")
             Keys.onEscapePressed: root.drawerOpen = false
             Keys.onBackPressed: root.drawerOpen = false
+            // Tab opens the drawer on the base surface, so it has to close it
+            // here too — see the note there (#489).
+            Keys.onTabPressed: root.drawerOpen = false
             Keys.onMenuPressed: root.drawerOpen = false
 
             onGoHome: {

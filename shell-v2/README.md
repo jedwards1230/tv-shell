@@ -138,7 +138,9 @@ warning must wrap it in `ignoreWarning()`, or the lane aborts.
 QT_QPA_PLATFORM=xcb ./build/tv-shell-v2
 ```
 
-Arrows move focus, **Enter** activates a card, **Menu** opens the overlay drawer.
+Arrows move focus, **Enter** activates a card, **Tab** opens the overlay drawer
+(**Menu** does too, but gamescope never delivers it — see
+jedwards1230/tv-shell#489).
 With no `shell.json` and no core you get the empty state, which is itself
 focusable — the home screen always has somewhere for focus to be.
 
