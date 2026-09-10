@@ -404,10 +404,17 @@
 # virtual pad. On its own that is BEHAVIOURALLY INVISIBLE — what reads the
 # presenter sees the same input the physical pad was sending.
 #
+# IT ALSO OWNS THE GUIDE BUTTON, on every route. A Guide TAP goes to whatever is
+# on screen; a Guide HOLD past `guide_hold_ms` makes the CORE write the base
+# layer back to the shell itself — no message to the shell, so it works with the
+# shell dead, hung or never started. That is the one thing v1 got wrong here: it
+# delivered this escape as an intent the shell acted on, and it failed exactly
+# when the shell was wedged. See jedwards1230/tv-shell#496.
+#
 # WHAT IT DOES NOT DO YET: decide an owner (the route below is hard-wired, not
-# arbitrated), mask a button held across a route change, or implement the
-# Meta-hold escape. Rumble, battery, LEDs and companion touchpad/motion-node
-# inhibition are also still to come. See docs/V2_GAMEPAD_HANDOFF.md.
+# arbitrated) or mask a button held across a route change. Rumble, battery, LEDs
+# and companion touchpad/motion-node inhibition are also still to come. See
+# docs/V2_GAMEPAD_HANDOFF.md.
 
 #[input]
 # The safety flag.
@@ -426,7 +433,8 @@
 # What it does when on: A activates (KEY_ENTER), B goes back (KEY_ESC), Start
 # toggles the drawer (KEY_TAB), and the d-pad and left stick drive the arrows —
 # the stick with v1's calibrated auto-repeat (300 ms, then every 150 ms). The
-# Guide button is deliberately NOT a key. Only key codes measured to actually
+# Guide button is deliberately NOT a key — see `guide_hold_ms`. Only key codes
+# measured to actually
 # reach the shell through gamescope are emitted: KEY_MENU is dropped by gamescope
 # silently, which is why the drawer is Tab.
 #
@@ -441,6 +449,19 @@
 # pad did would be a hotplug event to every game and to Moonlight — which is
 # exactly the defect jedwards1230/tv-shell#402 records. 1-8.
 #players = 4
+#
+# The Guide tap-vs-hold threshold, in milliseconds. v1's `meta_hold_ms`, ported
+# with its value: 500 ms is a press-and-hold a deliberate long press clears and a
+# quick tap does not. Below the threshold the button goes to whatever is on
+# screen (a real Guide press+release to an app, the drawer key to the shell);
+# past it the core writes the base layer back to the shell itself.
+#
+# This is ACTIVE WHENEVER `enabled` IS ON — it is not gated behind `shell_keys`,
+# because it is the way back from a running app and that is precisely the case
+# where the shell route is off. `input-state` reports it under `escape`: whether
+# a hold is armed, how many fired, and how many fired and could not be
+# delivered. 100-5000 ms.
+#guide_hold_ms = 500
 #
 # How often the fleet is re-enumerated. Polled rather than driven by a udev
 # listener, per V2_DESIGN §10: v1's residual defect was an attached listener that

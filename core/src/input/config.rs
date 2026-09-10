@@ -17,6 +17,7 @@
 use serde::Deserialize;
 
 use super::discovery::Pin;
+use super::escape;
 use super::identity::{bundled_db, ControllerDb};
 
 /// The largest `players` the config accepts.
@@ -58,6 +59,15 @@ pub struct InputConfig {
     /// appeared when a pad did would be a hotplug event to every game (§7).
     pub players: u8,
 
+    /// How long the Guide button must be held before the core returns the
+    /// screen to the shell, in milliseconds.
+    ///
+    /// v1's `meta_hold_ms`, ported with its default ([`escape::DEFAULT_HOLD_MS`]).
+    /// A *tap* is left to whatever is on screen; only a hold escapes. Active
+    /// whenever `enabled` is on — it is the way back from a running app, so it
+    /// is not gated behind `shell_keys`.
+    pub guide_hold_ms: u64,
+
     /// How often the fleet is re-enumerated, in milliseconds.
     ///
     /// Polled rather than driven by a udev/netlink listener, per V2_DESIGN §10:
@@ -85,6 +95,7 @@ impl Default for InputConfig {
             // with this on, Moonlight gets no pad at all.
             shell_keys: false,
             players: 4,
+            guide_hold_ms: escape::DEFAULT_HOLD_MS,
             // v1's discovery poll interval, which has run on this hardware for
             // months: fast enough that plugging a pad in feels immediate, slow
             // enough that `evdev::enumerate` is not a background cost.
@@ -119,6 +130,15 @@ impl InputConfig {
                 "config: [input] poll_interval_ms must be between {MIN_POLL_MS} and \
                  {MAX_POLL_MS} (got {})",
                 self.poll_interval_ms
+            );
+        }
+        if self.guide_hold_ms < escape::MIN_HOLD_MS || self.guide_hold_ms > escape::MAX_HOLD_MS {
+            anyhow::bail!(
+                "config: [input] guide_hold_ms must be between {} and {} (got {}); below that a \
+                 tap and a hold are indistinguishable, and above it the escape is unreachable",
+                escape::MIN_HOLD_MS,
+                escape::MAX_HOLD_MS,
+                self.guide_hold_ms
             );
         }
         // A half-pin is the dangerous shape: "vendor only" would read as "claim
@@ -174,6 +194,7 @@ impl InputConfig {
             db,
             pin: self.pin(),
             poll_interval: std::time::Duration::from_millis(self.poll_interval_ms),
+            guide_hold: std::time::Duration::from_millis(self.guide_hold_ms),
         })
     }
 }
@@ -186,6 +207,8 @@ pub struct ResolvedInput {
     pub db: ControllerDb,
     pub pin: Pin,
     pub poll_interval: std::time::Duration,
+    /// The Guide tap-vs-hold threshold. See [`InputConfig::guide_hold_ms`].
+    pub guide_hold: std::time::Duration,
 }
 
 #[cfg(test)]
@@ -271,6 +294,32 @@ mod tests {
             .unwrap();
     }
 
+    /// **Rule: the Guide hold is v1's threshold, and stays within bounds.**
+    ///
+    /// Zero would make every tap an escape — a brush of the button ending a
+    /// game — and an enormous value would make the escape unreachable, which is
+    /// the failure jedwards1230/tv-shell#496 exists to remove.
+    ///
+    /// **Mutation note.** Drop either bound from `validate` and the matching
+    /// half fails; change the default away from v1's 500 ms and the first
+    /// assertion does.
+    #[test]
+    fn the_guide_hold_is_v1s_threshold_and_bounded() {
+        assert_eq!(InputConfig::default().guide_hold_ms, 500);
+        assert_eq!(escape::DEFAULT_HOLD_MS, 500, "v1's DEFAULT_META_HOLD_MS");
+        assert!(cfg(|c| c.guide_hold_ms = 0).validate().is_err());
+        assert!(cfg(|c| c.guide_hold_ms = escape::MAX_HOLD_MS + 1)
+            .validate()
+            .is_err());
+        cfg(|c| c.guide_hold_ms = escape::MIN_HOLD_MS)
+            .validate()
+            .unwrap();
+        assert_eq!(
+            InputConfig::default().resolve().unwrap().guide_hold,
+            std::time::Duration::from_millis(500)
+        );
+    }
+
     /// **Rule: a half-pin is rejected.**
     ///
     /// "vendor only" reads as "claim everything from this vendor", which is not
@@ -317,6 +366,7 @@ mod tests {
             enabled,
             shell_keys,
             players,
+            guide_hold_ms,
             poll_interval_ms,
             controller_db,
             pin_vendor,
@@ -328,6 +378,7 @@ mod tests {
             enabled,
             shell_keys,
             players,
+            guide_hold_ms,
             poll_interval_ms,
             &controller_db,
             pin_vendor,
@@ -338,12 +389,13 @@ mod tests {
             ("enabled", "true"),
             ("shell_keys", "true"),
             ("players", "2"),
+            ("guide_hold_ms", "600"),
             ("poll_interval_ms", "500"),
             ("controller_db", "\"/etc/tv-shell/db.txt\""),
             ("pin_vendor", "1"),
             ("pin_product", "2"),
         ];
-        assert_eq!(keys.len(), 7, "one entry per field destructured above");
+        assert_eq!(keys.len(), 8, "one entry per field destructured above");
         for (name, value) in keys {
             // Through the FULL core config, so this also pins that `[input]`
             // really is reachable at that table name and not only in isolation.

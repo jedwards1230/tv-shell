@@ -30,10 +30,11 @@ use serde::Serialize;
 use super::backend::{InputBackend, InputError};
 use super::config::ResolvedInput;
 use super::discovery::{OwnedNodes, Pin, Refusal};
+use super::escape::{EscapeSink, GuideWatch, Release};
 use super::fleet::{Fleet, FleetFull};
 use super::identity::ControllerDb;
-use super::keymap::{KeyEmit, KeyMap, KeyboardProfile};
-use super::presenter::{ev, quiesce, translate, DropReason, Forward, PadProfile};
+use super::keymap::{key, KeyEmit, KeyMap, KeyboardProfile};
+use super::presenter::{btn, ev, quiesce, translate, DropReason, Forward, PadProfile};
 
 /// A pad newly taken into the fleet.
 ///
@@ -120,6 +121,29 @@ pub struct RefusedReport {
     pub explanation: String,
 }
 
+/// The Guide escape, as reported.
+///
+/// In the report rather than left to be inferred, for the reason `owner` and
+/// `route` are: the acceptance for this is a person at a television, and
+/// "did the core see my press, and did the write happen" must be readable
+/// there instead of guessed from whether the screen changed.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EscapeReport {
+    /// The configured tap-vs-hold threshold.
+    pub hold_ms: u64,
+    /// A pad is holding Guide and its threshold has not been reached yet.
+    /// This is what distinguishes "the core never saw the button" from "the
+    /// core saw it and the write did not take".
+    pub armed: bool,
+    /// Holds that fired and were handed off for a base-layer write.
+    pub fires: u64,
+    /// Holds that fired and could NOT be handed off. Non-zero means a user
+    /// asked to leave an app and the core could not make it happen.
+    pub failures: u64,
+    /// When the last fire was handed off, in Unix milliseconds.
+    pub last_fire_unix_ms: Option<u64>,
+}
+
 /// The `input-state` payload.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct InputReport {
@@ -169,6 +193,8 @@ pub struct InputReport {
     pub masked_keys: Vec<u16>,
     /// Axes held across a route change. Empty in phase 1, as above.
     pub masked_axes: Vec<u16>,
+    /// The Guide escape (jedwards1230/tv-shell#496). See [`EscapeReport`].
+    pub escape: EscapeReport,
     /// How many discovery passes have COMPLETED.
     ///
     /// Beside the timestamp rather than instead of it, for two different
@@ -205,6 +231,16 @@ impl InputReport {
             keyboard: None,
             masked_keys: Vec::new(),
             masked_axes: Vec::new(),
+            // No pad is grabbed, so no Guide press ever reaches the core and
+            // the escape cannot arm. Reported as the configured default rather
+            // than zero, so the number does not read as "the hold is disabled".
+            escape: EscapeReport {
+                hold_ms: super::escape::DEFAULT_HOLD_MS,
+                armed: false,
+                fires: 0,
+                failures: 0,
+                last_fire_unix_ms: None,
+            },
         }
     }
 }
@@ -242,6 +278,22 @@ pub struct InputSession<B: InputBackend> {
     /// One translator per claimed pad, so two players keep independent repeat
     /// timers. Present only on the shell route.
     keymaps: BTreeMap<PathBuf, KeyMap>,
+    /// Where a fired Guide hold goes. Boxed so the session's rules are testable
+    /// against a recording double with no compositor — and so the escape's own
+    /// failure is a thing a test can produce.
+    escape: Box<dyn EscapeSink>,
+    /// The tap-vs-hold threshold, from `[input].guide_hold_ms`.
+    guide_hold: std::time::Duration,
+    /// One Guide state machine per claimed pad. **Per pad is the rule, not an
+    /// implementation detail** — see [`GuideWatch`].
+    guides: BTreeMap<PathBuf, GuideWatch>,
+    /// Fleet-level dedup latch, ported from v1's `home_hold_active`. Set on the
+    /// first pad's fire and cleared only when NO pad holds Guide, so two pads
+    /// held down together escape once rather than twice.
+    escape_latched: bool,
+    escape_fires: u64,
+    escape_failures: u64,
+    escape_last_fire_unix_ms: Option<u64>,
 }
 
 impl<B: InputBackend> InputSession<B> {
@@ -252,7 +304,11 @@ impl<B: InputBackend> InputSession<B> {
     /// degraded: a core that came up with three of four presenters would hand
     /// player four's input nowhere, and the `players` count it reports would be
     /// a lie.
-    pub fn start(mut backend: B, config: &ResolvedInput) -> Result<InputSession<B>, InputError> {
+    pub fn start(
+        mut backend: B,
+        config: &ResolvedInput,
+        escape: Box<dyn EscapeSink>,
+    ) -> Result<InputSession<B>, InputError> {
         let profile = PadProfile::canonical();
         let mut owned = OwnedNodes::new();
         let mut presenters = Vec::new();
@@ -338,6 +394,13 @@ impl<B: InputBackend> InputSession<B> {
             route,
             keyboard,
             keymaps: BTreeMap::new(),
+            escape,
+            guide_hold: config.guide_hold,
+            guides: BTreeMap::new(),
+            escape_latched: false,
+            escape_fires: 0,
+            escape_failures: 0,
+            escape_last_fire_unix_ms: None,
         })
     }
 
@@ -425,9 +488,26 @@ impl<B: InputBackend> InputSession<B> {
     /// The 1:1 passthrough. An event from a pad the fleet does not hold is
     /// ignored — that is a stream draining after a retire, not something to
     /// route at a slot which may already belong to another player.
-    pub fn forward(&mut self, path: &Path, event_type: u16, code: u16, value: i32) {
+    ///
+    /// Returns `true` when the event changed something the report carries — in
+    /// practice, a Guide press or release. The runtime republishes on that, so
+    /// `escape.armed` is observable *while* a hold is in progress rather than
+    /// only after it resolves, which is the whole reason the field exists.
+    ///
+    /// **`now` is passed in, never read here.** Two time-dependent rules hang
+    /// off this call — the stick auto-repeat and the Guide tap-vs-hold — and a
+    /// clock read inside routing code makes both untestable except by sleeping.
+    /// The runtime passes `Instant::now()`; a test passes the instant it means.
+    pub fn forward(
+        &mut self,
+        path: &Path,
+        event_type: u16,
+        code: u16,
+        value: i32,
+        now: std::time::Instant,
+    ) -> bool {
         let Some(pad) = self.fleet.get(path) else {
-            return;
+            return false;
         };
         let slot = pad.slot;
         let source_axis = if event_type == ev::ABS {
@@ -436,11 +516,24 @@ impl<B: InputBackend> InputSession<B> {
             None
         };
 
+        // Guide is the core's, on EVERY route, and it never crosses live.
+        //
+        // Before the route split rather than inside it: the escape is the way
+        // back from a running app, so it cannot be a property of the shell
+        // route — with `shell_keys` off the pad reaches the app and this is the
+        // only thing that can end that. v1 buffers the press for the same
+        // reason it is buffered here: forwarding it and retracting later is not
+        // possible, so nothing is forwarded until the release says which
+        // gesture it was.
+        if event_type == ev::KEY && code == btn::MODE {
+            self.on_guide(path, slot, value, now);
+            return true;
+        }
+
         if self.route == Route::Shell {
             // The pad drives the shell: nothing reaches the presenter, so a game
             // behind the shell sees a controller sitting still rather than one
             // being used by someone else.
-            let now = std::time::Instant::now();
             let emits = self
                 .keymaps
                 .entry(path.to_path_buf())
@@ -449,13 +542,13 @@ impl<B: InputBackend> InputSession<B> {
             for emit in emits {
                 self.emit_key(emit);
             }
-            return;
+            return false;
         }
 
         let forward = translate(event_type, code, value, source_axis, &self.profile);
         if let Forward::Drop(reason) = forward {
             *self.drops.entry(reason).or_insert(0) += 1;
-            return;
+            return false;
         }
         // Track the button BEFORE emitting: if the emit fails we still know what
         // the pad is holding, and quiesce stays correct.
@@ -463,6 +556,101 @@ impl<B: InputBackend> InputSession<B> {
             self.fleet.note_key(path, code, value);
         }
         self.emit(slot, forward);
+        false
+    }
+
+    /// One Guide event, on the pad at `path`.
+    ///
+    /// The press arms; the release delivers a tap or is swallowed; the hold
+    /// itself fires from [`Self::tick`], because a threshold that elapses while
+    /// the user holds perfectly still produces no event to hang it off.
+    fn on_guide(&mut self, path: &Path, slot: u8, value: i32, now: std::time::Instant) {
+        match value {
+            1 => {
+                self.guides
+                    .entry(path.to_path_buf())
+                    .or_default()
+                    .press(now);
+            }
+            0 => {
+                let release = self.guides.entry(path.to_path_buf()).or_default().release();
+                match release {
+                    // A tap belongs to whatever is on screen. On the app route
+                    // that is a real Guide press+release on the presenter (v1's
+                    // `ReplayToPad`, so Steam Big Picture still opens); on the
+                    // shell route it is the drawer, which is v1's `HomeTap` and
+                    // reaches the v2 shell as Tab — the key measured to arrive
+                    // (§2.1), not KEY_MENU, which gamescope drops.
+                    Release::Tap => match self.route {
+                        Route::App => {
+                            for v in [1, 0] {
+                                self.emit(
+                                    slot,
+                                    Forward::Key {
+                                        code: btn::MODE,
+                                        value: v,
+                                    },
+                                );
+                            }
+                        }
+                        Route::Shell => {
+                            for v in [1, 0] {
+                                self.emit_key(KeyEmit {
+                                    code: key::TAB,
+                                    value: v,
+                                });
+                            }
+                        }
+                    },
+                    // The hold already fired. Swallowed on purpose: the target
+                    // never saw the press, so a release would be the only edge
+                    // it ever got — exactly the leak jedwards1230/tv-shell#295
+                    // is about, in the one direction this phase can produce.
+                    Release::Swallow | Release::Ignore => {}
+                }
+                self.clear_escape_latch();
+            }
+            // A kernel autorepeat on a held Guide is not a new press, and must
+            // not restart the hold timer.
+            _ => {}
+        }
+    }
+
+    /// Clear the fleet latch once NO pad is holding Guide.
+    ///
+    /// v1's rule, and the reason it is "no pad holding" rather than "no pad
+    /// armed": a fired hold stays `holding` until the button comes up, so the
+    /// latch cannot clear underneath the very press that set it.
+    fn clear_escape_latch(&mut self) {
+        if self.escape_latched && !self.guides.values().any(|g| g.holding()) {
+            self.escape_latched = false;
+        }
+    }
+
+    /// Hand a fired hold to the escape sink, and count what comes back.
+    ///
+    /// **The core does this itself.** Not a message to the shell — v1's
+    /// `intent home-hold` was exactly that, and it failed whenever the shell was
+    /// wedged, which is the only time anyone needs it. See
+    /// [`super::escape`].
+    fn fire_escape(&mut self, slot: u8) {
+        if self.escape_latched {
+            // Another pad's hold is already escaping. One `home` is the whole
+            // gesture; a second would be a second switch to the same place.
+            return;
+        }
+        self.escape_latched = true;
+        tracing::info!(slot, "Guide hold: returning the screen to the shell");
+        match self.escape.fire() {
+            Ok(()) => {
+                self.escape_fires += 1;
+                self.escape_last_fire_unix_ms = Some(unix_millis());
+            }
+            Err(e) => {
+                self.escape_failures += 1;
+                tracing::error!("the Guide escape fired and could not be delivered: {e}");
+            }
+        }
     }
 
     /// A pad's event stream failed — a USB unplug, usually. Retire it now rather
@@ -498,6 +686,12 @@ impl<B: InputBackend> InputSession<B> {
                 self.emit_key(emit);
             }
         }
+        // A pad unplugged mid-hold takes its Guide state with it, and can then
+        // release the fleet latch — otherwise a pad yanked while holding Guide
+        // would leave the escape latched for the life of the session, and the
+        // NEXT hold on another pad would do nothing at all.
+        self.guides.remove(path);
+        self.clear_escape_latch();
         self.backend.release(path);
     }
 
@@ -529,20 +723,36 @@ impl<B: InputBackend> InputSession<B> {
         }
     }
 
-    /// When the next stick auto-repeat is due, across every pad.
+    /// When this session next needs waking, across every pad.
     ///
-    /// The runtime sleeps until this instead of polling, so a session with no
-    /// deflected stick costs nothing. `None` on the app route, where no key is
-    /// ever synthesised.
-    pub fn next_key_deadline(&self) -> Option<std::time::Instant> {
-        self.keymaps
+    /// Two kinds of deadline, deliberately merged into one: a stick auto-repeat
+    /// and a Guide hold. The runtime sleeps until the earliest instead of
+    /// polling, so a session with nothing armed costs nothing.
+    pub fn next_deadline(&self) -> Option<std::time::Instant> {
+        let repeats = self.keymaps.values().filter_map(|m| m.next_deadline());
+        let holds = self
+            .guides
             .values()
-            .filter_map(|m| m.next_deadline())
-            .min()
+            .filter_map(|g| g.deadline(self.guide_hold));
+        repeats.chain(holds).min()
     }
 
-    /// Fire every stick auto-repeat due at `now`.
-    pub fn tick_keys(&mut self, now: std::time::Instant) {
+    /// Fire every stick auto-repeat, and every Guide hold, due at `now`.
+    pub fn tick(&mut self, now: std::time::Instant) {
+        // The escape first: it is the thing someone is waiting on, and a burst
+        // of repeats should not sit in front of it.
+        let hold = self.guide_hold;
+        let fired: Vec<PathBuf> = self
+            .guides
+            .iter_mut()
+            .filter_map(|(path, g)| g.due(now, hold).then(|| path.clone()))
+            .collect();
+        for path in fired {
+            if let Some(slot) = self.fleet.get(&path).map(|p| p.slot) {
+                self.fire_escape(slot);
+            }
+        }
+
         let mut emits = Vec::new();
         for map in self.keymaps.values_mut() {
             emits.extend(map.tick(now));
@@ -580,8 +790,22 @@ impl<B: InputBackend> InputSession<B> {
             route: self.route,
             keyboard: self.keyboard.clone(),
             // Phase 1 has no route change to mask across; phase 3 fills these.
+            //
+            // The Guide escape does NOT fill them either, and that is a finding
+            // rather than an omission: routing is still pinned, so the escape
+            // changes what is on screen without changing where pad events go.
+            // Guide itself is buffered and never crosses, and every other button
+            // keeps forwarding to the same target, so its real release still
+            // arrives. There is nothing held across a change to mask.
             masked_keys: Vec::new(),
             masked_axes: Vec::new(),
+            escape: EscapeReport {
+                hold_ms: self.guide_hold.as_millis() as u64,
+                armed: self.guides.values().any(|g| g.armed()),
+                fires: self.escape_fires,
+                failures: self.escape_failures,
+                last_fire_unix_ms: self.escape_last_fire_unix_ms,
+            },
         }
     }
 
@@ -761,10 +985,59 @@ mod tests {
         }
     }
 
+    /// What the escape double recorded.
+    ///
+    /// Beside [`Log`] rather than inside it, deliberately: the whole claim is
+    /// that firing the escape is a base-layer write and touches *nothing* the
+    /// backend does, so the two must be separately readable. A test asserts a
+    /// fire happened AND that the keyboard/presenter logs did not move.
+    #[derive(Debug, Default)]
+    struct EscapeLog {
+        fires: usize,
+    }
+
+    /// A recording [`EscapeSink`]. It performs no write and fakes none — it
+    /// records that the session asked for one, which is the session's whole
+    /// half of the contract.
+    struct RecordingEscape {
+        log: Rc<RefCell<EscapeLog>>,
+        /// When set, every fire is refused — the "fired and could not write"
+        /// case, which must show up as a number rather than a silence.
+        fails: bool,
+    }
+
+    impl EscapeSink for RecordingEscape {
+        fn fire(&mut self) -> Result<(), super::super::escape::EscapeError> {
+            self.log.borrow_mut().fires += 1;
+            if self.fails {
+                return Err(super::super::escape::EscapeError(
+                    "the escape worker is gone".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    /// A sink for the many tests that never press Guide. It panics if it is
+    /// ever used, so a test that accidentally fires an escape says so instead of
+    /// passing quietly.
+    struct NeverFires;
+
+    impl EscapeSink for NeverFires {
+        fn fire(&mut self) -> Result<(), super::super::escape::EscapeError> {
+            panic!("this test fired the Guide escape and did not mean to");
+        }
+    }
+
+    fn never_fires() -> Box<dyn EscapeSink> {
+        Box::new(NeverFires)
+    }
+
     struct Harness {
         session: InputSession<Recorder>,
         log: Rc<RefCell<Log>>,
         devices: Rc<RefCell<Vec<Candidate>>>,
+        escapes: Rc<RefCell<EscapeLog>>,
     }
 
     fn config(players: u8) -> ResolvedInput {
@@ -774,8 +1047,19 @@ mod tests {
             db: bundled_db(),
             pin: None,
             poll_interval: std::time::Duration::from_secs(2),
+            guide_hold: HOLD,
         }
     }
+
+    /// Wall-clock now, for the many tests whose events carry no timing meaning.
+    fn t0() -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    /// The escape threshold every test below uses — the real default, so a
+    /// hold in a test is the same hold a couch produces.
+    const HOLD: std::time::Duration =
+        std::time::Duration::from_millis(super::super::escape::DEFAULT_HOLD_MS);
 
     fn harness(players: u8) -> Harness {
         harness_with(config(players))
@@ -791,13 +1075,23 @@ mod tests {
     }
 
     fn harness_with(config: ResolvedInput) -> Harness {
+        harness_with_escape(config, false)
+    }
+
+    fn harness_with_escape(config: ResolvedInput, escape_fails: bool) -> Harness {
         let log = Rc::new(RefCell::new(Log::default()));
         let devices = Rc::new(RefCell::new(Vec::new()));
-        let session = InputSession::start(Recorder::new(&log, &devices), &config).unwrap();
+        let escapes = Rc::new(RefCell::new(EscapeLog::default()));
+        let escape = Box::new(RecordingEscape {
+            log: Rc::clone(&escapes),
+            fails: escape_fails,
+        });
+        let session = InputSession::start(Recorder::new(&log, &devices), &config, escape).unwrap();
         Harness {
             session,
             log,
             devices,
+            escapes,
         }
     }
 
@@ -887,7 +1181,7 @@ mod tests {
         let p = pad("/dev/input/event3", "port-a");
         *h.devices.borrow_mut() = vec![p.clone()];
         h.session.poll();
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
 
         assert!(
             h.log.borrow().keys.is_empty(),
@@ -936,11 +1230,11 @@ mod tests {
         let p = pad("/dev/input/event3", "port-a");
         *h.devices.borrow_mut() = vec![p.clone()];
         h.session.poll();
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 0);
-        h.session.forward(&p.path, ev::ABS, abs::X, 32767);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 0, t0());
+        h.session.forward(&p.path, ev::ABS, abs::X, 32767, t0());
         h.session
-            .tick_keys(std::time::Instant::now() + std::time::Duration::from_secs(1));
+            .tick(std::time::Instant::now() + std::time::Duration::from_secs(1));
         h.devices.borrow_mut().clear();
         h.session.poll();
         *h.devices.borrow_mut() = vec![pad("/dev/input/event7", "port-a")];
@@ -970,8 +1264,8 @@ mod tests {
         *h.devices.borrow_mut() = vec![p.clone()];
         h.session.poll();
 
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 0);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 0, t0());
 
         let log = h.log.borrow();
         assert_eq!(
@@ -998,13 +1292,13 @@ mod tests {
     /// the runtime is told when to come back.**
     ///
     /// Driven entirely through the real entry points — `forward` for the
-    /// deflection, `next_key_deadline` for the wake-up the runtime sleeps on,
-    /// `tick_keys` for the repeat — because a test that armed the latch directly
+    /// deflection, `next_deadline` for the wake-up the runtime sleeps on,
+    /// `tick` for the repeat — because a test that armed the latch directly
     /// would prove the timer and not the path to it.
     ///
-    /// **Mutation note.** Make `next_key_deadline` return `None` and the runtime
+    /// **Mutation note.** Make `next_deadline` return `None` and the runtime
     /// would never wake; this fails on the deadline assertion rather than
-    /// silently still passing on `tick_keys`.
+    /// silently still passing on `tick`.
     #[test]
     fn a_stick_held_on_the_shell_route_repeats_and_schedules_its_own_wake_up() {
         let mut h = shell_harness(2);
@@ -1013,23 +1307,23 @@ mod tests {
         h.session.poll();
 
         assert_eq!(
-            h.session.next_key_deadline(),
+            h.session.next_deadline(),
             None,
             "an idle session must not wake the runtime at all"
         );
 
         let t = std::time::Instant::now();
-        h.session.forward(&p.path, ev::ABS, abs::X, 32767);
+        h.session.forward(&p.path, ev::ABS, abs::X, 32767, t0());
         let due = h
             .session
-            .next_key_deadline()
+            .next_deadline()
             .expect("a deflected stick arms a repeat");
         assert!(
             due >= t + keymap::repeat::INITIAL_DELAY,
             "the first repeat must wait v1's calibrated initial delay"
         );
 
-        h.session.tick_keys(due);
+        h.session.tick(due);
         assert_eq!(
             h.log.borrow().keys,
             vec![
@@ -1066,8 +1360,8 @@ mod tests {
         *h.devices.borrow_mut() = vec![p.clone()];
         h.session.poll();
 
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
-        h.session.forward(&p.path, ev::ABS, abs::X, 32767);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
+        h.session.forward(&p.path, ev::ABS, abs::X, 32767, t0());
         h.log.borrow_mut().keys.clear();
 
         // Unplug.
@@ -1087,7 +1381,7 @@ mod tests {
 
         // And the repeat is disarmed with it, or the runtime wakes forever for a
         // pad that is gone.
-        assert_eq!(h.session.next_key_deadline(), None);
+        assert_eq!(h.session.next_deadline(), None);
     }
 
     /// **Rule: a keyboard the backend created without a devnode fails the
@@ -1109,6 +1403,7 @@ mod tests {
                 shell_keys: true,
                 ..config(2)
             },
+            never_fires(),
         );
         assert!(matches!(started, Err(InputError::Keyboard(_))));
     }
@@ -1132,6 +1427,7 @@ mod tests {
                 shell_keys: true,
                 ..config(2)
             },
+            never_fires(),
         )
         .unwrap();
 
@@ -1139,7 +1435,7 @@ mod tests {
         *devices.borrow_mut() = vec![p.clone()];
         session.poll();
         assert_eq!(session.report().emit_failures, 0);
-        session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
         assert_eq!(session.report().emit_failures, 1);
     }
 
@@ -1171,7 +1467,7 @@ mod tests {
         h.session.poll();
 
         // Press and hold A, then yank the pad.
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
         h.log.borrow_mut().emitted.clear();
         h.devices.borrow_mut().clear();
         h.session.poll();
@@ -1218,9 +1514,9 @@ mod tests {
         h.session.poll();
         h.log.borrow_mut().emitted.clear();
 
-        h.session.forward(&p2.path, ev::KEY, btn::START, 1);
-        h.session.forward(&p2.path, ev::SYN, SYN_REPORT, 0);
-        h.session.forward(&p1.path, ev::ABS, abs::X, -32768);
+        h.session.forward(&p2.path, ev::KEY, btn::START, 1, t0());
+        h.session.forward(&p2.path, ev::SYN, SYN_REPORT, 0, t0());
+        h.session.forward(&p1.path, ev::ABS, abs::X, -32768, t0());
 
         assert_eq!(
             h.log.borrow().emitted,
@@ -1259,7 +1555,7 @@ mod tests {
         h.session.poll();
         h.log.borrow_mut().emitted.clear();
 
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
         assert!(h.log.borrow().emitted.is_empty());
     }
 
@@ -1282,7 +1578,7 @@ mod tests {
         h.session.backend.emit_fails = true;
 
         // A live passthrough event the device refuses.
-        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1, t0());
         assert_eq!(h.session.report().emit_failures, 1);
 
         // And a whole quiesce that cannot land: every release and axis reset,
@@ -1308,9 +1604,9 @@ mod tests {
         h.session.poll();
 
         // BTN_TOUCH twice, and one unadvertised axis.
-        h.session.forward(&p.path, ev::KEY, 0x14a, 1);
-        h.session.forward(&p.path, ev::KEY, 0x14a, 0);
-        h.session.forward(&p.path, ev::ABS, 0x12, 1);
+        h.session.forward(&p.path, ev::KEY, 0x14a, 1, t0());
+        h.session.forward(&p.path, ev::KEY, 0x14a, 0, t0());
+        h.session.forward(&p.path, ev::ABS, 0x12, 1, t0());
 
         let drops = h.session.report().drops;
         assert_eq!(drops.get(&DropReason::UnadvertisedKey), Some(&2));
@@ -1393,7 +1689,7 @@ mod tests {
         let devices = Rc::new(RefCell::new(vec![pad("/dev/input/event3", "a")]));
         let mut backend = Recorder::new(&log, &devices);
         backend.claim_fails = BTreeSet::from([PathBuf::from("/dev/input/event3")]);
-        let mut session = InputSession::start(backend, &config(2)).unwrap();
+        let mut session = InputSession::start(backend, &config(2), never_fires()).unwrap();
 
         assert!(session.poll().is_empty());
         assert!(session.report().pads.is_empty());
@@ -1414,7 +1710,7 @@ mod tests {
         backend.presenter_without_devnode = true;
         // `unwrap_err` would need `InputSession: Debug`, and so `Debug` on every
         // backend. Match instead.
-        let err = match InputSession::start(backend, &config(2)) {
+        let err = match InputSession::start(backend, &config(2), never_fires()) {
             Ok(_) => panic!("a presenter with no devnode must not yield a session"),
             Err(e) => e,
         };
@@ -1446,7 +1742,8 @@ mod tests {
     fn a_failed_enumeration_does_not_retire_the_fleet() {
         let log = Rc::new(RefCell::new(Log::default()));
         let devices = Rc::new(RefCell::new(vec![pad("/dev/input/event3", "a")]));
-        let mut session = InputSession::start(Recorder::new(&log, &devices), &config(2)).unwrap();
+        let mut session =
+            InputSession::start(Recorder::new(&log, &devices), &config(2), never_fires()).unwrap();
         assert_eq!(session.poll().len(), 1);
 
         session.backend.enumerate_fails = true;
@@ -1518,5 +1815,380 @@ mod tests {
         h.session.backend.enumerate_fails = false;
         h.session.poll();
         assert_eq!(h.session.report().polls_completed, 2);
+    }
+
+    // ---- the Guide escape (jedwards1230/tv-shell#496) ----------------------
+    //
+    // Every test below reaches the escape the only way the real core does:
+    // `forward` with an `EV_KEY`/`BTN_MODE` event, then `tick` with an instant.
+    // Nothing pokes a `GuideWatch` or a counter directly, so no assertion here
+    // is about a state the pad cannot produce.
+
+    /// Claim one pad and hand back its path, on the given harness.
+    fn one_pad(h: &mut Harness, path: &str, phys: &str) -> PathBuf {
+        let p = pad(path, phys);
+        h.devices.borrow_mut().push(p.clone());
+        h.session.poll();
+        p.path
+    }
+
+    /// A little past the hold threshold, from `t`.
+    fn past(t: std::time::Instant) -> std::time::Instant {
+        t + HOLD + std::time::Duration::from_millis(1)
+    }
+
+    /// **Rule: a held Guide writes the base layer, and touches the shell in no
+    /// way at all.**
+    ///
+    /// The acceptance for jedwards1230/tv-shell#496 at the level where the
+    /// decision is made. v1 delivered this escape as a message the shell acted
+    /// on, and it failed whenever the shell was wedged — so the assertion is not
+    /// only "a fire happened" but that the fire needed nothing else: no key on
+    /// the shell keyboard, no event onto a presenter.
+    ///
+    /// **Mutation note.** Route the fire through `emit_key` (a "tell the shell"
+    /// implementation) and the touched-nothing assertions fail while the fire
+    /// count still passes — which is why both are asserted.
+    #[test]
+    fn a_held_guide_writes_the_base_layer_and_touches_the_shell_in_no_way() {
+        let mut h = shell_harness(2);
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let keys_before = h.log.borrow().keys.len();
+        let emits_before = h.log.borrow().emitted.len();
+
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+        h.session.tick(past(t));
+
+        assert_eq!(h.escapes.borrow().fires, 1, "the hold escaped");
+        assert_eq!(
+            h.log.borrow().keys.len(),
+            keys_before,
+            "the escape must not need the shell keyboard"
+        );
+        assert_eq!(
+            h.log.borrow().emitted.len(),
+            emits_before,
+            "nor a presenter — Guide never crosses"
+        );
+        let report = h.session.report();
+        assert_eq!(report.escape.fires, 1);
+        assert_eq!(report.escape.failures, 0);
+        assert!(report.escape.last_fire_unix_ms.is_some_and(|ms| ms > 0));
+    }
+
+    /// **Rule: a TAP is not an escape — it goes to whatever is on screen.**
+    ///
+    /// v1 let a Guide tap through to the game and reserved the hold for the
+    /// escape; escaping on a tap would end a game every time the button was
+    /// brushed. On the app route the tap is a real Guide press+release on the
+    /// presenter (so Steam Big Picture still opens); on the shell route it is
+    /// the drawer key, which is Tab — the code measured to arrive.
+    ///
+    /// **Mutation note.** Fire on press (a zero threshold), or on release
+    /// regardless of elapsed time, and the `fires` assertions fail. Drop the
+    /// replay and the presenter/keyboard assertions do.
+    #[test]
+    fn a_guide_tap_reaches_the_target_and_escapes_nothing() {
+        // The app route: a real Guide, press then release, onto the presenter.
+        let mut h = harness(2);
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let before = h.log.borrow().emitted.len();
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+        assert_eq!(
+            h.log.borrow().emitted.len(),
+            before,
+            "the press is BUFFERED — nothing may cross until the gesture is known"
+        );
+        h.session
+            .forward(&path, ev::KEY, btn::MODE, 0, t + HOLD.mul_f64(0.5));
+        assert_eq!(h.escapes.borrow().fires, 0, "a tap escapes nothing");
+        let tail: Vec<(u8, Forward)> = h.log.borrow().emitted[before..].to_vec();
+        assert_eq!(
+            tail,
+            vec![
+                (
+                    0,
+                    Forward::Key {
+                        code: btn::MODE,
+                        value: 1
+                    }
+                ),
+                (
+                    0,
+                    Forward::Key {
+                        code: btn::MODE,
+                        value: 0
+                    }
+                ),
+            ]
+        );
+
+        // The shell route: the drawer.
+        let mut h = shell_harness(2);
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+        h.session
+            .forward(&path, ev::KEY, btn::MODE, 0, t + HOLD.mul_f64(0.5));
+        assert_eq!(h.escapes.borrow().fires, 0);
+        assert_eq!(
+            h.log.borrow().keys.clone(),
+            vec![
+                KeyEmit {
+                    code: keymap::key::TAB,
+                    value: 1
+                },
+                KeyEmit {
+                    code: keymap::key::TAB,
+                    value: 0
+                },
+            ]
+        );
+    }
+
+    /// **Rule: a fired hold's release is swallowed — it never reaches the
+    /// target.**
+    ///
+    /// The target never saw the press (it is buffered), so a release would be
+    /// the only edge it ever got. That is jedwards1230/tv-shell#295's shape, in
+    /// the one direction this phase can produce.
+    ///
+    /// **Mutation note.** Replay the tap unconditionally on release and this
+    /// fails.
+    #[test]
+    fn a_fired_holds_release_reaches_nothing() {
+        let mut h = harness(2);
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+        h.session.tick(past(t));
+        let after_fire = h.log.borrow().emitted.len();
+
+        h.session
+            .forward(&path, ev::KEY, btn::MODE, 0, t + HOLD + HOLD);
+        assert_eq!(
+            h.log.borrow().emitted.len(),
+            after_fire,
+            "the release of a fired hold must not leak onto the presenter"
+        );
+        assert_eq!(h.escapes.borrow().fires, 1, "and it did not fire again");
+    }
+
+    /// **Rule: two pads each holding HALF the gesture never complete it between
+    /// them.**
+    ///
+    /// v1's per-pad-complete rule (`docs/V2_GAMEPAD_HANDOFF.md` §5), ported. Pad
+    /// A holds Guide for part of the threshold and lets go; pad B picks it up
+    /// for the rest. Neither pad held it long enough, so nothing escapes — a
+    /// fleet-level timer would fire here, which is exactly the bug the rule
+    /// prevents.
+    ///
+    /// **Mutation note.** Keep the hold state on the session instead of per pad
+    /// — one `pressed_at`, set by any pad — and this fails while every
+    /// single-pad test above still passes.
+    #[test]
+    fn two_pads_each_holding_half_the_gesture_never_complete_it() {
+        let mut h = harness(2);
+        let a = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let b = one_pad(&mut h, "/dev/input/event4", "port-b");
+
+        let t = t0();
+        let handover = t + HOLD.mul_f64(0.6);
+        // A holds for 60% of the threshold. B takes over, overlapping by a
+        // moment — which is what a real handover between two people looks like,
+        // and the ordering under which a fleet-level timer misfires.
+        h.session.forward(&a, ev::KEY, btn::MODE, 1, t);
+        h.session.tick(handover);
+        h.session.forward(&b, ev::KEY, btn::MODE, 1, handover);
+        h.session.forward(
+            &a,
+            ev::KEY,
+            btn::MODE,
+            0,
+            handover + std::time::Duration::from_millis(1),
+        );
+        h.session.tick(past(t));
+
+        assert_eq!(
+            h.escapes.borrow().fires,
+            0,
+            "no single pad held Guide for the threshold, so nothing may escape"
+        );
+
+        // The probe is live: B holding it out on its OWN does escape, so the
+        // assertion above is not passing because the escape is simply broken.
+        h.session.tick(past(handover));
+        assert_eq!(h.escapes.borrow().fires, 1);
+    }
+
+    /// **Rule: two pads holding Guide together escape ONCE.**
+    ///
+    /// v1's fleet-level dedup latch (`home_hold_active`), ported. Two `home`
+    /// writes say the same thing; the second is a switch to where the box
+    /// already is.
+    ///
+    /// **Mutation note.** Drop the latch and the first count becomes 2; stop
+    /// clearing it and the second hold never fires, so the two halves pin
+    /// opposite mistakes. (Clearing on `armed` instead of `holding` is NOT
+    /// killed here, and that is recorded rather than papered over — see
+    /// `GuideWatch::holding`: at today's call sites the two are equivalent.)
+    #[test]
+    fn two_pads_holding_together_escape_once() {
+        let mut h = harness(2);
+        let a = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let b = one_pad(&mut h, "/dev/input/event4", "port-b");
+
+        let t = t0();
+        h.session.forward(&a, ev::KEY, btn::MODE, 1, t);
+        h.session.forward(&b, ev::KEY, btn::MODE, 1, t);
+        h.session.tick(past(t));
+        assert_eq!(h.escapes.borrow().fires, 1);
+
+        // Both let go, and the latch clears — a SECOND deliberate hold must
+        // still work, or the escape is a once-per-boot affair.
+        let later = t + std::time::Duration::from_secs(10);
+        h.session.forward(&a, ev::KEY, btn::MODE, 0, later);
+        h.session.forward(&b, ev::KEY, btn::MODE, 0, later);
+        h.session.forward(&a, ev::KEY, btn::MODE, 1, later);
+        h.session.tick(past(later));
+        assert_eq!(h.escapes.borrow().fires, 2);
+    }
+
+    /// **Rule: an escape that fired and could NOT be delivered is a number, not
+    /// a silence.**
+    ///
+    /// The one failure mode that is invisible from the couch: the user held the
+    /// button, the core agreed, and the screen did not change. `input-state`
+    /// has to say which of the three it was.
+    ///
+    /// **Mutation note.** Ignore the sink's `Err` (or count it as a fire) and
+    /// this fails on both numbers.
+    #[test]
+    fn an_escape_that_could_not_be_delivered_is_counted() {
+        let mut h = harness_with_escape(config(2), true);
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+        h.session.tick(past(t));
+
+        assert_eq!(h.escapes.borrow().fires, 1, "the sink was asked");
+        let report = h.session.report();
+        assert_eq!(report.escape.fires, 0, "but nothing was delivered");
+        assert_eq!(report.escape.failures, 1);
+        assert_eq!(report.escape.last_fire_unix_ms, None);
+    }
+
+    /// **Rule: `armed` is readable WHILE the hold is in progress.**
+    ///
+    /// It exists to tell "the core never saw your press" apart from "the core
+    /// saw it and the write did not take", and a flag only true after the fact
+    /// answers neither.
+    ///
+    /// **Mutation note.** Report `armed` from a pad's `holding` instead of its
+    /// `armed` and the post-fire assertion fails; hard-code it `false` and the
+    /// mid-hold one does.
+    #[test]
+    fn armed_is_readable_during_the_hold() {
+        let mut h = shell_harness(2);
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        assert!(!h.session.report().escape.armed);
+
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+        let mid = h.session.report();
+        assert!(mid.escape.armed, "the press is in, the threshold is not");
+        assert_eq!(mid.escape.fires, 0);
+        assert_eq!(mid.escape.hold_ms, super::super::escape::DEFAULT_HOLD_MS);
+
+        h.session.tick(past(t));
+        let after = h.session.report();
+        assert!(!after.escape.armed, "it is no longer waiting to fire");
+        assert_eq!(after.escape.fires, 1);
+    }
+
+    /// **Rule: the threshold is the CONFIGURED one, and short of it nothing
+    /// fires.**
+    ///
+    /// **Mutation note.** Fire at `pressed_at` rather than `pressed_at + hold`
+    /// and the first assertion fails; read the hold from a constant rather than
+    /// from the config and the longer-threshold half does.
+    #[test]
+    fn the_threshold_comes_from_the_config() {
+        let long = std::time::Duration::from_millis(1_500);
+        let mut h = harness_with(ResolvedInput {
+            guide_hold: long,
+            ..config(2)
+        });
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+
+        // Past the DEFAULT threshold, short of the configured one.
+        h.session.tick(past(t));
+        assert_eq!(h.escapes.borrow().fires, 0);
+        assert_eq!(h.session.next_deadline(), Some(t + long));
+
+        h.session.tick(t + long);
+        assert_eq!(h.escapes.borrow().fires, 1);
+    }
+
+    /// **Rule: a pad yanked mid-hold does not leave the escape latched.**
+    ///
+    /// The latch clears when no pad is holding, and an unplugged pad holds
+    /// nothing. Without the removal on retire, a controller whose battery died
+    /// mid-hold would disable the escape for the life of the session — with
+    /// `input-state` reporting nothing wrong.
+    ///
+    /// **Mutation note.** Drop the `guides.remove` in `retire` and the second
+    /// pad's hold stops firing.
+    #[test]
+    fn a_pad_yanked_mid_hold_leaves_the_escape_usable() {
+        let mut h = harness(2);
+        let a = one_pad(&mut h, "/dev/input/event3", "port-a");
+        let b = one_pad(&mut h, "/dev/input/event4", "port-b");
+
+        let t = t0();
+        h.session.forward(&a, ev::KEY, btn::MODE, 1, t);
+        h.session.tick(past(t));
+        assert_eq!(h.escapes.borrow().fires, 1);
+
+        // A is unplugged while still holding Guide, so its release never comes.
+        h.devices.borrow_mut().retain(|c| c.path != a);
+        h.session.poll();
+
+        let later = t + std::time::Duration::from_secs(10);
+        h.session.forward(&b, ev::KEY, btn::MODE, 1, later);
+        h.session.tick(past(later));
+        assert_eq!(
+            h.escapes.borrow().fires,
+            2,
+            "the latch must not survive the pad that set it"
+        );
+    }
+
+    /// **Rule: a hold arms a deadline the runtime can sleep on.**
+    ///
+    /// The threshold elapses while the user holds perfectly still, so there is
+    /// no event to hang the fire off — without a deadline the escape would only
+    /// happen when something else happened to wake the loop.
+    ///
+    /// **Mutation note.** Leave the Guide holds out of `next_deadline` and this
+    /// fails, while every test above still passes because they call `tick`
+    /// themselves.
+    #[test]
+    fn a_hold_arms_a_deadline_for_the_runtime() {
+        let mut h = harness(2);
+        let path = one_pad(&mut h, "/dev/input/event3", "port-a");
+        assert_eq!(h.session.next_deadline(), None);
+
+        let t = t0();
+        h.session.forward(&path, ev::KEY, btn::MODE, 1, t);
+        assert_eq!(h.session.next_deadline(), Some(t + HOLD));
+
+        h.session
+            .forward(&path, ev::KEY, btn::MODE, 0, t + HOLD.mul_f64(0.5));
+        assert_eq!(h.session.next_deadline(), None, "a tap disarms it");
     }
 }

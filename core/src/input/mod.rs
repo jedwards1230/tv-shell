@@ -18,10 +18,16 @@
 //! start — there is no owner arbitration yet — so while that flag is on **no app
 //! or game receives pad input at all**.
 //!
+//! There is also a **third path that is not a route at all**: a held Guide
+//! makes the core write the base layer back to the shell itself
+//! ([`escape`], jedwards1230/tv-shell#496). It is active on both routes,
+//! because it is the way back from a running app, and it deliberately involves
+//! the shell in nothing — v1 delivered this as a message the shell acted on and
+//! it failed whenever the shell was wedged, which is the only time it matters.
+//!
 //! What is NOT here, each a follow-up: the owner decision and the
 //! `gamepad`/`keyboard` per-app contracts (phase 2), masking across a route
-//! change and the Meta hold and safety combos (phase 3 — `intent home` with no
-//! shell lands on an empty compositor, a black television), rumble/battery/LED,
+//! change and the safety combos (phase 3), rumble/battery/LED,
 //! and the companion touchpad/motion-node inhibition §7 calls for (SteamOS's
 //! `ds-inhibit` shape).
 //!
@@ -40,6 +46,7 @@
 //! | [`discovery`] | The claim-or-refuse gate, and devnode ownership | yes |
 //! | [`presenter`] | The canonical profile, rescaling, translation, quiesce | yes |
 //! | [`keymap`] | Pad → key translation, the keyboard profile, stick repeat | yes |
+//! | [`escape`] | The Guide tap/hold rule, and the hand-off that writes the base layer | yes |
 //! | [`fleet`] | Membership, slot stability, the join/leave plan | yes |
 //! | [`session`] | The lifecycle: create once, claim, forward, retire | yes (recording double) |
 //! | [`backend`] | The hardware seam | n/a (a trait) |
@@ -49,6 +56,7 @@
 pub mod backend;
 pub mod config;
 pub mod discovery;
+pub mod escape;
 pub mod fleet;
 pub mod identity;
 pub mod keymap;
@@ -64,6 +72,7 @@ pub mod evdev_backend;
 mod runtime;
 
 pub use config::{InputConfig, ResolvedInput};
+pub use escape::EscapeSink;
 pub use session::InputReport;
 
 use tokio::sync::watch;
@@ -189,8 +198,19 @@ pub fn decide(config: &InputConfig) -> StartDecision {
 /// taking the core down: the compositor half — the base layer, launching, the
 /// escape hatches — is what keeps a television showing something, and it must
 /// not be hostage to `/dev/uinput` permissions.
+///
+/// `escape` builds the sink a held Guide fires into. A **thunk**, not a value,
+/// so the gate below still short-circuits everything: with the flag off the
+/// escape worker is never constructed either, and the promise stays "a disabled
+/// core does no work at all" rather than "no *device* work". It is a parameter
+/// because what performs the base-layer write is the compositor half of the
+/// core, which this module must not know about — and because a session's escape
+/// has to be substitutable for the recording double its tests use.
 #[cfg(target_os = "linux")]
-pub fn start(config: &InputConfig) -> Option<InputHandle> {
+pub fn start(
+    config: &InputConfig,
+    escape: impl FnOnce() -> anyhow::Result<Box<dyn EscapeSink + Send>>,
+) -> Option<InputHandle> {
     let resolved = match decide(config) {
         StartDecision::Disabled => {
             tracing::info!("[input] is disabled; no input device will be enumerated or opened");
@@ -202,7 +222,17 @@ pub fn start(config: &InputConfig) -> Option<InputHandle> {
         }
         StartDecision::Start(resolved) => resolved,
     };
-    match runtime::spawn(resolved) {
+    let escape = match escape() {
+        Ok(sink) => sink,
+        Err(e) => {
+            // The layer does not start rather than starting with no way back to
+            // the shell: a grabbed pad and no escape is exactly the trap
+            // jedwards1230/tv-shell#496 exists to remove.
+            tracing::error!("input layer not started: building the escape sink: {e:#}");
+            return None;
+        }
+    };
+    match runtime::spawn(resolved, escape) {
         Ok(handle) => Some(handle),
         Err(e) => {
             tracing::error!("input layer not started: {e}");
@@ -298,7 +328,10 @@ mod tests {
 /// The crate still compiles and its rules are still tested there — the point of
 /// keeping every decision out of the backend.
 #[cfg(not(target_os = "linux"))]
-pub fn start(config: &InputConfig) -> Option<InputHandle> {
+pub fn start(
+    config: &InputConfig,
+    _escape: impl FnOnce() -> anyhow::Result<Box<dyn EscapeSink + Send>>,
+) -> Option<InputHandle> {
     if config.enabled {
         tracing::warn!("[input].enabled is set, but evdev and uinput are Linux-only");
     }

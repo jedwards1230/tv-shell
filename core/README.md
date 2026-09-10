@@ -259,15 +259,35 @@ those tests has been mutation-checked (`## Build, test & lint`).
   life of a session — and a pad that leaves has its **keys** released as well as
   its presenter buttons, because the keyboard outlives the pad in exactly the
   same way.
+- **The Guide escape is performed BY THE CORE, and reaches the shell in no way
+  at all.** A held Guide makes the core write the base layer back to the shell
+  itself — `baselayer::home`, one write plus one bounded verify — so it works
+  with the shell dead, hung or never started. v1 delivered this as `intent
+  home-hold`, a message the shell acted on, and it failed in exactly the
+  situation it existed for (`docs/V2_GAMEPAD_HANDOFF.md` §5). It rests on M1
+  (grab always) and M3 (`EVIOCGRAB` genuinely takes the pad from a running app),
+  and it is active on **both** routes because the route it is most needed on is
+  the app one. A *tap* is not an escape: it is buffered and delivered to
+  whatever is on screen, v1's behaviour and v1's 500 ms threshold, ported. The
+  hold state is **per pad**, so two pads each holding half the gesture never
+  complete it between them, and a fleet latch makes two pads holding together
+  escape once. The write happens on the escape worker's thread, never on the
+  input loop: a `home` whose target has no mapped window waits the *map* bound,
+  and "the shell has no mapped window" is precisely the case this exists for —
+  blocking the pad loop there would trade a wedged shell for a dead controller.
 - **`input-state` answers from a snapshot, and says when it last ran.** It is the
   verb an operator reaches for when something is wrong, so it must not hang on a
   wedged input loop — hence a `watch` snapshot rather than a request/reply round
   trip. The price is a report that looks plausible whether the loop is alive or
   dead, so it carries `last_poll_unix_ms` and `polls_completed`: a stopped loop
   is visible as a number that stops advancing. It also carries `owner`, `route`,
-  `masked_keys` and `masked_axes` — empty or fixed in phase 1 — so a hardware
+  `masked_keys` and `masked_axes` — empty or fixed in phase 1 — plus an `escape`
+  block (`armed`, `fires`, `failures`, `last_fire_unix_ms`), so a hardware
   session **reads** what the core decided rather than inferring it from
-  behaviour, which is what makes the later phases verifiable.
+  behaviour, which is what makes the later phases verifiable. `armed` is what
+  separates "the core never saw the press" from "it saw it and the write did not
+  take"; `failures` is the case that is otherwise invisible from the couch — the
+  user held the button, the core agreed, and the screen did not change.
 
 ## Install
 
@@ -498,6 +518,54 @@ worth repeating by hand:
 - Point any arm of `keymap::key_for_button` at `KEY_MENU` (`0x8b`) — the
   intuitive drawer key, and the one actually tried on hardware.
   `every_emittable_code_was_measured_to_arrive` must fail.
+
+Fourteen more were run against the Guide escape (jedwards1230/tv-shell#496).
+Thirteen are killed; the fourteenth is a genuine equivalence and is recorded as
+such rather than papered over.
+
+- Make `GuideWatch::due` compare against `Duration::ZERO` — a hold threshold of
+  zero, so every tap escapes. `a_tap_is_a_tap_and_fires_nothing`,
+  `the_threshold_comes_from_the_config` and
+  `two_pads_each_holding_half_the_gesture_never_complete_it` must fail.
+- Fire the escape from the Guide **press** arm in `session::on_guide`.
+  `a_guide_tap_reaches_the_target_and_escapes_nothing` and three others must
+  fail.
+- Replay a fired hold's release as a tap (make `Release::Swallow` deliver).
+  `a_fired_holds_release_reaches_nothing` must fail.
+- Make a release NOT disarm its pad while another pad still holds Guide — a
+  fleet-level timer rather than a per-pad one.
+  `two_pads_each_holding_half_the_gesture_never_complete_it` must fail. Note
+  the ORDERING that catches it: the two pads' holds must OVERLAP, which is what
+  a real handover between two people looks like.
+- Drop the fleet dedup latch in `fire_escape`, and separately stop clearing it.
+  `two_pads_holding_together_escape_once` must fail either way — the first as a
+  double fire, the second as an escape that works once per boot.
+- Count a sink error as a fire in `fire_escape`.
+  `an_escape_that_could_not_be_delivered_is_counted` must fail. This is the one
+  failure mode invisible from the couch: the user held the button, the core
+  agreed, and the screen did not change.
+- Emit a key alongside the fire — a "tell the shell" implementation.
+  `a_held_guide_writes_the_base_layer_and_touches_the_shell_in_no_way` must
+  fail, while the fire COUNT still passes, which is why both are asserted.
+- Gate the Guide interception on `route == Route::Shell`, so there is no way out
+  of a running app. Eight tests must fail.
+- Drop `guides.remove` from `session::retire`.
+  `a_pad_yanked_mid_hold_leaves_the_escape_usable` must fail — a controller
+  whose battery dies mid-hold would otherwise disable the escape for the rest of
+  the session, with `input-state` reporting nothing wrong.
+- Leave the Guide holds out of `next_deadline`.
+  `a_hold_arms_a_deadline_for_the_runtime` must fail; the threshold elapses with
+  the user holding still, so there is no event to hang the fire off.
+- Make `escape::run_worker` drain its queue without calling `home`.
+  `every_request_performs_one_home_write` must fail.
+- Report `escape.armed` from `holding` rather than `armed`.
+  `armed_is_readable_during_the_hold` must fail.
+- **Survives:** clearing the fleet latch on `armed` rather than `holding`. Both
+  call sites — a release and a retire — make the two equivalent, because a pad
+  that has fired cannot fire again without a fresh press. `holding` is kept
+  because it ties the latch's lifetime to the physical button rather than to the
+  timer, and the equivalence is noted on `GuideWatch::holding` so a later reader
+  does not mistake it for an untested rule.
 - Change `keymap::KeyboardProfile::keys` to advertise only the codes it emits.
   `the_keyboard_profile_advertises_the_block_udev_requires` must fail, and so
   must the uinput lane's `the_shell_keyboard_advertises_the_block_udev_reads` —

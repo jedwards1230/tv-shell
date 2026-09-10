@@ -26,8 +26,11 @@
 //! # What is deliberately NOT here
 //!
 //! * **Guide / `BTN_MODE`.** [`key_for_button`] returns `None` for it on
-//!   purpose — the Guide hold is a core-side `home` (a base-layer write), not a
-//!   key, and it lands in phase 3. The seam is the `None`, not a stub.
+//!   purpose, and that stays true now that the Guide escape exists
+//!   (jedwards1230/tv-shell#496): a held Guide is a core-side `home` — a
+//!   base-layer write performed by [`super::escape`] — never a key. It is
+//!   intercepted in [`super::session`] before this module is reached, on every
+//!   route, so nothing here ever sees it.
 //! * **Masking** (`masked_keys` / `masked_axes`): phase 3.
 //! * **The right stick** (v1 drove a mouse from it) and remappable bindings:
 //!   dropped for now, per the handoff plan §5.
@@ -131,7 +134,7 @@ impl KeyboardProfile {
 /// [`VERIFIED_CODES`].
 ///
 /// **Mutation note.** Add `btn::MODE => key::ESC` and
-/// `guide_is_not_a_key_in_this_phase` fails; map anything to `KEY_MENU` (0x8b)
+/// `guide_is_never_a_key` fails; map anything to `KEY_MENU` (0x8b)
 /// and `every_emittable_code_was_measured_to_arrive` fails.
 pub fn key_for_button(code: u16) -> Option<u16> {
     match code {
@@ -429,15 +432,16 @@ mod tests {
         }
     }
 
-    /// **Rule: Guide is not a key in this phase.**
+    /// **Rule: Guide is never a key.**
     ///
     /// It is a core-side `home` (a base-layer write), and mapping it to a key
     /// would leak it to whatever holds focus — v1's stated reason for handling
-    /// `BTN_MODE` directly rather than binding it.
+    /// `BTN_MODE` directly rather than binding it. Still true with the escape
+    /// shipped: the session intercepts Guide before this module sees it.
     ///
     /// **Mutation note.** Give `btn::MODE` any mapping and this fails.
     #[test]
-    fn guide_is_not_a_key_in_this_phase() {
+    fn guide_is_never_a_key() {
         assert_eq!(key_for_button(btn::MODE), None);
         let mut map = KeyMap::new();
         assert!(map.on_event(ev::KEY, btn::MODE, 1, None, t0()).is_empty());
