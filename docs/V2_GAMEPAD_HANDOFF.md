@@ -190,6 +190,12 @@ start, so a hardware session reads what the core decided instead of inferring it
 `KEY_MENU`, which gamescope does not deliver, and the keymap must emit only codes
 verified to arrive.
 
+**Shipped, default off.** `core/src/input/keymap.rs`, the `create_keyboard` /
+`emit_key` backend seam, `[input].shell_keys`, and `owner` / `route` /
+`masked_keys` / `masked_axes` on `InputReport` are in. Nothing changes on a box
+until that flag is set, and it has not been exercised on hardware yet — the
+acceptance for that is a person at the television, not a green suite.
+
 **The honest cost, stated loudly:** with routing forced to `Shell` the pad is grabbed
 unconditionally, so **Moonlight loses the pad the whole time the flag is on**. That is
 why it is off by default and why enabling it is an attended act, never a deploy.

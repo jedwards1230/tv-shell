@@ -35,13 +35,14 @@
 //! against its own fixture, which is the failure this crate's test strategy is
 //! written against.
 //!
-//! # Not wired into CI yet, on purpose
+//! # Wired into CI, as a blocking leg
 //!
-//! `/dev/uinput` is a kernel device, not an apt package. A GitHub-hosted runner
-//! is a full VM with passwordless sudo, so `modprobe uinput` is *likely* to
-//! work — but "likely" is how `atoms_xvfb.rs` spent months compiled everywhere
-//! and run nowhere. Wiring the CI leg is a follow-up that has to be **verified
-//! by watching it actually execute**, not assumed from the runner's shape.
+//! `/dev/uinput` is a kernel device, not an apt package, so whether a hosted
+//! runner can `modprobe uinput` had to be *observed* rather than assumed from
+//! the runner's shape — that assumption is how `atoms_xvfb.rs` spent months
+//! compiled everywhere and run nowhere. The `core-uinput` job in `rust.yml`
+//! therefore landed advisory and was made blocking once it had a green run
+//! history on hosted runners.
 
 #![cfg(target_os = "linux")]
 
@@ -50,6 +51,7 @@ use std::path::PathBuf;
 use tv_shell_core::input::backend::InputBackend;
 use tv_shell_core::input::discovery::{classify, Candidate, OwnedNodes, Refusal, Verdict};
 use tv_shell_core::input::identity::bundled_db;
+use tv_shell_core::input::keymap::{KeyEmit, KeyboardProfile, VERIFIED_CODES};
 use tv_shell_core::input::presenter::{btn, PadProfile};
 
 /// Require the opt-in and **both** permissions these tests need, or panic with
@@ -336,4 +338,112 @@ fn each_player_gets_its_own_presenter_device() {
              reading the device list: {name:?}"
         );
     }
+}
+
+/// **The kernel accepts the shell keyboard's profile, publishes a devnode for
+/// it, and reports the whole `1..=31` block back.**
+///
+/// The hardware half of the rule `keymap.rs` states: systemd's `input_id`
+/// builtin sets `ID_INPUT_KEYBOARD` only when key codes 1..=31 are all
+/// advertised, and libinput ignores a device without that property — so a
+/// keyboard advertising only the keys it means to send is created successfully,
+/// looks right in `/proc/bus/input/devices`, and drives nothing
+/// (V2_GAMEPAD_HANDOFF §2.1.1, measured on htpc-1).
+///
+/// The unit test asserts the profile ASKS for the block. Only this one asserts
+/// the kernel gave it: a uinput device silently drops codes it did not accept,
+/// so "we requested it" and "the device has it" are different claims.
+///
+/// `ID_INPUT_KEYBOARD` itself is deliberately NOT asserted here — it is set by
+/// udev, which a container or a bare test process need not have running, and a
+/// check that passes because nothing was watching is the failure this file is
+/// written against. What is asserted is the precondition udev's rule reads.
+#[test]
+#[ignore = "needs /dev/uinput: set TV_SHELL_TEST_UINPUT and run with --ignored"]
+fn the_shell_keyboard_advertises_the_block_udev_reads() {
+    require_opt_in();
+
+    let mut backend = tv_shell_core::input::evdev_backend::EvdevBackend::new();
+    let devnodes = backend
+        .create_keyboard(&KeyboardProfile)
+        .expect("the kernel must accept the keyboard profile on /dev/uinput");
+    assert!(
+        !devnodes.is_empty(),
+        "the kernel published no devnode for the keyboard"
+    );
+
+    let device = evdev::Device::open(&devnodes[0]).expect("opening our own keyboard");
+    let keys = device.supported_keys().expect("it must advertise keys");
+    for code in 1u16..=31 {
+        assert!(
+            keys.contains(evdev::KeyCode::new(code)),
+            "the kernel did not take key {code}; without the full 1..=31 block udev does \
+             not set ID_INPUT_KEYBOARD and libinput ignores the device entirely"
+        );
+    }
+    for code in VERIFIED_CODES {
+        assert!(
+            keys.contains(evdev::KeyCode::new(code)),
+            "the kernel did not take emittable key {code}, which it would then drop silently"
+        );
+    }
+
+    // It must not look like a pad — and the gate must refuse it on that basis
+    // even before ownership is considered, or a keyboard could occupy a player
+    // slot.
+    let seen = enumerate_by_path(&mut backend, &devnodes[0])
+        .expect("the keyboard must appear in an enumeration of /dev/input");
+    assert!(!seen.has_btn_south, "a keyboard is not a pad");
+    assert_eq!(
+        classify(&seen, &bundled_db(), &OwnedNodes::new(), None),
+        Verdict::Refuse(Refusal::NotAGamepad),
+    );
+
+    // And it emits: a device that refuses its own advertised codes would be a
+    // keyboard that exists and types nothing.
+    backend
+        .emit_key(KeyEmit {
+            code: 15, // KEY_TAB
+            value: 1,
+        })
+        .expect("the keyboard must accept a key it advertises");
+    backend
+        .emit_key(KeyEmit { code: 15, value: 0 })
+        .expect("and its release");
+}
+
+/// **A second keyboard is refused.**
+///
+/// The permanence rule at the device layer (§7 / jedwards1230/tv-shell#402): the
+/// keyboard is created once in `InputSession::start`, and a second one would
+/// both be a hotplug event and leave the first holding whatever it last pressed.
+/// `session.rs` proves this crate never *asks* twice; this proves the backend
+/// would refuse if it did.
+#[test]
+#[ignore = "needs /dev/uinput: set TV_SHELL_TEST_UINPUT and run with --ignored"]
+fn a_second_keyboard_is_refused() {
+    require_opt_in();
+
+    let mut backend = tv_shell_core::input::evdev_backend::EvdevBackend::new();
+    backend
+        .create_keyboard(&KeyboardProfile)
+        .expect("the first keyboard");
+    assert!(
+        backend.create_keyboard(&KeyboardProfile).is_err(),
+        "a session must never hold two keyboards"
+    );
+}
+
+/// **Emitting before the keyboard exists is an error, not a silent no-op.**
+///
+/// Reachable in exactly one way — a backend used without `create_keyboard` —
+/// and it must fail loudly, because the alternative is a shell route where every
+/// key vanishes while `input-state` reports a healthy session.
+#[test]
+#[ignore = "needs /dev/uinput: set TV_SHELL_TEST_UINPUT and run with --ignored"]
+fn emitting_without_a_keyboard_fails_rather_than_vanishing() {
+    require_opt_in();
+
+    let mut backend = tv_shell_core::input::evdev_backend::EvdevBackend::new();
+    assert!(backend.emit_key(KeyEmit { code: 15, value: 1 }).is_err());
 }

@@ -36,6 +36,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 
 use super::backend::{InputBackend, InputError};
 use super::discovery::Candidate;
+use super::keymap::{KeyEmit, KeyboardProfile};
 use super::presenter::{ev, AbsRange, Forward, PadProfile, SYN_REPORT};
 
 /// evdev + uinput.
@@ -45,6 +46,9 @@ pub struct EvdevBackend {
     presenters: Vec<VirtualDevice>,
     /// Claimed pads, by devnode. Holding the stream here is holding the grab.
     pads: HashMap<PathBuf, EventStream>,
+    /// The shell keyboard, when the session created one. Created once in
+    /// `InputSession::start` and dropped only with this struct.
+    keyboard: Option<VirtualDevice>,
 }
 
 impl EvdevBackend {
@@ -52,6 +56,7 @@ impl EvdevBackend {
         EvdevBackend {
             presenters: Vec::new(),
             pads: HashMap::new(),
+            keyboard: None,
         }
     }
 
@@ -266,5 +271,81 @@ impl InputBackend for EvdevBackend {
             slot,
             detail: e.to_string(),
         })
+    }
+
+    fn create_keyboard(&mut self, _profile: &KeyboardProfile) -> Result<Vec<PathBuf>, InputError> {
+        if self.keyboard.is_some() {
+            // The permanence rule, enforced where the device actually lives: a
+            // second keyboard would be a hotplug event AND would leave the first
+            // one holding whatever it last pressed.
+            return Err(InputError::Keyboard(
+                "a keyboard already exists for this session; it is created once in \
+                 InputSession::start and never replaced"
+                    .into(),
+            ));
+        }
+
+        let keys: AttributeSet<KeyCode> = KeyboardProfile::keys()
+            .into_iter()
+            .map(KeyCode::new)
+            .collect();
+        let name = KeyboardProfile::device_name();
+        let mut device = VirtualDevice::builder()
+            .map_err(|e| InputError::Keyboard(e.to_string()))?
+            .name(&name)
+            .input_id(InputId::new(
+                BusType(KeyboardProfile::BUS),
+                KeyboardProfile::VENDOR,
+                KeyboardProfile::PRODUCT,
+                KeyboardProfile::VERSION,
+            ))
+            .with_keys(&keys)
+            .map_err(|e| InputError::Keyboard(e.to_string()))?
+            .build()
+            .map_err(|e| InputError::Keyboard(e.to_string()))?;
+
+        // Same retry as `create_presenter`: the kernel may not have published
+        // /dev/input/eventN by the instant build() returns, and a devnode we
+        // never saw is one discovery cannot be taught to skip.
+        let mut nodes = Vec::new();
+        for attempt in 0..20 {
+            match device.enumerate_dev_nodes_blocking() {
+                Ok(found) => {
+                    nodes = found.flatten().collect();
+                    if !nodes.is_empty() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    return Err(InputError::Keyboard(format!(
+                        "enumerating its devnodes: {e}"
+                    )))
+                }
+            }
+            if attempt < 19 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        if nodes.is_empty() {
+            return Err(InputError::Keyboard(
+                "its devnode never appeared, so discovery could not be taught to skip it".into(),
+            ));
+        }
+
+        self.keyboard = Some(device);
+        Ok(nodes)
+    }
+
+    fn emit_key(&mut self, emit: KeyEmit) -> Result<(), InputError> {
+        let device = self.keyboard.as_mut().ok_or_else(|| InputError::EmitKey {
+            code: emit.code,
+            detail: "no keyboard exists for this session".into(),
+        })?;
+        device
+            .emit(&[InputEvent::new(ev::KEY, emit.code, emit.value)])
+            .map_err(|e| InputError::EmitKey {
+                code: emit.code,
+                detail: e.to_string(),
+            })
     }
 }
