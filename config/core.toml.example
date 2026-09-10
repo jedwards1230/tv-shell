@@ -404,14 +404,36 @@
 # virtual pad. On its own that is BEHAVIOURALLY INVISIBLE — what reads the
 # presenter sees the same input the physical pad was sending.
 #
-# WHAT IT DOES NOT DO YET: route anything to a shell, translate the pad to a
-# keyboard for web apps, or implement the Meta-hold escape. Those need a shell to
-# route to. Rumble, battery, LEDs and companion touchpad/motion-node inhibition
-# are also still to come.
+# WHAT IT DOES NOT DO YET: decide an owner (the route below is hard-wired, not
+# arbitrated), mask a button held across a route change, or implement the
+# Meta-hold escape. Rumble, battery, LEDs and companion touchpad/motion-node
+# inhibition are also still to come. See docs/V2_GAMEPAD_HANDOFF.md.
 
 #[input]
 # The safety flag.
 #enabled = false
+#
+# Route the pad to the SHELL as synthesised keys instead of onto the player
+# presenters. Off by default, and inert unless `enabled` is on too.
+#
+# READ THIS BEFORE SETTING IT. There is no owner arbitration yet — phase 1 of
+# docs/V2_GAMEPAD_HANDOFF.md hard-wires the route to the shell — so while this is
+# on, EVERY pad is grabbed unconditionally and NO app or game receives pad input.
+# Moonlight loses the controller for as long as the core runs with this set. It
+# is a separate flag under `enabled` precisely so that turning it on is an
+# attended act at the television, never a side effect of a deploy.
+#
+# What it does when on: A activates (KEY_ENTER), B goes back (KEY_ESC), Start
+# toggles the drawer (KEY_TAB), and the d-pad and left stick drive the arrows —
+# the stick with v1's calibrated auto-repeat (300 ms, then every 150 ms). The
+# Guide button is deliberately NOT a key. Only key codes measured to actually
+# reach the shell through gamescope are emitted: KEY_MENU is dropped by gamescope
+# silently, which is why the drawer is Tab.
+#
+# It creates one more uinput device, `tv-shell-keys`, alongside the presenters —
+# created once at startup and never again, the same permanence rule, and gone
+# with the process.
+#shell_keys = false
 #
 # Player slots, and so how many permanent uinput presenters exist. A CAPACITY,
 # not a count of connected pads: the presenters are created at startup whether or

@@ -99,6 +99,20 @@ pub fn spawn(resolved: ResolvedInput) -> anyhow::Result<InputHandle> {
     }
 }
 
+/// Why the loop woke.
+///
+/// Named rather than an `Option`, because there are now three reasons and
+/// "None means the discovery tick" was already a comment pretending to be a
+/// type.
+enum Wake {
+    /// The discovery interval elapsed.
+    Poll,
+    /// A stick auto-repeat is due.
+    Repeat,
+    /// A claimed pad produced an event, or its stream failed.
+    Event((std::path::PathBuf, std::io::Result<evdev::InputEvent>)),
+}
+
 async fn run(
     resolved: ResolvedInput,
     started: std::sync::mpsc::Sender<Result<(), String>>,
@@ -124,25 +138,44 @@ async fn run(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
+        // Copied out BEFORE the select, so the sleep future borrows nothing from
+        // the session and the pad-read arm can borrow it mutably.
+        let repeat_at = session.next_key_deadline();
+        let repeat = async move {
+            match repeat_at {
+                Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+                // No stick is deflected, so there is nothing to repeat and this
+                // arm simply never fires. Pending rather than a busy interval:
+                // the common case is no deflection at all.
+                None => std::future::pending().await,
+            }
+        };
+
         // The backend is borrowed only for the duration of this expression, so
         // the arms below are free to use `session` mutably afterwards.
         let event = tokio::select! {
-            _ = tick.tick() => None,
-            next = session.backend_mut().next_event() => Some(next),
+            _ = tick.tick() => Wake::Poll,
+            _ = repeat => Wake::Repeat,
+            next = session.backend_mut().next_event() => Wake::Event(next),
             _ = &mut shutdown => break,
         };
 
         match event {
-            None => {
+            Wake::Repeat => {
+                // The stick auto-repeat, on the shell route. A no-op on the app
+                // route, where no keymap exists to have armed a deadline.
+                session.tick_keys(std::time::Instant::now());
+            }
+            Wake::Poll => {
                 for joined in session.poll() {
                     tracing::debug!(slot = joined.slot, path = %joined.path.display(), "joined");
                 }
                 let _ = reports.send(session.report());
             }
-            Some((path, Ok(ev))) => {
+            Wake::Event((path, Ok(ev))) => {
                 session.forward(&path, ev.event_type().0, ev.code(), ev.value());
             }
-            Some((path, Err(e))) => {
+            Wake::Event((path, Err(e))) => {
                 // The usual cause is the pad being unplugged. Retire it now
                 // rather than waiting for the next enumeration to miss it.
                 tracing::info!("pad at {} stopped reading: {e}", path.display());

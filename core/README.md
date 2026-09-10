@@ -19,7 +19,7 @@ its relationship to `daemon/`.
 | `protocol` | The IPC grammar, carried over from v1 unchanged in contract (§4): newline framing, 4096-byte lines, `ok` / `unknown` / `error:<msg>` / a bare JSON document |
 | `ipc` | The Unix-socket server — `LinesCodec`, one task per connection, socket bound 0600 under a tightened umask. Compositor work sits behind a `Compositor` trait so the whole request/reply surface is testable with no X server |
 | `compositor` | The seam between the two: IPC verbs → the §5 X primitives |
-| `input` | The pad fleet (§7): DB-match-or-reject discovery, stable per-player slots, hot join/leave, `EVIOCGRAB`, and **permanent** per-player uinput presenters. **Off unless `[input].enabled` is set** — with it off nothing is enumerated, opened or grabbed. Every rule is in a pure submodule; only `evdev_backend` and `runtime` touch hardware |
+| `input` | The pad fleet (§7): DB-match-or-reject discovery, stable per-player slots, hot join/leave, `EVIOCGRAB`, and **permanent** per-player uinput presenters — plus, behind `[input].shell_keys`, the pad→key route that drives the v2 shell. **Off unless `[input].enabled` is set** — with it off nothing is enumerated, opened or grabbed. Every rule is in a pure submodule; only `evdev_backend` and `runtime` touch hardware |
 
 `units/` holds the v2 session units (§4's `tv-shell-session.target` shape, taken
 from the ChimeraOS `gamescope-session` files rather than written from scratch).
@@ -237,12 +237,37 @@ those tests has been mutation-checked (`## Build, test & lint`).
   an optimisation on top, never the sole sensor. A failed enumeration changes
   nothing — "we could not read the device list" is not evidence that every pad
   was unplugged, and treating it as one would release a live fleet mid-game.
+- **The shell route is a keyboard, and only codes measured to arrive are sent.**
+  Qt 6 has no gamepad input, and gamescope routes keys but never pads
+  (`docs/V2_GAMEPAD_HANDOFF.md` §1), so a controller reaches the v2 shell as
+  synthesised keys or not at all. It also **drops `KEY_MENU` silently** — XTEST
+  `Menu`, injected past gamescope, opened the drawer while the same key from a
+  uinput device never arrived — so `keymap::VERIFIED_CODES` is a list of codes
+  someone watched land, and a mapping outside it fails a test rather than
+  becoming a button that quietly does nothing.
+- **The keyboard advertises key codes `1..=31` in full**, including `KEY_MINUS`,
+  `KEY_EQUAL`, the braces and `KEY_LEFTCTRL` — codes the shell is never sent.
+  systemd's `input_id` sets `ID_INPUT_KEYBOARD` only when all of them are
+  present, and without that property libinput does not treat the device as a
+  keyboard at all: the intuitive profile, advertising exactly the keys it means
+  to send, was built, looked correct in `/proc/bus/input/devices`, and drove
+  nothing (§2.1.1).
+- **The keyboard is permanent too, and created only in `InputSession::start`.**
+  The presenters' rule, for the same reason (jedwards1230/tv-shell#402): a device
+  that appeared on a route change would be a hotplug event apps forward to the
+  streaming host. It is created once or never — `shell_keys` is fixed for the
+  life of a session — and a pad that leaves has its **keys** released as well as
+  its presenter buttons, because the keyboard outlives the pad in exactly the
+  same way.
 - **`input-state` answers from a snapshot, and says when it last ran.** It is the
   verb an operator reaches for when something is wrong, so it must not hang on a
   wedged input loop — hence a `watch` snapshot rather than a request/reply round
   trip. The price is a report that looks plausible whether the loop is alive or
   dead, so it carries `last_poll_unix_ms` and `polls_completed`: a stopped loop
-  is visible as a number that stops advancing.
+  is visible as a number that stops advancing. It also carries `owner`, `route`,
+  `masked_keys` and `masked_axes` — empty or fixed in phase 1 — so a hardware
+  session **reads** what the core decided rather than inferring it from
+  behaviour, which is what makes the later phases verifiable.
 
 ## Install
 
@@ -470,6 +495,23 @@ worth repeating by hand:
   `a_failed_enumeration_does_not_retire_the_fleet` must fail.
 - Make `presenter::translate` map `SYN_DROPPED` to `Forward::Sync`.
   `syn_report_flushes_and_syn_dropped_does_not` must fail.
+- Point any arm of `keymap::key_for_button` at `KEY_MENU` (`0x8b`) — the
+  intuitive drawer key, and the one actually tried on hardware.
+  `every_emittable_code_was_measured_to_arrive` must fail.
+- Change `keymap::KeyboardProfile::keys` to advertise only the codes it emits.
+  `the_keyboard_profile_advertises_the_block_udev_requires` must fail, and so
+  must the uinput lane's `the_shell_keyboard_advertises_the_block_udev_reads` —
+  the second is the one that says the *kernel* took the block, which the first
+  cannot.
+- Make `InputSession::start` create the keyboard unconditionally.
+  `with_shell_keys_off_no_keyboard_is_ever_created` must fail — on the creation
+  log, not on the report, so it cannot pass by reading back the field it set.
+- Drop the `return` after the keymap in `session::forward`.
+  `on_the_shell_route_a_button_becomes_a_key_and_the_presenter_gets_nothing`
+  must fail: a game behind the shell would see every button pressed in it.
+- Delete the keymap quiesce in `session::retire`.
+  `a_pad_that_leaves_releases_the_keys_it_was_holding` must fail — the stuck
+  arrow key that scrolls the shell forever.
 
 And against `core/tests/input_uinput.rs`, which runs on a real kernel:
 

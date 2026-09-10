@@ -10,11 +10,20 @@
 //! **behaviourally invisible**: the pad is grabbed and re-presented, and what
 //! reads the presenter sees the same input it saw from the physical pad.
 //!
-//! What is NOT here, each a follow-up: routing to a shell and the
-//! `gamepad`/`keyboard` contracts (there is no shell to route to yet), the Meta
-//! hold and safety combos (`intent home` with no shell lands on an empty
-//! compositor — a black television), rumble/battery/LED, and the companion
-//! touchpad/motion-node inhibition §7 calls for (SteamOS's `ds-inhibit` shape).
+//! Since phase 1 of `docs/V2_GAMEPAD_HANDOFF.md` there is also a **second
+//! route**: with `[input].shell_keys` set (under the still-default-false
+//! `[input].enabled`), pad events are translated by [`keymap`] onto one
+//! permanent uinput **keyboard** and reach the v2 shell through gamescope,
+//! instead of crossing onto the presenters. The route is hard-wired at session
+//! start — there is no owner arbitration yet — so while that flag is on **no app
+//! or game receives pad input at all**.
+//!
+//! What is NOT here, each a follow-up: the owner decision and the
+//! `gamepad`/`keyboard` per-app contracts (phase 2), masking across a route
+//! change and the Meta hold and safety combos (phase 3 — `intent home` with no
+//! shell lands on an empty compositor, a black television), rumble/battery/LED,
+//! and the companion touchpad/motion-node inhibition §7 calls for (SteamOS's
+//! `ds-inhibit` shape).
 //!
 //! # Default off
 //!
@@ -30,6 +39,7 @@
 //! | [`identity`] | SDL GUID, controller DB, wire id, slot allocation | yes |
 //! | [`discovery`] | The claim-or-refuse gate, and devnode ownership | yes |
 //! | [`presenter`] | The canonical profile, rescaling, translation, quiesce | yes |
+//! | [`keymap`] | Pad → key translation, the keyboard profile, stick repeat | yes |
 //! | [`fleet`] | Membership, slot stability, the join/leave plan | yes |
 //! | [`session`] | The lifecycle: create once, claim, forward, retire | yes (recording double) |
 //! | [`backend`] | The hardware seam | n/a (a trait) |
@@ -41,6 +51,7 @@ pub mod config;
 pub mod discovery;
 pub mod fleet;
 pub mod identity;
+pub mod keymap;
 pub mod presenter;
 pub mod session;
 

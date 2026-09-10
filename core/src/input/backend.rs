@@ -14,14 +14,16 @@
 //!
 //! # What a test double here can and cannot prove
 //!
-//! A double can prove **our call sequence**: that presenters are created once at
-//! start and never again, that a leave quiesces before it releases, that a pad
-//! we cannot seat is given back. That is our code, and it is what the doubles in
-//! `session.rs` assert.
+//! A double can prove **our call sequence**: that presenters and the shell
+//! keyboard are created once at start and never again, that a leave quiesces
+//! before it releases, that a pad we cannot seat is given back, that a routed
+//! event reaches the keyboard and NOT the presenter. That is our code, and it is
+//! what the doubles in `session.rs` assert.
 //!
 //! A double **cannot** prove that `EVIOCGRAB` excludes other readers, that
-//! uinput publishes the devnode we then claim ownership of, or that a game reads
-//! the presenter at all. Nothing in this crate asserts those, because a fake
+//! uinput publishes the devnode we then claim ownership of, that the kernel
+//! really took the keyboard's `1..=31` block, or that a game reads the presenter
+//! at all. Nothing in this crate asserts those, because a fake
 //! that "grabbed" would only be testing the fake. They are hardware claims,
 //! verified on hardware.
 
@@ -29,6 +31,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::discovery::Candidate;
+use super::keymap::{KeyEmit, KeyboardProfile};
 use super::presenter::{AbsRange, Forward, PadProfile};
 
 /// Anything the input layer can fail at.
@@ -42,6 +45,10 @@ pub enum InputError {
     Claim { path: PathBuf, detail: String },
     #[error("emitting on player {slot}: {detail}")]
     Emit { slot: u8, detail: String },
+    #[error("creating the shell keyboard: {0}")]
+    Keyboard(String),
+    #[error("emitting key {code} on the shell keyboard: {detail}")]
+    EmitKey { code: u16, detail: String },
 }
 
 /// The operations the input session needs from the hardware.
@@ -79,4 +86,19 @@ pub trait InputBackend {
 
     /// Emit one translated event on `slot`'s presenter.
     fn emit(&mut self, slot: u8, forward: Forward) -> Result<(), InputError>;
+
+    /// Create the single uinput **keyboard** the shell route synthesises on,
+    /// returning the evdev devnode(s) the kernel gave it.
+    ///
+    /// Called from [`super::session::InputSession::start`] and nowhere else,
+    /// under the same permanence rule as the presenters: a keyboard that
+    /// appeared and vanished with a route change would be a hotplug event, which
+    /// is exactly what jedwards1230/tv-shell#402 and V2_DESIGN §7 forbid.
+    ///
+    /// The profile is fixed and must advertise key codes `1..=31` in full — see
+    /// [`KeyboardProfile`].
+    fn create_keyboard(&mut self, profile: &KeyboardProfile) -> Result<Vec<PathBuf>, InputError>;
+
+    /// Emit one key event on that keyboard.
+    fn emit_key(&mut self, emit: KeyEmit) -> Result<(), InputError>;
 }

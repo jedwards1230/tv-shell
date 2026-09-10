@@ -38,6 +38,18 @@ pub struct InputConfig {
     /// **The safety flag.** Off by default; see the module docs.
     pub enabled: bool,
 
+    /// Route the pad to the **shell** as synthesised keys, instead of onto the
+    /// player presenters.
+    ///
+    /// Off by default, and inert unless `enabled` is also on. Phase 1 of
+    /// `docs/V2_GAMEPAD_HANDOFF.md`: with this set the route is hard-wired to
+    /// the shell — there is no owner arbitration yet — so **every pad is grabbed
+    /// unconditionally and no app or game receives pad input while the core
+    /// runs**. Moonlight loses the pad for as long as it is on. That is why it
+    /// is a separate flag under `enabled` rather than part of it, and why
+    /// turning it on is an attended act rather than a deploy.
+    pub shell_keys: bool,
+
     /// How many player slots — and therefore how many permanent uinput
     /// presenters — the session creates at startup.
     ///
@@ -69,6 +81,9 @@ impl Default for InputConfig {
             // DEFAULT OFF. Changing this line changes what a deploy does on a
             // box nobody reconfigured.
             enabled: false,
+            // DEFAULT OFF, under the default-off flag above. See the field docs:
+            // with this on, Moonlight gets no pad at all.
+            shell_keys: false,
             players: 4,
             // v1's discovery poll interval, which has run on this hardware for
             // months: fast enough that plugging a pad in feels immediate, slow
@@ -155,6 +170,7 @@ impl InputConfig {
         }
         Ok(ResolvedInput {
             players: self.players,
+            shell_keys: self.shell_keys,
             db,
             pin: self.pin(),
             poll_interval: std::time::Duration::from_millis(self.poll_interval_ms),
@@ -166,6 +182,7 @@ impl InputConfig {
 #[derive(Debug, Clone)]
 pub struct ResolvedInput {
     pub players: u8,
+    pub shell_keys: bool,
     pub db: ControllerDb,
     pub pin: Pin,
     pub poll_interval: std::time::Duration,
@@ -298,6 +315,7 @@ mod tests {
     fn every_input_key_is_classified() {
         let InputConfig {
             enabled,
+            shell_keys,
             players,
             poll_interval_ms,
             controller_db,
@@ -308,6 +326,7 @@ mod tests {
         // was destructured and then forgotten.
         let _ = (
             enabled,
+            shell_keys,
             players,
             poll_interval_ms,
             &controller_db,
@@ -317,13 +336,14 @@ mod tests {
 
         let keys = [
             ("enabled", "true"),
+            ("shell_keys", "true"),
             ("players", "2"),
             ("poll_interval_ms", "500"),
             ("controller_db", "\"/etc/tv-shell/db.txt\""),
             ("pin_vendor", "1"),
             ("pin_product", "2"),
         ];
-        assert_eq!(keys.len(), 6, "one entry per field destructured above");
+        assert_eq!(keys.len(), 7, "one entry per field destructured above");
         for (name, value) in keys {
             // Through the FULL core config, so this also pins that `[input]`
             // really is reachable at that table name and not only in isolation.

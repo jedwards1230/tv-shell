@@ -32,6 +32,7 @@ use super::config::ResolvedInput;
 use super::discovery::{OwnedNodes, Pin, Refusal};
 use super::fleet::{Fleet, FleetFull};
 use super::identity::ControllerDb;
+use super::keymap::{KeyEmit, KeyMap, KeyboardProfile};
 use super::presenter::{ev, quiesce, translate, DropReason, Forward, PadProfile};
 
 /// A pad newly taken into the fleet.
@@ -43,6 +44,44 @@ use super::presenter::{ev, quiesce, translate, DropReason, Forward, PadProfile};
 pub struct Joined {
     pub path: PathBuf,
     pub slot: u8,
+}
+
+/// Who the core believes owns the pad right now.
+///
+/// **Phase 1 does not compute this** — it is fixed at session start from
+/// `[input].shell_keys`, and the arbitration that makes it a decision is phase 2
+/// (`V2_GAMEPAD_HANDOFF.md` §3). It is in the report from the start anyway, so a
+/// hardware session READS what the core decided instead of inferring it from
+/// behaviour, which is how phase 2 becomes verifiable rather than plausible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InputOwner {
+    /// The v2 shell owns the screen and the pad drives it.
+    Shell,
+    /// An app owns the screen; the pad reaches it through its presenter.
+    App,
+    /// Not known. **Routes to the app**, never to the shell: trapping the pad in
+    /// an invisible shell is the worse failure — a game on screen and a dead
+    /// controller (§3 phase 2).
+    Unknown,
+}
+
+/// Where pad events actually go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Route {
+    /// Translated to keys on the core's uinput keyboard, which gamescope routes
+    /// to the focused client.
+    Shell,
+    /// Forwarded 1:1 onto the player's presenter, as they always were.
+    App,
+}
+
+/// The shell keyboard, as reported.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct KeyboardReport {
+    pub name: String,
+    pub devnodes: Vec<String>,
 }
 
 /// One presenter, as reported.
@@ -114,6 +153,22 @@ pub struct InputReport {
     /// from a game's side no device disconnected. A non-zero count here means a
     /// player may be holding a button nothing will release.
     pub emit_failures: u64,
+    /// Who the core believes owns the pad. See [`InputOwner`].
+    pub owner: InputOwner,
+    /// Where pad events are going right now. See [`Route`].
+    pub route: Route,
+    /// The shell keyboard, when this session created one. `None` when
+    /// `[input].shell_keys` is off — the device is then never created at all.
+    pub keyboard: Option<KeyboardReport>,
+    /// Buttons held across a route change, whose press/release must not reach
+    /// the new target (jedwards1230/tv-shell#295).
+    ///
+    /// **Always empty in phase 1**: routing is fixed at start, so there is no
+    /// change to mask across. The field is here from the start for the same
+    /// reason `owner` is — phase 3's masking must be readable, not inferred.
+    pub masked_keys: Vec<u16>,
+    /// Axes held across a route change. Empty in phase 1, as above.
+    pub masked_axes: Vec<u16>,
     /// How many discovery passes have COMPLETED.
     ///
     /// Beside the timestamp rather than instead of it, for two different
@@ -143,6 +198,13 @@ impl InputReport {
             emit_failures: 0,
             last_poll_unix_ms: None,
             polls_completed: 0,
+            // Nothing is grabbed, so the pad reaches the app directly — which
+            // is `App`, honestly, and not `Unknown`.
+            owner: InputOwner::App,
+            route: Route::App,
+            keyboard: None,
+            masked_keys: Vec::new(),
+            masked_axes: Vec::new(),
         }
     }
 }
@@ -173,6 +235,13 @@ pub struct InputSession<B: InputBackend> {
     emit_failures: u64,
     last_poll_unix_ms: Option<u64>,
     polls_completed: u64,
+    /// Fixed at start in this phase; phase 2 makes it a decision.
+    owner: InputOwner,
+    route: Route,
+    keyboard: Option<KeyboardReport>,
+    /// One translator per claimed pad, so two players keep independent repeat
+    /// timers. Present only on the shell route.
+    keymaps: BTreeMap<PathBuf, KeyMap>,
 }
 
 impl<B: InputBackend> InputSession<B> {
@@ -213,6 +282,44 @@ impl<B: InputBackend> InputSession<B> {
             "input presenters created; they persist for the life of this session"
         );
 
+        // The shell keyboard, created HERE and nowhere else — the same
+        // permanence rule the presenters follow (§7 / jedwards1230/tv-shell#402):
+        // a device that appeared and vanished with a route change would be a
+        // hotplug event apps forward to the streaming host.
+        //
+        // It is created only when the shell route is configured. That is still
+        // "once, in start, or never": `shell_keys` is fixed for the life of a
+        // session, so no route change can ever want a keyboard that does not
+        // exist. And it keeps the default-off promise literal at the device
+        // layer — with the flag off, this session creates no keyboard at all.
+        let (owner, route, keyboard) = if config.shell_keys {
+            let devnodes = backend.create_keyboard(&KeyboardProfile)?;
+            if devnodes.is_empty() {
+                return Err(InputError::Keyboard(
+                    "the backend reported no devnode for the keyboard, so discovery could \
+                     not be taught to skip it"
+                        .into(),
+                ));
+            }
+            for node in &devnodes {
+                owned.register(node.clone());
+            }
+            tracing::warn!(
+                "[input].shell_keys is ON: every pad is routed to the SHELL as keys, so no \
+                 app or game receives pad input while this core runs"
+            );
+            (
+                InputOwner::Shell,
+                Route::Shell,
+                Some(KeyboardReport {
+                    name: KeyboardProfile::device_name(),
+                    devnodes: devnodes.iter().map(|p| p.display().to_string()).collect(),
+                }),
+            )
+        } else {
+            (InputOwner::App, Route::App, None)
+        };
+
         Ok(InputSession {
             backend,
             profile,
@@ -227,6 +334,10 @@ impl<B: InputBackend> InputSession<B> {
             emit_failures: 0,
             last_poll_unix_ms: None,
             polls_completed: 0,
+            owner,
+            route,
+            keyboard,
+            keymaps: BTreeMap::new(),
         })
     }
 
@@ -325,6 +436,22 @@ impl<B: InputBackend> InputSession<B> {
             None
         };
 
+        if self.route == Route::Shell {
+            // The pad drives the shell: nothing reaches the presenter, so a game
+            // behind the shell sees a controller sitting still rather than one
+            // being used by someone else.
+            let now = std::time::Instant::now();
+            let emits = self
+                .keymaps
+                .entry(path.to_path_buf())
+                .or_default()
+                .on_event(event_type, code, value, source_axis, now);
+            for emit in emits {
+                self.emit_key(emit);
+            }
+            return;
+        }
+
         let forward = translate(event_type, code, value, source_axis, &self.profile);
         if let Forward::Drop(reason) = forward {
             *self.drops.entry(reason).or_insert(0) += 1;
@@ -362,6 +489,15 @@ impl<B: InputBackend> InputSession<B> {
         for forward in quiesce(&retired.held_keys, &self.profile) {
             self.emit(retired.slot, forward);
         }
+        // The keyboard outlives the pad exactly as the presenter does, so a pad
+        // that left mid-press must have its keys released too — otherwise the
+        // shell is left navigating in one direction forever, with nothing
+        // downstream able to correct it.
+        if let Some(mut map) = self.keymaps.remove(path) {
+            for emit in map.quiesce() {
+                self.emit_key(emit);
+            }
+        }
         self.backend.release(path);
     }
 
@@ -378,6 +514,41 @@ impl<B: InputBackend> InputSession<B> {
         if let Err(e) = self.backend.emit(slot, forward) {
             self.emit_failures += 1;
             tracing::warn!("{e}");
+        }
+    }
+
+    /// Emit one key on the shell keyboard, counting a refusal.
+    ///
+    /// Counted rather than propagated for the same reason as [`Self::emit`]: a
+    /// key the device refuses is a key nothing else will correct, and silence is
+    /// the only unacceptable outcome.
+    fn emit_key(&mut self, emit: KeyEmit) {
+        if let Err(e) = self.backend.emit_key(emit) {
+            self.emit_failures += 1;
+            tracing::warn!("{e}");
+        }
+    }
+
+    /// When the next stick auto-repeat is due, across every pad.
+    ///
+    /// The runtime sleeps until this instead of polling, so a session with no
+    /// deflected stick costs nothing. `None` on the app route, where no key is
+    /// ever synthesised.
+    pub fn next_key_deadline(&self) -> Option<std::time::Instant> {
+        self.keymaps
+            .values()
+            .filter_map(|m| m.next_deadline())
+            .min()
+    }
+
+    /// Fire every stick auto-repeat due at `now`.
+    pub fn tick_keys(&mut self, now: std::time::Instant) {
+        let mut emits = Vec::new();
+        for map in self.keymaps.values_mut() {
+            emits.extend(map.tick(now));
+        }
+        for emit in emits {
+            self.emit_key(emit);
         }
     }
 
@@ -405,6 +576,12 @@ impl<B: InputBackend> InputSession<B> {
             emit_failures: self.emit_failures,
             last_poll_unix_ms: self.last_poll_unix_ms,
             polls_completed: self.polls_completed,
+            owner: self.owner,
+            route: self.route,
+            keyboard: self.keyboard.clone(),
+            // Phase 1 has no route change to mask across; phase 3 fills these.
+            masked_keys: Vec::new(),
+            masked_axes: Vec::new(),
         }
     }
 
@@ -432,6 +609,7 @@ mod tests {
     use super::*;
     use crate::input::discovery::Candidate;
     use crate::input::identity::bundled_db;
+    use crate::input::keymap;
     use crate::input::presenter::{abs, btn, AbsRange, SYN_REPORT};
     use std::cell::RefCell;
     use std::collections::BTreeSet;
@@ -453,6 +631,16 @@ mod tests {
         released_at_emit_count: Vec<usize>,
         /// `(slot, forward)` for everything emitted.
         emitted: Vec<(u8, Forward)>,
+        /// Every device this crate asked the backend to CREATE, in order, as
+        /// `"presenter-N"` / `"keyboard"`.
+        ///
+        /// Beside `created` rather than instead of it: the #402 rule is about
+        /// every permanent device, and a keyboard created on a route change
+        /// would be exactly the hotplug that rule forbids. One ordered list is
+        /// what makes "nothing was created outside `start`" assertable.
+        device_creations: Vec<String>,
+        /// Everything emitted on the shell keyboard, in order.
+        keys: Vec<KeyEmit>,
     }
 
     /// A recording backend.
@@ -469,6 +657,8 @@ mod tests {
         claim_fails: BTreeSet<PathBuf>,
         /// When set, `create_presenter` returns no devnodes.
         presenter_without_devnode: bool,
+        /// When set, `create_keyboard` returns no devnodes.
+        keyboard_without_devnode: bool,
         /// When set, `enumerate` fails.
         enumerate_fails: bool,
         /// When set, the presenter refuses every event.
@@ -482,6 +672,7 @@ mod tests {
                 devices: Rc::clone(devices),
                 claim_fails: BTreeSet::new(),
                 presenter_without_devnode: false,
+                keyboard_without_devnode: false,
                 enumerate_fails: false,
                 emit_fails: false,
             }
@@ -501,7 +692,11 @@ mod tests {
             slot: u8,
             _profile: &PadProfile,
         ) -> Result<Vec<PathBuf>, InputError> {
-            self.log.borrow_mut().created.push(slot);
+            {
+                let mut log = self.log.borrow_mut();
+                log.created.push(slot);
+                log.device_creations.push(format!("presenter-{slot}"));
+            }
             if self.presenter_without_devnode {
                 return Ok(Vec::new());
             }
@@ -539,6 +734,31 @@ mod tests {
             self.log.borrow_mut().emitted.push((slot, forward));
             Ok(())
         }
+
+        fn create_keyboard(
+            &mut self,
+            _profile: &KeyboardProfile,
+        ) -> Result<Vec<PathBuf>, InputError> {
+            self.log
+                .borrow_mut()
+                .device_creations
+                .push("keyboard".into());
+            if self.keyboard_without_devnode {
+                return Ok(Vec::new());
+            }
+            Ok(vec![PathBuf::from("/dev/input/event30")])
+        }
+
+        fn emit_key(&mut self, emit: KeyEmit) -> Result<(), InputError> {
+            if self.emit_fails {
+                return Err(InputError::EmitKey {
+                    code: emit.code,
+                    detail: "the keyboard refused the event".into(),
+                });
+            }
+            self.log.borrow_mut().keys.push(emit);
+            Ok(())
+        }
     }
 
     struct Harness {
@@ -550,6 +770,7 @@ mod tests {
     fn config(players: u8) -> ResolvedInput {
         ResolvedInput {
             players,
+            shell_keys: false,
             db: bundled_db(),
             pin: None,
             poll_interval: std::time::Duration::from_secs(2),
@@ -557,9 +778,22 @@ mod tests {
     }
 
     fn harness(players: u8) -> Harness {
+        harness_with(config(players))
+    }
+
+    /// A harness on the SHELL route — reached the only way the real core reaches
+    /// it, by setting `shell_keys` in the config `start` is given.
+    fn shell_harness(players: u8) -> Harness {
+        harness_with(ResolvedInput {
+            shell_keys: true,
+            ..config(players)
+        })
+    }
+
+    fn harness_with(config: ResolvedInput) -> Harness {
         let log = Rc::new(RefCell::new(Log::default()));
         let devices = Rc::new(RefCell::new(Vec::new()));
-        let session = InputSession::start(Recorder::new(&log, &devices), &config(players)).unwrap();
+        let session = InputSession::start(Recorder::new(&log, &devices), &config).unwrap();
         Harness {
             session,
             log,
@@ -632,6 +866,299 @@ mod tests {
         );
     }
 
+    /// **Rule: with `shell_keys` off — the default — no keyboard exists at
+    /// all, and the pad still reaches its presenter.**
+    ///
+    /// The default-off promise, stated at the device layer rather than at the
+    /// flag: not "the route is App" (which a test could read off the same field
+    /// it set) but "the backend was never asked to create a keyboard".
+    ///
+    /// **Mutation note.** Make `start` create the keyboard unconditionally and
+    /// this fails on `device_creations`, not on the report.
+    #[test]
+    fn with_shell_keys_off_no_keyboard_is_ever_created() {
+        let mut h = harness(2);
+        assert_eq!(
+            h.log.borrow().device_creations,
+            vec!["presenter-0", "presenter-1"],
+            "a default session creates presenters and nothing else"
+        );
+
+        let p = pad("/dev/input/event3", "port-a");
+        *h.devices.borrow_mut() = vec![p.clone()];
+        h.session.poll();
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+
+        assert!(
+            h.log.borrow().keys.is_empty(),
+            "no key may be synthesised on the app route"
+        );
+        assert!(
+            h.log.borrow().emitted.contains(&(
+                0,
+                Forward::Key {
+                    code: btn::SOUTH,
+                    value: 1
+                }
+            )),
+            "and the pad still crosses onto its presenter, unchanged"
+        );
+
+        let report = h.session.report();
+        assert_eq!(report.route, Route::App);
+        assert_eq!(report.owner, InputOwner::App);
+        assert!(report.keyboard.is_none());
+    }
+
+    /// **Rule (§7 / jedwards1230/tv-shell#402, extended to the keyboard): every
+    /// permanent device is created in `start` and NOWHERE else.**
+    ///
+    /// The keyboard is under the same permanence rule as the presenters, for the
+    /// same reason: a device that appeared or vanished on a route change, a pad
+    /// joining, or a stick repeat is a hotplug event apps forward to the
+    /// streaming host. This drives a full pad lifecycle — join, input, repeat,
+    /// unplug, replug — through the real entry points and asserts the ordered
+    /// creation log is untouched by all of it.
+    ///
+    /// **Mutation note.** Move `create_keyboard` into `forward` (lazily, "only
+    /// when a key is first needed" — the intuitive implementation) and this
+    /// fails.
+    #[test]
+    fn the_keyboard_is_created_once_in_start_and_nothing_else_creates_a_device() {
+        let mut h = shell_harness(2);
+        let after_start = h.log.borrow().device_creations.clone();
+        assert_eq!(
+            after_start,
+            vec!["presenter-0", "presenter-1", "keyboard"],
+            "the keyboard is created in start, beside the presenters"
+        );
+
+        let p = pad("/dev/input/event3", "port-a");
+        *h.devices.borrow_mut() = vec![p.clone()];
+        h.session.poll();
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 0);
+        h.session.forward(&p.path, ev::ABS, abs::X, 32767);
+        h.session
+            .tick_keys(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        h.devices.borrow_mut().clear();
+        h.session.poll();
+        *h.devices.borrow_mut() = vec![pad("/dev/input/event7", "port-a")];
+        h.session.poll();
+        h.session.shutdown();
+
+        assert_eq!(
+            h.log.borrow().device_creations,
+            after_start,
+            "a device was created after start"
+        );
+    }
+
+    /// **Rule: on the shell route a pad event becomes a KEY, and the presenter
+    /// receives nothing.**
+    ///
+    /// Both halves matter. If the presenter also got the event, a game behind
+    /// the shell would see the user pressing buttons in it while they navigate
+    /// the shell — which is the leak the whole routing design exists to prevent.
+    ///
+    /// **Mutation note.** Drop the `return` after the keymap in `forward` and
+    /// the presenter half fails; drop the keymap call and the key half does.
+    #[test]
+    fn on_the_shell_route_a_button_becomes_a_key_and_the_presenter_gets_nothing() {
+        let mut h = shell_harness(2);
+        let p = pad("/dev/input/event3", "port-a");
+        *h.devices.borrow_mut() = vec![p.clone()];
+        h.session.poll();
+
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 0);
+
+        let log = h.log.borrow();
+        assert_eq!(
+            log.keys,
+            vec![
+                KeyEmit {
+                    code: keymap::key::ENTER,
+                    value: 1
+                },
+                KeyEmit {
+                    code: keymap::key::ENTER,
+                    value: 0
+                },
+            ]
+        );
+        assert!(
+            log.emitted.is_empty(),
+            "nothing may cross onto the presenter while the shell owns the pad: {:?}",
+            log.emitted
+        );
+    }
+
+    /// **Rule: a stick held on the shell route auto-repeats on v1's timing, and
+    /// the runtime is told when to come back.**
+    ///
+    /// Driven entirely through the real entry points — `forward` for the
+    /// deflection, `next_key_deadline` for the wake-up the runtime sleeps on,
+    /// `tick_keys` for the repeat — because a test that armed the latch directly
+    /// would prove the timer and not the path to it.
+    ///
+    /// **Mutation note.** Make `next_key_deadline` return `None` and the runtime
+    /// would never wake; this fails on the deadline assertion rather than
+    /// silently still passing on `tick_keys`.
+    #[test]
+    fn a_stick_held_on_the_shell_route_repeats_and_schedules_its_own_wake_up() {
+        let mut h = shell_harness(2);
+        let p = pad("/dev/input/event3", "port-a");
+        *h.devices.borrow_mut() = vec![p.clone()];
+        h.session.poll();
+
+        assert_eq!(
+            h.session.next_key_deadline(),
+            None,
+            "an idle session must not wake the runtime at all"
+        );
+
+        let t = std::time::Instant::now();
+        h.session.forward(&p.path, ev::ABS, abs::X, 32767);
+        let due = h
+            .session
+            .next_key_deadline()
+            .expect("a deflected stick arms a repeat");
+        assert!(
+            due >= t + keymap::repeat::INITIAL_DELAY,
+            "the first repeat must wait v1's calibrated initial delay"
+        );
+
+        h.session.tick_keys(due);
+        assert_eq!(
+            h.log.borrow().keys,
+            vec![
+                KeyEmit {
+                    code: keymap::key::RIGHT,
+                    value: 1
+                },
+                KeyEmit {
+                    code: keymap::key::RIGHT,
+                    value: 0
+                },
+                KeyEmit {
+                    code: keymap::key::RIGHT,
+                    value: 1
+                },
+            ],
+            "press, then a release/press repeat"
+        );
+    }
+
+    /// **Rule: a pad that leaves mid-press releases its KEYS too, not only its
+    /// presenter buttons.**
+    ///
+    /// The keyboard outlives the pad exactly as the presenter does, so the same
+    /// stuck-input failure applies — and it is worse here, because a stuck arrow
+    /// key means a shell that scrolls forever with no device left to blame.
+    ///
+    /// **Mutation note.** Delete the `keymaps.remove(...)` quiesce in `retire`
+    /// and this fails.
+    #[test]
+    fn a_pad_that_leaves_releases_the_keys_it_was_holding() {
+        let mut h = shell_harness(2);
+        let p = pad("/dev/input/event3", "port-a");
+        *h.devices.borrow_mut() = vec![p.clone()];
+        h.session.poll();
+
+        h.session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        h.session.forward(&p.path, ev::ABS, abs::X, 32767);
+        h.log.borrow_mut().keys.clear();
+
+        // Unplug.
+        h.devices.borrow_mut().clear();
+        h.session.poll();
+
+        let mut released: Vec<u16> = h
+            .log
+            .borrow()
+            .keys
+            .iter()
+            .inspect(|e| assert_eq!(e.value, 0, "a leave may only RELEASE"))
+            .map(|e| e.code)
+            .collect();
+        released.sort_unstable();
+        assert_eq!(released, vec![keymap::key::ENTER, keymap::key::RIGHT]);
+
+        // And the repeat is disarmed with it, or the runtime wakes forever for a
+        // pad that is gone.
+        assert_eq!(h.session.next_key_deadline(), None);
+    }
+
+    /// **Rule: a keyboard the backend created without a devnode fails the
+    /// start.**
+    ///
+    /// Same reasoning as the presenter case: a devnode we never saw is one
+    /// discovery cannot be taught to skip. It also means a session that came up
+    /// on the shell route with no keyboard — every key silently going nowhere —
+    /// is unrepresentable.
+    #[test]
+    fn a_keyboard_without_a_devnode_fails_the_start() {
+        let log = Rc::new(RefCell::new(Log::default()));
+        let devices = Rc::new(RefCell::new(Vec::new()));
+        let mut recorder = Recorder::new(&log, &devices);
+        recorder.keyboard_without_devnode = true;
+        let started = InputSession::start(
+            recorder,
+            &ResolvedInput {
+                shell_keys: true,
+                ..config(2)
+            },
+        );
+        assert!(matches!(started, Err(InputError::Keyboard(_))));
+    }
+
+    /// **Rule: a key the keyboard refuses is COUNTED, not silent.**
+    ///
+    /// The same reasoning as `emit_failures` for the presenters: a refused key
+    /// is one nothing downstream can correct, and a refused *release* leaves the
+    /// shell holding it.
+    ///
+    /// **Mutation note.** Drop the increment in `emit_key` and this fails.
+    #[test]
+    fn a_refused_key_is_counted() {
+        let log = Rc::new(RefCell::new(Log::default()));
+        let devices = Rc::new(RefCell::new(Vec::new()));
+        let mut recorder = Recorder::new(&log, &devices);
+        recorder.emit_fails = true;
+        let mut session = InputSession::start(
+            recorder,
+            &ResolvedInput {
+                shell_keys: true,
+                ..config(2)
+            },
+        )
+        .unwrap();
+
+        let p = pad("/dev/input/event3", "port-a");
+        *devices.borrow_mut() = vec![p.clone()];
+        session.poll();
+        assert_eq!(session.report().emit_failures, 0);
+        session.forward(&p.path, ev::KEY, btn::SOUTH, 1);
+        assert_eq!(session.report().emit_failures, 1);
+    }
+
+    /// The report says which route the core chose and names the keyboard, so a
+    /// hardware session READS the decision instead of inferring it from
+    /// behaviour (V2_GAMEPAD_HANDOFF §6).
+    #[test]
+    fn the_report_carries_the_owner_route_and_keyboard() {
+        let h = shell_harness(2);
+        let report = h.session.report();
+        assert_eq!(report.owner, InputOwner::Shell);
+        assert_eq!(report.route, Route::Shell);
+        let keyboard = report.keyboard.expect("the shell route names its keyboard");
+        assert_eq!(keyboard.name, "tv-shell-keys");
+        assert_eq!(keyboard.devnodes, vec!["/dev/input/event30"]);
+        // Phase 1 masks nothing, and says so rather than omitting the fields.
+        assert!(report.masked_keys.is_empty());
+        assert!(report.masked_axes.is_empty());
+    }
     /// **Rule: a leave returns the presenter to rest BEFORE releasing the pad.**
     ///
     /// The presenter outlives the pad, so a button held at unplug would stay
