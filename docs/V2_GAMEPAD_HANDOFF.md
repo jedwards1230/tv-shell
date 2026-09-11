@@ -141,8 +141,9 @@ permanent virtual pad was created. Moonlight opened its `/dev/input/event15` wit
 **2 seconds** and held it alongside the real pad's `event3` for the rest of the probe.
 
 **The idle presenter is enumerated, so the app sees two controllers.** This settles §4
-Q1 in favour of **option A (grab always)**, and means **`V2_DESIGN.md` §7's ungrab
-bullet does not survive** — under it, every game would see a phantom second pad.
+Q1 in favour of **option A (grab always)**, and killed **`V2_DESIGN.md` §7's ungrab
+bullet** — under it, every game would see a phantom second pad. §7 has since been
+amended to grab-always, with the reversal recorded there.
 
 ### 2.4 M3 — does `EVIOCGRAB` take the pad from a running app? **Yes.**
 
@@ -192,9 +193,18 @@ verified to arrive.
 
 **Shipped, default off.** `core/src/input/keymap.rs`, the `create_keyboard` /
 `emit_key` backend seam, `[input].shell_keys`, and `owner` / `route` /
-`masked_keys` / `masked_axes` on `InputReport` are in. Nothing changes on a box
-until that flag is set, and it has not been exercised on hardware yet — the
-acceptance for that is a person at the television, not a green suite.
+`masked_keys` / `masked_axes` on `InputReport` are in. Nothing changes on a box until
+that flag is set.
+
+**Exercised on hardware 2026-09-10**, with a person at the television — the phase-1 core
+running beside the production one on its own socket and config, so the couch session was
+never at risk. The pad drove the v2 shell: **Start opened the drawer** (Start → Tab →
+the #490 binding) and a card activation changed the focused app. `input-state` agreed
+with what was on screen: the pad claimed and **grabbed**
+(`phys:usb-0000:c4:00.4-1/input0`), the keyboard `tv-shell-keys` created once in
+`start`, four permanent presenters all correctly **refused** by discovery as
+`our-own-presenter`, and `owner: shell` / `route: shell` / `emit_failures: 0` /
+`drops: {}` across 36 polls.
 
 **The honest cost, stated loudly:** with routing forced to `Shell` the pad is grabbed
 unconditionally, so **Moonlight loses the pad the whole time the flag is on**. That is
@@ -285,6 +295,14 @@ screen (v1's behaviour, and its 500 ms threshold, ported as `[input].guide_hold_
 only a hold escapes. `input-state` carries an `escape` block: `armed`, `fires`,
 `failures`, `last_fire_unix_ms`.
 
+**Half-verified on hardware 2026-09-10.** Holding Guide returned the screen to the shell
+from a running Moonlight, observed directly at the television. Two halves remain open,
+and they are the ones that decide whether this is the escape it claims to be. The first
+is the property the whole design rests on — that it still works with the **shell process
+killed**, which is the only condition anyone reaches for an escape in; a live shell
+proves the write lands, not that it lands without one. The second is **Steam Big
+Picture**, which was not tried and is the app most likely to contend for Guide.
+
 One thing it does NOT do, reported rather than worked around: it fills neither
 `masked_keys` nor `masked_axes`. Routing is still pinned, so the escape changes what is
 *on screen* without changing where pad events *go* — Guide itself is buffered and never
@@ -323,8 +341,9 @@ module `V2_SHELL.md` §11.9c sketches, once §2.2 has said what asserting means.
 
 ### Q1 — grab always, or ungrab while an app owns the screen?
 
-`V2_DESIGN.md` §7 currently says the physical node is **ungrabbed** while the app is
-the base window, so the game sees the real pad and no virtual twin double-fires.
+`V2_DESIGN.md` §7 said, until this was settled, that the physical node is **ungrabbed**
+while the app is the base window, so the game sees the real pad and no virtual twin
+double-fires.
 
 - **Option A — grab always, the app reads the presenter.** One device ever moves.
   Masking is possible, because we own the stream. Guide can be intercepted. Costs a hop
@@ -336,8 +355,7 @@ the base window, so the game sees the real pad and no virtual twin double-fires.
 
 **Settled: A.** M1 (§2.3) measured the second controller directly — Moonlight opened the
 idle presenter within 2 s. Option B would hand every game a phantom pad, so §7's ungrab
-bullet must be amended and the reversal recorded there rather than left to diverge
-quietly.
+bullet was amended and the reversal recorded there rather than left to diverge quietly.
 
 ### Q2 — how do keys reach QML?
 
