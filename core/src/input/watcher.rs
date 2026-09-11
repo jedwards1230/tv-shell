@@ -233,10 +233,6 @@ pub fn run(
     // written yet, so the very first owner still earns its settle window.
     let mut wake = Wake::Poll;
     loop {
-        if !sink.alive() {
-            tracing::debug!("screen watcher stopping: the input layer is gone");
-            return;
-        }
         let now = Instant::now();
         let owner = routing::owner_of(Facts {
             on_screen: source.on_screen(),
@@ -256,6 +252,17 @@ pub fn run(
                 tracing::debug!("screen watcher stopping: the input layer is gone");
                 return;
             }
+        }
+
+        // Checked HERE, before the wait, rather than at the top of the loop.
+        // At the top it is only reached after a full poll interval has already
+        // elapsed, so a watcher whose input layer is gone would sit sleeping
+        // for one more interval before noticing — and a test that ends by
+        // going dead would pay that interval too, which is how this loop's own
+        // latency assertion came to measure the wrong thing.
+        if !sink.alive() {
+            tracing::debug!("screen watcher stopping: the input layer is gone");
+            return;
         }
 
         // Sleep until the poll is due, or until a pending change settles —
@@ -330,11 +337,44 @@ mod tests {
         }
     }
 
-    /// A recording sink. `alive` goes false after `stop_after` deliveries so the
-    /// loop terminates without the test depending on a timeout.
+    /// A recording sink that also BOUNDS the loop.
+    ///
+    /// `alive` goes false once `stop_after` decisions have landed — and also
+    /// after `max_passes` trips round, whatever happened. The second bound is
+    /// not tidiness: a `Settle` whose window is renewed on every observation
+    /// never settles, so `run` spins forever and the suite HANGS. A hang and a
+    /// pass are indistinguishable to an unattended CI run, so a loop that is
+    /// not converging has to end as a failed assertion instead. Measured, not
+    /// imagined: that is exactly what mutation 14 did before this bound existed.
     struct Recorder {
         seen: RefCell<Vec<InputOwner>>,
         stop_after: usize,
+        passes: std::cell::Cell<usize>,
+        max_passes: usize,
+    }
+
+    impl Recorder {
+        fn new(stop_after: usize) -> Recorder {
+            Recorder {
+                seen: RefCell::new(Vec::new()),
+                stop_after,
+                passes: std::cell::Cell::new(0),
+                // Generous against the fast timings below (2 ms poll, 10 ms
+                // settle): a converging loop needs a handful of passes, and a
+                // non-converging one blows through this in well under a second.
+                max_passes: 500,
+            }
+        }
+
+        /// Assert the run ended because it finished, not because it gave up.
+        fn converged(&self) {
+            assert!(
+                self.passes.get() < self.max_passes,
+                "the watcher never settled: {} passes without reaching {} decisions",
+                self.passes.get(),
+                self.stop_after
+            );
+        }
     }
 
     impl OwnerSink for Recorder {
@@ -343,7 +383,8 @@ mod tests {
             true
         }
         fn alive(&self) -> bool {
-            self.seen.borrow().len() < self.stop_after
+            self.passes.set(self.passes.get() + 1);
+            self.seen.borrow().len() < self.stop_after && self.passes.get() <= self.max_passes
         }
     }
 
@@ -367,34 +408,37 @@ mod tests {
     #[test]
     fn the_poll_finds_a_change_nothing_announced() {
         let script = Script::new(vec![None, None, Some(MOONLIGHT)]);
-        let sink = Recorder {
-            seen: RefCell::new(Vec::new()),
-            stop_after: 1,
-        };
+        let sink = Recorder::new(1);
         let (_nudge, nudges) = nudge_channel();
         run(&script, &sink, SHELL, &OverlayFlag::new(), &nudges, fast());
+        sink.converged();
         assert_eq!(*sink.seen.borrow(), vec![InputOwner::App { id: MOONLIGHT }]);
     }
 
-    /// **Rule: a nudge applies at once, without the settle window.**
+    /// **Rule: a nudge applies at once, WITHOUT the settle window.**
     ///
     /// This is the escape's path, end to end through the loop: the base-layer
-    /// write happens, the nudge arrives, and the owner follows immediately. The
-    /// settle window here is 10 s — longer than this test could ever run — so a
-    /// pass is only possible if the debounce was genuinely bypassed.
+    /// write happens, the nudge arrives, and the owner follows immediately.
     ///
-    /// **Mutation note — the "escape does not recompute" mutation.** Treat
-    /// `Wake::Nudge` as an observation (delegate to the `Wake::Poll` arm) and
-    /// this hangs on the settle window and then fails.
+    /// **The assertion is the LATENCY, not the outcome, and that distinction was
+    /// measured rather than reasoned about.** An earlier version asserted only
+    /// the recorded owner, with a settle window of 10 s to make the point — and
+    /// the mutation below SURVIVED it, because the loop still applied the owner
+    /// once the window finally elapsed. The test passed, ten seconds later,
+    /// having asserted the exact opposite of its own name. So the window is
+    /// large (5 s) and the deadline is small (1 s): the only way to finish
+    /// inside the deadline is to have bypassed the debounce.
+    ///
+    /// **Mutation note.** Treat `Wake::Nudge` as an observation (delegate to the
+    /// `Wake::Poll` arm) and the run takes the full 5 s window, failing the
+    /// elapsed assertion.
     #[test]
     fn a_nudge_applies_immediately() {
         let script = Script::new(vec![Some(SHELL)]);
-        let sink = Recorder {
-            seen: RefCell::new(Vec::new()),
-            stop_after: 1,
-        };
+        let sink = Recorder::new(1);
         let (nudge, nudges) = nudge_channel();
         nudge.now();
+        let started = Instant::now();
         run(
             &script,
             &sink,
@@ -402,11 +446,16 @@ mod tests {
             &OverlayFlag::new(),
             &nudges,
             Timing {
-                poll: Duration::from_secs(10),
-                settle: Duration::from_secs(10),
+                poll: Duration::from_secs(5),
+                settle: Duration::from_secs(5),
             },
         );
+        let elapsed = started.elapsed();
         assert_eq!(*sink.seen.borrow(), vec![InputOwner::Shell]);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "a nudge must not wait out the 5 s settle window; this took {elapsed:?}"
+        );
     }
 
     /// **Rule: the shell's overlay declaration reaches the decision.**
@@ -419,15 +468,13 @@ mod tests {
     #[test]
     fn the_overlay_flag_is_read_on_every_recompute() {
         let script = Script::new(vec![Some(SHELL)]);
-        let sink = Recorder {
-            seen: RefCell::new(Vec::new()),
-            stop_after: 1,
-        };
+        let sink = Recorder::new(1);
         let overlay = OverlayFlag::new();
         overlay.set(true);
         let (nudge, nudges) = nudge_channel();
         nudge.now();
         run(&script, &sink, SHELL, &overlay, &nudges, fast());
+        sink.converged();
         assert_eq!(*sink.seen.borrow(), vec![InputOwner::ShellOverlay]);
     }
 

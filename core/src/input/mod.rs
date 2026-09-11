@@ -10,13 +10,21 @@
 //! **behaviourally invisible**: the pad is grabbed and re-presented, and what
 //! reads the presenter sees the same input it saw from the physical pad.
 //!
-//! Since phase 1 of `docs/V2_GAMEPAD_HANDOFF.md` there is also a **second
-//! route**: with `[input].shell_keys` set (under the still-default-false
-//! `[input].enabled`), pad events are translated by [`keymap`] onto one
-//! permanent uinput **keyboard** and reach the v2 shell through gamescope,
-//! instead of crossing onto the presenters. The route is hard-wired at session
-//! start — there is no owner arbitration yet — so while that flag is on **no app
-//! or game receives pad input at all**.
+//! Since phase 1 of `docs/V2_GAMEPAD_HANDOFF.md` there is a **second route**:
+//! pad events are translated by [`keymap`] onto one permanent uinput
+//! **keyboard** and reach the v2 shell through gamescope, instead of crossing
+//! onto the presenters.
+//!
+//! Since phase 2 the choice between them is a **decision, not a setting**.
+//! [`routing`] computes an [`InputOwner`] from what is on screen; [`watcher`]
+//! recomputes it on a poll and immediately after the core's own base-layer
+//! writes, and pushes it into the input thread over [`InputControl`]. Phase 1
+//! pinned the route for the life of the session, and hardware showed what that
+//! costs: a held Guide returned the screen to the shell and the home screen was
+//! completely inert, because the pad was still forwarding to the app.
+//! `[input].shell_keys` now **pins** the owner to the shell — the operator
+//! override for a measurement, under which **no app or game receives pad input
+//! at all**.
 //!
 //! There is also a **third path that is not a route at all**: a held Guide
 //! makes the core write the base layer back to the shell itself
@@ -25,9 +33,11 @@
 //! the shell in nothing — v1 delivered this as a message the shell acted on and
 //! it failed whenever the shell was wedged, which is the only time it matters.
 //!
-//! What is NOT here, each a follow-up: the owner decision and the
-//! `gamepad`/`keyboard` per-app contracts (phase 2), masking across a route
-//! change and the safety combos (phase 3), rumble/battery/LED,
+//! What is NOT here, each a follow-up: **masking** across a route change and the
+//! safety combos (phase 3) — a transition quiesces the target it leaves, but the
+//! physical release that arrives afterwards still crosses to the new one, which
+//! is jedwards1230/tv-shell#295's shape; the `gamepad`/`keyboard` per-app
+//! contracts (phase 4, an `[[app]]` change in `core.toml`); rumble/battery/LED;
 //! and the companion touchpad/motion-node inhibition §7 calls for (SteamOS's
 //! `ds-inhibit` shape).
 //!
@@ -47,9 +57,11 @@
 //! | [`presenter`] | The canonical profile, rescaling, translation, quiesce | yes |
 //! | [`keymap`] | Pad → key translation, the keyboard profile, stick repeat | yes |
 //! | [`escape`] | The Guide tap/hold rule, and the hand-off that writes the base layer | yes |
+//! | [`routing`] | The owner truth table, the transition plan, the settle debounce | yes |
 //! | [`fleet`] | Membership, slot stability, the join/leave plan | yes |
-//! | [`session`] | The lifecycle: create once, claim, forward, retire | yes (recording double) |
+//! | [`session`] | The lifecycle: create once, claim, forward, retire, re-route | yes (recording double) |
 //! | [`backend`] | The hardware seam | n/a (a trait) |
+//! | [`watcher`] | The screen poll, the nudge, and the push into the input thread | yes (its loop; its X source is a trait) |
 //! | `evdev_backend` | evdev/uinput syscalls | **no** — needs a seat |
 //! | `runtime` | The poll/read loop and the thread it runs on | **no** — needs a backend |
 

@@ -1315,15 +1315,20 @@ mod tests {
     /// **Rule: a transition releases the held button on the target it is
     /// LEAVING — which is only possible if it quiesces BEFORE it switches.**
     ///
-    /// This is the ordering assertion, and it is stated as an observable rather
-    /// than as a sequence of two lists: a `set_owner` that switched first would
-    /// send the release to the KEYBOARD, because the route would already be the
-    /// shell's. So "the presenter got the release and the keyboard got nothing"
-    /// is exactly "quiesce came first".
+    /// **Mutation note.** Delete the `quiesce_route` call and the presenter
+    /// never sees the release.
     ///
-    /// **Mutation note — two of them.** Delete the `quiesce_route` call and the
-    /// presenter never sees the release. Move it AFTER the two assignments and
-    /// the release lands on the keyboard instead, failing both assertions.
+    /// **And a correction, because the obvious second mutation SURVIVED.** This
+    /// comment used to claim that moving `quiesce_route` after the two
+    /// assignments would send the release to the keyboard instead. It does not,
+    /// and the claim was wrong: `quiesce_route` is passed `transition.quiesce`,
+    /// a value [`routing::plan`] computed from the OLD owner before anything was
+    /// assigned, so it targets the route being left whichever side of the
+    /// assignments it runs on. The two orderings are genuinely equivalent, and
+    /// the reason they are is the design — the plan carries the route as data
+    /// rather than leaving `quiesce_route` to read `self.route` back. Writing
+    /// the code the other way (a `quiesce_route()` that consults `self.route`)
+    /// would make the ordering load-bearing and this test would then catch it.
     #[test]
     fn a_transition_quiesces_the_route_it_is_leaving_before_it_switches() {
         let (mut h, _p) = holding_a();
