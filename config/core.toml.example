@@ -411,8 +411,26 @@
 # delivered this escape as an intent the shell acted on, and it failed exactly
 # when the shell was wedged. See jedwards1230/tv-shell#496.
 #
-# WHAT IT DOES NOT DO YET: decide an owner (the route below is hard-wired, not
-# arbitrated) or mask a button held across a route change. Rumble, battery, LEDs
+# IT ALSO DECIDES WHO OWNS THE PAD. A watcher reads what is on screen roughly
+# four times a second (and immediately after the core's own `show`/`launch`/
+# `home`, including the Guide escape's) and routes accordingly: the shell's app
+# id means the pad drives the shell as keys, any other app means the pad reaches
+# that app through its presenter. A change is applied only once it has held still
+# for 300 ms, which collapses the focus flap every launch produces into one
+# transition. If it cannot tell — nothing is mapped, or the screen could not be
+# read — THE PAD GOES TO THE APP, never to the shell: a game on screen and a dead
+# controller is the worse failure.
+#
+# The shell can also declare an input-taking overlay (a drawer, the QAM) with the
+# `input-focus take` / `input-focus release` IPC verb. It is a declaration of the
+# shell's own state, not a command about routing — the core still decides — so a
+# shell that dies without releasing self-heals as soon as something else is on
+# screen.
+#
+# WHAT IT DOES NOT DO YET: MASK a button held across a route change. Each
+# transition *quiesces* the target it leaves, so nothing is left holding a
+# button — but the physical release that arrives afterwards still crosses to the
+# new target, which is jedwards1230/tv-shell#295's shape. Rumble, battery, LEDs
 # and companion touchpad/motion-node inhibition are also still to come. See
 # docs/V2_GAMEPAD_HANDOFF.md.
 
@@ -420,27 +438,30 @@
 # The safety flag.
 #enabled = false
 #
-# Route the pad to the SHELL as synthesised keys instead of onto the player
-# presenters. Off by default, and inert unless `enabled` is on too.
+# PIN the pad to the SHELL, disabling owner arbitration. Off by default, and
+# inert unless `enabled` is on too.
 #
-# READ THIS BEFORE SETTING IT. There is no owner arbitration yet — phase 1 of
-# docs/V2_GAMEPAD_HANDOFF.md hard-wires the route to the shell — so while this is
-# on, EVERY pad is grabbed unconditionally and NO app or game receives pad input.
+# READ THIS BEFORE SETTING IT. With this on the route never changes, whatever is
+# on screen: EVERY pad is grabbed and NO app or game receives pad input, so
 # Moonlight loses the controller for as long as the core runs with this set. It
-# is a separate flag under `enabled` precisely so that turning it on is an
-# attended act at the television, never a side effect of a deploy.
+# is the operator override for taking a measurement, not the way to use the
+# shell — leaving it OFF is what gives you a pad that drives the shell at the
+# home screen and the app once one is running.
 #
-# What it does when on: A activates (KEY_ENTER), B goes back (KEY_ESC), Start
-# toggles the drawer (KEY_TAB), and the d-pad and left stick drive the arrows —
-# the stick with v1's calibrated auto-repeat (300 ms, then every 150 ms). The
-# Guide button is deliberately NOT a key — see `guide_hold_ms`. Only key codes
-# measured to actually
-# reach the shell through gamescope are emitted: KEY_MENU is dropped by gamescope
-# silently, which is why the drawer is Tab.
+# What the shell route does: A activates (KEY_ENTER), B goes back (KEY_ESC),
+# Start toggles the drawer (KEY_TAB), and the d-pad and left stick drive the
+# arrows — the stick with v1's calibrated auto-repeat (300 ms, then every
+# 150 ms). The Guide button is deliberately NOT a key — see `guide_hold_ms`. Only
+# key codes measured to actually reach the shell through gamescope are emitted:
+# KEY_MENU is dropped by gamescope silently, which is why the drawer is Tab.
 #
-# It creates one more uinput device, `tv-shell-keys`, alongside the presenters —
-# created once at startup and never again, the same permanence rule, and gone
-# with the process.
+# The keyboard device `tv-shell-keys` is created alongside the presenters
+# whenever `enabled` is on, whether or not this flag is set — once at startup and
+# never again, the same permanence rule the presenters follow, and gone with the
+# process. It has to exist up front precisely BECAUSE the route can change: a
+# device that appeared at the moment of a transition would be a hotplug event
+# every game and Moonlight forward to the streaming host
+# (jedwards1230/tv-shell#402).
 #shell_keys = false
 #
 # Player slots, and so how many permanent uinput presenters exist. A CAPACITY,

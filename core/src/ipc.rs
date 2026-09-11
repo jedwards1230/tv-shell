@@ -30,6 +30,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Framed, LinesCodec};
 
 use crate::atoms::AppId;
+use crate::input::watcher::WatchHandle;
 use crate::input::InputReports;
 use crate::protocol::{self, Command};
 
@@ -89,6 +90,7 @@ pub async fn serve(
     sock_path: String,
     compositor: Arc<dyn Compositor>,
     input: InputReports,
+    watch: WatchHandle,
 ) -> Result<()> {
     let listener = bind(&sock_path)?;
     tracing::info!("listening on {sock_path}");
@@ -97,8 +99,9 @@ pub async fn serve(
             Ok((stream, _addr)) => {
                 let compositor = Arc::clone(&compositor);
                 let input = input.clone();
+                let watch = watch.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, compositor, input).await {
+                    if let Err(e) = handle_client(stream, compositor, input, watch).await {
                         tracing::debug!("client connection ended: {e}");
                     }
                 });
@@ -154,11 +157,12 @@ async fn handle_client(
     stream: UnixStream,
     compositor: Arc<dyn Compositor>,
     input: InputReports,
+    watch: WatchHandle,
 ) -> Result<()> {
     let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(protocol::MAX_LINE));
     while let Some(line) = framed.next().await {
         let line = line.context("reading command line")?;
-        let reply = dispatch(&compositor, &input, Command::parse(&line)).await;
+        let reply = dispatch(&compositor, &input, &watch, Command::parse(&line)).await;
         framed.send(reply).await?;
     }
     Ok(())
@@ -168,6 +172,7 @@ async fn handle_client(
 pub async fn dispatch(
     compositor: &Arc<dyn Compositor>,
     input: &InputReports,
+    watch: &WatchHandle,
     cmd: Command,
 ) -> String {
     match cmd {
@@ -183,19 +188,35 @@ pub async fn dispatch(
         Command::Show(raw) => match raw.parse::<AppId>() {
             Ok(app_id) => {
                 let c = Arc::clone(compositor);
-                blocking(move || c.show(app_id)).await
+                let reply = blocking(move || c.show(app_id)).await;
+                // The core just changed what is on screen, so who owns the pad
+                // may have changed with it. Recompute NOW rather than waiting
+                // for the watcher's poll: `show` verified its own switch before
+                // returning, so there is nothing left to wait out, and a route
+                // that lags a visible change is a controller that does nothing
+                // for a third of a second.
+                //
+                // Nudged even when the reply is an error: a `show` can land and
+                // still fail its verify, and refusing to look after a failure is
+                // how a core ends up confidently routing to the wrong place.
+                watch.wrote_base_layer();
+                reply
             }
             Err(_) => protocol::resp_error(&format!("not an app id: {raw}")),
         },
         Command::ShowUsage => protocol::resp_usage("show <appid>"),
         Command::Home => {
             let c = Arc::clone(compositor);
-            blocking(move || c.home()).await
+            let reply = blocking(move || c.home()).await;
+            watch.wrote_base_layer();
+            reply
         }
         Command::Launch { app_id, command } => match app_id.parse::<AppId>() {
             Ok(app_id) => {
                 let c = Arc::clone(compositor);
-                blocking(move || c.launch(app_id, &command)).await
+                let reply = blocking(move || c.launch(app_id, &command)).await;
+                watch.wrote_base_layer();
+                reply
             }
             Err(_) => protocol::resp_error(&format!("not an app id: {app_id}")),
         },
@@ -205,6 +226,17 @@ pub async fn dispatch(
             blocking(move || c.screenshot(&dest)).await
         }
         Command::ScreenshotUsage => protocol::resp_usage("screenshot <absolute-path>"),
+        // A DECLARATION, not a command about routing: it sets the shell's own
+        // overlay state and asks for a recompute. The core still decides, so a
+        // shell that dies without releasing self-heals the moment something else
+        // is on screen. `ok` even with no input layer — the shell is reporting
+        // its state correctly either way, and an error would make a working
+        // shell look broken on a box where input is simply off.
+        Command::InputFocus { taken } => {
+            watch.set_overlay(taken);
+            protocol::resp_ok()
+        }
+        Command::InputFocusUsage => protocol::resp_usage("input-focus take|release"),
         Command::Unknown => protocol::resp_unknown(),
     }
 }
@@ -222,6 +254,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::watcher;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// A stand-in compositor, so the IPC layer is exercised end-to-end with no
@@ -286,7 +319,13 @@ mod tests {
     }
 
     async fn reply(c: &Arc<dyn Compositor>, line: &str) -> String {
-        dispatch(c, &InputReports::disabled(), Command::parse(line)).await
+        dispatch(
+            c,
+            &InputReports::disabled(),
+            &WatchHandle::detached(),
+            Command::parse(line),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -303,6 +342,87 @@ mod tests {
             reply(&c, "launch 9003 moonlight stream").await,
             r#"{"app_id":9003,"command":["moonlight","stream"]}"#
         );
+    }
+
+    /// **Rule: every verb that WRITES the base layer asks the watcher to
+    /// recompute who owns the pad.**
+    ///
+    /// The other half of the phase-2 symptom. `show`/`launch`/`home` change what
+    /// is on screen, and a route that does not follow leaves the pad driving
+    /// something the user can no longer see. Each verb verifies its own switch
+    /// before returning, so there is nothing left to wait out — the recompute
+    /// belongs here and not at the next poll.
+    ///
+    /// **Mutation note — the "the watcher ignores the core's own writes"
+    /// mutation.** Delete any one `watch.wrote_base_layer()` call and that
+    /// verb's assertion fails. The read verbs at the end are the control: they
+    /// change nothing on screen and must NOT nudge, so a blanket nudge at the
+    /// top of `dispatch` fails too.
+    #[tokio::test]
+    async fn every_base_layer_write_nudges_the_watcher() {
+        let c = fake(false);
+        let (nudge, nudges) = watcher::nudge_channel();
+        let watch = WatchHandle::new(watcher::OverlayFlag::new(), nudge);
+
+        for line in ["show 9003", "home", "launch 9003 moonlight"] {
+            assert!(
+                nudges.try_recv().is_err(),
+                "the probe is live before {line}"
+            );
+            dispatch(&c, &InputReports::disabled(), &watch, Command::parse(line)).await;
+            assert!(nudges.try_recv().is_ok(), "{line} must ask for a recompute");
+        }
+
+        for line in ["ping", "screen-state", "input-state"] {
+            dispatch(&c, &InputReports::disabled(), &watch, Command::parse(line)).await;
+            assert!(
+                nudges.try_recv().is_err(),
+                "{line} changes nothing on screen and must not nudge"
+            );
+        }
+    }
+
+    /// **Rule: `input-focus` sets the shell's overlay state AND recomputes.**
+    ///
+    /// Setting the flag without recomputing leaves the declaration inert until
+    /// the next poll, which is a drawer that opens and does not take the pad for
+    /// a third of a second. It replies `ok` with no input layer running, because
+    /// the shell is reporting its own state correctly either way.
+    ///
+    /// **Mutation note.** Drop the `nudge.now()` from `WatchHandle::set_overlay`
+    /// and the recompute assertions fail; drop the `overlay.set` and the flag
+    /// assertions do.
+    #[tokio::test]
+    async fn input_focus_declares_the_overlay_and_recomputes() {
+        let c = fake(false);
+        let (nudge, nudges) = watcher::nudge_channel();
+        let overlay = watcher::OverlayFlag::new();
+        let watch = WatchHandle::new(overlay.clone(), nudge);
+
+        assert!(
+            !overlay.get(),
+            "the probe is live: nothing has declared yet"
+        );
+        let r = dispatch(
+            &c,
+            &InputReports::disabled(),
+            &watch,
+            Command::parse("input-focus take"),
+        )
+        .await;
+        assert_eq!(r, "ok");
+        assert!(overlay.get());
+        assert!(nudges.try_recv().is_ok(), "taking focus recomputes at once");
+
+        dispatch(
+            &c,
+            &InputReports::disabled(),
+            &watch,
+            Command::parse("input-focus release"),
+        )
+        .await;
+        assert!(!overlay.get());
+        assert!(nudges.try_recv().is_ok(), "releasing it recomputes too");
     }
 
     /// **Rule: `input-state` answers with an honest empty report when the layer
@@ -447,7 +567,12 @@ mod tests {
             .join(format!("tv-core-ipc-test-{}.sock", std::process::id()))
             .to_string_lossy()
             .to_string();
-        let server = tokio::spawn(serve(sock.clone(), fake(false), InputReports::disabled()));
+        let server = tokio::spawn(serve(
+            sock.clone(),
+            fake(false),
+            InputReports::disabled(),
+            WatchHandle::detached(),
+        ));
 
         for _ in 0..100 {
             if std::path::Path::new(&sock).exists() {

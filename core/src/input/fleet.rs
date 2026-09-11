@@ -197,6 +197,20 @@ impl Fleet {
     }
 
     /// Pads in slot order.
+    /// Take every pad's held-button set, clearing it.
+    ///
+    /// The route-change counterpart of [`Fleet::retire`]'s `held_keys`: the pad
+    /// stays in the fleet and keeps its slot, but whatever it is holding has to
+    /// be released onto the presenter it is about to stop driving. Clearing is
+    /// half the contract — a set left behind would be released a second time at
+    /// the next transition, sending a key-up for a button nothing is holding.
+    pub fn take_held(&mut self) -> Vec<(u8, BTreeSet<u16>)> {
+        self.pads
+            .values_mut()
+            .map(|pad| (pad.slot, std::mem::take(&mut pad.held_keys)))
+            .collect()
+    }
+
     pub fn pads(&self) -> impl Iterator<Item = &ClaimedPad> {
         let mut v: Vec<&ClaimedPad> = self.pads.values().collect();
         v.sort_by_key(|p| p.slot);

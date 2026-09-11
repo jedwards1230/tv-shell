@@ -202,28 +202,55 @@ why it is off by default and why enabling it is an attended act, never a deploy.
 
 ### Phase 2 — the owner decision, computed and asserted
 
-`core/src/input/routing.rs`, pure: an `InputOwner` of `Shell | ShellOverlay | App { id,
-contract } | Unknown`, and the transition plan (what to quiesce, what to mask, what to
-route). No syscalls.
+**Shipped, still under the default-off `[input].enabled`.**
 
-A **screen watcher** in the core recomputes on a ~250 ms poll *and* immediately after
-the core's own `show` / `launch` / `home`, porting v1's `FOCUS_SETTLE_MS = 300`
-debounce — launch flaps focus several times in a fraction of a second, which v1 learned
-the hard way.
+Why it had to follow phase 1 immediately, measured rather than argued: with
+`shell_keys = false`, holding Guide correctly returned the screen to the shell
+(jedwards1230/tv-shell#498) and **the home screen was then completely inert**, because
+the pad was still forwarding to the app's presenter. Routing was static — `shell_keys`
+pinned it for the life of the session — so you could have a drivable shell or a working
+app, never both.
 
-One new verb, `input-focus take|release`, sent by the shell when it opens or closes an
-input-taking overlay. It is a **declaration of the shell's own state, never a command
-about routing**: the core folds it into a decision it makes itself, so a shell that
-dies without sending `release` self-heals when the watcher sees the window is gone.
-This is v1's `set_overlay_focus` with the failure mode removed.
+What landed:
 
-Routing also needs a **write path into the input thread** — `InputReports` is a
-read-only `watch` receiver today. The input thread must never do an X round trip; the
-watcher lives on the core side and pushes `SetOwner` messages over an `mpsc`.
+- `core/src/input/routing.rs`, pure, no syscalls: an `InputOwner` of `Shell |
+  ShellOverlay | App { id } | Unknown`, the `route()` it implies, and the transition
+  plan (`from`, `to`, what to quiesce, what to route) as data. The per-app `contract`
+  is **not** here — that is phase 4's `[[app]]` change, and adding a field nothing can
+  populate would have been a decision input no config could reach.
+- `core/src/input/watcher.rs`: a thread that reads the screen, computes the owner, and
+  **pushes** it into the input runtime. The input thread never does an X round trip —
+  that would put compositor latency, and a hung X server, on the pad path.
+- A **write path into the input thread**: `InputHandle::control()` hands out an
+  `mpsc` sender carrying `Control::SetOwner`, beside the read-only `watch` receiver
+  `InputReports` already was.
+- v1's **`FOCUS_SETTLE_MS = 300`**, ported as `routing::SETTLE`, over a ~250 ms poll.
+  Observations settle; the core's own writes (`show`/`launch`/`home`, and the Guide
+  escape's `home`) are **asserted** and apply at once. That split is v1's too.
+- `input-focus take|release`, the shell's overlay declaration. A **declaration of the
+  shell's own state, never a command about routing**: the core folds it into a decision
+  it makes itself, and it is ignored outright unless the shell is what is on screen —
+  so a shell that dies without sending `release` self-heals with no timeout and no
+  liveness check. v1's `set_overlay_focus` with the failure mode removed.
+- **The safe default, in one arm of one function: `Unknown` routes to the app, never to
+  the shell.** An unreadable screen folds into the same answer, via the
+  `SCREEN_UNREADABLE` sentinel `Compositor::on_screen_app` already fails closed with.
 
-**Safe default, stated explicitly: `Unknown` routes to the app, never to the shell.**
-Trapping the pad in an invisible shell is the worse failure — the user sees a game and
-a dead controller.
+Two consequences worth stating out loud:
+
+- **`shell_keys` changed meaning.** It now PINS the owner to the shell and disables
+  arbitration, rather than being the only way to reach the shell route. The key name
+  and its default are unchanged, so nothing on a box moves.
+- **The keyboard is now created unconditionally** (whenever `enabled` is on), not only
+  under `shell_keys`. It has to be: any session can be handed the shell route at any
+  moment, and creating the device *at* that moment is the hotplug event
+  jedwards1230/tv-shell#402 forbids.
+
+**What phase 2 deliberately does NOT do: masking.** Each transition *quiesces* the
+target it leaves, so nothing is left holding a button — but the physical release that
+arrives afterwards still crosses to the new target, which never saw the press. That is
+#295's shape and it is phase 3's job; `masked_keys` / `masked_axes` stay empty and the
+gap is reported rather than papered over.
 
 ### Phase 3 — masking and the escapes
 

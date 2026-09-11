@@ -10,13 +10,21 @@
 //! **behaviourally invisible**: the pad is grabbed and re-presented, and what
 //! reads the presenter sees the same input it saw from the physical pad.
 //!
-//! Since phase 1 of `docs/V2_GAMEPAD_HANDOFF.md` there is also a **second
-//! route**: with `[input].shell_keys` set (under the still-default-false
-//! `[input].enabled`), pad events are translated by [`keymap`] onto one
-//! permanent uinput **keyboard** and reach the v2 shell through gamescope,
-//! instead of crossing onto the presenters. The route is hard-wired at session
-//! start — there is no owner arbitration yet — so while that flag is on **no app
-//! or game receives pad input at all**.
+//! Since phase 1 of `docs/V2_GAMEPAD_HANDOFF.md` there is a **second route**:
+//! pad events are translated by [`keymap`] onto one permanent uinput
+//! **keyboard** and reach the v2 shell through gamescope, instead of crossing
+//! onto the presenters.
+//!
+//! Since phase 2 the choice between them is a **decision, not a setting**.
+//! [`routing`] computes an [`InputOwner`] from what is on screen; [`watcher`]
+//! recomputes it on a poll and immediately after the core's own base-layer
+//! writes, and pushes it into the input thread over [`InputControl`]. Phase 1
+//! pinned the route for the life of the session, and hardware showed what that
+//! costs: a held Guide returned the screen to the shell and the home screen was
+//! completely inert, because the pad was still forwarding to the app.
+//! `[input].shell_keys` now **pins** the owner to the shell — the operator
+//! override for a measurement, under which **no app or game receives pad input
+//! at all**.
 //!
 //! There is also a **third path that is not a route at all**: a held Guide
 //! makes the core write the base layer back to the shell itself
@@ -25,9 +33,11 @@
 //! the shell in nothing — v1 delivered this as a message the shell acted on and
 //! it failed whenever the shell was wedged, which is the only time it matters.
 //!
-//! What is NOT here, each a follow-up: the owner decision and the
-//! `gamepad`/`keyboard` per-app contracts (phase 2), masking across a route
-//! change and the safety combos (phase 3), rumble/battery/LED,
+//! What is NOT here, each a follow-up: **masking** across a route change and the
+//! safety combos (phase 3) — a transition quiesces the target it leaves, but the
+//! physical release that arrives afterwards still crosses to the new one, which
+//! is jedwards1230/tv-shell#295's shape; the `gamepad`/`keyboard` per-app
+//! contracts (phase 4, an `[[app]]` change in `core.toml`); rumble/battery/LED;
 //! and the companion touchpad/motion-node inhibition §7 calls for (SteamOS's
 //! `ds-inhibit` shape).
 //!
@@ -47,9 +57,11 @@
 //! | [`presenter`] | The canonical profile, rescaling, translation, quiesce | yes |
 //! | [`keymap`] | Pad → key translation, the keyboard profile, stick repeat | yes |
 //! | [`escape`] | The Guide tap/hold rule, and the hand-off that writes the base layer | yes |
+//! | [`routing`] | The owner truth table, the transition plan, the settle debounce | yes |
 //! | [`fleet`] | Membership, slot stability, the join/leave plan | yes |
-//! | [`session`] | The lifecycle: create once, claim, forward, retire | yes (recording double) |
+//! | [`session`] | The lifecycle: create once, claim, forward, retire, re-route | yes (recording double) |
 //! | [`backend`] | The hardware seam | n/a (a trait) |
+//! | [`watcher`] | The screen poll, the nudge, and the push into the input thread | yes (its loop; its X source is a trait) |
 //! | `evdev_backend` | evdev/uinput syscalls | **no** — needs a seat |
 //! | `runtime` | The poll/read loop and the thread it runs on | **no** — needs a backend |
 
@@ -61,7 +73,9 @@ pub mod fleet;
 pub mod identity;
 pub mod keymap;
 pub mod presenter;
+pub mod routing;
 pub mod session;
+pub mod watcher;
 
 /// Public so `core/tests/input_uinput.rs` can drive it against a real kernel.
 /// That file is the ONLY place the hardware claims are checked, so the module
@@ -73,6 +87,7 @@ mod runtime;
 
 pub use config::{InputConfig, ResolvedInput};
 pub use escape::EscapeSink;
+pub use routing::{InputOwner, Route};
 pub use session::InputReport;
 
 use tokio::sync::watch;
@@ -94,6 +109,7 @@ use tokio::sync::watch;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub struct InputHandle {
     reports: watch::Receiver<InputReport>,
+    control: InputControl,
     /// Dropped on shutdown; the runtime's loop selects on its closure.
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     join: Option<std::thread::JoinHandle<()>>,
@@ -103,6 +119,15 @@ impl InputHandle {
     /// A cloneable read-only view, for the IPC surface.
     pub fn reports(&self) -> InputReports {
         InputReports(Some(self.reports.clone()))
+    }
+
+    /// A cloneable WRITE path into the input thread, for the screen watcher.
+    ///
+    /// The counterpart of [`Self::reports`], and the reason phase 2 needed a
+    /// second channel at all: `watch` is read-only, so the owner decision had
+    /// nowhere to go. See [`InputControl`].
+    pub fn control(&self) -> InputControl {
+        self.control.clone()
     }
 
     /// The most recent report.
@@ -146,6 +171,54 @@ impl InputReports {
             Some(rx) => rx.borrow().clone(),
             None => InputReport::disabled(),
         }
+    }
+}
+
+/// A message into the input thread.
+///
+/// Deliberately tiny, and deliberately one-way. Nothing here asks the input
+/// thread a question: a request/reply channel would let the compositor half
+/// block on the pad path, which is the one thing this split exists to prevent.
+#[derive(Debug, Clone, Copy)]
+pub enum Control {
+    /// Route the pad according to this owner. Computed by
+    /// [`watcher`] from a screen read that happened on another thread.
+    SetOwner(InputOwner),
+}
+
+/// The write side of the input layer, held by the screen watcher.
+///
+/// `None` inside means the layer is disabled or failed to start; every send is
+/// then a no-op and [`InputControl::is_closed`] answers `true`, so a watcher
+/// handed a disabled control stops instead of computing decisions for nobody.
+#[derive(Clone)]
+pub struct InputControl(Option<tokio::sync::mpsc::UnboundedSender<Control>>);
+
+impl InputControl {
+    /// The control a core with no input layer hands out.
+    pub fn disabled() -> InputControl {
+        InputControl(None)
+    }
+
+    /// Has the input thread gone?
+    pub fn is_closed(&self) -> bool {
+        match &self.0 {
+            Some(tx) => tx.is_closed(),
+            None => true,
+        }
+    }
+}
+
+impl watcher::OwnerSink for InputControl {
+    fn set_owner(&self, owner: InputOwner) -> bool {
+        match &self.0 {
+            Some(tx) => tx.send(Control::SetOwner(owner)).is_ok(),
+            None => false,
+        }
+    }
+
+    fn alive(&self) -> bool {
+        !self.is_closed()
     }
 }
 
