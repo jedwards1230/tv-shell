@@ -168,15 +168,21 @@ This supersedes PRD §5 "Input arbitration" (four presenters).
 
 > **The plan for actually building this — phases, open decisions, and the hardware
 > measurements it is gated on — is [`V2_GAMEPAD_HANDOFF.md`](V2_GAMEPAD_HANDOFF.md).**
-> Two bullets below are contested there and may not survive it: the `gamepad` contract's
-> **ungrab** while an app is the base window (which makes held-button masking impossible,
-> reintroducing #295 by construction), and the assumption that the core can drive the
-> shell with a **uinput keyboard** — measured 2026-09-09 as *not* reaching the shell on
-> this gamescope, by a route not yet fully explained.
+> Two questions that document carried as open are now closed by measurement on htpc-1,
+> and both are load-bearing here. **The core can drive the shell with a uinput keyboard**
+> (M0, 2026-09-10): a synthesised key arrives exactly as a physical one does, with
+> Moonlight running and suspended, and needs no seat tagging. The 2026-09-09 negative was
+> an artefact of the probe key — gamescope silently drops `KEY_MENU`, which was the
+> drawer's only binding (jedwards1230/tv-shell#489, fixed in #490 by moving the drawer to
+> Tab), so any code the core emits must be verified to arrive rather than assumed. And
+> **an idle presenter is enumerated by a running app** (M1, 2026-09-10): with the physical
+> pad ungrabbed, Moonlight opened the virtual node within ~2 s and held it alongside the
+> real one, so the app saw two controllers. That settles the grab question against the
+> `gamepad` contract as originally written; see the amended bullet below.
 
 - **The core keeps `EVIOCGRAB` of the pad fleet**: DB-match-or-reject discovery, stable per-player slots, hot join/leave, rumble/battery/LED, per-player uinput presenters. gamescope never opens joystick nodes (libinput ignores the class; true in SteamOS too), but a pad's companion touchpad/motion nodes present as pointers gamescope will read; discovery claims or inhibits them (SteamOS ships `ds-inhibit` for this).
-- **Two contracts, not four.** `gamepad` (the default, games and streams): the physical node is ungrabbed while the app is the base window, so the game sees the real pad and no virtual twin double-fires. `keyboard` (web apps, Plex): the grab stays and the core translates the pad to a uinput keyboard, since a browser reads no gamepad. `handoff` collapses into `gamepad`.
-- **Grab follows visibility, devices do not.** The grab is armed when the shell is the base window or a `STEAM_INPUT_FOCUS` overlay is mapped, and dropped otherwise; the uinput presenters stay present throughout (create/destroy is a hotplug event every game and Moonlight forward to the streaming host, #402). Sequence: overlay maps → grab → mask held buttons → route to the shell key-map; overlay unmaps → unmask → ungrab. With the pad ungrabbed a Guide tap reaches the game before the hold threshold; accepted, as in v1's Handoff.
+- **Two contracts, not four.** `gamepad` (the default, games and streams): the grab is held and the app reads the per-player presenter, so exactly one device ever moves. `keyboard` (web apps, Plex): the grab stays and the core translates the pad to a uinput keyboard, since a browser reads no gamepad. `handoff` collapses into `gamepad`. **This bullet is a reversal, recorded rather than rewritten.** It said until 2026-09-10 that the physical node is *ungrabbed* while the app is the base window, so the game sees the real pad and no virtual twin double-fires. M1 disproved the second half — the idle presenter is enumerated anyway, so the app sees two pads — and the first half makes held-button masking impossible, since the press reaches the real device and nothing can swallow it: jedwards1230/tv-shell#295 reintroduced by construction. Grab-always is option A in [`V2_GAMEPAD_HANDOFF.md`](V2_GAMEPAD_HANDOFF.md) §4 Q1. It costs a hop of latency, and rumble/battery/LED must eventually be proxied back through the core — named there as a follow-up, deliberately not built on the handoff path.
+- **Routing follows visibility, devices do not.** Under grab-always the grab itself no longer moves: what changes on a visibility edge is where the grabbed stream is *routed*. The route points at the shell key-map when the shell is the base window or a `STEAM_INPUT_FOCUS` overlay is mapped, and at the app's presenter otherwise; the uinput presenters stay present throughout (create/destroy is a hotplug event every game and Moonlight forward to the streaming host, #402). Sequence: overlay maps → quiesce the app's presenter → mask held buttons → route to the shell key-map; overlay unmaps → quiesce the shell keyboard → unmask → route back. A Guide tap still reaches the app before the hold threshold, since Guide is buffered and released on a tap; accepted, as in v1's Handoff.
 - **Escapes.** The Meta hold and the safety combos come from a passive, non-grabbing reader in the core, so they are unrefusable by the compositor but depend on the core being alive (`Upholds=` is the mitigation). The keyboard escapes (`Super`, `Super+Escape`, `Super+Backspace`) are `gamescope-action-binding` entries and survive a dead core.
 - **Keyboard stays with the compositor.** gamescope routes keyboard focus to the base window or the overlay deterministically (`GAMESCOPE_FOCUS_DISPLAY`); the shell reads keys through Qt, and automation injects nav keys via a uinput keyboard (or libei through `gamescope-eis`).
 
