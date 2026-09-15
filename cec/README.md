@@ -68,9 +68,16 @@ leg to the cold path and to recovery. This file is the crate's own map.
 | `notify` | `sd_notify` — `READY=1` for the unit's `Type=notify`, `WATCHDOG=1` for its `WatchdogSec=`. Transport only; it decides nothing |
 
 `../core/units/tv-shell-v2-cec.service` is this daemon's unit. It lives beside
-the other v2 units because the session target that `Wants=` it does, and it is
-**shipped but not installed**: `scripts/install-v2.sh`'s `UNITS=()` array does
-not carry it yet.
+the other v2 units because the session target that `Wants=` it does, and since
+the cutover it is **installed**: it is the fourth entry in
+`scripts/install-v2.sh`'s `UNITS=()`, and that script now builds and installs
+this binary alongside `tv-shell-core`.
+
+Installing it on a box with no adapter is a **silent, correct skip** — the unit
+carries `ConditionPathExists=/dev/cec0`, so systemd records the unmet condition
+and starts nothing, and the session target only `Wants=` it in any case. On the
+deploy host `/dev/cec0` does not exist yet; creating it is an operator step in
+`jedwards1230/homelab-ansible#338`, taken with nobody at the television.
 
 ## The rules this code enforces
 
@@ -750,10 +757,9 @@ Each of these lands with the module that reads it, never ahead of it:
   leg is Wake-on-LAN only, by decision; see "The IP leg" above.
 - **A `backend-pin` control on the panel** — the `/devices/av` page stays
   read-only. The verb is available on the daemon's socket.
-- **The §8 rewrite** — §8's AV-ownership table still reads the pre-Q7 way, and
-  §13 Q7's "IP only when CEC is unavailable" wants the complement/failover
-  distinction folded in. Both are step 8 of the plan.
-- **Enabling the unit** — adding it to `scripts/install-v2.sh`'s `UNITS=()`.
+- **An on-hardware run of any of it.** Everything below "Not yet here" used to
+  include the §8 rewrite and enabling the unit; both landed. What is left is the
+  operator step that gives this daemon a device to open.
 
 Nothing here can be verified against real hardware yet: `/dev/cec0` does not
 exist on the deploy box, and the receiver and television are live equipment in a

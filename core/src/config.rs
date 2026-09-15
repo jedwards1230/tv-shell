@@ -1825,14 +1825,6 @@ ENABLE_GAMESCOPE_WSI = "1"
         // And the three that need a prefix say so with the token, so the
         // installer has something to substitute and a hand-copied unit fails
         // loudly.
-        //
-        // tv-shell-v2-cec.service is asserted here but is NOT in the installer's
-        // UNITS=() array yet: it is shipped disabled-by-condition
-        // (ConditionPathExists=/dev/cec0) while the CEC daemon is built out, so
-        // the committed file must already be token-correct even though nothing
-        // installs it. That is precisely the case this assertion exists for — a
-        // unit nobody installs is a unit nobody would notice had a hardcoded
-        // path.
         for (unit, needle) in [
             (
                 "tv-shell-core.service",
@@ -1856,16 +1848,32 @@ ENABLE_GAMESCOPE_WSI = "1"
     fn the_installed_units_carry_no_token_and_no_v1_path() {
         let s = stage_install("units");
         let units = installed_units(&s);
-        // THREE INSTALLED, not three committed. `core/units/` also holds
-        // tv-shell-v2-cec.service, which is deliberately absent from
-        // install-v2.sh's UNITS=() while the CEC daemon is built out — shipped,
-        // but not installed and not enabled. If that unit is added to UNITS=()
-        // this number goes to four; if this number is "fixed" without adding it
-        // there, the assertion has stopped meaning anything.
+        // FOUR INSTALLED, and every unit file in `core/units/` is now one of
+        // them — tv-shell-v2-cec.service joined install-v2.sh's UNITS=() at the
+        // cutover, so "committed" and "installed" have converged. The count
+        // stays pinned anyway: a unit added to the directory and forgotten in
+        // the installer is the failure this catches, and it is silent otherwise
+        // (the session target only Wants= its members, so a missing one is a
+        // log line at most).
         assert_eq!(
             units.len(),
-            3,
-            "expected three INSTALLED v2 units, got {units:?}"
+            4,
+            "expected four INSTALLED v2 units, got {units:?}"
+        );
+        // Read, not listed: the set installed must be exactly the set committed.
+        // A count alone would pass if a unit were added to the directory and a
+        // different one dropped from UNITS=().
+        let mut committed: Vec<String> =
+            std::fs::read_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("units"))
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".service") || n.ends_with(".target"))
+                .collect();
+        committed.sort();
+        let installed: Vec<String> = units.iter().map(|(n, _)| n.clone()).collect();
+        assert_eq!(
+            installed, committed,
+            "every committed v2 unit must be installed, and nothing else"
         );
         for (name, text) in &units {
             assert!(
@@ -2047,7 +2055,7 @@ ENABLE_GAMESCOPE_WSI = "1"
         // And the flag must suppress ONLY that: a flag that quietly skipped the
         // rest would leave an Ansible-managed host with a session entry pointing
         // at nothing.
-        assert_eq!(installed_units(&s).len(), 3, "the units must still install");
+        assert_eq!(installed_units(&s).len(), 4, "the units must still install");
         assert!(
             s.prefix
                 .join("bin")
