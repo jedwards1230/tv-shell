@@ -26,10 +26,15 @@
 //!   `[supervisor]` is the standing example of it — thresholds written and read
 //!   by nothing. Nothing is added here ahead of the code that reads it.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::failover::Thresholds;
+use crate::ip::avr::{self, Avr, AvrEndpoint};
+use crate::ip::wol::{self, Mac};
+use crate::ip::{IpConfig, WolTarget};
 use crate::state::PhysAddr;
 
 /// Env var overriding the config path.
@@ -52,6 +57,9 @@ pub const MAX_OSD_NAME: usize = 14;
 #[serde(default, deny_unknown_fields)]
 pub struct CecConfig {
     pub device: DeviceConfig,
+    pub avr: AvrSection,
+    pub tv: TvSection,
+    pub failover: FailoverSection,
 }
 
 /// `[device]` — which adapter to open and how to identify ourselves on it.
@@ -104,6 +112,112 @@ impl Default for DeviceConfig {
     }
 }
 
+/// `[avr]` — the Denon/Marantz receiver's telnet control port.
+///
+/// **Absent by default, and absent means absent**: an empty `host` is not a
+/// receiver at "", it is no receiver at all, and every telnet step is then
+/// skipped. This is the IP leg's *capability complement* half — Zone 2 has no
+/// CEC expression whatsoever — as well as half of the warm-path failover.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AvrSection {
+    /// Hostname or IP. Empty disables every AVR step.
+    ///
+    /// Resolved at send time, never here: a name that does not resolve must not
+    /// stop the daemon from starting on a box whose receiver is unplugged.
+    pub host: String,
+    /// The control port. Denon/Marantz speak ASCII over TCP/23.
+    pub port: u16,
+    /// The source code to select on wake (`SI<input>`, e.g. `GAME`). Empty
+    /// skips the input switch.
+    ///
+    /// Validated as ASCII alphanumeric, because it is interpolated into a
+    /// carriage-return-terminated control line — see
+    /// [`crate::ip::avr::validate_input_code`].
+    pub input: String,
+    /// Drive the receiver's MAIN-zone power over telnet (`PWON` / `PWSTANDBY`).
+    ///
+    /// **Off by default.** On the CEC path the main zone is already powered by
+    /// `<Image View On>` / `<Standby>`; and powering the main zone *down* is the
+    /// action that can black out a television somebody is watching, so this
+    /// daemon does not grant itself that authority merely because its adapter
+    /// stopped answering.
+    pub main_power: bool,
+    /// Send `Z2OFF` on every standby.
+    ///
+    /// **On by default, and it runs with a perfectly healthy CEC bus**: Zone 2
+    /// is not CEC-addressable at all, so this is a capability the bus does not
+    /// have rather than a fallback for when it fails.
+    pub zone2_off: bool,
+}
+
+impl Default for AvrSection {
+    fn default() -> AvrSection {
+        AvrSection {
+            host: String::new(),
+            port: avr::DEFAULT_PORT,
+            input: String::new(),
+            main_power: false,
+            zone2_off: true,
+        }
+    }
+}
+
+/// `[tv]` — the television's IP leg, which is **Wake-on-LAN and nothing else**.
+///
+/// There is no webOS/SSAP client here and none is planned: see
+/// [`crate::ip::wol`] for why the TV IP leg is write-only with no state read.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct TvSection {
+    /// The television's MAC. Empty disables Wake-on-LAN.
+    pub wol_mac: String,
+    /// Where to broadcast the magic packet. Numeric `addr:port` — a magic packet
+    /// is a broadcast, and a DNS name would resolve to a single host.
+    pub wol_broadcast: String,
+}
+
+impl Default for TvSection {
+    fn default() -> TvSection {
+        TvSection {
+            wol_mac: String::new(),
+            wol_broadcast: "255.255.255.255:9".to_string(),
+        }
+    }
+}
+
+/// `[failover]` — the warm-path decision's four thresholds.
+///
+/// Every key here is read by [`crate::failover::Failover`], and
+/// `every_threshold_changes_a_decision` fails if one stops being.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct FailoverSection {
+    /// Consecutive transmit failures, with nothing heard in the same window,
+    /// that count as a wedged adapter. **At least 2** — a threshold of 1 makes
+    /// one NAK a backend change.
+    pub tx_error_threshold: u32,
+    /// How far apart those failures may be and still be one run.
+    pub tx_error_window_ms: u64,
+    /// How long a failing observation must hold before the backend changes.
+    pub fail_after_ms: u64,
+    /// How long health must hold, across re-observations, before it changes
+    /// back.
+    pub recover_after_ms: u64,
+}
+
+impl Default for FailoverSection {
+    fn default() -> FailoverSection {
+        let t = Thresholds::default();
+        FailoverSection {
+            tx_error_threshold: t.tx_error_threshold,
+            tx_error_window_ms: t.tx_error_window_ms,
+            fail_after_ms: t.fail_after_ms,
+            recover_after_ms: t.recover_after_ms,
+        }
+    }
+}
+
 impl CecConfig {
     /// Load from the resolved path. A missing file yields all-defaults.
     pub fn load() -> anyhow::Result<Self> {
@@ -150,7 +264,83 @@ impl CecConfig {
                 self.device.osd_name
             );
         }
+        // Both of these parse the IP leg and the thresholds for their errors
+        // alone: a bad MAC or a zero hysteresis must fail here, naming the key,
+        // rather than at the first packet — where a WoL failure is SILENT.
+        self.ip()?;
+        self.thresholds()?;
         Ok(())
+    }
+
+    /// The IP leg, in [`crate::ip`]'s own terms.
+    ///
+    /// Fallible rather than parsed at deserialize time so each failure carries a
+    /// `config:` message naming the key, like every other validation here. An
+    /// empty `[avr].host` or `[tv].wol_mac` is **not** an error: it means that
+    /// half is not configured, which is the default and the common case.
+    pub fn ip(&self) -> anyhow::Result<IpConfig> {
+        let avr = if self.avr.host.trim().is_empty() {
+            None
+        } else {
+            if !self.avr.input.is_empty() {
+                avr::validate_input_code(&self.avr.input)
+                    .map_err(|e| anyhow::anyhow!("config: [avr] input {e}"))?;
+            }
+            if self.avr.port == 0 {
+                anyhow::bail!("config: [avr] port must not be zero");
+            }
+            Some(Avr {
+                endpoint: AvrEndpoint {
+                    host: self.avr.host.trim().to_string(),
+                    port: self.avr.port,
+                },
+                input: Some(self.avr.input.clone()).filter(|i| !i.is_empty()),
+                main_power: self.avr.main_power,
+                zone2_off: self.avr.zone2_off,
+            })
+        };
+
+        let tv_wol = if self.tv.wol_mac.trim().is_empty() {
+            None
+        } else {
+            let mac = Mac::parse(&self.tv.wol_mac).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "config: [tv] wol_mac is not a MAC address ({:?}); it must be six hex \
+                     octets separated by ':' or '-'",
+                    self.tv.wol_mac
+                )
+            })?;
+            let broadcast: SocketAddr = self.tv.wol_broadcast.parse().map_err(|e| {
+                anyhow::anyhow!(
+                    "config: [tv] wol_broadcast must be a numeric addr:port ({:?}: {e}); a \
+                     magic packet is a broadcast, so a name that resolves to one host is not \
+                     a destination for it",
+                    self.tv.wol_broadcast
+                )
+            })?;
+            if !wol::is_limited_broadcast(&broadcast) && broadcast.ip().is_loopback() {
+                anyhow::bail!(
+                    "config: [tv] wol_broadcast {broadcast} is a loopback address, which no \
+                     television can receive"
+                );
+            }
+            Some(WolTarget { mac, broadcast })
+        };
+
+        Ok(IpConfig { avr, tv_wol })
+    }
+
+    /// The failover thresholds, validated.
+    pub fn thresholds(&self) -> anyhow::Result<Thresholds> {
+        let t = Thresholds {
+            tx_error_threshold: self.failover.tx_error_threshold,
+            tx_error_window_ms: self.failover.tx_error_window_ms,
+            fail_after_ms: self.failover.fail_after_ms,
+            recover_after_ms: self.failover.recover_after_ms,
+        };
+        t.validate()
+            .map_err(|e| anyhow::anyhow!("config: [failover] {e}"))?;
+        Ok(t)
     }
 
     /// The configured physical address, parsed.
@@ -293,6 +483,128 @@ mod tests {
     fn an_empty_device_path_fails_validation() {
         let c = CecConfig::parse("[device]\npath = \"\"").unwrap();
         assert!(c.validate().unwrap_err().to_string().contains("path"));
+    }
+
+    /// **The rule: the IP leg is absent until it is configured.**
+    ///
+    /// A default box has no receiver and no television MAC, so `wake` and
+    /// `standby` put nothing on any network — and [`crate::failover`] reports
+    /// `cec` as the only available backend rather than announcing one that does
+    /// not exist.
+    #[test]
+    fn the_ip_leg_is_absent_by_default() {
+        let c = CecConfig::default();
+        let ip = c.ip().unwrap();
+        assert_eq!(ip, crate::ip::IpConfig::default());
+        assert!(!ip.is_configured());
+        // The defaults that do exist are the harmless ones.
+        assert_eq!(c.avr.port, 23);
+        assert!(c.avr.zone2_off, "Zone 2 is the whole point of this leg");
+        assert!(!c.avr.main_power, "powering the main zone down is opt-in");
+        assert_eq!(c.tv.wol_broadcast, "255.255.255.255:9");
+    }
+
+    #[test]
+    fn a_configured_ip_leg_parses_into_the_domain_types() {
+        let c = CecConfig::parse(
+            r#"
+            [avr]
+            host = "192.0.2.10"
+            port = 23
+            input = "GAME"
+            main_power = true
+            zone2_off = true
+
+            [tv]
+            wol_mac = "aa:bb:cc:dd:ee:ff"
+            wol_broadcast = "255.255.255.255:9"
+            "#,
+        )
+        .unwrap();
+        c.validate().unwrap();
+        let ip = c.ip().unwrap();
+        assert!(ip.is_configured());
+        let avr = ip.avr.unwrap();
+        assert_eq!(avr.endpoint.to_string(), "192.0.2.10:23");
+        assert_eq!(avr.input.as_deref(), Some("GAME"));
+        assert!(avr.main_power);
+        let wol = ip.tv_wol.unwrap();
+        assert_eq!(wol.mac.to_canonical(), "aa:bb:cc:dd:ee:ff");
+        assert_eq!(wol.broadcast.port(), 9);
+    }
+
+    /// **The rule: a malformed IP-leg value fails at startup naming the key.**
+    ///
+    /// Every failure mode this guards is SILENT at runtime — nothing
+    /// acknowledges a magic packet, and a control line with an embedded carriage
+    /// return is accepted by the receiver as a second command.
+    #[test]
+    fn a_malformed_ip_leg_value_fails_validation_naming_its_key() {
+        let cases = [
+            ("[tv]\nwol_mac = \"nonsense\"", "[tv] wol_mac"),
+            ("[tv]\nwol_mac = \"aa:bb:cc:dd:ee\"", "[tv] wol_mac"),
+            (
+                "[tv]\nwol_mac = \"aa:bb:cc:dd:ee:ff\"\nwol_broadcast = \"broadcast-host\"",
+                "[tv] wol_broadcast",
+            ),
+            (
+                "[tv]\nwol_mac = \"aa:bb:cc:dd:ee:ff\"\nwol_broadcast = \"127.0.0.1:9\"",
+                "[tv] wol_broadcast",
+            ),
+            (
+                "[avr]\nhost = \"192.0.2.10\"\ninput = \"GAME\\rZ2OFF\"",
+                "[avr] input",
+            ),
+            ("[avr]\nhost = \"192.0.2.10\"\nport = 0", "[avr] port"),
+            (
+                "[failover]\ntx_error_threshold = 1",
+                "[failover] tx_error_threshold",
+            ),
+            ("[failover]\nfail_after_ms = 0", "[failover] fail_after_ms"),
+            (
+                "[failover]\nrecover_after_ms = 0",
+                "[failover] recover_after_ms",
+            ),
+        ];
+        for (doc, expected) in cases {
+            let c = CecConfig::parse(doc).unwrap_or_else(|e| panic!("{doc:?} must parse: {e}"));
+            let e = c.validate().unwrap_err().to_string();
+            assert!(e.contains(expected), "{doc:?} -> {e}");
+        }
+    }
+
+    /// The thresholds reach [`crate::failover::Thresholds`] as written — the
+    /// config half of "every key here has a reader".
+    #[test]
+    fn the_failover_thresholds_reach_the_decision_module() {
+        let c = CecConfig::parse(
+            r#"
+            [failover]
+            tx_error_threshold = 7
+            tx_error_window_ms = 1234
+            fail_after_ms = 4321
+            recover_after_ms = 9876
+            "#,
+        )
+        .unwrap();
+        let t = c.thresholds().unwrap();
+        assert_eq!(t.tx_error_threshold, 7);
+        assert_eq!(t.tx_error_window_ms, 1234);
+        assert_eq!(t.fail_after_ms, 4321);
+        assert_eq!(t.recover_after_ms, 9876);
+    }
+
+    /// `deny_unknown_fields` reaches the new sections too.
+    #[test]
+    fn an_unknown_key_in_a_new_section_is_a_parse_error() {
+        for doc in [
+            "[avr]\nhostname = \"192.0.2.10\"",
+            "[tv]\nmac = \"aa:bb:cc:dd:ee:ff\"",
+            "[failover]\nthreshold = 3",
+            "[avrs]\nhost = \"192.0.2.10\"",
+        ] {
+            assert!(CecConfig::parse(doc).is_err(), "{doc:?}");
+        }
     }
 
     #[test]

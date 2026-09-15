@@ -41,6 +41,7 @@
 //! construction in [`crate::action`], where every gate runs before any message
 //! is built.
 
+use crate::failover::Pin;
 use crate::state::PhysAddr;
 use crate::volume::VolumeAction;
 
@@ -53,12 +54,10 @@ pub const INPUT_SELECT_USAGE: &str = "input-select <phys-addr>  (e.g. input-sele
 /// Usage line for `volume`.
 pub const VOLUME_USAGE: &str = "volume up|down|mute|unmute";
 
+/// Usage line for `backend-pin`.
+pub const BACKEND_PIN_USAGE: &str = "backend-pin cec|ip|auto";
+
 /// One parsed request.
-///
-/// `backend` and `backend-pin` are step 7 of the plan for
-/// jedwards1230/tv-shell#504 and are deliberately absent — an unimplemented verb
-/// answers `unknown`, which is a client learning the truth rather than a stub
-/// answering `ok`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// Liveness. Replies `ok`.
@@ -105,6 +104,26 @@ pub enum Command {
     /// typo reply `ok` for a change the client never asked for, which is exactly
     /// the confusion this design removes.
     VolumeUsage,
+    /// Which backend is authoritative, which exist, and why.
+    ///
+    /// **A read, and a cheap one**: it answers from the recorded decision and
+    /// touches neither the bus nor the network, so it keeps answering while the
+    /// adapter is the thing being diagnosed — the same rule
+    /// [`Command::AvState`] and [`Command::AvHealth`] follow.
+    Backend,
+    /// Pin the backend, or return to the automatic decision.
+    ///
+    /// An operator override, for when the automatic answer is wrong. It changes
+    /// no state on the bus or the network by itself — it changes which wire the
+    /// *next* action uses.
+    BackendPin(Pin),
+    /// `backend-pin` with a missing or unknown argument.
+    ///
+    /// **Distinct from [`Command::Unknown`], and never a silent default.** A
+    /// bare `backend-pin` is a client that knows the verb and got the call
+    /// wrong, and defaulting it to `auto` would silently clear an override the
+    /// operator had set.
+    BackendPinUsage,
     /// Not a verb this daemon has.
     Unknown,
 }
@@ -143,6 +162,13 @@ impl Command {
             // one.
             ("volume", _) => Command::VolumeUsage,
             ("volume-state", []) => Command::VolumeState,
+            ("backend", []) => Command::Backend,
+            ("backend-pin", [word]) => {
+                Pin::parse(word).map_or(Command::BackendPinUsage, Command::BackendPin)
+            }
+            // A bare `backend-pin`, and `backend-pin cec ip`: neither is a
+            // request this daemon can act on, and neither may be coerced.
+            ("backend-pin", _) => Command::BackendPinUsage,
             _ => Command::Unknown,
         }
     }
@@ -361,6 +387,12 @@ mod tests {
             "volume-states",
             "volume-state 1",
             "volumestate",
+            "backendX",
+            "backends",
+            "backend cec",
+            "backend-pinX cec",
+            "backend-pins cec",
+            "backendpin cec",
         ] {
             assert_eq!(
                 Command::parse(line),
@@ -379,10 +411,51 @@ mod tests {
         // write wearing a read's name.
         assert_eq!(Command::parse("cec-health"), Command::Unknown);
         assert_eq!(Command::parse("cec-scan"), Command::Unknown);
-        // And the verbs that land in step 7. `unknown` is the honest answer
-        // until they do something.
-        for later in ["backend", "backend-pin cec"] {
-            assert_eq!(Command::parse(later), Command::Unknown, "{later}");
+    }
+
+    #[test]
+    fn the_backend_verbs_parse() {
+        assert_eq!(Command::parse("backend"), Command::Backend);
+        assert_eq!(
+            Command::parse("backend-pin cec"),
+            Command::BackendPin(Pin::Cec)
+        );
+        assert_eq!(
+            Command::parse("backend-pin ip"),
+            Command::BackendPin(Pin::Ip)
+        );
+        assert_eq!(
+            Command::parse("  backend-pin   auto  "),
+            Command::BackendPin(Pin::Auto)
+        );
+    }
+
+    /// **The rule: `backend-pin` with a missing or unknown argument is a USAGE
+    /// error — never a silent default, and never `unknown`.**
+    ///
+    /// Defaulting a bare `backend-pin` to `auto` would silently clear an
+    /// override an operator had set, which is the opposite of what they asked
+    /// for and is indistinguishable from success.
+    ///
+    /// Mutation-check (run 2026-09-14): make the bare-`backend-pin` arm fall
+    /// back to `Command::BackendPin(Pin::Auto)` and every row here fails, along
+    /// with the `ipc` twin.
+    #[test]
+    fn a_missing_or_unknown_backend_pin_argument_is_a_usage_error() {
+        for line in [
+            "backend-pin",
+            "backend-pin ",
+            "backend-pin AUTO",
+            "backend-pin libcec",
+            "backend-pin kernel",
+            "backend-pin cec ip",
+            "backend-pin auto 1",
+        ] {
+            assert_eq!(
+                Command::parse(line),
+                Command::BackendPinUsage,
+                "{line:?} must be a usage error"
+            );
         }
     }
 

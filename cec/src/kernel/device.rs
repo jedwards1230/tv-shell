@@ -49,7 +49,9 @@ use linux_cec::{FollowerMode, InitiatorMode, LogicalAddressType, PhysicalAddress
 use crate::action::Action;
 use crate::backend::{ActionOutcome, AvBackend};
 use crate::config::CecConfig;
+use crate::failover::{Backend, BackendReport, Failover, Observed, Pin};
 use crate::health::{Health, HealthReport};
+use crate::ip::{self, IpConfig, IpWire, NetWire};
 use crate::kernel::ops;
 use crate::state::{now_ms, AvState, Observation, Observations, PhysAddr, Topology};
 use crate::volume::{VolumeAction, VolumeBus, VolumeState};
@@ -66,6 +68,17 @@ pub struct KernelBackend {
     /// `observations` follows, and for the same reason: `av-health` must keep
     /// answering while the device is the thing being diagnosed.
     health: Arc<Mutex<Health>>,
+    /// The warm-path backend decision. Shared with the receive loop, which folds
+    /// every heard message and every state change into it, and with the watchdog
+    /// probe, which folds the health verdict. **Never held across an `.await`**,
+    /// for the same reason as the two above.
+    failover: Arc<Mutex<Failover>>,
+    /// The IP leg as configured. Usually empty — it is opt-in.
+    ip: IpConfig,
+    /// The network. A trait object rather than [`NetWire`] directly, so the
+    /// tests in [`crate::ip`] drive a recording fake and **no test in this crate
+    /// dials a receiver**.
+    wire: Arc<dyn IpWire>,
 }
 
 impl KernelBackend {
@@ -223,9 +236,35 @@ impl KernelBackend {
             health.report(now_ms()).reason
         );
 
+        // The IP leg and the warm-path decision. Both are already validated —
+        // `config.validate()` runs before this function is called — so a bad MAC
+        // or a zero hysteresis has failed at startup naming its key rather than
+        // at the first packet, where a Wake-on-LAN failure is silent.
+        let ip = config.ip()?;
+        let failover = Failover::at_open(config.thresholds()?, &ip, health.state());
+        if ip.is_configured() {
+            tracing::info!(
+                "IP leg configured: receiver {}, wake-on-lan {}",
+                ip.avr
+                    .as_ref()
+                    .map_or_else(|| "none".to_string(), |a| a.endpoint.to_string()),
+                ip.tv_wol
+                    .as_ref()
+                    .map_or_else(|| "none".to_string(), |w| w.mac.to_canonical()),
+            );
+        } else {
+            tracing::info!(
+                "no IP leg configured; the kernel CEC adapter is the only backend, and a \
+                 degraded adapter has nowhere to fail over to"
+            );
+        }
+
         Ok(KernelBackend {
             device: Arc::new(device),
             health: Arc::new(Mutex::new(health)),
+            failover: Arc::new(Mutex::new(failover)),
+            ip,
+            wire: Arc::new(NetWire),
             topology: Topology {
                 backend: "cec",
                 device: path,
@@ -255,6 +294,12 @@ impl KernelBackend {
     #[must_use]
     pub fn health(&self) -> Arc<Mutex<Health>> {
         Arc::clone(&self.health)
+    }
+
+    /// The shared warm-path decision, for the receive loop.
+    #[must_use]
+    pub fn failover(&self) -> Arc<Mutex<Failover>> {
+        Arc::clone(&self.failover)
     }
 
     /// Observe **facts 1 and 2**, record them, and answer the one question the
@@ -307,18 +352,80 @@ impl KernelBackend {
                 health.report(now).reason
             );
         }
-        health.should_feed_watchdog()
+        let state = health.state();
+        let feed = health.should_feed_watchdog();
+        drop(health);
+
+        // The warm-path decision sees the verdict, not the ioctl. This is also
+        // the **backstop** recovery path: the primary one is the kernel's own
+        // `PollResult::StateChange` in the receive loop, which fires the moment
+        // the adapter regains its address. Neither is a timer with authority of
+        // its own — both carry a re-read of facts 1 and 2, and
+        // `Failover::observe` is the only thing that can move the backend.
+        self.note_failover(Observed::Health(state));
+        feed
     }
 
-    /// Record a transmit the bus accepted (**fact 4**).
-    fn note_tx(&self, outcome: &ActionOutcome) {
-        if !matches!(outcome, ActionOutcome::Done) {
-            return;
-        }
-        self.health
+    /// Fold one observation into the warm-path decision, logging the transition
+    /// it caused, if any.
+    ///
+    /// **One line per change, never one per observation.** This is called from
+    /// the receive loop on every heard message; a line each would fill a journal
+    /// that retains about a day.
+    fn note_failover(&self, observed: Observed) {
+        let transition = self
+            .failover
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .record_tx_ok(now_ms());
+            .observe(observed, now_ms());
+        if let Some(t) = transition {
+            log_transition(&t);
+        }
+    }
+
+    /// Record what became of a transmit: **fact 4** for health, and the
+    /// transmit-side input to the warm-path decision.
+    ///
+    /// A **refusal is neither**. Nothing was transmitted, so it is not evidence
+    /// about the adapter in either direction — counting one toward the failover
+    /// rule would make the ownership gate look like a wedged bus.
+    fn note_tx(&self, outcome: &ActionOutcome) {
+        match outcome {
+            ActionOutcome::Done => {
+                self.health
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .record_tx_ok(now_ms());
+                self.note_failover(Observed::TxOk);
+            }
+            // One of these changes nothing: the rule needs N consecutive
+            // failures with nothing heard in the same window. See
+            // `crate::failover`.
+            ActionOutcome::Failed(_) => self.note_failover(Observed::TxError),
+            ActionOutcome::Refused(_) => {}
+        }
+    }
+}
+
+/// One line per committed backend change, naming the observation that caused it.
+///
+/// `warn` on the way out and `info` on the way back, because one of them is
+/// something an operator should look at and the other is the system working.
+pub(crate) fn log_transition(transition: &crate::failover::Transition) {
+    if transition.to == Backend::Cec {
+        tracing::info!(
+            "backend {} -> {}: {}",
+            transition.from.as_str(),
+            transition.to.as_str(),
+            transition.reason
+        );
+    } else {
+        tracing::warn!(
+            "backend {} -> {}: {}",
+            transition.from.as_str(),
+            transition.to.as_str(),
+            transition.reason
+        );
     }
 }
 
@@ -372,6 +479,46 @@ impl AvBackend for KernelBackend {
     /// The observation lock is taken and released before the first `.await` on
     /// the device, so an action can never block `av-state`.
     async fn act(&self, action: Action) -> ActionOutcome {
+        let (active, why) = {
+            let failover = self
+                .failover
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (failover.active(), failover.reason())
+        };
+
+        // **The IP leg runs FIRST, and it runs whatever the warm-path decision
+        // says.** Two things have no CEC expression at all — Zone 2, and a
+        // television at mains standby — so these steps are a capability
+        // complement, not a fallback. The order matters twice over: a cold
+        // television has to be woken before `<Image View On>` can reach it, and
+        // a `Z2OFF` has to reach a receiver that is still awake, which it would
+        // not be if the CEC `<Standby>` had gone first.
+        let ip_plan = ip::plan_for(action, &self.ip, active.ip_role());
+        let ip_report = if ip_plan.is_empty() {
+            ip::IpReport::default()
+        } else {
+            tracing::info!("{action:?}: IP leg ({:?}) {:?}", ip_plan.role, ip_plan);
+            ip::execute(self.wire.as_ref(), &ip_plan).await
+        };
+
+        if active == Backend::Ip {
+            // CEC is not authoritative, so the IP leg is the whole action and
+            // its outcome is the action's outcome.
+            let outcome = ip::judge(action, &self.ip, &ip_report, &why);
+            tracing::info!("{action:?} over the IP leg: {outcome:?}");
+            return outcome;
+        }
+        if !ip_report.ok() {
+            // CEC is authoritative, so this does not fail the action — but it is
+            // not silent either: a receiver that refused its control port is the
+            // reason Zone 2 is still on.
+            tracing::warn!(
+                "{action:?}: the IP complement failed ({}); the CEC steps follow regardless",
+                ip_report.why()
+            );
+        }
+
         let owner = {
             let observations = self
                 .observations
@@ -401,6 +548,19 @@ impl AvBackend for KernelBackend {
     /// (a refusal here transmits nothing), [`crate::volume::execute`] is the
     /// sequence, and this method only supplies the wire.
     async fn volume(&self, action: VolumeAction) -> ActionOutcome {
+        let (active, why) = {
+            let failover = self
+                .failover
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (failover.active(), failover.reason())
+        };
+        if active == Backend::Ip {
+            // Nothing to send: see `ip::volume_unreachable`. Answering `ok` and
+            // transmitting into a bus this daemon has just concluded it cannot
+            // use would be the failure this crate exists to remove.
+            return ip::volume_unreachable(&why);
+        }
         let plan = match crate::volume::plan(action, self.topology.phys_addr_read_back) {
             Ok(plan) => plan,
             Err(refusal) => {
@@ -444,6 +604,28 @@ impl AvBackend for KernelBackend {
                 )
             }
         }
+    }
+
+    /// The warm-path decision, with no device and no network access at all.
+    async fn backend(&self) -> BackendReport {
+        match self.failover.lock() {
+            Ok(f) => f.report(),
+            Err(poisoned) => poisoned.into_inner().report(),
+        }
+    }
+
+    /// Apply an operator override.
+    async fn pin_backend(&self, pin: Pin) -> Result<(), String> {
+        let result = self
+            .failover
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .set_pin(pin);
+        match &result {
+            Ok(()) => tracing::info!("backend pinned to {} by an operator", pin.as_str()),
+            Err(e) => tracing::info!("backend-pin {} refused: {e}", pin.as_str()),
+        }
+        result
     }
 
     /// The recorded facts, with no device access at all.
