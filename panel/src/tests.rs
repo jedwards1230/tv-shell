@@ -37,7 +37,11 @@ fn hermetic_state() -> Arc<AppState> {
         // snapshot keeps every section rendered so an assertion can't pass by
         // the section being gated away.
         caps: CapabilitySnapshot::fully_capable(),
-        node: Arc::new(IpcTransport::new(sock)),
+        node: Arc::new(IpcTransport::new(sock.clone())),
+        // The v2 AV daemon: an unbound path, so it is unreachable — which is
+        // the state of every box that has not taken #504's operator step.
+        av: Arc::new(IpcTransport::new(sock.with_extension("av.sock"))),
+        av_sock: sock.with_extension("av.sock"),
         bridge: Arc::new(BridgeClient::new(None, None)),
         recovery: Recovery::new(),
         updates: crate::updates::UpdatesState::with_seeded_cache(),
@@ -57,6 +61,209 @@ async fn dashboard_tiles_degrades_when_daemon_unreachable() {
         html.to_lowercase().contains("unreachable"),
         "degraded dashboard must show an unreachable marker: {html}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Devices ▸ AV (v2) — the v2 AV daemon's own socket, and the caller rule
+// ---------------------------------------------------------------------------
+
+/// Bind a socket that ACCEPTS and never replies, and hold the connection open.
+///
+/// This is the wedged-daemon shape, and it is deliberately not "an unbound
+/// path": a daemon whose CEC ioctl never returns still has a bound socket and
+/// still accepts, so a caller that only guards against `ENOENT` waits forever on
+/// it. The returned listener must be kept alive by the caller — dropping it
+/// closes the socket and turns the wedge into an EOF.
+fn spawn_hung_daemon(name: &str) -> (std::path::PathBuf, tokio::task::JoinHandle<()>) {
+    let sock = std::path::PathBuf::from(format!(
+        "/tmp/tvshp-hung-{name}-{}-{}.sock",
+        std::process::id(),
+        config_daemon_uniquifier()
+    ));
+    let _ = std::fs::remove_file(&sock);
+    let listener = UnixListener::bind(&sock).expect("bind hung daemon socket");
+    let handle = tokio::spawn(async move {
+        let mut held = Vec::new();
+        // Read nothing, write nothing, close nothing: every accepted connection
+        // is parked in `held` for the lifetime of the task.
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    (sock, handle)
+}
+
+/// A state whose v1 node is unreachable and whose v2 AV daemon is `av_sock`.
+fn state_for_av_socket(av_sock: std::path::PathBuf) -> Arc<AppState> {
+    let node_sock = std::path::PathBuf::from(format!(
+        "/tmp/tvshp-av-node-{}-{}.sock",
+        std::process::id(),
+        config_daemon_uniquifier()
+    ));
+    state_for_sockets(node_sock, av_sock, CapabilitySnapshot::fully_capable())
+}
+
+/// With no v2 AV daemon running at all, the page still renders — and says which
+/// socket it looked at, so a wrong path is distinguishable from a stopped
+/// daemon.
+///
+/// This is the normal state of every box that has not taken the operator step
+/// of jedwards1230/tv-shell#504: no `/dev/cec0`, so the unit's
+/// `ConditionPathExists=` keeps it inert.
+#[tokio::test]
+async fn av_page_degrades_when_the_v2_daemon_is_not_running() {
+    let state = hermetic_state();
+    let html = pages::av::render_page(&state).await;
+    assert!(!html.is_empty());
+    assert!(
+        html.contains("nothing is listening"),
+        "must name the actual failure: {html}"
+    );
+    assert!(
+        !html.contains("dot-ok"),
+        "a daemon that did not answer must not render as healthy: {html}"
+    );
+    assert!(
+        html.contains(&state.av_sock.display().to_string()),
+        "must name the socket it dialled: {html}"
+    );
+}
+
+/// **THE LOAD-BEARING TEST OF THIS PAGE: a WEDGED daemon — one that accepts the
+/// connection and never replies — renders a degraded page rather than hanging
+/// the request.**
+///
+/// The v2 AV unit is isolated from the session topologically (a bare `Wants=`,
+/// no ordering, no failure propagation), and that isolation is only real if
+/// every caller of its socket bounds its own wait. A caller that awaits
+/// indefinitely is precisely the mechanism by which a wedged CEC backend reaches
+/// the television. So this asserts BOTH halves: the page degrades, and it
+/// degrades *in bounded time*.
+///
+/// The latency assertion is the half that cannot be dropped — a mutation that
+/// removes the bound does not fail an assertion, it HANGS, and a hung suite
+/// reads as green until it times out. Comparing against the transport's own 3 s
+/// default is what makes "we used `command_timeout`" an observation rather than
+/// a claim about which function was called.
+///
+/// Mutation-check (run 2026-09-14): swap `command_timeout(line, AV_TIMEOUT)` for
+/// `command(line)` in `pages::av::ask` and this fails on the upper bound (it
+/// takes ~3 s); widen the bound to an hour — the "no bound at all" case — and it
+/// fails on the 5 s wrapper rather than hanging the suite.
+#[tokio::test]
+async fn av_page_renders_degraded_rather_than_hanging_on_a_wedged_daemon() {
+    let (sock, listener) = spawn_hung_daemon("av-wedged");
+    let state = state_for_av_socket(sock.clone());
+
+    // The render is itself wrapped in a bound, so a mutation that removes the
+    // page's OWN bound fails this test instead of hanging the suite — a hung
+    // test reads as green until something else kills it.
+    let started = std::time::Instant::now();
+    let html = tokio::time::timeout(Duration::from_secs(5), pages::av::render_page(&state))
+        .await
+        .expect("the page must bound its own wait; it did not return within 5s");
+    let elapsed = started.elapsed();
+
+    assert!(
+        html.contains("did not reply within"),
+        "a wedged daemon must be named as wedged, not as absent: {html}"
+    );
+    assert!(
+        !html.contains("dot-ok"),
+        "a wedged daemon must not render as healthy: {html}"
+    );
+    assert!(
+        elapsed >= pages::av::AV_TIMEOUT,
+        "the page cannot have waited less than its own bound ({elapsed:?})"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "the page must give up on its own bound, well inside IpcTransport's 3s \
+         default — took {elapsed:?}"
+    );
+
+    listener.abort();
+    let _ = std::fs::remove_file(&sock);
+}
+
+/// A running daemon's answers reach the page: the tri-state with its dot, the
+/// ages, and the topology rows.
+#[tokio::test]
+async fn av_page_renders_what_a_running_v2_daemon_reports() {
+    let mut replies = HashMap::new();
+    replies.insert(
+        "av-health",
+        r#"{"state":"healthy","sinceMs":65000,"lastTxOk":800,"lastRxMs":null,"busActivityMs":null,"reason":"the adapter fd answers and the adapter holds a physical and logical address; bus liveness from last-heard ages (CEC_CAP_MONITOR_PIN absent)"}"#,
+    );
+    replies.insert(
+        "av-state",
+        r#"{"backend":"cec","device":"/dev/cec0","physAddr":"2.5.0.0","physAddrConfigured":"2.5.0.0","logAddrs":["playback-device1"],"capabilities":["PHYS_ADDR","LOG_ADDRS"],"monitorPin":false,"tvPower":"on","avrPower":null,"activeSource":"2.5.0.0","weAreSource":true,"displayOwnership":{"state":"owned-by-us"},"volume":40,"muted":false,"observedAt":1700000000000,"lostMessages":0}"#,
+    );
+    replies.insert("backend", "unknown");
+    let sock = spawn_canned_daemon("av-healthy", replies);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let state = state_for_av_socket(sock);
+
+    let html = pages::av::render_page(&state).await;
+    assert!(html.contains("dot-ok"), "{html}");
+    assert!(html.contains("healthy"), "{html}");
+    // Ages, humanized — and a fact that never happened is an em dash, never
+    // "0 s", because "never" and "just now" are different readings.
+    assert!(html.contains("65 s"), "the state age must render: {html}");
+    assert!(html.contains("800 ms"), "the tx age must render: {html}");
+    assert!(
+        html.contains("—"),
+        "a null age must render as an em dash: {html}"
+    );
+    assert!(!html.contains("0 s ago"), "{html}");
+    // Topology rows.
+    assert!(html.contains("/dev/cec0"), "{html}");
+    assert!(html.contains("owned-by-us"), "{html}");
+    assert!(html.contains("playback-device1"), "{html}");
+    // `backend` is honestly reported as not implemented — no invented value.
+    assert!(html.contains("Not yet implemented"), "{html}");
+    assert!(
+        html.contains("step 7"),
+        "the placeholder must say what fills it in: {html}"
+    );
+}
+
+/// **THE RULE, at the last surface it can be broken: an `unknown` health is
+/// never rendered as healthy.**
+///
+/// Reachable from the real daemon: a `PollResult::StateChange` puts it in
+/// exactly this state, and the reply asserted here is that daemon's own shape.
+/// A degraded state gets its own (also non-ok) dot.
+///
+/// Mutation-check (run 2026-09-14): make `pages::av::dot_class` fall through to
+/// `dot-ok` and both assertions fail.
+#[tokio::test]
+async fn an_unknown_av_health_is_not_rendered_as_healthy() {
+    for (state_token, expected_dot) in [("unknown", "dot-warn"), ("degraded", "dot-error")] {
+        let mut replies = HashMap::new();
+        let health: &'static str = Box::leak(
+            format!(
+                r#"{{"state":"{state_token}","sinceMs":10,"lastTxOk":null,"lastRxMs":null,"busActivityMs":null,"reason":"why"}}"#
+            )
+            .into_boxed_str(),
+        );
+        replies.insert("av-health", health);
+        replies.insert("av-state", "{}");
+        replies.insert("backend", "unknown");
+        let sock = spawn_canned_daemon(&format!("av-{state_token}"), replies);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let state = state_for_av_socket(sock);
+
+        let html = pages::av::render_page(&state).await;
+        assert!(
+            html.contains(expected_dot),
+            "{state_token} must render {expected_dot}: {html}"
+        );
+        assert!(
+            !html.contains("dot-ok"),
+            "{state_token} must never render as healthy: {html}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -336,10 +543,23 @@ fn state_for_socket(sock: std::path::PathBuf) -> Arc<AppState> {
 /// facts, and a page that conflates them renders links to routes that were
 /// never registered.
 fn state_for_socket_with_caps(sock: std::path::PathBuf, caps: CapabilitySnapshot) -> Arc<AppState> {
+    state_for_sockets(sock.clone(), sock.with_extension("av.sock"), caps)
+}
+
+/// A state wired to BOTH sockets independently — the v1 node and the v2 AV
+/// daemon are different daemons on different sockets, and a test that wants one
+/// reachable and the other not is the normal case rather than an edge one.
+fn state_for_sockets(
+    sock: std::path::PathBuf,
+    av_sock: std::path::PathBuf,
+    caps: CapabilitySnapshot,
+) -> Arc<AppState> {
     Arc::new(AppState {
         cfg: AppConfig::default(),
         caps,
         node: Arc::new(IpcTransport::new(sock)),
+        av: Arc::new(IpcTransport::new(av_sock.clone())),
+        av_sock,
         bridge: Arc::new(BridgeClient::new(None, None)),
         recovery: Recovery::new(),
         updates: crate::updates::UpdatesState::with_seeded_cache(),
@@ -2241,6 +2461,13 @@ fn route_table() -> Vec<RouteSpec> {
             Get,
             Authenticated,
         ),
+        // Devices ▸ AV (v2) — recovery tier: it dials the v2 AV daemon's OWN
+        // socket (a third socket, V2_DESIGN §11) with a bounded timeout and
+        // renders degraded when nothing answers, so it needs neither the v1
+        // daemon nor a declared capability. Read-only: the daemon's transmit
+        // verbs put messages on a shared living-room bus, and this page sends
+        // none of them, so there is no mutating route to justify here.
+        r("/devices/av", "/devices/av", Get, Authenticated),
         // ── forwarding addresses for the pre-IA paths (recovery tier half) ──
         r("/dashboard", "/dashboard", Get, Authenticated),
         r("/processes", "/processes", Get, Authenticated),
@@ -3137,7 +3364,7 @@ fn route_table_matches_main_rs_declarations() {
 
     assert_eq!(
         declared.len(),
-        113,
+        114,
         "expected the 109 routes phase 3 left, then phase 4: 6 deleted outright \
          (the four `/tools/sys/*` probes, already on the Overview tiles, and the \
          two `controllerdb-*` duplicates of the Controllers page's own), the \
@@ -3148,6 +3375,9 @@ fn route_table_matches_main_rs_declarations() {
          system-services tile's own poll target — Overview ADDED no mutating \
          route, and removed none, because its actions had already moved). \
          Everything else moved rather than being added (docs/PANEL_IA.md) — \
+         plus Devices > AV (v2)'s single net-new GET (`/devices/av`, the v2 \
+         AV daemon's read-only page, recovery tier because it dials that \
+         daemon's own socket and needs no v1 capability) — \
          plus the display-mode section's five net-new routes on Devices > \
          Display & Audio (`GET /devices/display-audio/mode` and its \
          apply/vrr/confirm/revert POSTs), the first controls on that page that \
@@ -3409,7 +3639,9 @@ fn state_with_caps(cfg: AppConfig, caps: CapabilitySnapshot) -> SharedState {
     Arc::new(AppState {
         cfg,
         caps,
-        node: Arc::new(IpcTransport::new(sock)),
+        node: Arc::new(IpcTransport::new(sock.clone())),
+        av: Arc::new(IpcTransport::new(sock.with_extension("av.sock"))),
+        av_sock: sock.with_extension("av.sock"),
         bridge,
         recovery: Recovery::new(),
         updates: crate::updates::UpdatesState::with_seeded_cache(),

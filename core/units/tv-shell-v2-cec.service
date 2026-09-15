@@ -58,18 +58,24 @@ ExecStart=@TV_SHELL_V2_PREFIX@/bin/tv-shell-cec
 # waits on it, so the blast radius is this cgroup.
 #
 # THE FEED IS IMPLEMENTED, and it has to be: WatchdogSec= without a WATCHDOG=1
-# message is a unit that kills itself every 30 s. cec/src/main.rs feeds it at
-# half this interval, and only while CEC_ADAP_G_CAPS round-trips on our own file
-# descriptor — a pure ioctl with no bus traffic, so probing liveness has no
-# side effect on anyone's television. That is the difference from v1's
-# cec-health, which inferred adapter health from the outcome of our own
-# transmits and was then inferred from a second time by a polling watchdog
-# reading IPC reachability, which is how a deliberately stopped daemon read as a
-# wedged adapter and got "recovered" three times.
+# message is a unit that kills itself every 30 s. cec/src/main.rs probes the
+# adapter at half this interval and feeds the watchdog while — and only while —
+# cec/src/health.rs says to, which is fact 1: CEC_ADAP_G_CAPS round-tripping on
+# our own file descriptor. That is a pure ioctl with no bus traffic, so probing
+# liveness has no side effect on anyone's television.
 #
-# The rest of that work — the health state machine over the four observed facts,
-# and the av-health verb that publishes them — is a later step. This directive
-# covers one fact only.
+# It is deliberately NOT gated on the published verdict. A lost address is
+# `degraded`, and restarting the daemon does not give an HDMI topology back, so
+# feeding on the verdict would make every television standby a restart loop.
+#
+# THIS IS WHAT RETIRES THE ANSIBLE CEC WATCHDOG, rather than merely disabling
+# it: one supervisor with restart authority over this daemon, on a bounded
+# timer, with no polling script and no bus side effects. v1's cec-health
+# inferred adapter health from the outcome of our own transmits and was then
+# inferred from a SECOND time by that polling watchdog reading IPC
+# reachability — which is how a deliberately stopped daemon read as a wedged
+# adapter and got "recovered" three times. The Ansible timer is already
+# disabled/inactive on the deploy box; it must simply never be re-enabled.
 WatchdogSec=30s
 Restart=always
 RestartSec=2

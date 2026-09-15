@@ -262,10 +262,15 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
+        let av_sock = sock.with_extension("av.sock");
         Arc::new(AppState {
             cfg: AppConfig::default(),
             caps: crate::capabilities::CapabilitySnapshot::fully_capable(),
             node: Arc::new(IpcTransport::new(sock)),
+            // The v2 AV daemon: an unbound path, so it is unreachable — the
+            // normal state on a box that has not taken the operator step.
+            av: Arc::new(IpcTransport::new(av_sock.clone())),
+            av_sock,
             bridge: Arc::new(BridgeClient::new(None, None)),
             recovery: Recovery::new(),
             updates: crate::updates::UpdatesState::with_seeded_cache(),

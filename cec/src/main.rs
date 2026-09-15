@@ -13,26 +13,25 @@
 //!    completes its start job — and it is sent last on purpose: a `READY=1` sent
 //!    before the socket exists would tell systemd the daemon was serving while a
 //!    client connecting on that promise still got `ENOENT`.
-//! 6. Feed `WATCHDOG=1` while, and only while, the adapter fd answers.
+//! 6. Probe the adapter on a timer, record what it observed, and feed
+//!    `WATCHDOG=1` while — and only while — the health machine says to.
 //! 7. Serve until a signal.
 //!
 //! # The watchdog, stated plainly
 //!
 //! The unit ships `WatchdogSec=30s`, so a daemon that does not feed it is
-//! SIGABRTed and restarted every 30 s. That means the feed cannot wait for step
-//! 6 of the plan — shipping the directive without the message would be shipping
-//! a unit that self-kills. So the minimal feed is here now, gated on exactly the
-//! plan's fact 1: `CEC_ADAP_G_CAPS` round-trips. It is a pure ioctl on our own
-//! file descriptor and touches the bus not at all.
+//! SIGABRTed and restarted every 30 s. **That is the only supervisor on this
+//! box with restart authority over this daemon** (V2_DESIGN §9), and it is what
+//! retires the Ansible CEC watchdog rather than merely disabling it: no polling
+//! script, no `cec-health` probe with bus side effects, no second mechanism that
+//! can "recover" a daemon that was never broken.
 //!
-//! What is deliberately NOT here is the rest of step 6 — the health state
-//! machine over the four observed facts, and the `av-health` verb that publishes
-//! them. This feed answers one question ("is the fd answering?") and makes no
-//! claim about the bus. That distinction is the whole lesson of v1's
-//! `cec-health`, which inferred adapter health from the outcome of our own
-//! transmits and was then inferred from a second time by a watchdog reading IPC
-//! reachability — which is how a deliberately stopped daemon read as a wedged
-//! adapter and got "recovered" three times.
+//! **This file decides nothing about health.** It performs the probe and asks
+//! [`tv_shell_cec::health::Health::should_feed_watchdog`], which is gated on
+//! fact 1 — `CEC_ADAP_G_CAPS` round-tripping on our own file descriptor, a pure
+//! ioctl that touches the bus not at all — and deliberately not on the derived
+//! verdict. The reasoning for that split, and for the other three facts, lives
+//! with the state machine.
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -99,7 +98,7 @@ async fn main() -> ExitCode {
     notifier.status("listening; power, input and volume verbs available");
     tracing::info!("ready; serving on {sock_path}");
 
-    let watchdog = watchdog_feed(notifier, backend.liveness);
+    let watchdog = watchdog_feed(notifier, backend.probe);
 
     let outcome = tokio::select! {
         result = server => match result {
@@ -110,7 +109,7 @@ async fn main() -> ExitCode {
             }
         },
         () = watchdog => {
-            // Only reachable when the liveness probe is absent, which cannot
+            // Only reachable when the probe is absent, which cannot
             // happen with a real backend. Kept as a branch rather than an
             // `unreachable!()` so a future refactor cannot turn it into a panic.
             tracing::warn!("the watchdog feed ended; shutting down");
@@ -144,11 +143,15 @@ struct Opened {
     ipc: Arc<dyn AvBackend>,
     /// The receive loop to spawn, if this backend has one.
     receive_loop: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
-    /// The watchdog's liveness probe — fact 1, and nothing else.
-    liveness: Option<Box<dyn Fn() -> LivenessFuture + Send + Sync>>,
+    /// Observe the health facts and answer "should `WATCHDOG=1` be sent?".
+    ///
+    /// The **decision** is the health machine's; this closure only carries the
+    /// backend that can observe. `None` for a backend with no device, which
+    /// cannot happen with a real one.
+    probe: Option<Box<dyn Fn() -> ProbeFuture + Send + Sync>>,
 }
 
-type LivenessFuture = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+type ProbeFuture = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
 
 #[cfg(target_os = "linux")]
 async fn open_backend(config: &CecConfig) -> anyhow::Result<Opened> {
@@ -158,13 +161,15 @@ async fn open_backend(config: &CecConfig) -> anyhow::Result<Opened> {
     let device = backend.device();
     let observations = backend.observations();
 
-    let probe = Arc::clone(&backend);
+    let health = backend.health();
+
+    let prober = Arc::clone(&backend);
     Ok(Opened {
         ipc: Arc::clone(&backend) as Arc<dyn AvBackend>,
-        receive_loop: Some(Box::pin(follower::run(device, observations))),
-        liveness: Some(Box::new(move || {
-            let probe = Arc::clone(&probe);
-            Box::pin(async move { probe.fd_is_alive().await })
+        receive_loop: Some(Box::pin(follower::run(device, observations, health))),
+        probe: Some(Box::new(move || {
+            let prober = Arc::clone(&prober);
+            Box::pin(async move { prober.probe().await })
         })),
     })
 }
@@ -180,26 +185,33 @@ async fn open_backend(_config: &CecConfig) -> anyhow::Result<Opened> {
     anyhow::bail!("the kernel CEC API (/dev/cecN) exists only on Linux")
 }
 
-/// Feed `WATCHDOG=1` for as long as the adapter fd answers.
+/// Probe the adapter on a timer, and feed `WATCHDOG=1` while the health machine
+/// says to.
 ///
-/// When the probe fails the feed simply **stops**. It does not exit, kill
-/// anything, or log once a second: systemd's `WatchdogSec=` already owns the
-/// response, and a second mechanism with restart authority over the same process
-/// is the §9 "only one supervisor" rule being broken. A SIGABRT from the service
-/// manager, on a bounded timer, is the whole answer to a hung backend.
+/// When it says not to, the feed simply **stops**. This function does not exit,
+/// kill anything, or log once a second: systemd's `WatchdogSec=` already owns
+/// the response, and a second mechanism with restart authority over the same
+/// process is the §9 "only one supervisor" rule being broken. A SIGABRT from the
+/// service manager, on a bounded timer, is the whole answer to a hung backend.
+///
+/// The probe itself is where the loop can hang — an ioctl that never returns —
+/// and that is the case this whole arrangement exists for: no feed goes out, and
+/// systemd restarts the unit.
 async fn watchdog_feed(
     notifier: Notifier,
-    liveness: Option<Box<dyn Fn() -> LivenessFuture + Send + Sync>>,
+    probe: Option<Box<dyn Fn() -> ProbeFuture + Send + Sync>>,
 ) {
-    let Some(liveness) = liveness else {
+    let Some(probe) = probe else {
         return;
     };
     let period = watchdog_period();
-    tracing::debug!("feeding the systemd watchdog every {period:?} while the adapter fd answers");
+    tracing::debug!(
+        "probing the adapter every {period:?}; feeding the watchdog while fact 1 holds"
+    );
     let mut healthy = true;
     loop {
         tokio::time::sleep(period).await;
-        if liveness().await {
+        if probe().await {
             if !healthy {
                 tracing::info!("the adapter fd is answering again; resuming the watchdog feed");
                 healthy = true;

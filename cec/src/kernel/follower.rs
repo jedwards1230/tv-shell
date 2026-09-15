@@ -14,6 +14,21 @@
 //! says the snapshot may have missed an edge. Both are observations worth
 //! having, and `StateChange` is the event step 7's un-failover is built on
 //! ("recovery is an event, not a poll").
+//!
+//! # It also feeds three of the four health facts
+//!
+//! Everything here is passive, which is the point: the daemon learns whether it
+//! is still hearing the bus WITHOUT asking the bus anything.
+//!
+//! * every received message is **fact 4** (`last_rx`) — any message, including
+//!   one this daemon does not otherwise track, because the question is "did we
+//!   hear anything";
+//! * a `PinEvent` is **fact 3** (`bus_activity`), the line-level signal that
+//!   separates a quiet bus from a deaf adapter — see [`crate::health`] for why
+//!   it is not in force on this deployment;
+//! * a `StateChange` invalidates **fact 2** and is immediately followed by a
+//!   re-read of the addressing, so the `unknown` it produces lasts milliseconds
+//!   rather than until the next watchdog probe.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,6 +37,8 @@ use linux_cec::device::{AsyncDevice, MessageData, PollResult, PollTimeout};
 use linux_cec::message::Message;
 use linux_cec::LogicalAddress;
 
+use crate::health::Health;
+use crate::kernel::device::read_addressing;
 use crate::state::{now_ms, AvDevice, BusObservation, Observations, PhysAddr};
 
 /// How long one poll waits before coming back empty.
@@ -36,7 +53,11 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Returns only if the device becomes unusable. The caller decides what that
 /// means; today `main` logs it and the watchdog stops being fed, so systemd
 /// restarts the unit on a bounded timer.
-pub async fn run(device: Arc<AsyncDevice>, observations: Arc<Mutex<Observations>>) {
+pub async fn run(
+    device: Arc<AsyncDevice>,
+    observations: Arc<Mutex<Observations>>,
+    health: Arc<Mutex<Health>>,
+) {
     let timeout = match PollTimeout::try_from(POLL_INTERVAL) {
         Ok(t) => t,
         // Unreachable for a one-second constant, and still not a panic: this is
@@ -77,6 +98,7 @@ pub async fn run(device: Arc<AsyncDevice>, observations: Arc<Mutex<Observations>
             }
         };
         for result in results {
+            note_health(&device, &health, &result).await;
             let Some(observation) = fold(&result) else {
                 continue;
             };
@@ -89,6 +111,46 @@ pub async fn run(device: Arc<AsyncDevice>, observations: Arc<Mutex<Observations>
                 Err(poisoned) => poisoned.into_inner().apply(observation, now_ms()),
             }
         }
+    }
+}
+
+/// Fold one poll result into the health facts.
+///
+/// Separate from [`fold`] because the two answer different questions: `fold`
+/// asks "what does this mean for the published AV state", this asks "what does
+/// it tell us about whether we can still hear". A `<Report Power Status>` from
+/// the PS5 changes nothing in the first and is proof of life in the second.
+///
+/// **No lock is held across the `.await`.** The `StateChange` arm re-reads the
+/// adapter's addressing, and holding the health lock across that ioctl would let
+/// a slow device block `av-health` — the one verb that has to answer when the
+/// device is what is being diagnosed.
+async fn note_health(device: &AsyncDevice, health: &Mutex<Health>, result: &PollResult) {
+    let lock = |f: &mut dyn FnMut(&mut Health)| match health.lock() {
+        Ok(mut h) => f(&mut h),
+        Err(poisoned) => f(&mut poisoned.into_inner()),
+    };
+    match result {
+        // Fact 4. Any message at all — this is "we are still hearing".
+        PollResult::Message(_) => lock(&mut |h| h.record_rx(now_ms())),
+        // Fact 3. Line-level activity, observed passively.
+        PollResult::PinEvent(event) => {
+            tracing::debug!("CEC pin event: {event:?}");
+            lock(&mut |h| h.record_bus_activity(now_ms()));
+        }
+        // Fact 2 is stale from this instant. Marked first so a concurrent
+        // `av-health` between the two statements reports `unknown` rather than
+        // an addressing the kernel has just told us not to trust.
+        PollResult::StateChange => {
+            lock(&mut |h| h.record_state_change(now_ms()));
+            let addressed = read_addressing(device).await;
+            tracing::info!("adapter state change; addressing re-read as {addressed:?}");
+            lock(&mut |h| h.record_addressing(addressed, now_ms()));
+        }
+        // A dropped message is not evidence either way about hearing: the
+        // kernel dropped it, we did not fail to receive it. `state::Observations`
+        // counts it.
+        _ => {}
     }
 }
 
@@ -106,10 +168,9 @@ fn fold(result: &PollResult) -> Option<BusObservation> {
         },
         PollResult::StateChange => Some(BusObservation::StateChange),
         PollResult::LostMessages(n) => Some(BusObservation::LostMessages(*n)),
-        // The pin monitor is not enabled in this step (follower mode is
-        // `Enabled`, not `MonitorPin`), and whether `pulse8-cec` even offers
-        // `CEC_CAP_MONITOR_PIN` is unverified. Step 6 turns pin events into a
-        // health signal; there is nothing for them to mean yet.
+        // A pin event says nothing about the AV state — it is a voltage on a
+        // wire, not a message. It IS a health fact, and `note_health` above is
+        // where it lands.
         PollResult::PinEvent(_) => None,
         // `PollResult` is `#[non_exhaustive]`: a future variant is something
         // this daemon has not been taught to read, which is exactly "no change

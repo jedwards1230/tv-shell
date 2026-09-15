@@ -21,6 +21,7 @@
 //! | [`action`] | **PURE**: a verb plus two observed addresses becomes a plan of messages, or a refusal that transmits nothing |
 //! | [`volume`] | **PURE**: the volume/mute sequence — system-audio mode, an inseparable press/release pair, and success judged from the AVR's own report |
 //! | [`kernel`] | `/dev/cecN`: open, configure, read the topology, and listen. **Linux-only** |
+//! | [`health`] | **PURE**: the four observed facts, the tri-state derived from two of them, and the one rule the watchdog feed is gated on |
 //! | [`notify`] | `sd_notify` — `READY=1` for `Type=notify`, `WATCHDOG=1` for `WatchdogSec=` |
 //!
 //! # What this daemon puts on the bus, and when
@@ -42,10 +43,11 @@
 //! translation from this crate's vocabulary into `linux-cec` messages. CI has
 //! no adapter and covers all three.
 //!
-//! Explicitly **not** here yet, each a later step of the plan for
-//! jedwards1230/tv-shell#504: the health state machine and `av-health`; and the
-//! IP recovery leg (Denon/Marantz telnet, WoL) with the failover decision. Each
-//! lands with the module that reads it.
+//! Explicitly **not** here yet, and the last step of the plan for
+//! jedwards1230/tv-shell#504: the IP recovery leg (Denon/Marantz telnet, WoL)
+//! with the failover decision, and the `backend` / `backend-pin` verbs that
+//! choose between the two. Until it lands those verbs answer `unknown`, which
+//! is a client learning the truth rather than a stub answering `ok`.
 //!
 //! It is a lib plus a thin bin for the same reason the daemon and the core are:
 //! `pub` items in a library are public API and are never "dead", so
@@ -55,6 +57,7 @@
 pub mod action;
 pub mod backend;
 pub mod config;
+pub mod health;
 pub mod ipc;
 pub mod notify;
 pub mod ownership;

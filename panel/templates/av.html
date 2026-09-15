@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}AV (v2) — tv-shell panel{% endblock %}
+{% block content %}
+<h1>AV control (v2)</h1>
+<p class="muted">
+  The v2 AV-control daemon (<code>tv-shell-cec</code>) over the kernel CEC API
+  (<code>/dev/cecN</code>, <code>pulse8-cec</code>) — a different daemon, a different socket and a
+  different HDMI-CEC implementation from
+  {% if cec_page %}<a href="/devices/cec">Devices ▸ CEC</a>{% else %}Devices ▸ CEC{% endif %},
+  which drives v1's libcec. The two cannot run at once: the USB adapter takes an exclusive
+  serial lock.
+</p>
+<p class="muted">
+  Read-only. Every transmit this daemon can make (<code>wake</code>, <code>standby</code>,
+  <code>input-claim</code>/<code>-release</code>/<code>-select</code>, <code>volume</code>) puts a
+  message on a shared living-room bus, so this page asks and never tells.
+  Socket <code>{{ sock }}</code>, every request bounded at {{ timeout_ms }} ms.
+</p>
+
+<section class="controllers-section">
+  <h2>Health</h2>
+  {% match health %}
+  {% when Some with (h) %}
+  <p>
+    <span class="dot {{ h.dot_class }}" title="{{ h.state }}"></span>
+    <strong>{{ h.state }}</strong>
+    <span class="muted">· for {{ h.since }}</span>
+  </p>
+  <p class="muted">{{ h.reason }}</p>
+  <table class="tools-table">
+    <tbody>
+      {# Ages, never verdicts. An em dash means it has never happened — which on
+         a rack where everything can be switched off is a normal reading, not a
+         fault, and is deliberately not rendered as "0 s". #}
+      <tr><td>Last accepted transmit</td><td>{{ h.last_tx }} ago</td></tr>
+      <tr><td>Last message heard</td><td>{{ h.last_rx }} ago</td></tr>
+      <tr><td>Last CEC pin transition</td><td>{{ h.bus_activity }} ago</td></tr>
+    </tbody>
+  </table>
+  {% when None %}
+  <p class="banner banner-warn">{{ health_error }}</p>
+  {% endmatch %}
+</section>
+
+<section class="controllers-section">
+  <h2>State</h2>
+  {% if state_rows.is_empty() %}
+  <p class="banner banner-warn">{{ state_error }}</p>
+  {% else %}
+  <table class="tools-table">
+    <tbody>
+      {% for row in state_rows %}
+      <tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="controllers-section">
+  <h2>Backend</h2>
+  <p class="muted">{{ backend_note }}</p>
+</section>
+{% endblock %}

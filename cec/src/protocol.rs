@@ -55,7 +55,7 @@ pub const VOLUME_USAGE: &str = "volume up|down|mute|unmute";
 
 /// One parsed request.
 ///
-/// `av-health`, `backend` and `backend-pin` are steps 6-7 of the plan for
+/// `backend` and `backend-pin` are step 7 of the plan for
 /// jedwards1230/tv-shell#504 and are deliberately absent — an unimplemented verb
 /// answers `unknown`, which is a client learning the truth rather than a stub
 /// answering `ok`.
@@ -65,6 +65,14 @@ pub enum Command {
     Ping,
     /// One [`crate::state::AvState`] snapshot as compact JSON.
     AvState,
+    /// One [`crate::health::HealthReport`] as compact JSON.
+    ///
+    /// **Answered from the recorded facts, never by probing the device**, for
+    /// the same reason [`Command::AvState`] is: the verb has to keep answering
+    /// when the device is the thing being diagnosed. The facts are refreshed by
+    /// the watchdog probe and by the receive loop, and every time in the reply
+    /// is an age, so a stale answer says so rather than looking fresh.
+    AvHealth,
     /// Power the chain on and become the active source.
     Wake,
     /// Put the television and the AVR into standby. Gated on positive proof of
@@ -118,6 +126,7 @@ impl Command {
         match (verb, body.as_slice()) {
             ("ping", []) => Command::Ping,
             ("av-state", []) => Command::AvState,
+            ("av-health", []) => Command::AvHealth,
             ("wake", []) => Command::Wake,
             ("standby", []) => Command::Standby,
             ("input-claim", []) => Command::InputClaim,
@@ -200,6 +209,7 @@ mod tests {
     fn bare_verbs_parse() {
         assert_eq!(Command::parse("ping"), Command::Ping);
         assert_eq!(Command::parse("av-state"), Command::AvState);
+        assert_eq!(Command::parse("av-health"), Command::AvHealth);
         assert_eq!(Command::parse("wake"), Command::Wake);
         assert_eq!(Command::parse("standby"), Command::Standby);
         assert_eq!(Command::parse("input-claim"), Command::InputClaim);
@@ -325,6 +335,11 @@ mod tests {
         for line in [
             "av-stateX",
             "av-state-full",
+            "av-healthX",
+            "av-health-full",
+            "av-health 1",
+            "av-healths",
+            "avhealth",
             "av-state 1",
             "av-states",
             "pingpong",
@@ -364,9 +379,9 @@ mod tests {
         // write wearing a read's name.
         assert_eq!(Command::parse("cec-health"), Command::Unknown);
         assert_eq!(Command::parse("cec-scan"), Command::Unknown);
-        // And the verbs that land in steps 6-7. `unknown` is the honest answer
+        // And the verbs that land in step 7. `unknown` is the honest answer
         // until they do something.
-        for later in ["av-health", "backend", "backend-pin cec"] {
+        for later in ["backend", "backend-pin cec"] {
             assert_eq!(Command::parse(later), Command::Unknown, "{later}");
         }
     }
