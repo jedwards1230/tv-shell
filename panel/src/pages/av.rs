@@ -67,9 +67,11 @@ struct AvTemplate {
     /// `av-state`, flattened to label/value rows.
     state_rows: Vec<Row>,
     state_error: String,
-    /// What the `backend` verb answered. Not yet implemented in the daemon, so
-    /// this reports that fact rather than inventing a backend name.
-    backend_note: String,
+    /// What the `backend` verb answered: which backend is carrying actions,
+    /// which exist, and why.
+    backend: Option<BackendView>,
+    /// Why there is no backend answer, when there is none.
+    backend_error: String,
     /// Whether Devices ▸ CEC (v1) is registered on this node.
     ///
     /// The prose here names that page because the two daemons contend for one
@@ -90,6 +92,25 @@ pub struct HealthView {
     pub last_tx: String,
     pub last_rx: String,
     pub bus_activity: String,
+    pub reason: String,
+}
+
+/// One `backend` reply, prepared for rendering.
+pub struct BackendView {
+    /// Which backend is carrying actions: `cec` or `ip`.
+    pub active: String,
+    /// The dot class for it. **`ip` is not green**: the IP leg carrying actions
+    /// means either that CEC is degraded or that an operator has overridden the
+    /// decision, and neither is a steady state to render as fine.
+    pub dot_class: &'static str,
+    /// Every backend this box has, space-separated.
+    pub available: String,
+    /// The operator override in force, `auto` when there is none.
+    pub pin: String,
+    /// Whether an override is in force at all — the page says so explicitly,
+    /// because a pinned backend is a decision a person made and forgot.
+    pub pinned: bool,
+    /// Why `active` is what it is. The daemon's own sentence, verbatim.
     pub reason: String,
 }
 
@@ -177,6 +198,19 @@ fn render(
         },
         Err(why) => (Vec::new(), why.clone()),
     };
+    let (backend_view, backend_error) = match backend {
+        Ok(reply) => match backend_view(reply) {
+            Some(v) => (Some(v), String::new()),
+            None => (
+                None,
+                format!(
+                    "the daemon answered `backend` with something this panel could not read: \
+                     {reply}"
+                ),
+            ),
+        },
+        Err(why) => (None, why.clone()),
+    };
     let tmpl = AvTemplate {
         chrome: Chrome::new(caps, "devices.av"),
         sock: sock.to_string(),
@@ -185,28 +219,63 @@ fn render(
         health_error,
         state_rows,
         state_error,
-        backend_note: backend_note(backend),
+        backend: backend_view,
+        backend_error,
         cec_page: caps.allows(Gate::Cec),
     };
     tmpl.render()
         .unwrap_or_else(|e| format!("<p class=\"banner banner-error\">render error: {e}</p>"))
 }
 
-/// What the `backend` verb said.
+/// Parse a `backend` reply into its rendered form.
 ///
-/// The daemon answers `unknown` until step 7 of the plan lands, and that is
-/// reported as what it is. **No placeholder value is invented** — a page
-/// claiming "backend: cec" from a daemon that has no backend selection would be
-/// asserting the very thing step 7 exists to decide.
-fn backend_note(backend: &Result<String, String>) -> String {
-    match backend {
-        Ok(reply) if reply.trim() == "unknown" => "Not yet implemented — the daemon does not \
-             answer `backend`/`backend-pin` yet. Backend selection and the IP recovery leg are \
-             step 7 of the plan for jedwards1230/tv-shell#504; until then the kernel CEC \
-             backend is the only one there is."
+/// `None` when the reply is not a backend document — including the `unknown` a
+/// daemon built before the verb existed would answer. **No value is invented**:
+/// a page claiming "backend: cec" from a daemon that did not say so would be
+/// asserting the very thing the verb exists to report.
+fn backend_view(reply: &str) -> Option<BackendView> {
+    let v: Value = serde_json::from_str(reply).ok()?;
+    let active = v.get("active")?.as_str()?.to_string();
+    let pin = v
+        .get("pin")
+        .and_then(Value::as_str)
+        .unwrap_or("auto")
+        .to_string();
+    let available = match v.get("available") {
+        Some(Value::Array(items)) if !items.is_empty() => items
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => active.clone(),
+    };
+    Some(BackendView {
+        dot_class: backend_dot_class(&active),
+        pinned: pin != "auto",
+        active,
+        available,
+        pin,
+        reason: v
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("")
             .to_string(),
-        Ok(reply) => reply.clone(),
-        Err(why) => why.clone(),
+    })
+}
+
+/// **The rule: only `cec` is green.**
+///
+/// The IP leg carrying actions is a working degraded mode, not a steady state —
+/// it means the adapter stopped answering, or that somebody pinned it — and a
+/// green dot would make the one page that can report a wedged adapter look
+/// exactly like the page for a healthy one. A token this panel does not
+/// recognise gets the same treatment, for the same reason it does in
+/// [`dot_class`].
+pub fn backend_dot_class(active: &str) -> &'static str {
+    if active == "cec" {
+        "dot-ok"
+    } else {
+        "dot-warn"
     }
 }
 

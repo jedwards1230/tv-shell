@@ -123,10 +123,19 @@ cargo test -p tv-shell-cec
 
 **No device is needed, and none is faked into existence.** Every decision lives
 in a pure module beside the I/O — `cec.toml` parsing, the wire grammar, the
-physical-address form, the bus-observation fold, and the rule that `unknown` is
-never rendered as healthy or as `false` — and the IPC surface runs end-to-end
-against a stand-in backend over a real Unix socket. So the four commands above
-need no `/dev/cecN`, which is just as well: the deploy host does not have one
+physical-address form, the bus-observation fold, the warm-path failover decision,
+and the rule that `unknown` is never rendered as healthy or as `false` — and the
+IPC surface runs end-to-end against a stand-in backend over a real Unix socket.
+
+**No network is needed either, and no test may use one.** The IP leg's two wires
+— a Wake-on-LAN magic packet and the receiver's telnet control port — sit behind
+the one-method `ip::IpWire` trait, and every test drives a recording fake. The
+receiver and the television are live equipment in a living room, and the
+receiver's control port accepts exactly one client, so a test that dialled them
+would be a test that reaches into somebody's evening.
+
+So the four commands above need no `/dev/cecN` and no LAN, which is just as
+well: the deploy host does not have the former
 (`pulse8-cec` is blocked by a modprobe drop-in and `pulse8-cec.service` is
 masked, both deliberately, since the 2026-08-07 adapter-contention incident).
 

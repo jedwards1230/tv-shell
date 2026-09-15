@@ -127,13 +127,35 @@ pub trait AvBackend: Send + Sync + 'static {
     /// the AVR, which only the AVR can answer. Callers bound their timeouts
     /// either way — see [`crate::ipc`].
     async fn volume_state(&self) -> VolumeState;
+
+    /// Which backend is authoritative, which exist, and why.
+    ///
+    /// **Infallible and I/O-free, like [`AvBackend::snapshot`] and
+    /// [`AvBackend::health`].** It reports a decision already made from
+    /// observations already recorded; it probes no adapter and dials no
+    /// receiver, so it keeps answering when the adapter is the thing being
+    /// diagnosed — which is exactly when a caller wants to know which backend is
+    /// carrying actions.
+    async fn backend(&self) -> crate::failover::BackendReport;
+
+    /// Apply an operator override to the backend selection.
+    ///
+    /// Fallible by value because a pin to a backend this box does not have is a
+    /// real answer: accepting it and then acting over CEC anyway would be a
+    /// control that reports an effect nothing applies.
+    async fn pin_backend(&self, pin: crate::failover::Pin) -> Result<(), String>;
 }
 
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
     use crate::action::{plan, CecTx, LocalRecord};
-    use crate::health::{Health, HealthReport};
+    use crate::failover::{BackendReport, Failover, Observed, Pin, Thresholds};
+    use crate::health::{Health, HealthReport, HealthState};
+    use crate::ip::avr::{Avr, AvrEndpoint};
+    use crate::ip::testing::FakeWire;
+    use crate::ip::wol::Mac;
+    use crate::ip::{self, IpConfig, WolTarget};
     use crate::state::{
         AvDevice, AvState, BusObservation, Observation, Observations, PhysAddr, PowerState,
         Topology,
@@ -197,6 +219,15 @@ pub(crate) mod testing {
         /// [`FakeBackend::advance`]; it never ticks on its own, so no test can
         /// hang waiting for it.
         clock: Mutex<u64>,
+        /// The IP leg as configured. Absent by default — which is every box
+        /// that has not written an `[avr]` or `[tv]` section.
+        ip: IpConfig,
+        /// The stand-in network. **No socket is opened and no packet is sent**
+        /// by any test in this crate.
+        wire: FakeWire,
+        /// The warm-path decision, driven exactly as the kernel backend drives
+        /// it. It fakes the wire, not the decision.
+        failover: Mutex<Failover>,
     }
 
     impl FakeBackend {
@@ -219,7 +250,73 @@ pub(crate) mod testing {
                 volume_transmits: Mutex::new(Vec::new()),
                 health: Mutex::new(Health::at_open(false, Observation::Known(true), FAKE_NOW)),
                 clock: Mutex::new(FAKE_NOW),
+                ip: IpConfig::default(),
+                wire: FakeWire::default(),
+                failover: Mutex::new(Failover::at_open(
+                    Thresholds::default(),
+                    &IpConfig::default(),
+                    HealthState::Healthy,
+                )),
             }
+        }
+
+        /// A backend with an IP leg configured — a receiver on a telnet port and
+        /// a television MAC, the RFC 5737 documentation address throughout.
+        pub(crate) fn with_ip_leg() -> FakeBackend {
+            let ip = IpConfig {
+                avr: Some(Avr {
+                    endpoint: AvrEndpoint {
+                        host: "192.0.2.10".to_string(),
+                        port: 23,
+                    },
+                    input: Some("GAME".to_string()),
+                    main_power: false,
+                    zone2_off: true,
+                }),
+                tv_wol: Some(WolTarget {
+                    mac: Mac::parse("aa:bb:cc:dd:ee:ff").unwrap(),
+                    broadcast: "255.255.255.255:9".parse().unwrap(),
+                }),
+            };
+            let failover = Failover::at_open(Thresholds::default(), &ip, HealthState::Healthy);
+            FakeBackend {
+                ip,
+                failover: Mutex::new(failover),
+                ..FakeBackend::new()
+            }
+        }
+
+        /// Opt into telnet main-zone power, as `[avr].main_power = true` does.
+        pub(crate) fn with_avr_main_power(mut self) -> FakeBackend {
+            if let Some(avr) = self.ip.avr.as_mut() {
+                avr.main_power = true;
+            }
+            self
+        }
+
+        /// Fold one observation into the warm-path decision, exactly as the
+        /// kernel backend's probe and receive loop do.
+        pub(crate) fn note_failover(&self, observed: Observed) {
+            let now = self.now();
+            self.failover.lock().unwrap().observe(observed, now);
+        }
+
+        /// Drive the decision all the way to the IP leg, the way a wedged
+        /// adapter does: a degraded verdict that holds past the hysteresis.
+        pub(crate) fn fail_over_to_ip(&self) {
+            self.note_failover(Observed::Health(HealthState::Degraded));
+            self.advance(Thresholds::default().fail_after_ms + 1);
+            self.note_failover(Observed::Health(HealthState::Degraded));
+        }
+
+        /// Every telnet session this backend would have opened.
+        pub(crate) fn ip_sessions(&self) -> Vec<(AvrEndpoint, Vec<String>)> {
+            self.wire.sessions()
+        }
+
+        /// Every magic packet this backend would have broadcast.
+        pub(crate) fn wol_packets(&self) -> usize {
+            self.wire.packet_count()
         }
 
         /// A backend whose own physical address could not be read back, so
@@ -309,7 +406,32 @@ pub(crate) mod testing {
             AvState::assemble(&self.topology, &self.observations.lock().unwrap())
         }
 
+        async fn backend(&self) -> BackendReport {
+            self.failover.lock().unwrap().report()
+        }
+
+        async fn pin_backend(&self, pin: Pin) -> Result<(), String> {
+            self.failover.lock().unwrap().set_pin(pin)
+        }
+
         async fn act(&self, action: Action) -> ActionOutcome {
+            // The IP leg first, and in the same order the kernel backend runs
+            // it: the cold-path steps precede the CEC steps, and a `Z2OFF` has
+            // to reach a receiver that is still awake.
+            let (active, why) = {
+                let failover = self.failover.lock().unwrap();
+                (failover.active(), failover.reason())
+            };
+            let ip_plan = ip::plan_for(action, &self.ip, active.ip_role());
+            let ip_report = if ip_plan.is_empty() {
+                ip::IpReport::default()
+            } else {
+                ip::execute(&self.wire, &ip_plan).await
+            };
+            if active == crate::failover::Backend::Ip {
+                return ip::judge(action, &self.ip, &ip_report, &why);
+            }
+
             let owner = self.observations.lock().unwrap().active_source();
             let plan = match plan(action, self.topology.phys_addr_read_back, owner) {
                 Ok(p) => p,
@@ -349,6 +471,13 @@ pub(crate) mod testing {
         /// drives it, so "the AVR ignored it and we said so" is an assertion
         /// about the shipped decision rather than about a second copy of it.
         async fn volume(&self, action: VolumeAction) -> ActionOutcome {
+            let (active, why) = {
+                let failover = self.failover.lock().unwrap();
+                (failover.active(), failover.reason())
+            };
+            if active == crate::failover::Backend::Ip {
+                return ip::volume_unreachable(&why);
+            }
             let plan = match volume::plan(action, self.topology.phys_addr_read_back) {
                 Ok(p) => p,
                 Err(refusal) => return ActionOutcome::Refused(refusal.reason),
