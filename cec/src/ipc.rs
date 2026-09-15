@@ -31,7 +31,8 @@ use futures::{SinkExt, StreamExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Framed, LinesCodec};
 
-use crate::backend::AvBackend;
+use crate::action::Action;
+use crate::backend::{ActionOutcome, AvBackend};
 use crate::protocol::{self, Command};
 
 /// Bind the socket (removing any stale file), chmod 0600, and serve forever.
@@ -114,15 +115,35 @@ pub async fn dispatch(backend: &Arc<dyn AvBackend>, cmd: Command) -> String {
         // Answered from a snapshot, on the reactor: it reads no device, so it
         // cannot hang when the device is the thing being diagnosed.
         Command::AvState => protocol::resp_json(&backend.snapshot().await),
+        Command::Wake => act(backend, Action::Wake).await,
+        Command::Standby => act(backend, Action::Standby).await,
+        Command::InputClaim => act(backend, Action::InputClaim).await,
+        Command::InputRelease => act(backend, Action::InputRelease).await,
+        Command::InputSelect(addr) => act(backend, Action::InputSelect(addr)).await,
+        Command::InputSelectUsage => protocol::resp_usage(protocol::INPUT_SELECT_USAGE),
         Command::Unknown => protocol::resp_unknown(),
+    }
+}
+
+/// The one place an [`ActionOutcome`] becomes a reply line.
+///
+/// Three outcomes, three tokens. Collapsing `Refused` into `ok` is what v1 did
+/// and it is the confusion this design removes; collapsing it into `error:`
+/// would report a fault where there is none.
+async fn act(backend: &Arc<dyn AvBackend>, action: Action) -> String {
+    match backend.act(action).await {
+        ActionOutcome::Done => protocol::resp_ok(),
+        ActionOutcome::Refused(why) => protocol::resp_refused(&why),
+        ActionOutcome::Failed(why) => protocol::resp_error(&why),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::{CecTx, StandbyTarget};
     use crate::backend::testing::FakeBackend;
-    use crate::state::{BusObservation, PhysAddr};
+    use crate::state::{BusObservation, PhysAddr, PowerState};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn fake() -> Arc<FakeBackend> {
@@ -185,18 +206,229 @@ mod tests {
         let b: Arc<dyn AvBackend> = fake();
         assert_eq!(reply(&b, "frobnicate").await, "unknown");
         assert_eq!(reply(&b, "av-stateX").await, "unknown");
-        // The verbs steps 4-7 add. Until they transmit something, `unknown` is
-        // the honest answer — a stub `ok` would tell a caller the television was
-        // woken when nothing happened.
-        for later in ["wake", "standby", "input-claim", "volume up", "av-health"] {
+        // The verbs steps 5-7 add. Until they transmit something, `unknown` is
+        // the honest answer — a stub `ok` would tell a caller the volume had
+        // changed when nothing happened.
+        for later in ["volume up", "volume-state", "av-health", "backend"] {
             assert_eq!(reply(&b, later).await, "unknown", "{later}");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Power and input switching, end to end over the seam.
+    // -----------------------------------------------------------------------
+
+    /// `wake` is One Touch Play then the claim, in that order.
+    #[tokio::test]
+    async fn wake_powers_the_chain_on_then_claims_the_display() {
+        let backend = fake();
+        // The TV answers the power read-back, so `tvPower` stops being unknown.
+        backend.set_power_reply(Some(PowerState::On));
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        assert_eq!(reply(&b, "wake").await, "ok");
+        assert_eq!(
+            backend.transmits(),
+            vec![
+                CecTx::ImageViewOn,
+                CecTx::ActiveSource("2.5.0.0".parse().unwrap())
+            ]
+        );
+
+        // The claim reaches the published state: our own `<Active Source>` never
+        // comes back through the receive loop, so without the local record this
+        // would still read `null`.
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["activeSource"], serde_json::json!("2.5.0.0"));
+        assert_eq!(json["weAreSource"], serde_json::json!(true));
+        assert_eq!(
+            json["displayOwnership"]["state"],
+            serde_json::json!("owned-by-us")
+        );
+        // Read back, not assumed: `tvPower` is the TV's own answer.
+        assert_eq!(json["tvPower"], serde_json::json!("on"));
+        // And a claim of ours is NOT evidence the bus announces ownership.
+        assert_eq!(
+            json["displayOwnership"]["everObserved"],
+            serde_json::json!(false)
+        );
+    }
+
+    /// A TV that does not answer the power read-back leaves the power
+    /// `unknown` — never `on` because two frames were ACKed.
+    #[tokio::test]
+    async fn a_silent_power_read_back_leaves_the_power_unknown() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        assert_eq!(reply(&b, "wake").await, "ok");
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["tvPower"], serde_json::Value::Null);
+    }
+
+    /// **THE LOAD-BEARING NEGATIVE TEST, at the IPC surface: `standby` while
+    /// another device holds active source refuses and transmits ZERO
+    /// messages.**
+    ///
+    /// Asserted on the transmits produced through the backend seam, not on which
+    /// readers were called — v1's tests drew that line and this mirrors it. The
+    /// ownership state asserted here is reached the REAL way: an `<Active
+    /// Source>` broadcast folded by the receive path, not a field poked
+    /// directly.
+    ///
+    /// Mutation-check (run 2026-09-14): delete the `owns_display` gate from
+    /// `action::plan`'s `Standby` arm and this fails on both assertions.
+    #[tokio::test]
+    async fn standby_refuses_and_transmits_nothing_when_someone_else_holds_the_display() {
+        let backend = fake();
+        // The Apple TV takes the screen — exactly as the rx loop would report
+        // it.
+        backend.observe(
+            BusObservation::ActiveSource("1.0.0.0".parse::<PhysAddr>().unwrap()),
+            1_700_000_000_000,
+        );
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        let r = reply(&b, "standby").await;
+        assert!(r.starts_with("refused:"), "{r}");
+        assert!(
+            r.contains("1.0.0.0"),
+            "the refusal must name the owner: {r}"
+        );
+        assert!(
+            backend.transmits().is_empty(),
+            "a refused standby must put NOTHING on the bus, got {:?}",
+            backend.transmits()
+        );
+        // A refusal is neither a success nor a fault.
+        assert_ne!(r, "ok");
+        assert!(!r.starts_with("error:"));
+    }
+
+    /// The same for a bus that has said nothing at all — the daemon-started-
+    /// mid-session case, which is the common one.
+    #[tokio::test]
+    async fn standby_refuses_on_a_silent_bus() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        let r = reply(&b, "standby").await;
+        assert!(r.starts_with("refused:"), "{r}");
+        assert!(backend.transmits().is_empty());
+    }
+
+    /// And the positive case, reached the real way: we claim the display, then
+    /// standby proceeds and addresses two named devices — never a broadcast.
+    #[tokio::test]
+    async fn standby_proceeds_once_we_positively_hold_the_display() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        assert_eq!(reply(&b, "input-claim").await, "ok");
+
+        assert_eq!(reply(&b, "standby").await, "ok");
+        assert_eq!(
+            backend.transmits(),
+            vec![
+                CecTx::ActiveSource("2.5.0.0".parse().unwrap()),
+                CecTx::Standby(StandbyTarget::Tv),
+                CecTx::Standby(StandbyTarget::AudioSystem),
+            ]
+        );
+    }
+
+    /// `input-claim` / `input-release` — jedwards1230/tv-shell#372's ask, in a
+    /// v2 shape.
+    #[tokio::test]
+    async fn claim_and_release_move_the_published_ownership() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        assert_eq!(reply(&b, "input-claim").await, "ok");
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(
+            json["displayOwnership"]["state"],
+            serde_json::json!("owned-by-us")
+        );
+
+        assert_eq!(reply(&b, "input-release").await, "ok");
+        assert_eq!(
+            backend.transmits(),
+            vec![
+                CecTx::ActiveSource("2.5.0.0".parse().unwrap()),
+                CecTx::InactiveSource("2.5.0.0".parse().unwrap()),
+            ]
+        );
+        // Released goes to UNKNOWN, never to "nobody": the message says who let
+        // go, never who has it now.
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["activeSource"], serde_json::Value::Null);
+        assert_eq!(json["weAreSource"], serde_json::Value::Null);
+        assert_eq!(
+            json["displayOwnership"]["state"],
+            serde_json::json!("unknown")
+        );
+    }
+
+    /// `input-select` hands the display to another device — a `<Set Stream
+    /// Path>`, which the libcec path could not express at all.
+    #[tokio::test]
+    async fn input_select_broadcasts_a_stream_path_to_the_named_address() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        assert_eq!(reply(&b, "input-select 1.0.0.0").await, "ok");
+        assert_eq!(
+            backend.transmits(),
+            vec![CecTx::SetStreamPath("1.0.0.0".parse().unwrap())]
+        );
+        // No guess is recorded: the selected device confirms with its own
+        // `<Active Source>`, which the receive loop folds.
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["activeSource"], serde_json::Value::Null);
+    }
+
+    /// **The rule: a malformed body is a usage error and transmits nothing.**
+    ///
+    /// Distinct from `unknown` (the client knows the verb) and from any silent
+    /// default (a `<Set Stream Path>` to a nonexistent port fails silently).
+    #[tokio::test]
+    async fn a_malformed_input_select_is_a_usage_error_and_transmits_nothing() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        for line in [
+            "input-select",
+            "input-select nonsense",
+            "input-select 1.0.0",
+        ] {
+            let r = reply(&b, line).await;
+            assert!(r.starts_with("error:usage: input-select"), "{line} -> {r}");
+            assert_ne!(r, "unknown", "{line}");
+        }
+        assert!(backend.transmits().is_empty());
+    }
+
+    /// A bus that NAKs the transmit is a FAILURE, not a success — `ok` here
+    /// means the frame was accepted on the bus, not that it left the adapter.
+    #[tokio::test]
+    async fn a_naked_transmit_is_an_error_not_an_ok() {
+        let backend = fake();
+        backend.fail_transmits();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        let r = reply(&b, "wake").await;
+        assert!(r.starts_with("error:"), "{r}");
+        assert_ne!(r, "ok");
     }
 
     #[tokio::test]
     async fn no_reply_ever_contains_a_newline() {
         let b: Arc<dyn AvBackend> = fake();
-        for line in ["ping", "av-state", "frobnicate", "", "av-state x"] {
+        for line in [
+            "ping",
+            "av-state",
+            "frobnicate",
+            "",
+            "av-state x",
+            "standby",
+            "input-select",
+            "input-select ???",
+        ] {
             let r = reply(&b, line).await;
             assert!(!r.contains('\n'), "{line} -> {r:?}");
             assert!(!r.contains('\r'), "{line} -> {r:?}");

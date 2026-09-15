@@ -10,8 +10,9 @@
 //!   per command, 4096-byte maximum line.
 //! * **Tokenization**: whitespace-split, no quoting. A verb with a body must be
 //!   followed by whitespace, so `av-stateX` is not `av-state`.
-//! * **Replies**: `ok` · `unknown` · `error:<msg>` · a bare compact JSON
-//!   document as the whole line. No envelope, no `ok ` prefix on JSON.
+//! * **Replies**: `ok` · `unknown` · `error:<msg>` · `refused:<why>` · a bare
+//!   compact JSON document as the whole line. No envelope, no `ok ` prefix on
+//!   JSON.
 //! * Anything interpolated into an error goes through [`sanitize_ipc`], because
 //!   an embedded newline would split one reply into two and desync a
 //!   line-reading client.
@@ -20,16 +21,38 @@
 //! string set — the §13 / 2026-09-07 decision. A new verb that nothing answers
 //! is a compile error here, which is the property a `match` on `&str` does not
 //! have.
+//!
+//! # `refused:` — the one addition to the reply grammar
+//!
+//! v1 replied `ok` when its ownership gate skipped a transmit, on the reasoning
+//! that a skip performs zero transmits and therefore fails at nothing. That is
+//! true and it is still the wrong reply: it makes "we deliberately declined to
+//! power off your television" read exactly like "we powered off your
+//! television", and no later observation separates them — on a shared bus the
+//! set can go off for somebody else's reason.
+//!
+//! `error:` is not right either. It says a fault occurred, which sends an
+//! operator after a wedged adapter; that is the `cec-health` failure shape this
+//! whole design exists to remove, one layer down.
+//!
+//! So a refusal gets its own token: **`refused:<why>` means the daemon
+//! deliberately did not act, nothing is broken, and ZERO messages reached the
+//! bus.** The zero-transmit half is not a convention — it is enforced by
+//! construction in [`crate::action`], where every gate runs before any message
+//! is built.
+
+use crate::state::PhysAddr;
 
 /// Maximum accepted line length, matching v1 and the core.
 pub const MAX_LINE: usize = 4096;
 
+/// Usage line for the one verb that takes a body.
+pub const INPUT_SELECT_USAGE: &str = "input-select <phys-addr>  (e.g. input-select 1.0.0.0)";
+
 /// One parsed request.
 ///
-/// **This step is read-only: no verb here transmits anything on the CEC bus.**
-/// `wake`, `standby`, `input-claim`, `input-release`, `input-select`, the
-/// `volume` family, `av-health`, `backend` and `backend-pin` are steps 4-7 of
-/// the plan for jedwards1230/tv-shell#504 and are deliberately absent — an
+/// The `volume` family, `av-health`, `backend` and `backend-pin` are steps 5-7
+/// of the plan for jedwards1230/tv-shell#504 and are deliberately absent — an
 /// unimplemented verb answers `unknown`, which is a client learning the truth
 /// rather than a stub answering `ok`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +61,26 @@ pub enum Command {
     Ping,
     /// One [`crate::state::AvState`] snapshot as compact JSON.
     AvState,
+    /// Power the chain on and become the active source.
+    Wake,
+    /// Put the television and the AVR into standby. Gated on positive proof of
+    /// ownership, so it can reply `refused:`.
+    Standby,
+    /// Become the active source without touching power.
+    InputClaim,
+    /// Give the display up.
+    InputRelease,
+    /// Hand the display to the named physical address.
+    InputSelect(PhysAddr),
+    /// `input-select` with a missing, malformed or over-long body.
+    ///
+    /// **Distinct from [`Command::Unknown`], and distinct from a silent
+    /// default.** `input-select` with no argument is a client that knows the
+    /// verb and got the call wrong; answering `unknown` would send them looking
+    /// for a verb that exists. And a malformed address must never fall back to
+    /// "ours" or to any other default — a `<Set Stream Path>` to a port that
+    /// does not exist fails *silently* on the bus.
+    InputSelectUsage,
     /// Not a verb this daemon has.
     Unknown,
 }
@@ -45,22 +88,32 @@ pub enum Command {
 impl Command {
     /// Parse one line. The trailing newline is already stripped by the codec;
     /// surrounding whitespace is trimmed, mirroring v1 and the core.
+    ///
+    /// Tokenization is whitespace-split with no quoting, so a verb is a whole
+    /// word: `av-stateX` is a different word and `standby now` is the wrong
+    /// arity for a bare verb. Both answer `unknown` rather than being coerced
+    /// into the nearest match.
     pub fn parse(line: &str) -> Command {
-        match line.trim() {
-            "ping" => Command::Ping,
-            "av-state" => Command::AvState,
+        let mut parts = line.split_whitespace();
+        let Some(verb) = parts.next() else {
+            return Command::Unknown;
+        };
+        let body: Vec<&str> = parts.collect();
+        match (verb, body.as_slice()) {
+            ("ping", []) => Command::Ping,
+            ("av-state", []) => Command::AvState,
+            ("wake", []) => Command::Wake,
+            ("standby", []) => Command::Standby,
+            ("input-claim", []) => Command::InputClaim,
+            ("input-release", []) => Command::InputRelease,
+            ("input-select", [addr]) => addr
+                .parse::<PhysAddr>()
+                .map_or(Command::InputSelectUsage, Command::InputSelect),
+            ("input-select", _) => Command::InputSelectUsage,
             _ => Command::Unknown,
         }
     }
 }
-
-// NOTE: there is deliberately no `resp_usage` here, and no `*Usage` variant.
-// Both of this step's verbs are bare reads, so there is no arity to get wrong
-// and no usage arm to take — a usage builder would be a reply nothing can
-// produce. `core/src/protocol.rs` carries the rule this follows: a type nothing
-// constructs is dead code dressed as a contract, and the repo deletes dead code
-// rather than parking it. The usage/unknown distinction comes back with the
-// first verb that takes a body, `input-select <phys-addr>` in step 4.
 
 // ---------------------------------------------------------------------------
 // Response builders (the exact reply strings, sans trailing newline).
@@ -79,6 +132,20 @@ pub fn resp_unknown() -> String {
 /// Every error reply. `msg` is free text, sanitized to one line.
 pub fn resp_error(msg: &str) -> String {
     format!("error:{}", sanitize_ipc(msg))
+}
+
+/// Wrong arity or a malformed body. An `error:`, because the client got the call
+/// wrong — matching `core/src/protocol.rs`'s builder exactly.
+pub fn resp_usage(usage: &str) -> String {
+    resp_error(&format!("usage: {usage}"))
+}
+
+/// The daemon deliberately did not act. **Zero messages reached the bus.**
+///
+/// Its own token rather than `ok` or `error:` — see the module docs. `why` is
+/// free text and is sanitized to one line like every other interpolated reply.
+pub fn resp_refused(why: &str) -> String {
+    format!("refused:{}", sanitize_ipc(why))
 }
 
 /// Serialize a payload as the whole reply line, degrading to an error reply.
@@ -109,12 +176,62 @@ mod tests {
     fn bare_verbs_parse() {
         assert_eq!(Command::parse("ping"), Command::Ping);
         assert_eq!(Command::parse("av-state"), Command::AvState);
+        assert_eq!(Command::parse("wake"), Command::Wake);
+        assert_eq!(Command::parse("standby"), Command::Standby);
+        assert_eq!(Command::parse("input-claim"), Command::InputClaim);
+        assert_eq!(Command::parse("input-release"), Command::InputRelease);
+    }
+
+    #[test]
+    fn input_select_parses_its_physical_address() {
+        assert_eq!(
+            Command::parse("input-select 1.0.0.0"),
+            Command::InputSelect("1.0.0.0".parse().unwrap())
+        );
+        assert_eq!(
+            Command::parse("  input-select   2.5.0.0  "),
+            Command::InputSelect("2.5.0.0".parse().unwrap())
+        );
+    }
+
+    /// **The rule: a malformed physical address is a usage error, never a
+    /// silent default.**
+    ///
+    /// A `<Set Stream Path>` naming a port that does not exist fails silently on
+    /// the bus — nothing NAKs it and nothing changes — so a body this daemon
+    /// cannot parse must be refused at the parser, where the client still learns
+    /// about it.
+    ///
+    /// Mutation-check (run 2026-09-14): make the parse fall back to a default
+    /// address (`unwrap_or(PhysAddr::INVALID)` or the configured one) and every
+    /// row here fails.
+    #[test]
+    fn a_malformed_input_select_body_is_a_usage_error() {
+        for line in [
+            "input-select",
+            "input-select ",
+            "input-select x",
+            "input-select 1.0.0",
+            "input-select 1.0.0.0.0",
+            "input-select 10.0.0.0",
+            "input-select 0x1000",
+            "input-select 1.0.0.g",
+            "input-select 1.0.0.0 extra",
+            "input-select 1.0.0.0 2.0.0.0",
+        ] {
+            assert_eq!(
+                Command::parse(line),
+                Command::InputSelectUsage,
+                "{line:?} must be a usage error"
+            );
+        }
     }
 
     #[test]
     fn surrounding_whitespace_is_trimmed() {
         assert_eq!(Command::parse("  ping  "), Command::Ping);
         assert_eq!(Command::parse("\tav-state\n"), Command::AvState);
+        assert_eq!(Command::parse("  standby "), Command::Standby);
     }
 
     /// **The rule: a verb is a whole word.**
@@ -136,6 +253,16 @@ mod tests {
             "pingpong",
             "ping 1",
             "avstate",
+            "wakeX",
+            "wake up",
+            "standbyX",
+            "standby now",
+            "input-claimX",
+            "input-claim 1.0.0.0",
+            "input-releaseX",
+            "input-release 1.0.0.0",
+            "input-selectX 1.0.0.0",
+            "input-selects 1.0.0.0",
         ] {
             assert_eq!(
                 Command::parse(line),
@@ -154,14 +281,9 @@ mod tests {
         // write wearing a read's name.
         assert_eq!(Command::parse("cec-health"), Command::Unknown);
         assert_eq!(Command::parse("cec-scan"), Command::Unknown);
-        // And the verbs that land in steps 4-7. `unknown` is the honest answer
+        // And the verbs that land in steps 5-7. `unknown` is the honest answer
         // until they do something.
         for later in [
-            "wake",
-            "standby",
-            "input-claim",
-            "input-release",
-            "input-select 1.0.0.0",
             "volume up",
             "volume-state",
             "av-health",
@@ -177,6 +299,25 @@ mod tests {
         assert_eq!(resp_ok(), "ok");
         assert_eq!(resp_unknown(), "unknown");
         assert_eq!(resp_error("boom"), "error:boom");
+        assert_eq!(resp_usage("a <b>"), "error:usage: a <b>");
+    }
+
+    /// **The rule: a refusal is not a success and not an error.**
+    ///
+    /// Three distinct tokens, so a caller can tell "we did it", "we deliberately
+    /// did not" and "something is broken" apart. A refusal that read identically
+    /// to a success is exactly the confusion this design removes.
+    #[test]
+    fn a_refusal_is_its_own_token() {
+        let refused = resp_refused("someone else holds the display");
+        assert_eq!(refused, "refused:someone else holds the display");
+        assert_ne!(refused, resp_ok());
+        assert!(!refused.starts_with("error:"));
+        assert!(!refused.starts_with("ok"));
+        // Sanitized like every other interpolated reply — a newline in a
+        // refusal reason would split one reply into two.
+        assert_eq!(resp_refused("a\nb"), "refused:a b");
+        assert!(!resp_refused("x\r\ny").contains('\n'));
     }
 
     #[test]

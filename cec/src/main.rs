@@ -4,9 +4,9 @@
 //!
 //! 1. Load and **validate** config before anything uses a value from it — a bad
 //!    `phys_addr` fails here, naming the key, not at the first ioctl.
-//! 2. Open and configure the adapter, and read its topology back. This is the
-//!    only step that touches hardware, and it transmits nothing (see
-//!    [`tv_shell_cec::kernel::device`]).
+//! 2. Open and configure the adapter, and read its topology back. The startup
+//!    sequence itself transmits nothing (see [`tv_shell_cec::kernel::device`]);
+//!    transmits happen only when a client asks for one.
 //! 3. Bind the IPC socket and start serving.
 //! 4. Start the receive loop.
 //! 5. **Then** send `READY=1`. The unit is `Type=notify`, so this is what
@@ -96,7 +96,7 @@ async fn main() -> ExitCode {
 
     // Everything is up: the socket is bound and the loop is running.
     notifier.ready();
-    notifier.status("listening (read-only: no CEC transmits)");
+    notifier.status("listening; power and input verbs available");
     tracing::info!("ready; serving on {sock_path}");
 
     let watchdog = watchdog_feed(notifier, backend.liveness);

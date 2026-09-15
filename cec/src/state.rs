@@ -89,6 +89,16 @@ impl std::fmt::Display for PhysAddr {
     }
 }
 
+impl Serialize for PhysAddr {
+    /// As the `a.b.c.d` text form, never as the raw 16-bit integer.
+    ///
+    /// The dotted form is what an operator reads off `cec-ctl --show-topology`,
+    /// and a bare `9472` would be unrecognisable beside it.
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
 impl std::str::FromStr for PhysAddr {
     type Err = String;
 
@@ -244,6 +254,22 @@ pub struct Observations {
     /// Unix ms of the most recent observation of any kind, or of the last
     /// [`BusObservation::StateChange`]. `None` means nothing has been heard.
     observed_at: Option<u64>,
+    /// Unix ms when `active_source` last **changed**.
+    ///
+    /// Stamped only on a real change, not on every repeat broadcast — otherwise
+    /// "how long has the current owner held the display" would reset on each
+    /// periodic re-announce. Ported from v1's `DisplayOwner::store_owner`, which
+    /// made the same distinction for the same reason.
+    active_source_changed_at: Option<u64>,
+    /// Whether an ownership claim has ever been RECEIVED from the bus.
+    ///
+    /// Set by `<Active Source>` and `<Inactive Source>` only, never by a claim
+    /// of our own ([`Observations::record_our_claim`]): its whole job is to
+    /// answer "does this bus actually broadcast ownership?", and a self-claim
+    /// would make that always true. Without it, "we are listening and this bus
+    /// never announces ownership" and "we are not listening" read identically
+    /// from outside.
+    ever_observed_claim: bool,
     /// Count of messages the kernel told us it dropped.
     lost_messages: u64,
 }
@@ -257,14 +283,16 @@ impl Observations {
         self.observed_at = Some(now_ms);
         match obs {
             BusObservation::ActiveSource(addr) => {
-                self.active_source = Observation::Known(addr);
+                self.ever_observed_claim = true;
+                self.store_active_source(Observation::Known(addr), now_ms);
             }
             // Who holds the display AFTER a release is not stated by the
             // message, so this returns the field to `unknown` rather than
             // guessing. Inventing "nobody" here is exactly the shape of claim
             // this module exists to refuse.
             BusObservation::InactiveSource(_) => {
-                self.active_source = Observation::Unknown;
+                self.ever_observed_claim = true;
+                self.store_active_source(Observation::Unknown, now_ms);
             }
             BusObservation::PowerStatus { device, state } => match device {
                 AvDevice::Tv => self.tv_power = Observation::Known(state),
@@ -279,7 +307,7 @@ impl Observations {
             // the bus is now suspect, so it all goes back to `unknown` rather
             // than being carried forward as if it were still current.
             BusObservation::StateChange => {
-                self.active_source = Observation::Unknown;
+                self.store_active_source(Observation::Unknown, now_ms);
                 self.tv_power = Observation::Unknown;
                 self.avr_power = Observation::Unknown;
                 self.volume = Observation::Unknown;
@@ -289,6 +317,64 @@ impl Observations {
                 self.lost_messages += u64::from(n);
             }
         }
+    }
+
+    /// Swap in a new active source, stamping the change time only on a real
+    /// change.
+    ///
+    /// A repeat `<Active Source>` for the same address is not a transition, so
+    /// it must not move the timestamp — otherwise "how long has this device held
+    /// the display" resets on every periodic re-announce. v1's
+    /// `DisplayOwner::store_owner` drew the same line.
+    fn store_active_source(&mut self, next: Observation<PhysAddr>, now_ms: u64) {
+        if self.active_source == next {
+            return;
+        }
+        self.active_source = next;
+        self.active_source_changed_at = Some(now_ms);
+    }
+
+    /// Record an ownership claim **we made ourselves**, which never comes back
+    /// through the receive loop.
+    ///
+    /// Deliberately does NOT set the ever-observed flag and does NOT move
+    /// `observed_at`: neither is a thing the bus told us, and conflating the two
+    /// would make "this bus announces ownership" always true and "the bus said
+    /// something" true on a bus that said nothing.
+    pub fn record_our_claim(&mut self, ours: PhysAddr, now_ms: u64) {
+        self.store_active_source(Observation::Known(ours), now_ms);
+    }
+
+    /// Record that we gave the display up, for the same reason as
+    /// [`Observations::record_our_claim`].
+    ///
+    /// Goes to `unknown`, not to "nobody": `<Inactive Source>` says a device
+    /// released the display, never who has it now.
+    pub fn record_our_release(&mut self, now_ms: u64) {
+        self.store_active_source(Observation::Unknown, now_ms);
+    }
+
+    /// The current display-ownership report, given our own physical address.
+    ///
+    /// The verdict is derived by [`crate::ownership::classify`] and published
+    /// beside the two addresses it came from, so a consumer that wants to apply
+    /// its own fail-safe direction can.
+    #[must_use]
+    pub fn ownership(&self, ours: Observation<PhysAddr>) -> crate::ownership::OwnershipReport {
+        crate::ownership::OwnershipReport {
+            state: crate::ownership::classify(self.active_source, ours),
+            owner: self.active_source,
+            ours,
+            changed_at: self.active_source_changed_at,
+            ever_observed: self.ever_observed_claim,
+        }
+    }
+
+    /// The last observed active source, for the pure gates in
+    /// [`crate::ownership`].
+    #[must_use]
+    pub const fn active_source(&self) -> Observation<PhysAddr> {
+        self.active_source
     }
 
     /// How many messages the kernel has reported dropping.
@@ -369,6 +455,17 @@ pub struct AvState {
     pub avr_power: Observation<PowerState>,
     pub active_source: Observation<String>,
     pub we_are_source: Observation<bool>,
+    /// The full display-ownership report — the tri-state plus the two addresses
+    /// it was derived from, when it last changed, and whether the bus has ever
+    /// announced ownership at all.
+    ///
+    /// Published **beside** `weAreSource` rather than instead of it. They answer
+    /// different questions: `weAreSource` is a plain observation, while
+    /// `displayOwnership.state` is the verdict the transmit gates act on, and a
+    /// consumer whose fail-safe direction is the opposite one (suspend-when-
+    /// nobody-is-watching) needs the tri-state and the `everObserved` flag, not
+    /// a boolean.
+    pub display_ownership: crate::ownership::OwnershipReport,
     pub volume: Observation<u8>,
     pub muted: Observation<bool>,
     /// Unix ms of the most recent bus observation, or `null` if the bus has
@@ -400,6 +497,7 @@ impl AvState {
                 Observation::Unknown => Observation::Unknown,
             },
             we_are_source: obs.we_are_source(topology.phys_addr_read_back),
+            display_ownership: obs.ownership(topology.phys_addr_read_back),
             volume: obs.volume,
             muted: obs.muted,
             observed_at: obs.observed_at,
@@ -667,6 +765,87 @@ mod tests {
         assert_eq!(json["avrPower"], serde_json::Value::Null);
     }
 
+    /// **The rule: the change timestamp moves on a real change and on nothing
+    /// else.**
+    ///
+    /// A device re-announcing the same `<Active Source>` on a timer must not
+    /// make "held for" reset to zero, which is the reading a consumer uses to
+    /// decide whether the display has been someone else's for a while.
+    ///
+    /// Mutation-check (run 2026-09-14): drop the `if self.active_source == next
+    /// { return; }` guard in `store_active_source` and the repeat-broadcast
+    /// assertion fails.
+    #[test]
+    fn the_ownership_timestamp_moves_only_on_a_real_change() {
+        let ours = Observation::Known(addr("2.5.0.0"));
+        let mut obs = Observations::default();
+        assert_eq!(obs.ownership(ours).changed_at, None);
+        assert!(!obs.ownership(ours).ever_observed);
+
+        obs.apply(BusObservation::ActiveSource(addr("1.0.0.0")), 1_000);
+        assert_eq!(obs.ownership(ours).changed_at, Some(1_000));
+        assert!(obs.ownership(ours).ever_observed);
+
+        // A repeat broadcast of the SAME owner is not a transition.
+        obs.apply(BusObservation::ActiveSource(addr("1.0.0.0")), 1_050);
+        assert_eq!(obs.ownership(ours).changed_at, Some(1_000));
+        // It IS still an observation, so the "we heard something" clock moves.
+        assert_eq!(
+            obs.ownership(ours).state,
+            crate::ownership::Ownership::OwnedByOther
+        );
+
+        // A different device taking over is a change.
+        obs.apply(BusObservation::ActiveSource(addr("2.5.0.0")), 1_060);
+        assert_eq!(obs.ownership(ours).changed_at, Some(1_060));
+        assert_eq!(
+            obs.ownership(ours).state,
+            crate::ownership::Ownership::OwnedByUs
+        );
+    }
+
+    /// **The rule: a claim of OUR OWN is not evidence that this bus announces
+    /// ownership.**
+    ///
+    /// `everObserved` exists to tell "we are listening and the bus never says
+    /// anything" apart from "we are not listening". A self-claim setting it
+    /// would make it always true and the distinction unaskable — v1 drew the
+    /// same line in `DisplayOwner::record_local`.
+    #[test]
+    fn our_own_claim_does_not_count_as_bus_traffic() {
+        let ours = Observation::Known(addr("2.5.0.0"));
+        let mut obs = Observations::default();
+        obs.record_our_claim(addr("2.5.0.0"), 500);
+
+        let report = obs.ownership(ours);
+        assert_eq!(report.state, crate::ownership::Ownership::OwnedByUs);
+        assert_eq!(report.changed_at, Some(500));
+        assert!(!report.ever_observed, "a self-claim is not bus traffic");
+        // And it is not an observation either: nothing was heard.
+        assert_eq!(obs.observed_at, None);
+
+        obs.record_our_release(600);
+        let after = obs.ownership(ours);
+        assert_eq!(after.state, crate::ownership::Ownership::Unknown);
+        assert_eq!(after.changed_at, Some(600));
+        assert!(!after.ever_observed);
+    }
+
+    /// Once the bus has demonstrably announced ownership, that fact survives the
+    /// owner going away — the flag is about the bus, not about the current
+    /// value.
+    #[test]
+    fn ever_observed_survives_the_owner_becoming_unknown() {
+        let ours = Observation::Known(addr("2.5.0.0"));
+        let mut obs = Observations::default();
+        obs.apply(BusObservation::ActiveSource(addr("1.0.0.0")), 10);
+        obs.apply(BusObservation::InactiveSource(addr("1.0.0.0")), 20);
+        let report = obs.ownership(ours);
+        assert_eq!(report.state, crate::ownership::Ownership::Unknown);
+        assert!(report.ever_observed);
+        assert_eq!(report.changed_at, Some(20));
+    }
+
     #[test]
     fn dropped_messages_are_counted_and_reported() {
         let mut obs = Observations::default();
@@ -695,6 +874,7 @@ mod tests {
             "avrPower",
             "activeSource",
             "weAreSource",
+            "displayOwnership",
             "volume",
             "muted",
             "observedAt",
