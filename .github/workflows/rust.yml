@@ -15,9 +15,11 @@
 # workspace shares one target dir at the repo ROOT, so the build output is at
 # `../target/release/...` from `working-directory: daemon`.
 #
-# One job runs OUTSIDE the container on the bare runner VM: `core-uinput`, which
-# needs a real /dev/uinput. It is blocking: the leg has proved it can execute on a
-# hosted runner — see the comment above that job.
+# Two jobs run OUTSIDE the container on the bare runner VM: `core-uinput`, which
+# needs a real /dev/uinput (blocking — the leg has proved it can execute on a
+# hosted runner, see the comment above that job), and `cec-mutants`, which needs
+# cargo-mutants + jq and exists so the `cec` container job can keep installing
+# nothing at all.
 #
 # Invoked by the CI orchestrator (.github/workflows/ci.yml), which decides via
 # path-based change detection whether the daemon/protocol crates changed, so
@@ -350,6 +352,28 @@ jobs:
         id: test
         run: cargo test -p tv-shell-cec
 
+      # Acceptance gate, half one of two: the DEPENDENCY GRAPH.
+      #
+      # The job header above claims this crate needs no apt step because
+      # `linux-cec-sys` ships pre-generated bindings. Until now nothing asserted
+      # it, so the claim held BY ACCIDENT: a future `linux-cec` bump that
+      # switched to bindgen would stay green on a GitHub runner that happens to
+      # have libclang installed, and then fail on the deploy box. Same
+      # `cargo tree --invert` mechanism as the daemon's TLS gate — success is
+      # the failure condition — over a different banned list.
+      - name: Assert no C toolchain in the dependency graph
+        id: graph
+        run: ./scripts/assert-no-system-c.sh graph -p tv-shell-cec
+
+      # Half two: WHAT ACTUALLY GOT LINKED. The graph check catches a build-dep
+      # appearing; this catches a system library bound through a path the banned
+      # list does not name. It is an ALLOWLIST — the `cec-mcp` job's
+      # `libcec|libp8-platform` grep is a denylist and would sail straight past a
+      # new, unanticipated library, which is exactly the regression class here.
+      - name: Assert no system libraries linked
+        id: ldd
+        run: ./scripts/assert-no-system-c.sh ldd target/release/tv-shell-cec
+
       - name: Summary
         if: always()
         run: |
@@ -362,6 +386,72 @@ jobs:
             echo "| Clippy | ${{ steps.clippy.outcome }} |"
             echo "| Build (release) | ${{ steps.build.outcome }} |"
             echo "| Test | ${{ steps.test.outcome }} |"
+            echo "| No C toolchain (graph) | ${{ steps.graph.outcome }} |"
+            echo "| No system libs (ldd allowlist) | ${{ steps.ldd.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Mutation testing over the PURE DECISION MODULES of cec/ (scope + rationale:
+  # .cargo/mutants.toml; runner: scripts/run-cec-mutants.sh).
+  #
+  # WHY IT EXISTS. Mutation discipline on this crate is manual today and has
+  # already failed twice: three tests in jedwards1230/tv-shell#514 were vacuous
+  # until a hand-run mutation caught them — and fixing them exposed a real bug,
+  # where `Rx` reset the whole tx-error run and made the "no rx traffic in the
+  # same window" condition dead code — while inverting a crate's central rule in
+  # jedwards1230/tv-shell#462 left all 88 tests passing. A discipline that has
+  # failed twice should be automated.
+  #
+  # ADVISORY, BUT NOT `continue-on-error`. Surviving mutants are reported and do
+  # not fail the job; the baseline has to exist before it can be a threshold.
+  # But `continue-on-error` reports green on a SKIP as readily as on a failure,
+  # which is precisely jedwards1230/tv-shell#469. So the script keeps the three
+  # outcomes apart itself and exits NON-ZERO when it examined nothing, generated
+  # no mutants, or could not parse the report — "we could not measure" must
+  # never look like "we measured and it was fine".
+  #
+  # WHY ITS OWN JOB, ON THE BARE RUNNER. It needs cargo-mutants and jq, and the
+  # `cec` job's whole point is that it installs nothing — keeping the two apart
+  # preserves that property, and keeps a slow advisory run off the critical
+  # path of the blocking one. Same shape as `core-uinput` above.
+  cec-mutants:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: .
+          key: cec-mutants
+
+      - name: Install cargo-mutants
+        id: install
+        run: |
+          cargo install cargo-mutants --locked
+          cargo mutants --version
+
+      # The script owns the pass/fail decision — see its header for the three
+      # outcomes it keeps apart, and why it fails hard on the third.
+      - name: Mutation test the cec decision modules
+        id: mutants
+        run: ./scripts/run-cec-mutants.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### cargo-mutants job steps"
+            echo ""
+            echo "| Step | Result |"
+            echo "|------|--------|"
+            echo "| Install cargo-mutants | ${{ steps.install.outcome }} |"
+            echo "| Mutation run | ${{ steps.mutants.outcome }} |"
+            echo ""
+            echo "Surviving mutants are ADVISORY. A failure here means the run could"
+            echo "not be measured at all (examined nothing / no mutants / unparsable)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The uinput leg for core/tests/input_uinput.rs — four `#[ignore]`d tests keyed

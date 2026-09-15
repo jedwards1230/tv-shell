@@ -156,6 +156,21 @@ for, and it is why this crate's CI job needs no apt step at all.
 `cec-rs`/`libcec-sys` are deprecated upstream (2026-09-03) and are dropped by
 §13 Q7 regardless.
 
+**That invariant is asserted now, not assumed.** It previously held only by
+accident: the `cec` job installs no apt packages, so a future `linux-cec` bump
+that switched to bindgen would have stayed green on a GitHub runner that happens
+to carry libclang, and failed on the deploy box. `scripts/assert-no-system-c.sh`
+closes it from both sides — a `cargo tree --invert` ban on the build-time
+tooling (`bindgen`, `clang-sys`, `cmake`, `pkg-config`, `libcec-sys`,
+`libudev-sys`, …) and an **allowlist** `ldd` over the built binary, which may
+link nothing beyond the base C runtime (`libc`, `libm`, `libgcc_s`, the loader,
+`linux-vdso`). The allowlist direction is deliberate: the `cec-mcp` job's
+`libcec|libp8-platform` grep is a denylist and would not notice a new,
+unanticipated system library. `cc` is **not** banned — it is genuinely absent
+from this graph, but it is a build-dep of plenty of harmless crates, and a gate
+that fires on changes which do not threaten the invariant is a gate people learn
+to route around; the script says so in place.
+
 Two caveats, stated rather than buried:
 
 - It declares `nix ^0.31` while the lockfile already carries `nix 0.29`
@@ -244,6 +259,33 @@ These four were checked that way on 2026-09-14:
 
 A fifth lives in `core/`: hard-coding `/opt/tv-shell/bin/tv-shell-cec` into the
 unit's `ExecStart` fails `the_committed_units_name_no_absolute_install_path`.
+
+### That check is automated now — `cargo-mutants`
+
+Doing it by hand has failed twice. Three tests in jedwards1230/tv-shell#514 were
+vacuous until a hand-run mutation caught them, and fixing them exposed a real
+bug: `Rx` reset the whole tx-error run, which made the "no rx traffic in the
+same window" condition dead code. Separately, inverting a crate's central rule
+in jedwards1230/tv-shell#462 left all 88 tests passing.
+
+```bash
+cargo install cargo-mutants --locked
+./scripts/run-cec-mutants.sh          # from the workspace root
+```
+
+Scope is in [`.cargo/mutants.toml`](../.cargo/mutants.toml) and is **glob-based
+on purpose**: only `state.rs` and `protocol.rs` exist today, while
+`ownership.rs`, `action.rs`, `health.rs` and `failover.rs` arrive with later PRs
+in the stack, so the gate's coverage grows as each lands rather than being wrong
+now and right later. The I/O modules (`kernel/`, `ipc.rs`, `main.rs`,
+`notify.rs`, `backend.rs`, `config.rs`) are excluded and *named* as excluded —
+they are exercised through stand-ins, so a mutant surviving there measures the
+fake rather than the rule.
+
+Surviving mutants are **reported, not enforced**, until the baseline is agreed.
+The job still fails hard when the run examined nothing, generated no mutants, or
+produced output that could not be parsed — "we could not measure" must never
+look like "we measured and it was fine" (jedwards1230/tv-shell#469).
 
 ## Not yet here
 

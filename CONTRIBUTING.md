@@ -141,6 +141,42 @@ pre-generated bindings, so there is no bindgen and no libclang, and the `cec` CI
 job needs no apt step. That is a different arrangement from v1's `--features
 cec` leg, which static-links a prebuilt libcec — see [cec/README.md](cec/README.md).
 
+**That is asserted, not assumed** — it used to hold only because the job happened
+to install nothing, so a dependency bump to bindgen would have stayed green on a
+runner carrying libclang and failed on hardware:
+
+```bash
+./scripts/assert-no-system-c.sh graph -p tv-shell-cec
+cargo build --release -p tv-shell-cec
+./scripts/assert-no-system-c.sh ldd target/release/tv-shell-cec
+```
+
+The `graph` half bans the build-time C tooling (`bindgen`, `clang-sys`, `cmake`,
+`pkg-config`, `libcec-sys`, `libudev-sys`, …) via `cargo tree --invert`, where
+success is the failure condition; the `ldd` half is an **allowlist** over the
+built binary, which may link nothing beyond the base C runtime. Both run in
+`rust.yml`'s `cec` job. It is a sibling of
+[`scripts/assert-pure-rust-tls.sh`](scripts/assert-pure-rust-tls.sh), which
+shares the mechanism and asserts a different invariant (which TLS *provider*
+resolves).
+
+**Mutation testing.** The rules in the pure decision modules are checked by
+`cargo-mutants`, because doing it by hand has already failed twice (see
+[cec/README.md](cec/README.md) § "That check is automated now"):
+
+```bash
+cargo install cargo-mutants --locked
+./scripts/run-cec-mutants.sh
+```
+
+Scope lives in [`.cargo/mutants.toml`](.cargo/mutants.toml) as globs, so the
+decision modules still in flight are picked up as their PRs land; the I/O
+modules are excluded and named as excluded. Surviving mutants are **advisory**
+in CI (the `cec-mutants` job), but a run that examined nothing, generated no
+mutants, or could not be parsed **fails the job** — that distinction is the
+whole point, since `continue-on-error` reports green on a skip as readily as on
+a failure (jedwards1230/tv-shell#469).
+
 ### v2 shell (`shell-v2/` — Qt Quick + CMake, Linux)
 
 Unlike v1's `shell/`, this one BUILDS: the pre-map X11 tagging needs C++. See
