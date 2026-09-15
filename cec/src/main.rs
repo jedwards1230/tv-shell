@@ -96,7 +96,7 @@ async fn main() -> ExitCode {
 
     // Everything is up: the socket is bound and the loop is running.
     notifier.ready();
-    notifier.status("listening; power and input verbs available");
+    notifier.status("listening; power, input and volume verbs available");
     tracing::info!("ready; serving on {sock_path}");
 
     let watchdog = watchdog_feed(notifier, backend.liveness);

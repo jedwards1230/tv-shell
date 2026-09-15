@@ -9,7 +9,8 @@ leg to the cold path and to recovery. This file is the crate's own map.
 > ## What this daemon puts on the bus, and when
 >
 > **Only when a client asks.** `wake`, `standby`, `input-claim`,
-> `input-release` and `input-select` are the whole transmit surface. Nothing
+> `input-release`, `input-select`, the `volume` family and `volume-state` are
+> the whole transmit surface. Nothing
 > fires on a timer, on a session event, or on this daemon's own initiative, and
 > **starting it is still silent on the bus** — which is why `kernel/device.rs`
 > pins its open sequence's call order by comment rather than leaving it to
@@ -25,11 +26,20 @@ leg to the cold path and to recovery. This file is the crate's own map.
 > - **`standby` needs positive proof that this box holds the display**, and a
 >   refusal transmits *nothing at all*.
 >
-> Volume, the health state machine and the IP recovery leg are later steps of
-> the plan for jedwards1230/tv-shell#504. Their verbs are deliberately absent
-> from the vocabulary rather than stubbed: an absent verb answers `unknown`,
-> which is a client learning the truth. A stub answering `ok` would tell a
-> caller the volume had changed when nothing happened.
+> - **A volume action reports what the AVR did, not what left the adapter.** A
+>   receiver ignores CEC from a non-selected input *after* ACKing the frame, so
+>   success is judged from the AVR's own `<Report Audio Status>` read before and
+>   after. An unchanged level is an `error:` naming that cause, never an `ok`.
+> - **A key press is inseparable from its release.** `volume::VolumeTx::
+>   KeyPressAndRelease` is one intent and `kernel::ops::wire_for` turns it into a
+>   `Wire::KeyPair` carrying both messages, so a press cannot be spelled on its
+>   own. An unreleased press auto-repeats on the AVR.
+>
+> The health state machine and the IP recovery leg are later steps of the plan
+> for jedwards1230/tv-shell#504. Their verbs are deliberately absent from the
+> vocabulary rather than stubbed: an absent verb answers `unknown`, which is a
+> client learning the truth. A stub answering `ok` would tell a caller something
+> had happened when nothing had.
 
 ## Modules
 
@@ -42,6 +52,7 @@ leg to the cold path and to recovery. This file is the crate's own map.
 | `state` | The published snapshot: `PhysAddr`, the `Observation` tri-state, and the pure fold from a bus observation to what `av-state` reports. **The rule that `unknown` is never rendered as healthy and never as `false`** lives here |
 | `ownership` | **PURE.** The tri-state display-ownership model and the two transmit gates, ported from `daemon/src/display_owner.rs` and `daemon/src/cec.rs` |
 | `action` | **PURE.** A verb plus the two observed addresses becomes either a plan of messages or a refusal that transmits nothing. Every gate runs before any message is built |
+| `volume` | **PURE.** The volume/mute sequence: system-audio mode first, an inseparable press/release pair, and success judged from the AVR's own report. The bus is a one-method `VolumeBus` trait, so the whole sequence runs in CI with no adapter |
 | `kernel` | `/dev/cecN`: open, configure, read the topology back, listen, and transmit a plan. **Linux-only**. `kernel/ops.rs` holds the pure `CecTx` → `linux-cec` `Message` table, so CI covers the whole message set with no adapter |
 | `notify` | `sd_notify` — `READY=1` for the unit's `Type=notify`, `WATCHDOG=1` for its `WatchdogSec=`. Transport only; it decides nothing |
 
@@ -68,9 +79,17 @@ its own safe side. That reasoning is ported deliberately; it is the best thing i
 the v1 CEC code.
 
 The **whole** `av-state` shape shipped from the first step, with honest `null`s
-for what it could not observe. `activeSource`, `weAreSource`, `displayOwnership`
-and the power fields are genuinely observable now; `volume` and `muted` stay
-`null` until step 5.
+for what it could not observe. Every field of it is genuinely observable now:
+`volume` and `muted` are folded from a `<Report Audio Status>` — whether the
+receive loop overhears one or a `volume` action reads one back.
+
+**A volume of `0` and "we do not know the volume" are different wire values.**
+CEC's 7-bit audio-volume field defines only `0..=100` as levels and reserves
+`0x7F` for *"audio volume status unknown"*, which is exactly what a receiver out
+of system-audio mode sends. `volume::level_observation` is the one place that
+maps it, and it maps it to `unknown` — never to a clamped number, and never to
+`0`. The mute flag is one bit and always means something, so it stays known even
+when the level does not.
 
 ### The gates: positive proof one way, proof-of-harm the other
 
@@ -249,14 +268,74 @@ suggest a shared surface that does not exist.
 | `input-claim` | `ok` / `refused:` / `error:` | `<Active Source>` broadcast |
 | `input-release` | `ok` / `error:` | `<Inactive Source>` → TV |
 | `input-select <phys-addr>` | `ok` / `error:usage:` / `error:` | `<Set Stream Path>` broadcast |
+| `volume up\|down` | `ok` / `refused:` / `error:` / `error:usage:` | `<Give System Audio Mode Status>` (+ `<System Audio Mode Request>` if off) → `<Give Audio Status>` → `<User Control Pressed>[Volume Up/Down]` **and** `<User Control Released>` → `<Give Audio Status>` |
+| `volume mute\|unmute` | as above | the same sequence, with `<User Control Pressed>[Mute]` — and **no key at all** when the AVR already reports the state asked for |
+| `volume-state` | one compact JSON document (below) | `<Give Audio Status>`, falling back to the last one overheard |
 
-Anything else is `unknown`. Every verb but `input-select` is a bare read or bare
-action, so nothing may follow it: `av-stateX`, `av-state 1` and `standby now`
-are all `unknown`. `input-select` takes exactly one `a.b.c.d` physical address;
-a missing, malformed or extra body is `error:usage: …`, **never a silent
-default** — a `<Set Stream Path>` naming a port that does not exist fails
-silently on the bus, so a body this daemon cannot parse has to be refused where
-the client still learns about it.
+Anything else is `unknown`. Every verb but `input-select` and `volume` is a bare
+read or bare action, so nothing may follow it: `av-stateX`, `av-state 1`,
+`standby now` and `volume-state 1` are all `unknown`. The two that take a body
+take exactly one word, and a missing, malformed or extra body is
+`error:usage: …` — **never a silent default**, and never `unknown` (the client
+knows the verb; it got the call wrong). `input-select` because a
+`<Set Stream Path>` naming a port that does not exist fails *silently* on the
+bus; `volume` because a typo that read as `ok` would report a change nobody
+asked for.
+
+### What `volume` does, and what the bus can actually express
+
+Three things, in this order, and each one is load-bearing:
+
+1. **System audio mode first.** A receiver that has dropped out of it **silently
+   ignores** volume UI commands — it ACKs the frame and does nothing. So every
+   volume action reads `<Give System Audio Mode Status>` and sends
+   `<System Audio Mode Request>` when the answer is no or absent.
+2. **The press and its release are one intent.** An unreleased
+   `<User Control Pressed>` auto-repeats on the AVR and the volume runs away.
+   `Wire::KeyPair` carries both messages in one value, and the release is
+   transmitted **even when the press was NAKed** — a spurious NAK would otherwise
+   leave a key held down, while an extra release is a no-op at every receiver.
+3. **Success is the AVR's `<Report Audio Status>`, read before and after.** An
+   unchanged level is reported as an `error:` naming the likely cause ("a
+   receiver ignores CEC from a non-selected input…"), except at the ends of the
+   0-100 scale, where not moving is correct. If the AVR will not report at all,
+   that is an `error:` too: the transmit is reported honestly rather than as
+   success.
+
+**`mute` and `unmute` both press CEC's `Mute` UI code (`0x43`), which is a
+TOGGLE**, and this daemon does not pretend otherwise. The absolute codes —
+`Mute Function` (`0x65`) and `Restore Volume Function` (`0x66`) — are optional in
+the specification and widely unimplemented, so an `unmute` built on them would
+silently do nothing on the receivers that lack them. **An idempotent unmute is
+therefore not expressible as a single message on this bus.** What is expressible,
+and what this does, is the read-first shape the rest of the daemon already uses:
+`<Give Audio Status>`, then toggle **only if the AVR is not already in the state
+asked for**. The verbs are idempotent even though the message is not — repeated
+calls converge, and a call that finds the state already correct transmits no key
+and answers `ok` on the AVR's own evidence. When the mute state cannot be read at
+all, **nothing is transmitted**: a blind toggle could mute a television somebody
+asked to unmute.
+
+**`volume` does not claim the display first, deliberately.** `wake` and
+`standby` do, because §8's ordering constraint applies to them and they are
+lifecycle actions. Yanking the television to this box because somebody nudged the
+volume is a bigger side effect than the verb asks for, so `volume` sends the
+non-destructive half (`<System Audio Mode Request>`, which routes audio without
+touching the video input) and, when the AVR ignores the command anyway, **says
+so**. A caller that wants the input as well has `input-claim`, which says what it
+does.
+
+```json
+{"level":37,"muted":false,"source":"avr-report","observedAt":1757800000000}
+```
+
+`volume-state`'s `source` is `avr-report` when the AVR answered a query made just
+now and `observed` when the value is the last one the receive loop overheard;
+both are `null`, along with `level` and `muted`, when nothing is known. It is the
+one read verb that **may touch the bus** — `av-state` answers from the cached
+snapshot precisely so it still answers when the device is the thing being
+diagnosed, while "what is the AVR's volume" is a question only the AVR can
+answer.
 
 ### `refused:` — the one addition to the reply grammar
 
@@ -284,7 +363,7 @@ refusal carries no plan.
  "tvPower":"on","avrPower":null,"activeSource":"2.5.0.0","weAreSource":true,
  "displayOwnership":{"state":"owned-by-us","owner":"2.5.0.0","ours":"2.5.0.0",
                      "changedAt":1757800000000,"everObserved":true},
- "volume":null,"muted":null,"observedAt":1757800000000,"lostMessages":0}
+ "volume":37,"muted":false,"observedAt":1757800000000,"lostMessages":0}
 ```
 
 `displayOwnership` is published **beside** `weAreSource`, not instead of it, and
@@ -325,7 +404,7 @@ device-backed lane lands with something that needs a device to assert.
 ### Rule-defending tests, and how to check they still defend anything
 
 A green suite proves nothing until the rule is inverted and the suite goes red.
-These four were checked that way on 2026-09-14:
+Every row below was checked that way on 2026-09-14:
 
 | Rule | Mutation | What went red |
 |---|---|---|
@@ -341,6 +420,13 @@ These four were checked that way on 2026-09-14:
 | A malformed `input-select` body is a usage error | fall back to a default address | `a_malformed_input_select_body_is_a_usage_error` + the `ipc` twin |
 | The ownership timestamp moves only on a real change | drop the equality guard in `store_active_source` | `the_ownership_timestamp_moves_only_on_a_real_change` |
 | `input-release` sends `<Inactive Source>`, not `<Active Source>` | swap the message (what `set_active_source(None)` actually does — see below) | `every_intended_transmit_maps_to_its_message_and_destination` |
+| A press is always followed by its release | return early from `DeviceVolumeBus::perform` after the press | **3 tests** in `kernel::ops`, incl. the NAKed-press row |
+| Success is judged from the read-back, not the transmit | `perform_level` → `Done` without consulting `judge_level` | **4 tests** across `volume`, `kernel::ops` and `ipc` |
+| An unreadable volume is `unknown`, never `0` | `level_observation` → `Known(0)` out of range | **3 tests** across `volume`, `kernel::follower` and `kernel::ops` |
+| System-audio mode is asked about first | delete the `ensure_system_audio_mode` call from `volume::execute` | **4 tests** across `volume`, `kernel::ops` and `ipc` |
+| `mute`/`unmute` converge instead of toggling | `mute_step` → always `Toggle` | **4 tests** across `volume` and `ipc` |
+| A missing `volume` argument is a usage error | default it to `up` | `a_missing_or_unknown_volume_argument_is_a_usage_error` + the `ipc` twin |
+| An AVR report returning to "volume unknown" clears the old level | keep the previous level when the new one is unknown | `an_avr_that_does_not_know_its_volume_returns_the_level_to_unknown` |
 
 **Every ownership state the gates are tested against is reachable from the real
 receive path**, and `the_receive_path_can_produce_every_ownership_verdict` walks
@@ -393,9 +479,6 @@ look like "we measured and it was fine" (jedwards1230/tv-shell#469).
 
 Each of these lands with the module that reads it, never ahead of it:
 
-- **Volume** — `volume up|down|mute|unmute`, `volume-state`, and system-audio-mode
-  handling. A receiver ignores CEC from a non-selected input, so this must report
-  a transmit that merely left the adapter honestly rather than as success.
 - **Health** — the state machine over the four observed facts, and `av-health`.
 - **The IP recovery leg** — the Denon/Marantz telnet client ported from the
   never-merged jedwards1230/tv-shell#191 onto typed config, `Mac::parse` and

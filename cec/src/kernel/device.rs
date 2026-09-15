@@ -51,6 +51,7 @@ use crate::backend::{ActionOutcome, AvBackend};
 use crate::config::CecConfig;
 use crate::kernel::ops;
 use crate::state::{AvState, Observation, Observations, PhysAddr, Topology};
+use crate::volume::{VolumeAction, VolumeBus, VolumeState};
 
 /// An open kernel CEC adapter, its topology, and the observations folded out of
 /// its receive queue.
@@ -282,6 +283,55 @@ impl AvBackend for KernelBackend {
         tracing::info!("{action:?}: transmitting {:?}", plan.transmits);
         let transmitter = ops::DeviceTransmitter::new(self.device());
         ops::execute(&transmitter, &self.observations, plan).await
+    }
+
+    /// Decide, then run the volume sequence.
+    ///
+    /// Same division as [`AvBackend::act`]: [`crate::volume::plan`] is the gate
+    /// (a refusal here transmits nothing), [`crate::volume::execute`] is the
+    /// sequence, and this method only supplies the wire.
+    async fn volume(&self, action: VolumeAction) -> ActionOutcome {
+        let plan = match crate::volume::plan(action, self.topology.phys_addr_read_back) {
+            Ok(plan) => plan,
+            Err(refusal) => {
+                tracing::info!("volume {} refused: {}", action.as_str(), refusal.reason);
+                return ActionOutcome::Refused(refusal.reason);
+            }
+        };
+        tracing::info!("volume {}: starting", action.as_str());
+        let transmitter = ops::DeviceTransmitter::new(self.device());
+        let bus = ops::DeviceVolumeBus::new(&transmitter, &self.observations);
+        crate::volume::execute(&bus, plan).await
+    }
+
+    /// Ask the AVR, and fall back to what the receive loop last heard.
+    ///
+    /// The fallback is not a consolation prize: it is a different, honestly
+    /// labelled answer. `source` says which one this is, so a caller can tell a
+    /// reading taken just now from one heard at some point in the past — and
+    /// when neither exists, every field is `null` rather than a plausible zero.
+    async fn volume_state(&self) -> VolumeState {
+        let transmitter = ops::DeviceTransmitter::new(self.device());
+        let bus = ops::DeviceVolumeBus::new(&transmitter, &self.observations);
+        match bus.perform(crate::volume::VolumeTx::AudioStatusQuery).await {
+            Ok(crate::volume::VolumeReply::Audio(report)) => {
+                VolumeState::from_report(report, crate::state::now_ms())
+            }
+            other => {
+                if let Err(e) = other {
+                    tracing::debug!("the AVR did not answer <Give Audio Status> ({e})");
+                }
+                let observations = self
+                    .observations
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                VolumeState::from_observations(
+                    observations.volume(),
+                    observations.muted(),
+                    observations.observed_at(),
+                )
+            }
+        }
     }
 
     async fn snapshot(&self) -> AvState {

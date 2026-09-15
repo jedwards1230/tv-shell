@@ -38,11 +38,13 @@ use std::sync::{Arc, Mutex};
 
 use linux_cec::device::AsyncDevice;
 use linux_cec::message::{Message, Opcode};
+use linux_cec::operand::{AudioStatus, UiCommand};
 use linux_cec::{LogicalAddress, PhysicalAddress, Timeout};
 
 use crate::action::{CecTx, LocalRecord, Plan, PowerRead, StandbyTarget};
 use crate::backend::ActionOutcome;
 use crate::state::{now_ms, AvDevice, BusObservation, Observations, PowerState};
+use crate::volume::{AudioReport, VolumeBus, VolumeKey, VolumeReply, VolumeTx};
 
 /// How long a request/reply read-back waits.
 ///
@@ -142,17 +144,31 @@ fn phys(addr: crate::state::PhysAddr) -> PhysicalAddress {
 
 /// The seam over the transmit ioctls.
 ///
-/// Small on purpose: two methods, both taking values this crate already owns.
-/// Keeping it here rather than on [`crate::backend::AvBackend`] means the
-/// decision layer never sees a device, and the device layer never sees a verb.
+/// Small on purpose: two methods, both taking `linux-cec` values that the pure
+/// tables above produce. Keeping it here rather than on
+/// [`crate::backend::AvBackend`] means the decision layer never sees a device,
+/// and the device layer never sees a verb.
+///
+/// [`Transmitter::request`] is deliberately generic over the reply opcode rather
+/// than being one method per query. Everything this daemon asks the bus —
+/// `<Give Device Power Status>`, `<Give Audio Status>`,
+/// `<Give System Audio Mode Status>`, `<System Audio Mode Request>` — is one
+/// `tx_rx_message` with a bounded timeout, and the *parsing* of each reply is a
+/// pure function beside it, which is what keeps the reply tables covered by CI
+/// with no adapter.
 #[async_trait::async_trait]
 pub trait Transmitter: Send + Sync {
     /// Put one message on the bus, returning an error unless the bus accepted
     /// it.
     async fn send(&self, message: &Message, destination: LogicalAddress) -> Result<(), String>;
 
-    /// Ask a device for its power state and wait, bounded, for the reply.
-    async fn query_power(&self, read: PowerRead) -> Result<PowerState, String>;
+    /// Transmit and wait, bounded, for a reply carrying `reply`.
+    async fn request(
+        &self,
+        message: &Message,
+        destination: LogicalAddress,
+        reply: Opcode,
+    ) -> Result<Message, String>;
 }
 
 /// A real `/dev/cecN`.
@@ -180,23 +196,39 @@ impl Transmitter for DeviceTransmitter {
             .map_err(|e| format!("{e}"))
     }
 
-    async fn query_power(&self, read: PowerRead) -> Result<PowerState, String> {
-        let (message, destination, reply) = power_query_for(read);
+    async fn request(
+        &self,
+        message: &Message,
+        destination: LogicalAddress,
+        reply: Opcode,
+    ) -> Result<Message, String> {
         let envelope = self
             .device
-            .tx_rx_message(&message, destination, reply, REPLY_TIMEOUT)
+            .tx_rx_message(message, destination, reply, REPLY_TIMEOUT)
             .await
             .map_err(|e| format!("{e}"))?;
         match envelope.message {
-            linux_cec::device::MessageData::Valid(Message::ReportPowerStatus { status }) => {
-                power_state(status).ok_or_else(|| {
-                    format!("{destination} reported a power status this daemon does not recognise")
-                })
-            }
-            other => Err(format!(
-                "{destination} answered <Give Device Power Status> with {other:?}"
-            )),
+            linux_cec::device::MessageData::Valid(message) => Ok(message),
+            // A reply the crate could not parse tells us nothing, and must not
+            // be folded into the nearest thing we were hoping for.
+            other => Err(format!("{destination} answered with {other:?}")),
         }
+    }
+}
+
+/// Ask a device for its power state and wait, bounded, for the reply.
+pub async fn query_power(
+    transmitter: &dyn Transmitter,
+    read: PowerRead,
+) -> Result<PowerState, String> {
+    let (message, destination, reply) = power_query_for(read);
+    match transmitter.request(&message, destination, reply).await? {
+        Message::ReportPowerStatus { status } => power_state(status).ok_or_else(|| {
+            format!("{destination} reported a power status this daemon does not recognise")
+        }),
+        other => Err(format!(
+            "{destination} answered <Give Device Power Status> with {other:?}"
+        )),
     }
 }
 
@@ -270,7 +302,7 @@ pub async fn execute(
     // landed action into a failure — a television mid-transition legitimately
     // does not reply.
     if let Some(read) = plan.then_read {
-        match transmitter.query_power(read).await {
+        match query_power(transmitter, read).await {
             Ok(state) => {
                 let device = power_read_device(read);
                 tracing::info!("read back after the action: {device:?} reports {state:?}");
@@ -284,6 +316,198 @@ pub async fn execute(
     }
 
     ActionOutcome::Done
+}
+
+// ---------------------------------------------------------------------------
+// Volume — the wire half.
+// ---------------------------------------------------------------------------
+
+/// What one [`VolumeTx`] is on the wire.
+///
+/// **[`Wire::KeyPair`] carries BOTH halves of a key press in one value**, which
+/// is how the press/release pairing is made structural rather than conventional.
+/// There is no variant, and no function in this crate, that yields a
+/// `<User Control Pressed>` on its own — so no future edit can send one and
+/// forget the release. An unreleased press auto-repeats on the AVR: the volume
+/// runs away until something releases it.
+// `LogicalAddress` is `PartialEq` but not `Eq` in `linux-cec` 0.2.1, so this
+// derives what the dependency allows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Wire {
+    /// Transmit and wait, bounded, for a reply of this opcode.
+    Request {
+        message: Message,
+        destination: LogicalAddress,
+        reply: Opcode,
+    },
+    /// A press and its release, to the same destination, in that order.
+    KeyPair {
+        press: Message,
+        release: Message,
+        destination: LogicalAddress,
+    },
+}
+
+/// Translate one intended volume transmit into what goes on the wire.
+///
+/// **Pure**, on the no-device side of the seam, exactly like [`message_for`]:
+/// it is the whole volume message table and CI has no adapter.
+///
+/// Everything here is addressed to `LogicalAddress::AudioSystem`. Volume is the
+/// AVR's business; broadcasting a volume key would offer it to every device on a
+/// bus that also carries an Apple TV and a PS5.
+#[must_use]
+pub fn wire_for(tx: VolumeTx) -> Wire {
+    match tx {
+        VolumeTx::SystemAudioModeQuery => Wire::Request {
+            message: Message::GiveSystemAudioModeStatus,
+            destination: LogicalAddress::AudioSystem,
+            reply: Opcode::SystemAudioModeStatus,
+        },
+        // The AVR answers a request with `<Set System Audio Mode>`, not with a
+        // status message — so that is the opcode to wait for.
+        VolumeTx::SystemAudioModeRequest(addr) => Wire::Request {
+            message: Message::SystemAudioModeRequest {
+                physical_address: phys(addr),
+            },
+            destination: LogicalAddress::AudioSystem,
+            reply: Opcode::SetSystemAudioMode,
+        },
+        VolumeTx::AudioStatusQuery => Wire::Request {
+            message: Message::GiveAudioStatus,
+            destination: LogicalAddress::AudioSystem,
+            reply: Opcode::ReportAudioStatus,
+        },
+        VolumeTx::KeyPressAndRelease(key) => Wire::KeyPair {
+            press: Message::UserControlPressed {
+                ui_command: ui_command_for(key),
+            },
+            release: Message::UserControlReleased,
+            destination: LogicalAddress::AudioSystem,
+        },
+    }
+}
+
+/// The UI command a key becomes.
+///
+/// `MuteToggle` is `UiCommand::Mute` (`0x43`), which is a **toggle**. The
+/// absolute `MuteFunction` (`0x65`) and `RestoreVolumeFunction` (`0x66`) exist
+/// in this enum and are deliberately not used: both are optional in the
+/// specification and widely unimplemented, so an `unmute` built on them would
+/// silently do nothing on the receivers that lack them. The idempotence comes
+/// from [`crate::volume::mute_step`]'s read-back instead — see that module's
+/// docs.
+#[must_use]
+pub fn ui_command_for(key: VolumeKey) -> UiCommand {
+    match key {
+        VolumeKey::VolumeUp => UiCommand::VolumeUp,
+        VolumeKey::VolumeDown => UiCommand::VolumeDown,
+        VolumeKey::MuteToggle => UiCommand::Mute,
+    }
+}
+
+/// What a `<Report Audio Status>` payload means.
+///
+/// Pure. `0x7F` and everything above [`crate::volume::MAX_LEVEL`] become
+/// `unknown` via [`crate::volume::level_observation`] — never a clamped number
+/// and never `0`.
+#[must_use]
+pub fn audio_report(status: AudioStatus) -> AudioReport {
+    AudioReport {
+        // The field is 7 bits, so the conversion cannot fail; `u8::MAX` is out
+        // of range and folds to `unknown` anyway.
+        level: crate::volume::level_observation(u8::try_from(status.volume()).unwrap_or(u8::MAX)),
+        muted: status.mute(),
+    }
+}
+
+/// The real bus, as [`crate::volume::execute`] needs it.
+///
+/// Holds the transmitter by reference so the whole volume sequence can be driven
+/// against a recording stand-in in this module's tests — which is where the
+/// press/release pairing and the system-audio-mode step are asserted **on the
+/// messages produced**, not on which readers were called.
+pub struct DeviceVolumeBus<'a> {
+    transmitter: &'a dyn Transmitter,
+    observations: &'a Mutex<Observations>,
+}
+
+impl<'a> DeviceVolumeBus<'a> {
+    #[must_use]
+    pub fn new(
+        transmitter: &'a dyn Transmitter,
+        observations: &'a Mutex<Observations>,
+    ) -> DeviceVolumeBus<'a> {
+        DeviceVolumeBus {
+            transmitter,
+            observations,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl VolumeBus for DeviceVolumeBus<'_> {
+    async fn perform(&self, tx: VolumeTx) -> Result<VolumeReply, String> {
+        match wire_for(tx) {
+            Wire::Request {
+                message,
+                destination,
+                reply,
+            } => {
+                let answer = self
+                    .transmitter
+                    .request(&message, destination, reply)
+                    .await?;
+                interpret(answer, destination, self.observations)
+            }
+            Wire::KeyPair {
+                press,
+                release,
+                destination,
+            } => {
+                let pressed = self.transmitter.send(&press, destination).await;
+                // **ALWAYS, on every path.** The release goes out even when the
+                // press was not accepted: if the NAK was spurious the AVR is now
+                // auto-repeating, and an extra `<User Control Released>` on a
+                // key that was never pressed is a no-op at every receiver. The
+                // asymmetry is deliberate — one of these errors is a runaway
+                // volume and the other is nothing at all.
+                let released = self.transmitter.send(&release, destination).await;
+                pressed?;
+                released?;
+                Ok(VolumeReply::None)
+            }
+        }
+    }
+}
+
+/// What a reply to one of the volume queries means, and what it records.
+///
+/// A `<Report Audio Status>` is folded into [`Observations`] here, which is how
+/// `av-state`'s `volume` and `muted` reflect what the last action read back —
+/// our own request/reply exchanges never come past the receive loop.
+fn interpret(
+    answer: Message,
+    destination: LogicalAddress,
+    observations: &Mutex<Observations>,
+) -> Result<VolumeReply, String> {
+    match answer {
+        Message::ReportAudioStatus { status } => {
+            let report = audio_report(status);
+            lock(observations).apply(
+                BusObservation::AudioStatus {
+                    volume: report.level,
+                    muted: report.muted,
+                },
+                now_ms(),
+            );
+            Ok(VolumeReply::Audio(report))
+        }
+        Message::SystemAudioModeStatus { status } | Message::SetSystemAudioMode { status } => {
+            Ok(VolumeReply::SystemAudioMode(status))
+        }
+        other => Err(format!("{destination} answered with {other:?}")),
+    }
 }
 
 /// Whether a failed transmit may be survived rather than failing the action.
@@ -437,6 +661,326 @@ mod tests {
         assert_eq!(
             power_state(PowerStatus::ToStandby),
             Some(PowerState::ToStandby)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Volume — the wire table, and the press/release pairing.
+    //
+    // Asserted on the MESSAGES produced through the transmitter seam, which is
+    // the discipline the rest of this crate's tests use: not on which readers
+    // were consulted, but on what would have gone on the bus.
+    // -----------------------------------------------------------------------
+
+    use crate::volume::{self, AudioReport, VolumeAction, VolumeKey};
+    use linux_cec::operand::AudioStatus;
+
+    /// A transmitter that records everything and answers like an AVR.
+    struct RecordingTransmitter {
+        sent: Mutex<Vec<(Message, LogicalAddress)>>,
+        /// What `<Give Audio Status>` answers. `None` = no reply.
+        audio: Mutex<Option<AudioStatus>>,
+        /// What `<Give System Audio Mode Status>` answers. `None` = no reply.
+        system_audio_mode: Mutex<Option<bool>>,
+        /// Whether a key press moves the reported level.
+        acts: bool,
+        /// Whether a `<User Control Pressed>` is NAKed.
+        nak_press: bool,
+    }
+
+    impl RecordingTransmitter {
+        fn new(level: u8, muted: bool) -> RecordingTransmitter {
+            RecordingTransmitter {
+                sent: Mutex::new(Vec::new()),
+                audio: Mutex::new(Some(
+                    AudioStatus::new()
+                        .with_volume(usize::from(level))
+                        .with_mute(muted),
+                )),
+                system_audio_mode: Mutex::new(Some(true)),
+                acts: true,
+                nak_press: false,
+            }
+        }
+
+        fn sent(&self) -> Vec<(Message, LogicalAddress)> {
+            self.sent.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Transmitter for RecordingTransmitter {
+        async fn send(&self, message: &Message, destination: LogicalAddress) -> Result<(), String> {
+            self.sent.lock().unwrap().push((*message, destination));
+            if let Message::UserControlPressed { ui_command } = message {
+                if self.nak_press {
+                    return Err("the bus NAKed the press".to_string());
+                }
+                if self.acts {
+                    let mut audio = self.audio.lock().unwrap();
+                    if let Some(status) = audio.as_mut() {
+                        match ui_command {
+                            UiCommand::VolumeUp => {
+                                *status = status.with_volume((status.volume() + 1).min(100));
+                            }
+                            UiCommand::VolumeDown => {
+                                *status = status.with_volume(status.volume().saturating_sub(1));
+                            }
+                            UiCommand::Mute => *status = status.with_mute(!status.mute()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        async fn request(
+            &self,
+            message: &Message,
+            destination: LogicalAddress,
+            _reply: Opcode,
+        ) -> Result<Message, String> {
+            self.sent.lock().unwrap().push((*message, destination));
+            match message {
+                Message::GiveAudioStatus => self
+                    .audio
+                    .lock()
+                    .unwrap()
+                    .map(|status| Message::ReportAudioStatus { status })
+                    .ok_or_else(|| "no reply within the timeout".to_string()),
+                Message::GiveSystemAudioModeStatus => self
+                    .system_audio_mode
+                    .lock()
+                    .unwrap()
+                    .map(|status| Message::SystemAudioModeStatus { status })
+                    .ok_or_else(|| "no reply within the timeout".to_string()),
+                Message::SystemAudioModeRequest { .. } => {
+                    *self.system_audio_mode.lock().unwrap() = Some(true);
+                    Ok(Message::SetSystemAudioMode { status: true })
+                }
+                other => Err(format!("nothing answers {other:?}")),
+            }
+        }
+    }
+
+    /// The whole volume message table, asserted with no device present.
+    ///
+    /// Everything is addressed to the audio system: broadcasting a volume key
+    /// would offer it to every device on a bus that also carries an Apple TV and
+    /// a PS5.
+    #[test]
+    fn every_volume_intent_maps_to_its_messages_and_destination() {
+        let ours = addr("2.5.0.0");
+        assert_eq!(
+            wire_for(VolumeTx::SystemAudioModeQuery),
+            Wire::Request {
+                message: Message::GiveSystemAudioModeStatus,
+                destination: LogicalAddress::AudioSystem,
+                reply: Opcode::SystemAudioModeStatus,
+            }
+        );
+        assert_eq!(
+            wire_for(VolumeTx::SystemAudioModeRequest(ours)),
+            Wire::Request {
+                message: Message::SystemAudioModeRequest {
+                    physical_address: phys(ours),
+                },
+                destination: LogicalAddress::AudioSystem,
+                // The AVR answers a request with <Set System Audio Mode>.
+                reply: Opcode::SetSystemAudioMode,
+            }
+        );
+        assert_eq!(
+            wire_for(VolumeTx::AudioStatusQuery),
+            Wire::Request {
+                message: Message::GiveAudioStatus,
+                destination: LogicalAddress::AudioSystem,
+                reply: Opcode::ReportAudioStatus,
+            }
+        );
+        for (key, ui) in [
+            (VolumeKey::VolumeUp, UiCommand::VolumeUp),
+            (VolumeKey::VolumeDown, UiCommand::VolumeDown),
+            // The toggle, deliberately — see `volume`'s module docs.
+            (VolumeKey::MuteToggle, UiCommand::Mute),
+        ] {
+            assert_eq!(
+                wire_for(VolumeTx::KeyPressAndRelease(key)),
+                Wire::KeyPair {
+                    press: Message::UserControlPressed { ui_command: ui },
+                    release: Message::UserControlReleased,
+                    destination: LogicalAddress::AudioSystem,
+                },
+                "{key:?}"
+            );
+        }
+    }
+
+    /// **THE PAIRING RULE: a `<User Control Pressed>` is ALWAYS followed by a
+    /// `<User Control Released>`.**
+    ///
+    /// An unreleased press auto-repeats on the AVR — the volume runs away until
+    /// something sends the release. The pairing is structural: `Wire::KeyPair`
+    /// carries both messages in one value, so there is no way to spell a press
+    /// on its own, and the bus sends both.
+    ///
+    /// Mutation-check (run 2026-09-14): drop the `release` from
+    /// `wire_for`'s `KeyPressAndRelease` arm (or the second `send` from
+    /// `DeviceVolumeBus::perform`) and this fails on every key, together with
+    /// `a_naked_press_still_gets_its_release`.
+    #[tokio::test]
+    async fn a_key_press_is_always_followed_by_its_release() {
+        for (key, ui) in [
+            (VolumeKey::VolumeUp, UiCommand::VolumeUp),
+            (VolumeKey::VolumeDown, UiCommand::VolumeDown),
+            (VolumeKey::MuteToggle, UiCommand::Mute),
+        ] {
+            let transmitter = RecordingTransmitter::new(40, false);
+            let observations = Mutex::new(Observations::default());
+            let bus = DeviceVolumeBus::new(&transmitter, &observations);
+            assert_eq!(
+                bus.perform(VolumeTx::KeyPressAndRelease(key)).await,
+                Ok(VolumeReply::None)
+            );
+            assert_eq!(
+                transmitter.sent(),
+                vec![
+                    (
+                        Message::UserControlPressed { ui_command: ui },
+                        LogicalAddress::AudioSystem
+                    ),
+                    (Message::UserControlReleased, LogicalAddress::AudioSystem),
+                ],
+                "{key:?}"
+            );
+        }
+    }
+
+    /// **And the release goes out even when the press was NOT accepted.**
+    ///
+    /// The asymmetry is deliberate: if the NAK was spurious the AVR is now
+    /// auto-repeating, while an extra `<User Control Released>` for a key that
+    /// was never pressed is a no-op at every receiver. One of those errors
+    /// is a runaway volume and the other is nothing at all.
+    ///
+    /// Mutation-check (run 2026-09-14): make `DeviceVolumeBus::perform` return
+    /// early on a failed press (`self.transmitter.send(&press, …).await?;`) and
+    /// this fails.
+    #[tokio::test]
+    async fn a_naked_press_still_gets_its_release() {
+        let transmitter = RecordingTransmitter {
+            nak_press: true,
+            ..RecordingTransmitter::new(40, false)
+        };
+        let observations = Mutex::new(Observations::default());
+        let bus = DeviceVolumeBus::new(&transmitter, &observations);
+        let result = bus
+            .perform(VolumeTx::KeyPressAndRelease(VolumeKey::VolumeUp))
+            .await;
+        assert!(result.is_err(), "a NAKed press must still be an error");
+        assert!(
+            transmitter
+                .sent()
+                .contains(&(Message::UserControlReleased, LogicalAddress::AudioSystem)),
+            "the release must go out anyway: {:?}",
+            transmitter.sent()
+        );
+    }
+
+    /// The whole sequence, in `linux-cec` messages, against an AVR that is out
+    /// of system-audio mode and then acts.
+    ///
+    /// This is the message-level twin of the `volume` module's sequence test:
+    /// the request precedes the press, and the press precedes the read-back.
+    #[tokio::test]
+    async fn the_volume_sequence_reaches_the_bus_in_order() {
+        let transmitter = RecordingTransmitter::new(40, false);
+        *transmitter.system_audio_mode.lock().unwrap() = Some(false);
+        let observations = Mutex::new(Observations::default());
+        let bus = DeviceVolumeBus::new(&transmitter, &observations);
+        let plan = volume::plan(VolumeAction::Up, Observation::Known(addr("2.5.0.0"))).unwrap();
+
+        assert_eq!(volume::execute(&bus, plan).await, ActionOutcome::Done);
+        assert_eq!(
+            transmitter
+                .sent()
+                .into_iter()
+                .map(|(m, _)| m)
+                .collect::<Vec<_>>(),
+            vec![
+                Message::GiveSystemAudioModeStatus,
+                Message::SystemAudioModeRequest {
+                    physical_address: phys(addr("2.5.0.0")),
+                },
+                Message::GiveAudioStatus,
+                Message::UserControlPressed {
+                    ui_command: UiCommand::VolumeUp,
+                },
+                Message::UserControlReleased,
+                Message::GiveAudioStatus,
+            ]
+        );
+        // And the read-back reached the published state, which is how
+        // `av-state`'s `volume` stops being null: our own request/reply
+        // exchanges never come past the receive loop.
+        assert_eq!(
+            observations.lock().unwrap().volume(),
+            Observation::Known(41)
+        );
+    }
+
+    /// **The non-selected-input case, at the message seam: every frame is
+    /// accepted and the action still reports a FAILURE.**
+    ///
+    /// Mutation-check (run 2026-09-14): make `volume::perform_level` report
+    /// `Done` without consulting the read-back and this fails.
+    #[tokio::test]
+    async fn an_accepted_but_ignored_volume_command_is_a_failure_at_the_message_seam() {
+        let transmitter = RecordingTransmitter {
+            acts: false,
+            ..RecordingTransmitter::new(40, false)
+        };
+        let observations = Mutex::new(Observations::default());
+        let bus = DeviceVolumeBus::new(&transmitter, &observations);
+        let plan = volume::plan(VolumeAction::Up, Observation::Known(addr("2.5.0.0"))).unwrap();
+
+        let outcome = volume::execute(&bus, plan).await;
+        let ActionOutcome::Failed(why) = outcome else {
+            panic!("must report a failure, got {outcome:?}");
+        };
+        assert!(why.contains("non-selected input"), "{why}");
+        // Every frame WAS accepted by the bus — this is a judged failure, not a
+        // transmit error.
+        assert!(transmitter.sent().iter().any(|(m, _)| matches!(
+            m,
+            Message::UserControlPressed {
+                ui_command: UiCommand::VolumeUp
+            }
+        )));
+    }
+
+    /// A `<Report Audio Status>` payload becomes this crate's own report, with
+    /// the unknown encoding preserved as unknown.
+    #[test]
+    fn an_audio_status_payload_keeps_its_unknowns() {
+        assert_eq!(
+            audio_report(AudioStatus::new().with_volume(37).with_mute(true)),
+            AudioReport {
+                level: Observation::Known(37),
+                muted: true,
+            }
+        );
+        assert_eq!(
+            audio_report(
+                AudioStatus::new()
+                    .with_volume(usize::from(volume::LEVEL_UNKNOWN))
+                    .with_mute(false),
+            ),
+            AudioReport {
+                level: Observation::Unknown,
+                muted: false,
+            }
         );
     }
 }

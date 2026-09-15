@@ -33,6 +33,7 @@
 
 use crate::action::Action;
 use crate::state::AvState;
+use crate::volume::{VolumeAction, VolumeState};
 
 /// What became of an action.
 ///
@@ -92,6 +93,28 @@ pub trait AvBackend: Send + Sync + 'static {
     /// outcomes are real answers a caller acts on differently; see
     /// [`ActionOutcome`].
     async fn act(&self, action: Action) -> ActionOutcome;
+
+    /// Step the AVR's volume, or set its mute flag.
+    ///
+    /// Same three outcomes and the same division of labour: the decision is
+    /// [`crate::volume::plan`] and the sequence is [`crate::volume::execute`],
+    /// both of which are covered by CI with no adapter. **`Done` means the AVR's
+    /// own `<Report Audio Status>` showed the change**, not that a frame was
+    /// accepted — a receiver ignores CEC from a non-selected input, so a
+    /// transmit proves nothing on its own.
+    async fn volume(&self, action: VolumeAction) -> ActionOutcome;
+
+    /// The AVR's level and mute flag, with the source of each named.
+    ///
+    /// **Unlike [`AvBackend::snapshot`], this one may touch the bus.** It asks
+    /// the AVR directly (`<Give Audio Status>`, bounded) and falls back to
+    /// whatever the receive loop last heard, publishing `source` so a caller can
+    /// tell a fresh answer from an old one. The two verbs differ deliberately:
+    /// `av-state` is the diagnostic read that must still answer when the device
+    /// is the thing being diagnosed, while `volume-state` is a question about
+    /// the AVR, which only the AVR can answer. Callers bound their timeouts
+    /// either way — see [`crate::ipc`].
+    async fn volume_state(&self) -> VolumeState;
 }
 
 #[cfg(test)]
@@ -102,7 +125,33 @@ pub(crate) mod testing {
         AvDevice, AvState, BusObservation, Observation, Observations, PhysAddr, PowerState,
         Topology,
     };
+    use crate::volume::{self, AudioReport, VolumeBus, VolumeKey, VolumeReply, VolumeTx};
     use std::sync::Mutex;
+
+    /// A stand-in receiver, so the volume surface is exercised with no adapter
+    /// and no AVR.
+    pub(crate) struct FakeAvr {
+        /// What `<Report Audio Status>` answers. `None` models a receiver that
+        /// does not answer at all.
+        pub(crate) report: Option<AudioReport>,
+        pub(crate) system_audio_mode: bool,
+        /// Whether it ACTS on a key press. `false` is the non-selected-input
+        /// case: the frame is ACKed and the command ignored.
+        pub(crate) acts: bool,
+    }
+
+    impl Default for FakeAvr {
+        fn default() -> FakeAvr {
+            FakeAvr {
+                report: Some(AudioReport {
+                    level: Observation::Known(40),
+                    muted: false,
+                }),
+                system_audio_mode: true,
+                acts: true,
+            }
+        }
+    }
 
     /// A stand-in backend, so the IPC layer is exercised with no adapter — the
     /// role `FakeCompositor` plays in `core/src/ipc.rs`'s tests.
@@ -122,6 +171,10 @@ pub(crate) mod testing {
         power_reply: Mutex<Option<PowerState>>,
         /// Make the next transmit fail, to exercise the `Failed` outcome.
         fail_transmits: Mutex<bool>,
+        /// The receiver on the other end of the volume verbs.
+        avr: Mutex<FakeAvr>,
+        /// Every volume intent this backend would have put on the bus.
+        volume_transmits: Mutex<Vec<VolumeTx>>,
     }
 
     impl FakeBackend {
@@ -140,7 +193,27 @@ pub(crate) mod testing {
                 transmits: Mutex::new(Vec::new()),
                 power_reply: Mutex::new(None),
                 fail_transmits: Mutex::new(false),
+                avr: Mutex::new(FakeAvr::default()),
+                volume_transmits: Mutex::new(Vec::new()),
             }
+        }
+
+        /// A backend whose own physical address could not be read back, so
+        /// every gate that needs one refuses.
+        pub(crate) fn without_our_address() -> FakeBackend {
+            let mut backend = FakeBackend::new();
+            backend.topology.phys_addr_read_back = Observation::Unknown;
+            backend
+        }
+
+        /// Put a differently-behaved receiver on the bus.
+        pub(crate) fn set_avr(&self, avr: FakeAvr) {
+            *self.avr.lock().unwrap() = avr;
+        }
+
+        /// Every volume intent this backend has put on the bus so far.
+        pub(crate) fn volume_transmits(&self) -> Vec<VolumeTx> {
+            self.volume_transmits.lock().unwrap().clone()
         }
 
         /// Fold an observation in, as the real rx loop would.
@@ -201,6 +274,89 @@ pub(crate) mod testing {
                 }
             }
             ActionOutcome::Done
+        }
+
+        /// The **real** sequence, against the stand-in receiver.
+        ///
+        /// [`crate::volume::execute`] has exactly one implementation and this
+        /// drives it, so "the AVR ignored it and we said so" is an assertion
+        /// about the shipped decision rather than about a second copy of it.
+        async fn volume(&self, action: VolumeAction) -> ActionOutcome {
+            let plan = match volume::plan(action, self.topology.phys_addr_read_back) {
+                Ok(p) => p,
+                Err(refusal) => return ActionOutcome::Refused(refusal.reason),
+            };
+            volume::execute(&FakeVolumeBus(self), plan).await
+        }
+
+        async fn volume_state(&self) -> VolumeState {
+            // Same order as the kernel backend: ask the AVR, and fall back to
+            // what was heard.
+            let bus = FakeVolumeBus(self);
+            if let Ok(VolumeReply::Audio(report)) = bus.perform(VolumeTx::AudioStatusQuery).await {
+                return VolumeState::from_report(report, 1_700_000_000_000);
+            }
+            let observations = self.observations.lock().unwrap();
+            VolumeState::from_observations(
+                observations.volume(),
+                observations.muted(),
+                observations.observed_at(),
+            )
+        }
+    }
+
+    /// The stand-in wire the fake backend's volume verbs run over.
+    struct FakeVolumeBus<'a>(&'a FakeBackend);
+
+    #[async_trait::async_trait]
+    impl VolumeBus for FakeVolumeBus<'_> {
+        async fn perform(&self, tx: VolumeTx) -> Result<VolumeReply, String> {
+            self.0.volume_transmits.lock().unwrap().push(tx);
+            let mut avr = self.0.avr.lock().unwrap();
+            match tx {
+                VolumeTx::SystemAudioModeQuery => {
+                    Ok(VolumeReply::SystemAudioMode(avr.system_audio_mode))
+                }
+                VolumeTx::SystemAudioModeRequest(_) => {
+                    avr.system_audio_mode = true;
+                    Ok(VolumeReply::SystemAudioMode(true))
+                }
+                VolumeTx::AudioStatusQuery => match avr.report {
+                    Some(report) => {
+                        // As the real bus does: a read-back reaches the
+                        // published state, so `av-state` reflects it.
+                        self.0.observations.lock().unwrap().apply(
+                            BusObservation::AudioStatus {
+                                volume: report.level,
+                                muted: report.muted,
+                            },
+                            1_700_000_000_000,
+                        );
+                        Ok(VolumeReply::Audio(report))
+                    }
+                    None => Err("no reply within the timeout".to_string()),
+                },
+                VolumeTx::KeyPressAndRelease(key) => {
+                    if !avr.acts {
+                        return Ok(VolumeReply::None);
+                    }
+                    if let Some(report) = avr.report.as_mut() {
+                        match (key, report.level) {
+                            (VolumeKey::VolumeUp, Observation::Known(l)) => {
+                                report.level = Observation::Known(
+                                    l.saturating_add(1).min(crate::volume::MAX_LEVEL),
+                                );
+                            }
+                            (VolumeKey::VolumeDown, Observation::Known(l)) => {
+                                report.level = Observation::Known(l.saturating_sub(1));
+                            }
+                            (VolumeKey::MuteToggle, _) => report.muted = !report.muted,
+                            _ => {}
+                        }
+                    }
+                    Ok(VolumeReply::None)
+                }
+            }
         }
     }
 }
