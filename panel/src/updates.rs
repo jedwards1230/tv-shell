@@ -678,7 +678,13 @@ mod tests {
         let app: SharedState = Arc::new(AppState {
             cfg: crate::config::AppConfig::default(),
             caps: crate::capabilities::CapabilitySnapshot::fully_capable(),
-            node: Arc::new(crate::ipc::IpcTransport::new(sock)),
+            node: Arc::new(crate::ipc::IpcTransport::new(sock.clone())),
+            // Unbound: the v2 AV daemon is unreachable here, which is what it
+            // is on any box without a CEC adapter.
+            av: Arc::new(crate::ipc::IpcTransport::new(
+                sock.with_extension("av.sock"),
+            )),
+            av_sock: sock.with_extension("av.sock"),
             bridge: Arc::new(crate::bridge::BridgeClient::new(None, None)),
             recovery: crate::exec::Recovery::new(),
             // NOT UpdatesState::default() — that argv is a real

@@ -1070,6 +1070,38 @@ pub fn socket_path() -> PathBuf {
     PathBuf::from(format!("/run/user/{uid}/{name}"))
 }
 
+/// The v2 AV-control daemon's socket basename (`cec/src/config.rs`'s
+/// `DEFAULT_SOCKET_NAME`).
+pub const AV_SOCKET_NAME: &str = "tv-shell-v2-cec.sock";
+
+/// Env var the v2 AV daemon itself honours for its socket path
+/// (`cec/src/config.rs`'s `SOCKET_PATH_ENV`).
+pub const AV_SOCKET_ENV: &str = "TV_SHELL_CEC_SOCK";
+
+/// Resolve the **v2 AV-control daemon's** socket path — a THIRD socket.
+///
+/// Deliberately not [`socket_path`] and not derived from the brand's socket
+/// name: V2_DESIGN §11 requires v1, the v2 core and the v2 AV daemon to share
+/// no socket, and each speaks its own vocabulary, so reaching the wrong one must
+/// fail to connect rather than be answered by the wrong grammar. Same
+/// resolution order as [`socket_path`], against that daemon's own env var.
+pub fn av_socket_path() -> PathBuf {
+    if let Some(sock) = std::env::var_os(AV_SOCKET_ENV) {
+        if !sock.is_empty() {
+            return PathBuf::from(sock);
+        }
+    }
+    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        if !runtime_dir.is_empty() {
+            return PathBuf::from(runtime_dir).join(AV_SOCKET_NAME);
+        }
+    }
+    // SAFETY: as in `socket_path` — `libc::getuid()` is infallible, takes no
+    // arguments and only reads the caller's real UID.
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from(format!("/run/user/{uid}/{AV_SOCKET_NAME}"))
+}
+
 /// Build a [`UnitName`] from a brand-derived unit string.
 ///
 /// These are compile-time-shaped (`<SLUG>-input.service` and friends, `SLUG`

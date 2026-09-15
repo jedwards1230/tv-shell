@@ -35,11 +35,17 @@ leg to the cold path and to recovery. This file is the crate's own map.
 >   `Wire::KeyPair` carrying both messages, so a press cannot be spelled on its
 >   own. An unreleased press auto-repeats on the AVR.
 >
-> The health state machine and the IP recovery leg are later steps of the plan
-> for jedwards1230/tv-shell#504. Their verbs are deliberately absent from the
-> vocabulary rather than stubbed: an absent verb answers `unknown`, which is a
-> client learning the truth. A stub answering `ok` would tell a caller something
-> had happened when nothing had.
+> - **Health is observed, never inferred, and it is a READ with no bus traffic.**
+>   `av-health` publishes four facts and the tri-state derived from two of them.
+>   Probing the fd is a pure ioctl; asking for health puts nothing on the bus and
+>   answers from recorded facts, so the verb still answers when the device is the
+>   thing being diagnosed.
+>
+> The IP recovery leg is the last step of the plan for
+> jedwards1230/tv-shell#504. Its verbs (`backend`, `backend-pin`) are
+> deliberately absent from the vocabulary rather than stubbed: an absent verb
+> answers `unknown`, which is a client learning the truth. A stub answering `ok`
+> would tell a caller something had happened when nothing had.
 
 ## Modules
 
@@ -52,6 +58,7 @@ leg to the cold path and to recovery. This file is the crate's own map.
 | `state` | The published snapshot: `PhysAddr`, the `Observation` tri-state, and the pure fold from a bus observation to what `av-state` reports. **The rule that `unknown` is never rendered as healthy and never as `false`** lives here |
 | `ownership` | **PURE.** The tri-state display-ownership model and the two transmit gates, ported from `daemon/src/display_owner.rs` and `daemon/src/cec.rs` |
 | `action` | **PURE.** A verb plus the two observed addresses becomes either a plan of messages or a refusal that transmits nothing. Every gate runs before any message is built |
+| `health` | **PURE.** The four observed facts, the tri-state derived from **two** of them, and the single rule the `WATCHDOG=1` feed is gated on. `unknown` is a first-class state and is never rendered as healthy |
 | `volume` | **PURE.** The volume/mute sequence: system-audio mode first, an inseparable press/release pair, and success judged from the AVR's own report. The bus is a one-method `VolumeBus` trait, so the whole sequence runs in CI with no adapter |
 | `kernel` | `/dev/cecN`: open, configure, read the topology back, listen, and transmit a plan. **Linux-only**. `kernel/ops.rs` holds the pure `CecTx` → `linux-cec` `Message` table, so CI covers the whole message set with no adapter |
 | `notify` | `sd_notify` — `READY=1` for the unit's `Type=notify`, `WATCHDOG=1` for its `WatchdogSec=`. Transport only; it decides nothing |
@@ -165,8 +172,49 @@ never heard of is still reported rather than dropped.
 not be checked without a device. Nothing here assumes the pin monitor exists.
 It matters because the pin monitor is the one signal that separates "the bus is
 quiet because everything is off" from "our adapter has stopped hearing";
-`av-state.monitorPin` reports what was actually found, and step 6's `av-health`
+`av-state.monitorPin` reports what was actually found, and `av-health`'s `reason`
 names which signal is in force.
+
+### Health is four observed facts, not one inferred verdict
+
+v1 inferred adapter health from **the outcome of our own transmits**
+(`daemon/src/cec.rs:14-18`), and the Ansible CEC watchdog then inferred it a
+*second* time from IPC reachability. The v1 daemon does not unlink its socket on
+shutdown, so a stale node outlived every stop, every read-only probe timed out
+into "unreachable", and three of those "recovered" a daemon that was never
+broken. `av-health` replaces that with what was **observed**, and when:
+
+| Fact | How it is observed | Where it lands |
+|---|---|---|
+| 1. The fd is alive | `CEC_ADAP_G_CAPS` round-trips — a pure ioctl, **no bus traffic** | the verdict, and the watchdog gate |
+| 2. The adapter has an address | `CEC_ADAP_G_PHYS_ADDR` valid **and** `CEC_ADAP_G_LOG_ADDRS` non-empty; `PollResult::StateChange` says it may have changed | the verdict |
+| 3. The bus is physically moving | `PollResult::PinEvent` — line level, observed passively | `busActivityMs`, as an age |
+| 4. Last accepted tx / last rx | recorded by the transmit path and the receive loop | `lastTxOk` / `lastRxMs`, as ages |
+
+**Only facts 1 and 2 derive the verdict.** Facts 3 and 4 are published as ages
+and judged by nobody, because on this rack silence is not evidence: everything
+can be switched off, and without the pin monitor there is no way to tell that
+apart from a deaf adapter. Degrading on a quiet bus would be inventing exactly
+the kind of verdict this module exists to stop inventing — v1's mistake with the
+sign flipped. If the pin monitor ever comes into force, fact 3 is what makes "we
+have stopped hearing" a real observation, and that is when it may sharpen the
+verdict.
+
+**`CEC_CAP_MONITOR_PIN` is an open question, and the reply says so.** Whether
+`pulse8-cec` implements it could not be checked without a device, so the
+capability is read at open and `reason` always names which bus-liveness signal is
+in force. Even where the capability is present the daemon does **not** enter a
+pin-monitoring mode: `FollowerMode` is one value, so a monitor mode *replaces*
+`FollowerMode::Enabled` and the receive loop would stop folding `<Active
+Source>` — and the kernel gates the monitor modes on `CAP_NET_ADMIN`, which a
+`systemd --user` unit does not have. So fact 3 degrades to fact 4, `reason` says
+which, and `PinMonitor::InForce` is set only by an actually-observed pin event.
+
+The tri-state itself is `daemon/src/display_owner.rs`'s argument again: the
+fail-safe direction **inverts per consumer**, so the daemon publishes
+`healthy` / `degraded` / `unknown` plus the observations behind it, and each
+consumer picks its own safe side. **`unknown` is never rendered as healthy** — in
+this crate, and in the panel page that reads it.
 
 ### The watchdog answers one question, and systemd owns the response
 
@@ -178,13 +226,35 @@ never comes up or one that kills itself every 30 s.
 running — so systemd never reports the daemon as serving while a client
 connecting on that promise would get `ENOENT`.
 
-`WATCHDOG=1` is fed at half the interval, and only while `CEC_ADAP_G_CAPS`
-round-trips. That is a pure ioctl on our own file descriptor: it touches the bus
-not at all, so probing liveness has no side effect on anyone's television. When
-it stops round-tripping the feed simply **stops** — the daemon does not kill
-anything, because systemd's `WatchdogSec=` already owns the response and a second
-mechanism with restart authority over the same process is §9's "only one
-supervisor" rule being broken.
+`WATCHDOG=1` is fed at half the interval, and only while **fact 1** holds:
+`Health::should_feed_watchdog` is `fd_alive` and nothing else. It is deliberately
+**not** gated on the derived verdict — a lost address is `degraded`, and
+restarting the daemon does not give an HDMI topology back, so feeding on the
+verdict would make every television standby a restart loop, which is v1's
+"recovered a daemon that was never broken" with a new mechanism. When fact 1
+stops holding the feed simply **stops**: the daemon does not kill anything,
+because systemd's `WatchdogSec=` already owns the response and a second mechanism
+with restart authority over the same process is §9's "only one supervisor" rule
+being broken.
+
+**That is what RETIRES the Ansible CEC watchdog** rather than merely disabling
+it. No polling script, no `cec-health` probe with bus side effects, no second
+supervisor. The watchdog timer is already `disabled`/`inactive` on the deploy box
+(verified read-only 2026-09-14, and `htpc_cec_watchdog_active` derives from
+`htpc_boot_session`), so nothing needs stopping — it must simply never be
+re-enabled.
+
+### Every caller must bound its own timeout
+
+The unit's isolation from the session is topological: the only edge is the
+session target's `Wants=`, which carries no ordering and no failure propagation.
+**That isolation is only real if every caller of this socket uses a bounded
+connect+read timeout and renders a degraded state on expiry**, because the real
+hazard is not systemd — it is a caller blocking on a wedged backend, which is how
+that backend eventually reaches the television. The rule cannot be enforced from
+inside this daemon; it lives in the callers. The panel's `/devices/av` page is
+the first of them (800 ms, `panel/src/pages/av.rs`), and it has a test that
+stands up a socket which accepts and never replies.
 
 ## Why a new crate, not an evolution of `daemon/`
 
@@ -263,6 +333,7 @@ suggest a shared surface that does not exist.
 |---|---|---|
 | `ping` | `ok` | — |
 | `av-state` | one compact JSON document (below) | — |
+| `av-health` | one compact JSON document (below) | — |
 | `wake` | `ok` / `refused:` / `error:` | `<Image View On>` → TV, then `<Active Source>` broadcast, then a `<Give Device Power Status>` read-back |
 | `standby` | `ok` / `refused:` / `error:` | `<Standby>` → TV, then → Audio System. **Never broadcast.** Gated on `owns_display` |
 | `input-claim` | `ok` / `refused:` / `error:` | `<Active Source>` broadcast |
@@ -273,7 +344,8 @@ suggest a shared surface that does not exist.
 | `volume-state` | one compact JSON document (below) | `<Give Audio Status>`, falling back to the last one overheard |
 
 Anything else is `unknown`. Every verb but `input-select` and `volume` is a bare
-read or bare action, so nothing may follow it: `av-stateX`, `av-state 1`,
+read or bare action, so nothing may follow it: `av-stateX`, `av-healthX`,
+`av-health 1`, `av-state 1`,
 `standby now` and `volume-state 1` are all `unknown`. The two that take a body
 take exactly one word, and a missing, malformed or extra body is
 `error:usage: …` — **never a silent default**, and never `unknown` (the client
@@ -380,6 +452,25 @@ which carries no ordering and no failure propagation — but the runtime hazard 
 a caller blocking on this socket, and that rule lives in the callers (the shell's
 Session QAM, the panel), not here.
 
+`av-health`:
+
+```json
+{"state":"healthy","sinceMs":65000,"lastTxOk":800,"lastRxMs":4200,
+ "busActivityMs":null,
+ "reason":"the adapter fd answers and the adapter holds a physical and logical address; bus liveness from last-heard ages (CEC_CAP_MONITOR_PIN absent)"}
+```
+
+`state` is `healthy` / `degraded` / `unknown`, and **`unknown` is never rendered
+as healthy**. **Every time here is an AGE in milliseconds, not a timestamp**, and
+`null` means it has never happened — `lastRxMs: null` on a rack where everything
+is switched off is a silence, not a fault, which is exactly why it is published
+as an observation and not folded into the verdict. `sinceMs` is how long the
+current state has held, and it moves only on a real transition, so a prober
+confirming the same fact every few seconds cannot reset "degraded for four
+minutes" to zero. `reason` names what was observed **and** which bus-liveness
+signal is in force. It is answered from the recorded facts with no device access
+at all, for the same reason `av-state` is.
+
 ## Build, test & lint
 
 ```bash
@@ -427,6 +518,22 @@ Every row below was checked that way on 2026-09-14:
 | `mute`/`unmute` converge instead of toggling | `mute_step` → always `Toggle` | **4 tests** across `volume` and `ipc` |
 | A missing `volume` argument is a usage error | default it to `up` | `a_missing_or_unknown_volume_argument_is_a_usage_error` + the `ipc` twin |
 | An AVR report returning to "volume unknown" clears the old level | keep the previous level when the new one is unknown | `an_avr_that_does_not_know_its_volume_returns_the_level_to_unknown` |
+| **`unknown` health is never rendered as healthy** | `health::classify`'s `(true, Unknown)` arm → `Healthy` | **4 tests** across `health` and `ipc` |
+| **The watchdog feed is gated on fact 1 alone** | `should_feed_watchdog` → `true` | `the_watchdog_feed_is_gated_on_the_fd_and_on_nothing_else` + the `ipc` twin |
+| …and NOT on the derived verdict | `should_feed_watchdog` → `state == Healthy` | the same two |
+| Health comes from the four observed facts, not our transmit outcomes (v1's model) | derive the verdict from `last_tx_ok_at` | **4 tests** across `health` and `ipc` |
+| `busActivityMs` is an age, never a verdict | collapse it to a moving/not constant | `the_observations_are_reported_as_ages_and_judged_by_nobody` |
+| A silent bus is not a fault | add a last-rx age threshold that degrades the state | **5 tests** across `health` and `ipc` |
+| The reason never claims a pin monitor `CEC_ADAP_G_CAPS` says is absent | `PinMonitor::from_capability` → `InForce` | `the_reason_names_the_signal_in_force_and_never_claims_an_absent_one` + the `ipc` twin |
+| The state's age moves only on a real transition | drop the equality guard in `reclassify` | `the_state_age_moves_only_on_a_real_transition` |
+
+Two more live in `panel/` (`cargo test -p tv-shell-panel`), because that is where
+the caller-side rules are:
+
+| Rule | Mutation | What went red |
+|---|---|---|
+| The panel never renders `unknown` health as healthy | `pages::av::dot_class`'s fallthrough → `dot-ok` | `an_unknown_av_health_is_not_rendered_as_healthy` |
+| **A caller bounds its own wait** | `command_timeout(line, AV_TIMEOUT)` → `command(line)`, and → a one-hour bound | `av_page_renders_degraded_rather_than_hanging_on_a_wedged_daemon` (both times; the test wraps the render in its own 5 s bound so the unbounded case FAILS rather than hanging the suite) |
 
 **Every ownership state the gates are tested against is reachable from the real
 receive path**, and `the_receive_path_can_produce_every_ownership_verdict` walks
@@ -479,10 +586,13 @@ look like "we measured and it was fine" (jedwards1230/tv-shell#469).
 
 Each of these lands with the module that reads it, never ahead of it:
 
-- **Health** — the state machine over the four observed facts, and `av-health`.
 - **The IP recovery leg** — the Denon/Marantz telnet client ported from the
   never-merged jedwards1230/tv-shell#191 onto typed config, `Mac::parse` and
   `magic_packet` from `daemon/src/wol.rs`, and the failover decision with
   hysteresis. Zone 2 and a cold TV wake have **no** CEC equivalent, so the IP leg
   is a capability complement on the cold path, not only a fallback.
 - **Enabling the unit** — adding it to `scripts/install-v2.sh`'s `UNITS=()`.
+
+Nothing here can be verified against real hardware yet: `/dev/cec0` does not
+exist on the deploy box. The on-box checklist for after that operator step is in
+the pull request that added `health`.

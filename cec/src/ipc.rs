@@ -115,6 +115,10 @@ pub async fn dispatch(backend: &Arc<dyn AvBackend>, cmd: Command) -> String {
         // Answered from a snapshot, on the reactor: it reads no device, so it
         // cannot hang when the device is the thing being diagnosed.
         Command::AvState => protocol::resp_json(&backend.snapshot().await),
+        // Answered from the recorded facts, for the same reason: a health verb
+        // that had to touch the adapter to answer could not report a wedged
+        // adapter. See [`crate::health`].
+        Command::AvHealth => protocol::resp_json(&backend.health().await),
         Command::Wake => act(backend, Action::Wake).await,
         Command::Standby => act(backend, Action::Standby).await,
         Command::InputClaim => act(backend, Action::InputClaim).await,
@@ -218,12 +222,134 @@ mod tests {
         let b: Arc<dyn AvBackend> = fake();
         assert_eq!(reply(&b, "frobnicate").await, "unknown");
         assert_eq!(reply(&b, "av-stateX").await, "unknown");
-        // The verbs steps 6-7 add. Until they answer something, `unknown` is
-        // the honest answer — a stub `ok` would tell a caller the daemon had
-        // judged a health it has not measured.
-        for later in ["av-health", "backend", "backend-pin cec"] {
+        // The verbs step 7 adds. Until they answer something, `unknown` is the
+        // honest answer — a stub `ok` would tell a caller this daemon had an IP
+        // leg it does not have.
+        for later in ["backend", "backend-pin cec"] {
             assert_eq!(reply(&b, later).await, "unknown", "{later}");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // av-health, end to end over the seam.
+    // -----------------------------------------------------------------------
+
+    /// **THE RULE, at the IPC surface: `av-health` publishes what was observed
+    /// and when, and `unknown` never reaches a client as `healthy`.**
+    ///
+    /// All three states are reached the real way — the backend's own health
+    /// machine, driven by the same calls the kernel backend makes: the open-time
+    /// facts, a `PollResult::StateChange` from the receive loop, and a
+    /// `CEC_ADAP_G_CAPS` probe from the watchdog loop.
+    ///
+    /// Mutation-check (run 2026-09-14): make `health::classify`'s
+    /// `(true, Unknown)` arm return `Healthy` and the middle assertion fails.
+    #[tokio::test]
+    async fn av_health_publishes_the_tri_state_and_never_renders_unknown_as_healthy() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-health").await).unwrap();
+        assert_eq!(json["state"], serde_json::json!("healthy"));
+
+        // The kernel says the adapter was reconfigured.
+        backend.note_state_change();
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-health").await).unwrap();
+        assert_eq!(json["state"], serde_json::json!("unknown"));
+        assert_ne!(json["state"], serde_json::json!("healthy"));
+
+        // The fd stops answering.
+        backend.probe_fd(false);
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-health").await).unwrap();
+        assert_eq!(json["state"], serde_json::json!("degraded"));
+        assert!(
+            json["reason"].as_str().unwrap().contains("CEC_ADAP_G_CAPS"),
+            "the reason must name the observation: {json}"
+        );
+    }
+
+    /// **The rule: the four facts are AGES, and a fact that has not happened is
+    /// `null` — not `0`, which would read as "just now".**
+    ///
+    /// A silent bus is the normal state on this rack (everything can be off),
+    /// and it is reported as a silence, not as a fault.
+    #[tokio::test]
+    async fn av_health_reports_ages_and_a_silent_bus_is_not_a_fault() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-health").await).unwrap();
+        for field in ["lastTxOk", "lastRxMs", "busActivityMs"] {
+            assert_eq!(json[field], serde_json::Value::Null, "{field}: {json}");
+            assert_ne!(json[field], serde_json::json!(0), "{field}");
+        }
+        // Nothing has been heard, and the verdict is still healthy.
+        assert_eq!(json["state"], serde_json::json!("healthy"));
+
+        // A transmit the bus accepted, and a message heard, both become ages.
+        assert_eq!(reply(&b, "input-claim").await, "ok");
+        backend.note_rx();
+        backend.advance(2_500);
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-health").await).unwrap();
+        assert_eq!(json["lastTxOk"], serde_json::json!(2_500));
+        assert_eq!(json["lastRxMs"], serde_json::json!(2_500));
+        // Still no pin monitor, so still no electrical-activity age — and the
+        // reason says so rather than leaving a reader to guess.
+        assert_eq!(json["busActivityMs"], serde_json::Value::Null);
+        assert!(json["reason"]
+            .as_str()
+            .unwrap()
+            .contains("CEC_CAP_MONITOR_PIN absent"));
+    }
+
+    /// **A refused action is not a transmit**, so it does not move the last-tx
+    /// age — the same zero-transmit rule the refusal reply carries, seen from
+    /// the health side.
+    #[tokio::test]
+    async fn a_refused_action_does_not_move_the_last_transmit_age() {
+        let backend = fake();
+        backend.observe(
+            BusObservation::ActiveSource("1.0.0.0".parse::<PhysAddr>().unwrap()),
+            1_700_000_000_000,
+        );
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        assert!(reply(&b, "standby").await.starts_with("refused:"));
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-health").await).unwrap();
+        assert_eq!(json["lastTxOk"], serde_json::Value::Null);
+    }
+
+    /// **THE WATCHDOG RULE, through the same backend the IPC surface answers
+    /// from: the feed follows fact 1, not the published verdict.**
+    ///
+    /// A degraded-but-answering daemon must keep feeding, or every television
+    /// standby becomes a restart loop — v1's "recovered a daemon that was never
+    /// broken" with a new mechanism.
+    ///
+    /// Mutation-check (run 2026-09-14): make `should_feed_watchdog` return
+    /// `self.state == HealthState::Healthy` and the last assertion fails; make
+    /// it return `true` unconditionally and the middle one does.
+    #[tokio::test]
+    async fn the_watchdog_feed_follows_the_fd_and_not_the_verdict() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        assert!(backend.feeds_watchdog());
+
+        backend.probe_fd(false);
+        assert!(!backend.feeds_watchdog(), "a wedged fd must stop the feed");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&reply(&b, "av-health").await).unwrap()
+                ["state"],
+            serde_json::json!("degraded")
+        );
+
+        // Answering again, but unaddressed: degraded, and still fed.
+        backend.probe_fd(true);
+        backend.note_state_change();
+        assert!(
+            backend.feeds_watchdog(),
+            "an adapter that answers must keep the daemon alive whatever the verdict"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -649,6 +775,7 @@ mod tests {
         for line in [
             "ping",
             "av-state",
+            "av-health",
             "frobnicate",
             "",
             "av-state x",

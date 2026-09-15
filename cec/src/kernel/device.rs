@@ -49,8 +49,9 @@ use linux_cec::{FollowerMode, InitiatorMode, LogicalAddressType, PhysicalAddress
 use crate::action::Action;
 use crate::backend::{ActionOutcome, AvBackend};
 use crate::config::CecConfig;
+use crate::health::{Health, HealthReport};
 use crate::kernel::ops;
-use crate::state::{AvState, Observation, Observations, PhysAddr, Topology};
+use crate::state::{now_ms, AvState, Observation, Observations, PhysAddr, Topology};
 use crate::volume::{VolumeAction, VolumeBus, VolumeState};
 
 /// An open kernel CEC adapter, its topology, and the observations folded out of
@@ -59,6 +60,12 @@ pub struct KernelBackend {
     device: Arc<AsyncDevice>,
     topology: Topology,
     observations: Arc<Mutex<Observations>>,
+    /// The four observed health facts. Shared with the receive loop, which
+    /// records what it hears, and with the watchdog probe, which records facts
+    /// 1 and 2. **Never held across an `.await`** — the same rule
+    /// `observations` follows, and for the same reason: `av-health` must keep
+    /// answering while the device is the thing being diagnosed.
+    health: Arc<Mutex<Health>>,
 }
 
 impl KernelBackend {
@@ -204,8 +211,21 @@ impl KernelBackend {
             tracing::info!("logical addresses: {}", log_addrs.join(" "));
         }
 
+        // The health machine's opening facts: the fd answered (that is what
+        // produced `caps`), and the addressing exactly as read back above. No
+        // extra ioctl, and no assumption — `addressed` is `unknown` when the
+        // read-back itself failed, which is a different thing from "no address".
+        let addressed = addressing_from(read_back, &log_addrs);
+        let health = Health::at_open(monitor_pin, addressed, now_ms());
+        tracing::info!(
+            "health at open: {} ({})",
+            health.state().as_str(),
+            health.report(now_ms()).reason
+        );
+
         Ok(KernelBackend {
             device: Arc::new(device),
+            health: Arc::new(Mutex::new(health)),
             topology: Topology {
                 backend: "cec",
                 device: path,
@@ -231,22 +251,110 @@ impl KernelBackend {
         Arc::clone(&self.observations)
     }
 
-    /// **Fact 1: the fd is alive.** `CEC_ADAP_G_CAPS` round-trips.
+    /// The shared health facts, for the receive loop.
+    #[must_use]
+    pub fn health(&self) -> Arc<Mutex<Health>> {
+        Arc::clone(&self.health)
+    }
+
+    /// Observe **facts 1 and 2**, record them, and answer the one question the
+    /// watchdog loop asks: should `WATCHDOG=1` be sent?
     ///
-    /// This is the watchdog's condition and nothing more. It is a pure ioctl on
-    /// our own file descriptor: it touches the bus not at all, so unlike v1's
-    /// `cec-health` — which inferred adapter health from the outcome of our own
-    /// transmits — probing it has no side effect on anyone's television. A
-    /// wedged USB device fails it; a bus where everything is switched off does
-    /// not.
-    pub async fn fd_is_alive(&self) -> bool {
-        match self.device.get_capabilities().await {
+    /// Both facts are pure ioctls on our own file descriptor —
+    /// `CEC_ADAP_G_CAPS`, `CEC_ADAP_G_PHYS_ADDR`, `CEC_ADAP_G_LOG_ADDRS`. They
+    /// touch the bus not at all, so unlike v1's `cec-health` — which inferred
+    /// adapter health from the outcome of our own transmits — probing has no
+    /// side effect on anyone's television. A wedged USB device fails fact 1; a
+    /// bus where everything is switched off does not.
+    ///
+    /// The **decision** is [`Health::should_feed_watchdog`], not this function:
+    /// the gate is fact 1 alone, and the reasoning for that lives with the state
+    /// machine rather than inline here.
+    pub async fn probe(&self) -> bool {
+        let alive = match self.device.get_capabilities().await {
             Ok(_) => true,
             Err(e) => {
                 tracing::warn!("CEC_ADAP_G_CAPS failed; the adapter fd is not answering: {e}");
                 false
             }
+        };
+        // Fact 2 only when fact 1 held: with a dead fd the addressing reads
+        // would fail too, and recording that as "unaddressed" would attribute
+        // one fault to two facts.
+        let addressed = if alive {
+            Some(read_addressing(&self.device).await)
+        } else {
+            None
+        };
+        let now = now_ms();
+        let mut health = self
+            .health
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let before = health.state();
+        health.record_fd_probe(alive, now);
+        if let Some(addressed) = addressed {
+            health.record_addressing(addressed, now);
         }
+        if health.state() != before {
+            // One line per transition, naming the observation. Not one per
+            // probe: this runs every few seconds, and the journal on this box
+            // retains ~21h (jedwards1230/tv-shell#509).
+            tracing::info!(
+                "health {} -> {}: {}",
+                before.as_str(),
+                health.state().as_str(),
+                health.report(now).reason
+            );
+        }
+        health.should_feed_watchdog()
+    }
+
+    /// Record a transmit the bus accepted (**fact 4**).
+    fn note_tx(&self, outcome: &ActionOutcome) {
+        if !matches!(outcome, ActionOutcome::Done) {
+            return;
+        }
+        self.health
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .record_tx_ok(now_ms());
+    }
+}
+
+/// **Fact 2**, read from the adapter: a valid physical address AND at least one
+/// logical address.
+///
+/// `Observation::Unknown` when the read itself failed — a device going away
+/// mid-read is not the same fact as an adapter that holds no address, and
+/// collapsing the two is how a transport error becomes a verdict.
+///
+/// Both ioctls are pure gets. Neither puts anything on the bus.
+pub async fn read_addressing(device: &AsyncDevice) -> Observation<bool> {
+    let phys_ok = match device.get_physical_address().await {
+        Ok(a) => PhysAddr::from_raw(u16::from(a)).is_valid(),
+        Err(e) => {
+            tracing::debug!("CEC_ADAP_G_PHYS_ADDR: {e}");
+            return Observation::Unknown;
+        }
+    };
+    let log_ok = match device.get_logical_addresses().await {
+        Ok(addrs) => !addrs.is_empty(),
+        Err(e) => {
+            tracing::debug!("CEC_ADAP_G_LOG_ADDRS: {e}");
+            return Observation::Unknown;
+        }
+    };
+    Observation::Known(phys_ok && log_ok)
+}
+
+/// **Fact 2** from what the open sequence already read back, with no extra
+/// ioctl.
+fn addressing_from(phys: Observation<PhysAddr>, log_addrs: &[String]) -> Observation<bool> {
+    match phys {
+        Observation::Known(a) => Observation::Known(a.is_valid() && !log_addrs.is_empty()),
+        // The read-back failed at open. Unknown, never false.
+        Observation::Unknown => Observation::Unknown,
     }
 }
 
@@ -282,7 +390,9 @@ impl AvBackend for KernelBackend {
         };
         tracing::info!("{action:?}: transmitting {:?}", plan.transmits);
         let transmitter = ops::DeviceTransmitter::new(self.device());
-        ops::execute(&transmitter, &self.observations, plan).await
+        let outcome = ops::execute(&transmitter, &self.observations, plan).await;
+        self.note_tx(&outcome);
+        outcome
     }
 
     /// Decide, then run the volume sequence.
@@ -301,7 +411,9 @@ impl AvBackend for KernelBackend {
         tracing::info!("volume {}: starting", action.as_str());
         let transmitter = ops::DeviceTransmitter::new(self.device());
         let bus = ops::DeviceVolumeBus::new(&transmitter, &self.observations);
-        crate::volume::execute(&bus, plan).await
+        let outcome = crate::volume::execute(&bus, plan).await;
+        self.note_tx(&outcome);
+        outcome
     }
 
     /// Ask the AVR, and fall back to what the receive loop last heard.
@@ -332,6 +444,20 @@ impl AvBackend for KernelBackend {
                 )
             }
         }
+    }
+
+    /// The recorded facts, with no device access at all.
+    ///
+    /// Deliberately does NOT probe: see [`AvBackend::health`]. The facts are
+    /// refreshed by [`KernelBackend::probe`] on the watchdog interval and by the
+    /// receive loop on every bus event, and every time in the reply is an age —
+    /// so a stale answer reads as stale rather than as fresh.
+    async fn health(&self) -> HealthReport {
+        let health = match self.health.lock() {
+            Ok(h) => h.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        health.report(now_ms())
     }
 
     async fn snapshot(&self) -> AvState {

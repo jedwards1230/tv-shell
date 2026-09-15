@@ -467,6 +467,19 @@ pub const NAV: &[NavGroup] = &[
                 key: "devices.cec",
                 gate: Gate::Cec,
             },
+            // The v2 AV daemon (`cec/`), beside v1's CEC page rather than
+            // replacing it — they are two daemons over one adapter, and only
+            // one of them can hold it. RECOVERY tier: this page needs no v1
+            // daemon and no declared feature, because the v1 handshake says
+            // nothing about a separate v2 daemon on a separate socket. Gating
+            // it on `Feature::Cec` would hide the v2 AV state precisely when
+            // the v1 daemon is the thing that is down.
+            NavPage {
+                href: "/devices/av",
+                label: "AV (v2)",
+                key: "devices.av",
+                gate: Gate::Recovery,
+            },
             // NetworkManager + bluez, out of the dissolved Tools page. Node
             // tier: these map to no declared `Feature`, so the honest
             // statement is "they exist iff a node answered a handshake".
@@ -907,21 +920,35 @@ mod tests {
         chrome.groups.iter().map(|g| g.label).collect()
     }
 
-    /// **Recovery mode collapses the drawer to Overview + System + Dev.**
+    /// **Recovery mode collapses the drawer to Overview + System + Devices +
+    /// Dev.**
     ///
     /// `docs/PANEL_IA.md` says "System and Dev"; Overview is deliberately kept
     /// (`docs/PANEL.md` records the correction). `/` is the landing page and
     /// its tiles already have a daemon-down branch that reads unit state from
     /// systemd, so deleting it would leave `/` 404ing or force a conditional
-    /// root redirect. Shell, Devices and Remote must all vanish — no empty
-    /// group shells.
+    /// root redirect. Shell and Remote must vanish — no empty group shells.
+    ///
+    /// **Devices now survives**, and for the same reason the rest of the
+    /// recovery tier does: it holds one page that needs no v1 daemon at all —
+    /// AV (v2), which dials the v2 AV daemon's own socket. The v1 handshake
+    /// says nothing about whether that daemon is up, so gating the page on it
+    /// would hide the AV state exactly when the v1 daemon is what is broken.
+    /// The other four Devices pages stay gone.
     #[test]
-    fn recovery_mode_drawer_is_exactly_overview_system_and_dev() {
+    fn recovery_mode_drawer_is_overview_system_devices_and_dev() {
         let down = Chrome::new(&CapabilitySnapshot::unreachable(), "overview");
-        assert_eq!(drawer(&down), vec!["Overview", "System", "Dev"]);
+        assert_eq!(drawer(&down), vec!["Overview", "System", "Devices", "Dev"]);
         assert_eq!(
             down.groups.iter().map(|g| g.href).collect::<Vec<_>>(),
-            vec!["/", "/system/services", "/dev/recovery"]
+            vec!["/", "/system/services", "/devices/av", "/dev/recovery"]
+        );
+        // And Devices carries exactly the one daemon-independent page.
+        let devices = Chrome::new(&CapabilitySnapshot::unreachable(), "devices.av");
+        assert_eq!(
+            devices.subnav.len(),
+            0,
+            "one registered page means no sub-nav bar at all"
         );
         assert!(down.recovery_mode);
         assert!(
@@ -1002,7 +1029,7 @@ mod tests {
     /// on, the only registered Shell page is Widgets, so that is where the
     /// drawer must land. Devices is the same story three pages further in —
     /// Controllers, Display & Audio and CEC are all gated off, and its link
-    /// lands on Network, the node-tier page phase 4 added last.
+    /// lands on AV (v2), the recovery-tier page that needs no capability.
     #[test]
     fn a_groups_drawer_link_skips_its_gated_off_first_page() {
         let caps = snapshot(&[Feature::Widgets]);
@@ -1014,18 +1041,19 @@ mod tests {
             .expect("Shell still has one registered page");
         assert_eq!(shell.href, "/shell/widgets");
 
+        // Devices skips Controllers, Display & Audio and CEC — none of their
+        // features is declared — and lands on AV (v2), which is recovery tier.
         let devices = chrome
             .groups
             .iter()
             .find(|g| g.key == "devices")
-            .expect("Devices still has Network, which is node tier");
-        assert_eq!(devices.href, "/devices/network");
+            .expect("Devices still has AV (v2), which needs no capability");
+        assert_eq!(devices.href, "/devices/av");
 
         // A group with NOTHING registered still does not render. A failed
-        // handshake closes the node gate too, which takes Devices and Remote
-        // with it.
+        // handshake closes the node gate too, which takes Remote with it.
         let down = Chrome::new(&CapabilitySnapshot::unreachable(), "overview");
-        for gone in ["shell", "devices", "remote"] {
+        for gone in ["shell", "remote"] {
             assert!(
                 !down.groups.iter().any(|g| g.key == gone),
                 "{gone} has no registered page with the handshake failed"

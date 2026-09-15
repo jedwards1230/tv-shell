@@ -24,6 +24,21 @@ pub struct AppState {
     /// depend on *what* a node can do, not on the Unix socket that happens to
     /// serve the local one — see [`crate::transport`].
     pub node: Arc<dyn NodeTransport>,
+    /// The **v2 AV-control daemon** (`cec/`, `tv-shell-cec`) — a THIRD socket,
+    /// separate from the v1 daemon's and the v2 core's (V2_DESIGN §11).
+    ///
+    /// Held as the same [`NodeTransport`] trait object because the framing is
+    /// identical (one command line, one reply line, 4096-byte cap), but it is
+    /// **not a node**: it speaks its own small vocabulary and answers
+    /// `unknown` to `capabilities`, so only
+    /// [`NodeTransport::command_timeout`] is ever called on it and the startup
+    /// handshake never touches it. Its page is registered unconditionally and
+    /// renders degraded when nothing answers — see [`crate::pages::av`].
+    pub av: Arc<dyn NodeTransport>,
+    /// The path [`AppState::av`] dials, kept beside it purely so the page can
+    /// show which socket it looked at — a wrong path and a stopped daemon look
+    /// identical otherwise.
+    pub av_sock: std::path::PathBuf,
     /// The daemon's opt-in HTTP dev-ops tier, held as a trait object for the
     /// same reason — see [`crate::bridge::DevBridge`].
     pub bridge: Arc<dyn DevBridge>,

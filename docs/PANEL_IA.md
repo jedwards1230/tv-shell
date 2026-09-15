@@ -9,9 +9,11 @@ the plan wrong. Those corrections are left visible in situ (struck-through
 claim, then what actually shipped) rather than tidied away, because the
 reasoning that was wrong is the part worth keeping. Three are load-bearing:
 
-- **Recovery mode leaves three groups, not two.** The drawer collapses to
-  **Overview + System + Dev**; this document and #405 originally said System
-  and Dev. See [Capability gating](#capability-gating).
+- **Recovery mode leaves four groups, not two.** The drawer collapses to
+  **Overview + System + Devices + Dev**; this document and #405 originally said
+  System and Dev. Overview came back in phase 1; **Devices came back with the
+  AV (v2) page**, which dials the v2 AV daemon's own socket and so needs no v1
+  capability at all. See [Capability gating](#capability-gating).
 - **Five of the six `allow_dangerous` controls are in Dev, not all six.**
   `POST /system/updates/apply` is the exception and stays under System ▸
   Updates. See [Dev](#dev).
@@ -182,6 +184,7 @@ them, fail-closed when nothing is declared — see PANEL.md's
 | **Controllers** | Controllers | ✅ landed at `/devices/controllers` in phase 1 — already single-subject; phase 3 added Settings' `Input` group (`controllerDebug`, `rumbleEnabled`), which is the same subject |
 | **Display & Audio** | Settings (Display, Night Light, Power, Audio groups) | ✅ landed in phase 3 at `/devices/display-audio`; phase 4 added Tools' two power probes beside the `Power` group; a **Display mode** section (resolution / refresh / VRR) was added later — the page's first controls that are Hyprland compositor state rather than a `settings.json` slice, with their own IPC path and a confirm-or-revert timer ([PANEL.md § Display mode](PANEL.md#display-mode-resolution-refresh-vrr)) |
 | **CEC** | CEC + Settings (CEC group) | ✅ landed in phase 3 — config and actions on one page. The `settings.json` group stays visibly distinct from the `[cec].osd_name` `config.toml` editor beneath it |
+| **AV (v2)** | new | ✅ landed at `/devices/av` — the v2 AV-control daemon (`cec/`), beside the v1 CEC page rather than replacing it: two daemons over one adapter, only one of which can hold it. **Recovery tier**, since it dials that daemon's own socket and needs no v1 capability — which is why Devices now survives a failed handshake with exactly this one page. Read-only, and every request is bounded at 800 ms |
 | **Network** | Tools (Network, Bluetooth) | ✅ landed in phase 4 at `/devices/network`. Node tier: these commands map to no declared `Feature` |
 
 ### Remote
@@ -327,7 +330,10 @@ Rules, all four built:
 and its tiles already have a daemon-down branch that reads unit state straight
 from `systemd`, so deleting the group would leave `/` 404ing or force a
 conditional root redirect, which is strictly worse than a three-group drawer.
-Shell, Devices and Remote do all vanish, per rule 2. See PANEL.md's
+Shell and Remote do vanish, per rule 2. **Corrected again with AV (v2):**
+Devices survives too, carrying that one page and nothing else — it reads a
+*different daemon on a different socket*, and the v1 handshake says nothing
+about whether that one is up. See PANEL.md's
 [Capability gating](PANEL.md#capability-gating).
 
 ## Phasing

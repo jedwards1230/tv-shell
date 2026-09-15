@@ -104,6 +104,18 @@ pub trait AvBackend: Send + Sync + 'static {
     /// transmit proves nothing on its own.
     async fn volume(&self, action: VolumeAction) -> ActionOutcome;
 
+    /// The four observed health facts and the tri-state derived from two of
+    /// them.
+    ///
+    /// **Infallible and device-free, exactly like [`AvBackend::snapshot`].** It
+    /// answers from facts already recorded — by the watchdog probe, by the
+    /// receive loop and by the transmit path — and probes nothing itself. A
+    /// health verb that had to touch the adapter to answer could not report a
+    /// wedged adapter, which is the failure mode v1's `cec-health` shipped: its
+    /// reading WAS a bus interaction, and the watchdog above it then read IPC
+    /// reachability as a second inference.
+    async fn health(&self) -> crate::health::HealthReport;
+
     /// The AVR's level and mute flag, with the source of each named.
     ///
     /// **Unlike [`AvBackend::snapshot`], this one may touch the bus.** It asks
@@ -121,6 +133,7 @@ pub trait AvBackend: Send + Sync + 'static {
 pub(crate) mod testing {
     use super::*;
     use crate::action::{plan, CecTx, LocalRecord};
+    use crate::health::{Health, HealthReport};
     use crate::state::{
         AvDevice, AvState, BusObservation, Observation, Observations, PhysAddr, PowerState,
         Topology,
@@ -175,6 +188,15 @@ pub(crate) mod testing {
         avr: Mutex<FakeAvr>,
         /// Every volume intent this backend would have put on the bus.
         volume_transmits: Mutex<Vec<VolumeTx>>,
+        /// The health facts, driven exactly as the kernel backend drives them:
+        /// seeded at open, moved by a probe, a state change or a successful
+        /// transmit. It fakes the ioctls, not the state machine.
+        health: Mutex<Health>,
+        /// A fake wall clock, so the ages in an `av-health` reply are real
+        /// arithmetic rather than a constant. Moved only by
+        /// [`FakeBackend::advance`]; it never ticks on its own, so no test can
+        /// hang waiting for it.
+        clock: Mutex<u64>,
     }
 
     impl FakeBackend {
@@ -195,6 +217,8 @@ pub(crate) mod testing {
                 fail_transmits: Mutex::new(false),
                 avr: Mutex::new(FakeAvr::default()),
                 volume_transmits: Mutex::new(Vec::new()),
+                health: Mutex::new(Health::at_open(false, Observation::Known(true), FAKE_NOW)),
+                clock: Mutex::new(FAKE_NOW),
             }
         }
 
@@ -235,10 +259,52 @@ pub(crate) mod testing {
         pub(crate) fn fail_transmits(&self) {
             *self.fail_transmits.lock().unwrap() = true;
         }
+
+        /// The fake wall clock.
+        pub(crate) fn now(&self) -> u64 {
+            *self.clock.lock().unwrap()
+        }
+
+        /// Move the fake clock forward. Bounded and explicit: nothing here
+        /// sleeps, so a test cannot pass by waiting.
+        pub(crate) fn advance(&self, ms: u64) {
+            *self.clock.lock().unwrap() += ms;
+        }
+
+        /// Record a `CEC_ADAP_G_CAPS` probe, as the watchdog loop does.
+        pub(crate) fn probe_fd(&self, alive: bool) {
+            let now = self.now();
+            self.health.lock().unwrap().record_fd_probe(alive, now);
+        }
+
+        /// Record the kernel's `StateChange`, as the receive loop does.
+        pub(crate) fn note_state_change(&self) {
+            let now = self.now();
+            self.health.lock().unwrap().record_state_change(now);
+        }
+
+        /// Record a message heard on the bus, as the receive loop does.
+        pub(crate) fn note_rx(&self) {
+            let now = self.now();
+            self.health.lock().unwrap().record_rx(now);
+        }
+
+        /// Whether this backend would feed the systemd watchdog right now.
+        pub(crate) fn feeds_watchdog(&self) -> bool {
+            self.health.lock().unwrap().should_feed_watchdog()
+        }
     }
+
+    /// Where the fake clock starts. Advanced only by [`FakeBackend::advance`].
+    pub(crate) const FAKE_NOW: u64 = 1_700_000_000_000;
 
     #[async_trait::async_trait]
     impl AvBackend for FakeBackend {
+        async fn health(&self) -> HealthReport {
+            let now = self.now();
+            self.health.lock().unwrap().report(now)
+        }
+
         async fn snapshot(&self) -> AvState {
             AvState::assemble(&self.topology, &self.observations.lock().unwrap())
         }
@@ -262,6 +328,7 @@ pub(crate) mod testing {
                 Some(LocalRecord::Released) => observations.record_our_release(now),
                 None => {}
             }
+            self.health.lock().unwrap().record_tx_ok(self.now());
             if plan.then_read.is_some() {
                 if let Some(state) = *self.power_reply.lock().unwrap() {
                     observations.apply(
@@ -286,7 +353,11 @@ pub(crate) mod testing {
                 Ok(p) => p,
                 Err(refusal) => return ActionOutcome::Refused(refusal.reason),
             };
-            volume::execute(&FakeVolumeBus(self), plan).await
+            let outcome = volume::execute(&FakeVolumeBus(self), plan).await;
+            if outcome == ActionOutcome::Done {
+                self.health.lock().unwrap().record_tx_ok(self.now());
+            }
+            outcome
         }
 
         async fn volume_state(&self) -> VolumeState {

@@ -3,7 +3,7 @@
 //! The set follows `docs/PANEL_IA.md`'s six groups: `dashboard` (Overview);
 //! `services`, `processes`, `updates` and `logs` (System); `appearance`,
 //! `widgets`, `apps` and `advanced` (Shell); `controllers`, `display_audio`,
-//! `cec` and `network` (Devices); `navigation` and `launcher` (Remote); and
+//! `cec`, `av` and `network` (Devices); `navigation` and `launcher` (Remote); and
 //! `dev`, `screenshot` and `console` (Dev), plus `login`.
 //!
 //! Five modules here are **not** pages:
@@ -28,6 +28,7 @@
 pub mod advanced;
 pub mod appearance;
 pub mod apps;
+pub mod av;
 pub mod cec;
 pub mod console;
 pub mod controllers;

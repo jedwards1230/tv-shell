@@ -75,6 +75,13 @@ async fn main() -> anyhow::Result<()> {
     );
     let sock = config::socket_path();
     let node: Arc<dyn transport::NodeTransport> = Arc::new(ipc::IpcTransport::new(sock));
+    // The v2 AV daemon's own socket. No handshake and no gate: the page is
+    // registered unconditionally and reports whatever it finds, including
+    // "nothing is listening", which on a box that has not taken the operator
+    // step of jedwards1230/tv-shell#504 is the normal answer.
+    let av_sock = config::av_socket_path();
+    tracing::info!("tv-shell-panel: v2 AV daemon socket {}", av_sock.display());
+    let av: Arc<dyn transport::NodeTransport> = Arc::new(ipc::IpcTransport::new(av_sock.clone()));
     let bridge: Arc<dyn bridge::DevBridge> = Arc::new(bridge::BridgeClient::new(
         cfg.http_bridge_base.clone(),
         cfg.http_token.clone(),
@@ -113,6 +120,8 @@ async fn main() -> anyhow::Result<()> {
         cfg,
         caps,
         node,
+        av,
+        av_sock,
         bridge,
         recovery,
         updates,
@@ -214,6 +223,12 @@ fn build_router(state: SharedState) -> Router {
         .route("/logs", get(pages::redirects::logs))
         .route("/dev", get(pages::redirects::dev))
         .route("/nav/daemon-status", get(pages::nav::daemon_status_dot))
+        // Devices ▸ AV (v2). Recovery tier deliberately: it needs no v1 daemon
+        // and no capability — it dials the v2 AV daemon's own socket with a
+        // bounded timeout and renders a degraded page when nothing answers.
+        // Gating it on the v1 handshake would hide the v2 AV state exactly when
+        // the v1 daemon is down, which are unrelated failures.
+        .route("/devices/av", get(pages::av::page))
         // The four auth-exempt routes (`auth::PUBLIC_PATHS`): the two
         // compiled-in static assets, plus the login form and its submission.
         .route("/login", get(pages::login::page))
