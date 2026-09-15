@@ -73,6 +73,16 @@ jobs:
               # else lints it, so a change to it that skipped this area would be
               # unchecked — and v1 is what still boots the couch on a rollback.
               - 'scripts/install.sh'
+              # The acceptance gates rust.yml runs as steps. Nothing else
+              # executes these, so a change to one that skipped this area would
+              # ship unexercised — and a gate nobody ran is a gate that reports
+              # green by default, which is the failure mode they exist to end.
+              - 'scripts/assert-pure-rust-tls.sh'
+              - 'scripts/assert-no-system-c.sh'
+              - 'scripts/run-cec-mutants.sh'
+              # The mutation gate's SCOPE. Editing it can silently shrink what
+              # is measured, so it must re-run the area that measures it.
+              - '.cargo/mutants.toml'
               - '.github/workflows/rust.yml'
               - '.github/workflows/ci.yml'
             host:

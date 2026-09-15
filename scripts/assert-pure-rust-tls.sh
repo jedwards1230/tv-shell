@@ -38,7 +38,11 @@
 # far from the cause.
 #
 # SCOPE — read this before assuming it checks more than it does.
-# This asserts the TLS/crypto provider only. It says nothing about the daemon's
+# This asserts the TLS/crypto provider only. The sibling invariant — that no C
+# toolchain or system C library enters a build at all — is a different question
+# with a different remediation, and lives in scripts/assert-no-system-c.sh,
+# which shares this script's `cargo tree --invert` mechanism and nothing else.
+# It says nothing about the daemon's
 # `cec` feature, which deliberately static-links libcec and needs libudev; that
 # has its own `ldd` gate in `rust.yml`.
 #
@@ -73,6 +77,21 @@ fi
 
 echo "Asserting no cmake/system-TLS crypto crate in: cargo tree ${args[*]}"
 
+# PREFLIGHT — resolve the tree ONCE before inverting anything. `cargo tree -p
+# typo --invert aws-lc-rs` fails with "package ID specification `typo` did not
+# match any packages", which is a message about the -p SPEC and not about the
+# banned crate; matched loosely below it read as "aws-lc-rs absent", and the
+# whole gate then reported green having examined nothing. Resolving first makes
+# a bad spec, a broken manifest or a lockfile mismatch fail here, where it names
+# itself. (Found while building scripts/assert-no-system-c.sh, which shares this
+# mechanism and had the identical hole.)
+if ! preflight=$(cargo tree "${args[@]}" 2>&1); then
+  echo "::error::cargo tree ${args[*]} does not resolve — failing here rather than" \
+       "letting every banned-crate check read as 'absent'"
+  printf '%s\n' "$preflight"
+  exit 1
+fi
+
 failed=0
 for crate in "${BANNED[@]}"; do
   # Capture combined output so a genuine cargo failure can be told apart from a
@@ -83,7 +102,9 @@ for crate in "${BANNED[@]}"; do
     echo "::error::banned crate '$crate' is in the dependency graph"
     printf '%s\n' "$out" | head -30
     failed=1
-  elif printf '%s' "$out" | grep -q 'did not match any packages'; then
+  elif printf '%s' "$out" | grep -q "specification \`$crate\` did not match any packages"; then
+    # Match the CRATE's own name, never a bare "did not match any packages" —
+    # see the preflight note above.
     echo "  ok: $crate absent"
   else
     echo "::error::cargo tree failed unexpectedly while checking '$crate' —" \

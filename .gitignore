@@ -11,3 +11,7 @@ __pycache__/
 
 # CMake build tree for shell-v2 (the documented `cmake -S shell-v2 -B build`)
 /build/
+
+# cargo-mutants scratch output (scripts/run-cec-mutants.sh)
+mutants-output/
+mutants.out/

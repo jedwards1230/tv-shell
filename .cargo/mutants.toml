@@ -1,0 +1,80 @@
+# cargo-mutants scope for the v2 AV-control crate (`cec/`, `tv-shell-cec`).
+#
+# WHY THIS EXISTS
+# ---------------
+# Mutation discipline on this crate is currently MANUAL, and it has already
+# failed twice:
+#
+#   * Three tests in jedwards1230/tv-shell#514 were vacuous until a hand-run
+#     mutation caught them — and fixing them exposed a real bug, where `Rx` reset
+#     the whole tx-error run, which made the "no rx traffic in the same window"
+#     condition dead code.
+#   * Inverting a crate's central rule in jedwards1230/tv-shell#462 left all 88
+#     tests passing.
+#
+# A discipline that has failed twice should be automated. `.github/workflows/
+# rust.yml`'s `cec` job runs cargo-mutants over exactly the files named below.
+#
+# SCOPE IS GLOB-BASED ON PURPOSE, NOT A LITERAL FILE LIST
+# -------------------------------------------------------
+# The pure decision modules of this crate arrive across a PR stack. Only
+# `state.rs` and `protocol.rs` exist on `main` today; `ownership.rs` and
+# `action.rs` land in jedwards1230/tv-shell#511, `health.rs` in #513 and
+# `failover.rs` in #514. Naming four files that do not exist yet as literal
+# paths would make the gate wrong on main and right only later. Naming them as
+# globs means each one is picked up automatically the moment its PR lands, so
+# the gate's coverage GROWS WITH THE STACK. A glob that matches nothing today is
+# not a failure; the CI step separately reports which of the intended modules
+# were found and which were absent, so a module missing because someone RENAMED
+# it is visible rather than silent.
+#
+# `examine_globs` is an allowlist: a file not matched here is never mutated,
+# whether or not it also appears in `exclude_globs` below.
+examine_globs = [
+  # Present on main.
+  "cec/src/state.rs",     # AvState + the `unknown` is never healthy / never `false` rule
+  "cec/src/protocol.rs",  # the wire grammar: parse/render, no I/O
+  # Arriving with the stack (jedwards1230/tv-shell#511 → #513 → #514).
+  "cec/src/ownership.rs", # #511 — who owns the bus, and when ownership is ceded
+  "cec/src/action.rs",    # #511 — the decision of what to transmit, not the transmitting
+  "cec/src/health.rs",    # #513 — the tx-error / rx-traffic window fold
+  "cec/src/failover.rs",  # #514 — CEC-primary → IP-recovery failover policy
+]
+
+# DELIBERATELY OUT OF SCOPE — stated, not merely omitted.
+#
+# These are I/O, not decisions. Every one of them is exercised in tests through
+# a stand-in (the `AvBackend` trait, a real Unix socket, a scratch tempdir), so
+# a mutant that survives in them measures the FAKE rather than the rule. That is
+# a number that looks like coverage and defends nothing, which is the failure
+# mode this whole gate exists to avoid — so they are excluded on purpose and
+# named here so the exclusion is a decision on the record:
+#
+#   cec/src/kernel/**  — /dev/cecN open, configure, and the rx follower loop
+#   cec/src/ipc.rs     — the Unix-socket server; the grammar it speaks is in protocol.rs
+#   cec/src/main.rs    — argument handling, wiring and process lifecycle
+#   cec/src/notify.rs  — the sd_notify transport
+#   cec/src/backend.rs — the seam itself (a trait plus its plumbing)
+#   cec/src/config.rs  — cec.toml I/O; its pure form checks live in state.rs/protocol.rs
+#
+# If a decision ever moves INTO one of these files, move it back out rather than
+# widening this list.
+exclude_globs = [
+  "cec/src/kernel/**",
+  "cec/src/ipc.rs",
+  "cec/src/main.rs",
+  "cec/src/notify.rs",
+  "cec/src/backend.rs",
+  "cec/src/config.rs",
+]
+
+# Only the cec crate's own tests decide whether a cec mutant is caught. Running
+# the whole workspace suite per mutant would multiply an already-slow run by the
+# panel and daemon suites, which cannot observe a cec mutation anyway.
+test_package = ["tv-shell-cec"]
+
+# A floor, not a cap: cargo-mutants times each mutant out relative to the
+# measured baseline, and the baseline for this crate is a couple of seconds. On
+# a loaded runner that auto-derived bound is tight enough to report a healthy
+# mutant as a spurious TIMEOUT. 20s of headroom is cheap; a flaky gate is not.
+minimum_test_timeout = 20
