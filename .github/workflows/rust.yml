@@ -1,5 +1,5 @@
 # Rust CI for the tv-shell Linux Rust crates: the input daemon (daemon/), the web
-# control panel (panel/), and the v2 core (core/).
+# control panel (panel/), the v2 core (core/), and the v2 AV-control daemon (cec/).
 #
 # Builds, formats, lints, and tests the daemon crate on a Linux runner — the only
 # place the evdev/uinput code compiles (it is excluded on non-Linux dev hosts).
@@ -7,10 +7,11 @@
 # vs the ~30 GB ubuntu-latest image; no system libs needed — evdev is pure Rust).
 #
 # Since the repo is a Cargo workspace (daemon/ + host/ + protocol/ + panel/ +
-# core/), every cargo command is `-p`-scoped so no crate's graph leaks into
+# core/ + cec/), every cargo command is `-p`-scoped so no crate's graph leaks into
 # another's build — the host crate (cross-platform, CI'd separately in host.yml)
 # is never dragged into the daemon's Linux/cec build, and the daemon's
-# evdev/zbus/bluer/cec graph never reaches the pure-Rust panel and core legs. The
+# evdev/zbus/bluer/cec graph never reaches the pure-Rust panel, core and cec legs
+# (and the cec crate's own `linux-cec` never reaches theirs). The
 # workspace shares one target dir at the repo ROOT, so the build output is at
 # `../target/release/...` from `working-directory: daemon`.
 #
@@ -295,6 +296,72 @@ jobs:
             echo "| Test | ${{ steps.test.outcome }} |"
             echo "| Test (Xvfb) | ${{ steps.test_xvfb.outcome }} |"
             echo "| Shellcheck | ${{ steps.shellcheck.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # tv-shell-cec (cec/, `tv-shell-cec`): the v2 AV-control daemon. Pure Rust
+  # like the panel and the core — `linux-cec-sys` ships PRE-GENERATED bindings,
+  # so there is no bindgen, no libclang and no system libcec anywhere in this
+  # graph, and the job therefore needs no apt step at all. That is the whole
+  # reason this crate can exist beside the v1 daemon's `cec` feature without
+  # re-opening the static-libcec argument (#179).
+  #
+  # `-p`-scoped like every sibling, so the daemon's Linux-only graph never
+  # reaches this build and this crate's `linux-cec` never reaches theirs.
+  #
+  # THERE IS NO DEVICE-BACKED LEG HERE, deliberately. The runner has no
+  # /dev/cecN, and an `#[ignore]`-gated test wired into no job defends nothing
+  # (jedwards1230/tv-shell#469) — `continue-on-error` reports green on a SKIP as
+  # readily as on a failure. The crate is written so the rules are covered
+  # WITHOUT a device: config parsing, the wire grammar, the observation fold and
+  # the `unknown`-is-never-`false` rule are all pure, and the IPC surface runs
+  # end-to-end against a fake backend over a real Unix socket. The device-backed
+  # lane lands with something that needs one to assert.
+  cec:
+    runs-on: ubuntu-latest
+    container: rust:1-bookworm
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Add rustfmt + clippy
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: .
+          key: cec
+
+      - name: Format check
+        id: fmt
+        run: cargo fmt --check -p tv-shell-cec
+
+      - name: Clippy
+        id: clippy
+        run: cargo clippy -p tv-shell-cec --all-targets -- -D warnings
+
+      - name: Build
+        id: build
+        run: cargo build --release -p tv-shell-cec
+
+      - name: Test
+        id: test
+        run: cargo test -p tv-shell-cec
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Rust CI — \`cec/\`"
+            echo ""
+            echo "| Step | Result |"
+            echo "|------|--------|"
+            echo "| Format | ${{ steps.fmt.outcome }} |"
+            echo "| Clippy | ${{ steps.clippy.outcome }} |"
+            echo "| Build (release) | ${{ steps.build.outcome }} |"
+            echo "| Test | ${{ steps.test.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The uinput leg for core/tests/input_uinput.rs — four `#[ignore]`d tests keyed

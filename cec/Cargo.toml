@@ -1,0 +1,69 @@
+[package]
+name = "tv-shell-cec"
+# The v2 AV-control daemon. No release stream exists yet (V2_DESIGN §11 gives a
+# v2 binary its own stream when it ships), so this is 0.0.0 like `core`,
+# `protocol` and `panel` — nothing reports it and editing it cuts no release.
+version = "0.0.0"
+edition = "2021"
+# DECLARED, NOT ENFORCED — the same caveat `core/Cargo.toml` records: no CI leg
+# builds this crate on a pinned old toolchain (`rust.yml` uses `rust:1-bookworm`,
+# i.e. latest stable). 1.85 is the highest `rust-version` in this crate's own
+# dependency graph (`toml` 1.x and its `toml_*`/`indexmap`/`hashbrown` tree), and
+# it matches the floor the core, host and panel crates already record.
+rust-version = "1.85"
+license = "GPL-3.0"
+description = "tv-shell v2 AV control: kernel HDMI-CEC (pulse8-cec) observation over /dev/cecN, with its own config file, socket and unit"
+
+[[bin]]
+name = "tv-shell-cec"
+path = "src/main.rs"
+
+[lib]
+name = "tv_shell_cec"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "1.1"
+anyhow = { workspace = true }
+thiserror = "2"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+libc = "0.2"
+# The backend seam (`backend::AvBackend`) is held as `Arc<dyn AvBackend>` so the
+# IPC layer can be exercised with no adapter, and native `async fn` in traits is
+# not yet dyn-compatible. Same reason the panel's `NodeTransport` uses it.
+async-trait = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The kernel CEC API (`/dev/cecN`, `<linux/cec.h>` ioctls). Linux-only, exactly
+# as the core's evdev backend is: every DECISION this crate makes lives in the
+# pure modules beside it (`config`, `protocol`, `state`), which build and test on
+# any host — that is what keeps the rules covered by CI on a runner with no
+# adapter.
+#
+# `default-features = false` drops `cectool`, which would pull `clap` in for a
+# binary we do not ship. `async` gives the tokio `AsyncDevice`; `tracing` routes
+# the crate's own logs into the subscriber this binary installs.
+#
+# WHY THIS CRATE. It is Valve's (repository gitlab.steamos.cloud/holo/linux-cec),
+# on a design that adopts SteamOS shapes everywhere else, and `linux-cec-sys`
+# declares only `bitflags` + `nix` — PRE-GENERATED BINDINGS, no bindgen and no
+# libclang at build time. That preserves the workspace's "a default build needs
+# no system C libraries" invariant that `daemon/Cargo.toml`'s `cec` feature
+# fought for. `cec-rs`/`libcec-sys` are deprecated upstream (2026-09-03) and are
+# dropped by V2_DESIGN §13 Q7 anyway.
+#
+# Two caveats, stated rather than buried (cf. the notes `daemon/Cargo.toml`
+# keeps on its own dependencies):
+#   * It declares `nix ^0.31` while the lockfile already carries `nix 0.29`
+#     transitively, so the tree holds two `nix` copies. Harmless; `cargo tree -d`
+#     grows an entry.
+#   * Its licence is LGPL-2.1-or-later, GPL-3.0-compatible via the "or-later"
+#     clause. Same class of check as the `cec-rs` GPL-2.0 note in
+#     jedwards1230/tv-shell#88.
+linux-cec = { version = "0.2.1", default-features = false, features = ["async", "tracing"] }

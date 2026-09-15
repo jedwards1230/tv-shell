@@ -1,0 +1,88 @@
+[Unit]
+# tv-shell-v2-cec — the v2 AV control daemon (cec/, `tv-shell-cec`).
+#
+# UNTESTED ON HARDWARE, and for a reason more specific than the rest of this
+# directory: /dev/cec0 DOES NOT EXIST ON THE DEPLOY HOST YET. The pulse8-cec
+# module is blocked by `install pulse8_cec /bin/false` in
+# /etc/modprobe.d/pulse8-cec-blacklist.conf and pulse8-cec.service is masked —
+# both deliberate, both dating from the 2026-08-07 incident in which the kernel
+# driver and v1's libcec daemon contended for one exclusive serial port. Undoing
+# that is an operator step in homelab-ansible, taken with nobody at the
+# television. Until it is taken the ConditionPathExists= below keeps this unit
+# inert on every boot, which is exactly what "shipped but not enabled" means.
+#
+# As of this step the daemon is READ-ONLY: it opens the adapter, sets the
+# physical and logical addresses, reads the capabilities, and listens. It
+# TRANSMITS NOTHING on the CEC bus. The living-room bus carries an Apple TV and
+# a PS5 as well as the television and the AVR.
+Description=tv-shell v2 AV control (kernel CEC primary, IP recovery)
+
+# PartOf ONLY. Deliberately NOT BindsTo=tv-shell-gamescope.service, unlike
+# tv-shell-core.service: this daemon touches no X server and no atom, so a
+# compositor restart has nothing to invalidate here. PartOf= means a session
+# stop takes it down; it never means the session waits on it.
+PartOf=tv-shell-session.target
+
+# NO After=. NO Before=. NO Requires=/Requisite=/BindsTo= in EITHER direction,
+# and nothing anywhere may order the core or gamescope against this unit. The
+# session target already reaches this unit through `Wants=` alone
+# (core/units/tv-shell-session.target), which is a soft, non-fatal, unordered
+# reference — and that is the isolation. A Wants= that fails to start is a log
+# line; anything stronger is a CEC backend with a vote on whether the
+# television gets a picture.
+#
+# NO Conflicts= with tv-shell-input.service, for the reason spelled out at
+# length in tv-shell-core.service: Conflicts= is bidirectional and turns any
+# third party starting v1 into a teardown of the live session. v1 exclusion
+# stays one-directional, in the session script's stop+mask.
+#
+# The runtime half of that isolation does NOT live here and cannot: every caller
+# of this daemon's socket — the shell's Session QAM, the panel, the core if it
+# ever consults AV state — must use a bounded connect+read timeout and render a
+# degraded state on expiry, never an indefinite await. That is the rule that
+# actually keeps a wedged CEC backend off the Moonlight path, and it lives in
+# the callers.
+ConditionPathExists=/dev/cec0
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=@TV_SHELL_V2_PREFIX@/bin/tv-shell-cec
+
+# The hung-backend answer. A CEC ioctl that never returns stops feeding the
+# watchdog; systemd SIGABRTs and restarts the unit. Nothing else on the box
+# waits on it, so the blast radius is this cgroup.
+#
+# THE FEED IS IMPLEMENTED, and it has to be: WatchdogSec= without a WATCHDOG=1
+# message is a unit that kills itself every 30 s. cec/src/main.rs feeds it at
+# half this interval, and only while CEC_ADAP_G_CAPS round-trips on our own file
+# descriptor — a pure ioctl with no bus traffic, so probing liveness has no
+# side effect on anyone's television. That is the difference from v1's
+# cec-health, which inferred adapter health from the outcome of our own
+# transmits and was then inferred from a second time by a polling watchdog
+# reading IPC reachability, which is how a deliberately stopped daemon read as a
+# wedged adapter and got "recovered" three times.
+#
+# The rest of that work — the health state machine over the four observed facts,
+# and the av-health verb that publishes them — is a later step. This directive
+# covers one fact only.
+WatchdogSec=30s
+Restart=always
+RestartSec=2
+
+# Resource fence, so a runaway rx loop cannot starve gamescope.
+MemoryMax=128M
+TasksMax=16
+CPUWeight=20
+
+# It needs /dev/cec0 (root:video 0660 via 50-udev-default.rules; the shell user
+# is already in `video`) and a network socket for the IP leg. Nothing else.
+DeviceAllow=char-cec rw
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+
+# No [Install] — the session target owns the lifecycle, same as the core.

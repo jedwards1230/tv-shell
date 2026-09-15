@@ -1,0 +1,271 @@
+//! `/dev/cecN` lifecycle: open, configure, read the topology back.
+//!
+//! # This step is READ-ONLY, and the ordering below is what makes that true
+//!
+//! The living-room bus carries an Apple TV and a PS5 as well as the television
+//! and the AVR, so a stray transmit from this daemon is a real-world side effect
+//! on someone else's evening. This step therefore transmits **nothing**.
+//!
+//! One call in the sequence would break that if it were moved:
+//! **`set_osd_name` must be called BEFORE `set_logical_addresses`.**
+//! `linux-cec`'s implementation sends a `<Set OSD Name>` message to the TV if a
+//! logical address has already been claimed (`device.rs`: `if
+//! self.tx_logical_address != LogicalAddress::Unregistered { … tx_message(…) }`),
+//! and does not if one has not. Before the logical addresses are set we are
+//! `Unregistered`, so the call is pure configuration. The crate's own docs
+//! require the same order for a different reason — the kernel only advertises
+//! the OSD name on query if it was set first — so the two agree, but the
+//! transmit is the one that matters here and it is why the order is pinned by a
+//! comment rather than left to chance.
+//!
+//! **The one bus interaction that is not ours.** `CEC_ADAP_S_LOG_ADDRS` makes
+//! the *kernel* poll the bus to allocate a logical address. That is the kernel's
+//! own address-claim traffic, performed by every CEC device that attaches, and
+//! it is unavoidable for an adapter that is going to have an address at all. No
+//! message of this daemon's is transmitted. Stated here rather than left for a
+//! reader to discover, because "no transmits" should mean what it says.
+//!
+//! # Capabilities are READ, never assumed
+//!
+//! `get_capabilities()` runs before anything is configured, and the result gates
+//! the two calls that need it (`CEC_CAP_PHYS_ADDR`, `CEC_CAP_LOG_ADDRS`) and is
+//! published verbatim in `av-state`. Whether `pulse8-cec` implements
+//! `CEC_CAP_MONITOR_PIN` is UNVERIFIED — it could not be checked without a
+//! device — so nothing here assumes the pin monitor exists. Step 6's `av-health`
+//! reads [`crate::state::Topology::monitor_pin`] to name which health signal is
+//! actually in force.
+
+use std::sync::{Arc, Mutex};
+
+use anyhow::{anyhow, Context, Result};
+use linux_cec::device::{AsyncDevice, Capabilities};
+use linux_cec::{FollowerMode, InitiatorMode, LogicalAddressType, PhysicalAddress};
+
+use crate::backend::AvBackend;
+use crate::config::CecConfig;
+use crate::state::{AvState, Observation, Observations, PhysAddr, Topology};
+
+/// An open kernel CEC adapter, its topology, and the observations folded out of
+/// its receive queue.
+pub struct KernelBackend {
+    device: Arc<AsyncDevice>,
+    topology: Topology,
+    observations: Arc<Mutex<Observations>>,
+}
+
+impl KernelBackend {
+    /// Open and configure the adapter named by `config`, then read its topology
+    /// back.
+    ///
+    /// See the module docs for the ordering rules. Every step is logged, and the
+    /// physical address is logged **as set and as read back** — a wrong
+    /// `phys_addr` is otherwise silent, and silence is the whole problem with
+    /// it.
+    pub async fn open(config: &CecConfig) -> Result<KernelBackend> {
+        let path = config.device.path.clone();
+        let configured = config.phys_addr()?;
+
+        let device = AsyncDevice::open(&path)
+            .await
+            .with_context(|| format!("opening the CEC device at {path}"))?;
+
+        // 1. READ the capabilities, before configuring anything that depends on
+        //    one. `get_capabilities` is also the daemon's liveness probe (the
+        //    plan's fact 1): a wedged USB device fails it, a healthy idle bus
+        //    does not.
+        let caps = device
+            .get_capabilities()
+            .await
+            .with_context(|| format!("reading CEC_ADAP_G_CAPS on {path}"))?;
+        let capabilities = capability_names(caps);
+        let monitor_pin = caps.contains(Capabilities::MONITOR_PIN);
+        let driver = device
+            .get_driver_name()
+            .await
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        tracing::info!(
+            "opened {path}: driver {driver}, capabilities [{}], monitor_pin={monitor_pin}",
+            capabilities.join(" ")
+        );
+
+        // 2. Initiator mode. Required by CEC_ADAP_S_LOG_ADDRS — the kernel
+        //    refuses the address claim from a process that is not an initiator.
+        //    It PERMITS transmitting; it does not transmit. This step sends
+        //    nothing.
+        device
+            .set_initiator_mode(InitiatorMode::Enabled)
+            .await
+            .context("entering initiator mode (needed to configure logical addresses)")?;
+
+        // 3. The physical address. Gated on the capability rather than attempted
+        //    blindly, so a driver that cannot take one says so in a message
+        //    naming the capability instead of an opaque ioctl errno.
+        if !caps.contains(Capabilities::PHYS_ADDR) {
+            return Err(anyhow!(
+                "{path} does not report CEC_CAP_PHYS_ADDR, so its physical address cannot be \
+                 set from userspace; capabilities are [{}]",
+                capabilities.join(" ")
+            ));
+        }
+        // `From<u16>`, not `TryFrom`: the 16-bit encoding IS a physical
+        // address, including `f.f.f.f`. Validation of the operator's text form
+        // happened in `config::validate`, where the error can name the key.
+        let wanted = PhysicalAddress::from(configured.raw());
+        device
+            .set_physical_address(wanted)
+            .await
+            .with_context(|| format!("setting the physical address to {configured}"))?;
+
+        // 4. The OSD name — BEFORE the logical addresses. See the module docs:
+        //    after them, this call transmits.
+        device
+            .set_osd_name(&config.device.osd_name)
+            .await
+            .with_context(|| format!("setting the OSD name to {:?}", config.device.osd_name))?;
+
+        // 5. The logical address. `Playback` is what an HTPC is on a CEC bus.
+        if !caps.contains(Capabilities::LOG_ADDRS) {
+            return Err(anyhow!(
+                "{path} does not report CEC_CAP_LOG_ADDRS, so it cannot claim a logical \
+                 address; capabilities are [{}]",
+                capabilities.join(" ")
+            ));
+        }
+        device
+            .set_logical_addresses(&[LogicalAddressType::Playback])
+            .await
+            .context("claiming the Playback logical address")?;
+
+        // 6. Follower mode, so the receive loop sees traffic addressed to us and
+        //    broadcasts. `Enabled`, not `Exclusive`: an exclusive follower locks
+        //    every other process out of the adapter for as long as this one
+        //    holds it open, and the point of the kernel driver is that it is a
+        //    shared, inspectable owner — `cec-ctl --monitor` has to keep working
+        //    for anyone diagnosing the bus.
+        device
+            .set_follower_mode(FollowerMode::Enabled)
+            .await
+            .context("entering follower mode")?;
+
+        // 7. Read the topology BACK. This is the whole answer to "a wrong
+        //    phys_addr fails silently": the value set and the value read are
+        //    both logged and both published.
+        let read_back: Observation<PhysAddr> = match device.get_physical_address().await {
+            Ok(a) => Observation::Known(PhysAddr::from_raw(u16::from(a))),
+            Err(e) => {
+                tracing::warn!("reading CEC_ADAP_G_PHYS_ADDR back on {path}: {e}");
+                Observation::Unknown
+            }
+        };
+        match read_back {
+            Observation::Known(got) if got == configured => {
+                tracing::info!("physical address {configured} set and read back unchanged");
+            }
+            Observation::Known(got) => {
+                // Loud, because this is the failure that is otherwise invisible:
+                // a later `<Active Source>` would address a port that does not
+                // exist and the bus would report nothing about it.
+                tracing::warn!(
+                    "physical address MISMATCH on {path}: set {configured}, adapter reports \
+                     {got}. `2.5.0.0` is the pre-2026-08-07 value and is unverified against \
+                     the current rack — check `cec-ctl -d {path} --show-topology`"
+                );
+            }
+            Observation::Unknown => {
+                tracing::warn!(
+                    "physical address {configured} was set but could not be read back; \
+                     av-state will report physAddr as unknown"
+                );
+            }
+        }
+
+        let log_addrs: Vec<String> = match device.get_logical_addresses().await {
+            Ok(addrs) => addrs.iter().map(ToString::to_string).collect(),
+            Err(e) => {
+                tracing::warn!("reading the logical addresses back on {path}: {e}");
+                Vec::new()
+            }
+        };
+        if log_addrs.is_empty() {
+            tracing::warn!(
+                "{path} holds no logical address; the adapter is attached but unaddressed, so \
+                 nothing on the bus is addressed to us"
+            );
+        } else {
+            tracing::info!("logical addresses: {}", log_addrs.join(" "));
+        }
+
+        Ok(KernelBackend {
+            device: Arc::new(device),
+            topology: Topology {
+                backend: "cec",
+                device: path,
+                phys_addr_configured: configured,
+                phys_addr_read_back: read_back,
+                log_addrs,
+                capabilities,
+                monitor_pin,
+            },
+            observations: Arc::new(Mutex::new(Observations::default())),
+        })
+    }
+
+    /// The device handle, for the receive loop.
+    #[must_use]
+    pub fn device(&self) -> Arc<AsyncDevice> {
+        Arc::clone(&self.device)
+    }
+
+    /// The shared observation store, for the receive loop.
+    #[must_use]
+    pub fn observations(&self) -> Arc<Mutex<Observations>> {
+        Arc::clone(&self.observations)
+    }
+
+    /// **Fact 1: the fd is alive.** `CEC_ADAP_G_CAPS` round-trips.
+    ///
+    /// This is the watchdog's condition and nothing more. It is a pure ioctl on
+    /// our own file descriptor: it touches the bus not at all, so unlike v1's
+    /// `cec-health` — which inferred adapter health from the outcome of our own
+    /// transmits — probing it has no side effect on anyone's television. A
+    /// wedged USB device fails it; a bus where everything is switched off does
+    /// not.
+    pub async fn fd_is_alive(&self) -> bool {
+        match self.device.get_capabilities().await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!("CEC_ADAP_G_CAPS failed; the adapter fd is not answering: {e}");
+                false
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AvBackend for KernelBackend {
+    async fn snapshot(&self) -> AvState {
+        // The lock is taken and released inside this expression and is never
+        // held across an `.await`: the rx loop must not be able to make a
+        // diagnostic read of `av-state` block.
+        let observations = match self.observations.lock() {
+            Ok(g) => g.clone(),
+            // A poisoned lock means a fold panicked. The observations are still
+            // structurally valid (the fold is total), and refusing to answer
+            // `av-state` at exactly the moment something went wrong is the worst
+            // available option for a diagnostic verb.
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        AvState::assemble(&self.topology, &observations)
+    }
+}
+
+/// The capability flags actually present, by name.
+///
+/// Read off the bitflags rather than hardcoded, so a flag this crate has never
+/// heard of still reaches `av-state` instead of being silently dropped.
+fn capability_names(caps: Capabilities) -> Vec<String> {
+    caps.iter_names()
+        .map(|(name, _)| name.to_string())
+        .collect()
+}

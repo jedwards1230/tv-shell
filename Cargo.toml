@@ -1,12 +1,17 @@
 # Virtual workspace manifest for tv-shell's Rust crates.
 #
-# Four crates, one lockfile, shared dependency versions:
+# Six crates, one lockfile, shared dependency versions:
 #   - daemon/    tv-shell-input    — Linux/cec/mcp input daemon (UNTOUCHED machinery)
 #   - host/      tv-shell-host     — cross-platform Steam-library sidecar (axum)
 #   - protocol/  tv-shell-protocol — shared /library wire types (serde only)
 #   - panel/     tv-shell-panel    — LAN web control panel (axum + askama)
 #   - core/      tv-shell-core     — v2 core: gamescope base-layer policy (BESIDE daemon/,
 #                                  never instead of it; see docs/V2_DESIGN.md §11)
+#   - cec/       tv-shell-cec      — v2 AV control over the kernel CEC API (/dev/cecN).
+#                                  A NEW crate beside core/, never an evolution of
+#                                  daemon/ — §13 Q12, and for the same reason: v1's
+#                                  config.toml root is deny_unknown_fields. Its own
+#                                  config file (cec.toml), socket and unit.
 #
 # Why a workspace (not two independent crates, not one crate w/ two bins): one
 # lockfile + shared dep versions; the `protocol` crate is the single source of
@@ -16,7 +21,7 @@
 # `-p`-scoped so neither binary compiles the other.
 [workspace]
 resolver = "2"
-members = ["daemon", "host", "protocol", "panel", "core"]
+members = ["daemon", "host", "protocol", "panel", "core", "cec"]
 
 [workspace.package]
 edition = "2021"
