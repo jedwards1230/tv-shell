@@ -1,10 +1,13 @@
 //! `/dev/cecN` lifecycle: open, configure, read the topology back.
 //!
-//! # This step is READ-ONLY, and the ordering below is what makes that true
+//! # The OPEN sequence is transmit-free, and the ordering below is what makes
+//! it so
 //!
 //! The living-room bus carries an Apple TV and a PS5 as well as the television
 //! and the AVR, so a stray transmit from this daemon is a real-world side effect
-//! on someone else's evening. This step therefore transmits **nothing**.
+//! on someone else's evening. Starting this daemon must therefore put **nothing**
+//! on the bus: every message it sends comes from a client asking for one, via
+//! [`crate::action::plan`] and [`crate::kernel::ops`].
 //!
 //! One call in the sequence would break that if it were moved:
 //! **`set_osd_name` must be called BEFORE `set_logical_addresses`.**
@@ -12,7 +15,9 @@
 //! logical address has already been claimed (`device.rs`: `if
 //! self.tx_logical_address != LogicalAddress::Unregistered { … tx_message(…) }`),
 //! and does not if one has not. Before the logical addresses are set we are
-//! `Unregistered`, so the call is pure configuration. The crate's own docs
+//! `Unregistered`, so the call is pure configuration — which is the difference
+//! between "starting the daemon is silent on the bus" and "starting the daemon
+//! announces itself to the television". The crate's own docs
 //! require the same order for a different reason — the kernel only advertises
 //! the OSD name on query if it was set first — so the two agree, but the
 //! transmit is the one that matters here and it is why the order is pinned by a
@@ -41,8 +46,10 @@ use anyhow::{anyhow, Context, Result};
 use linux_cec::device::{AsyncDevice, Capabilities};
 use linux_cec::{FollowerMode, InitiatorMode, LogicalAddressType, PhysicalAddress};
 
-use crate::backend::AvBackend;
+use crate::action::Action;
+use crate::backend::{ActionOutcome, AvBackend};
 use crate::config::CecConfig;
+use crate::kernel::ops;
 use crate::state::{AvState, Observation, Observations, PhysAddr, Topology};
 
 /// An open kernel CEC adapter, its topology, and the observations folded out of
@@ -244,6 +251,39 @@ impl KernelBackend {
 
 #[async_trait::async_trait]
 impl AvBackend for KernelBackend {
+    /// Decide, then transmit.
+    ///
+    /// The decision is [`crate::action::plan`] — a pure function of the action
+    /// and the two observed addresses — so every gate is covered by CI on a
+    /// runner with no adapter. This method's whole job is to read the two
+    /// addresses, hand them to the planner, and either put the plan on the bus
+    /// or return the refusal verbatim.
+    ///
+    /// **A refusal happens before anything is built, so it transmits nothing.**
+    /// The observation lock is taken and released before the first `.await` on
+    /// the device, so an action can never block `av-state`.
+    async fn act(&self, action: Action) -> ActionOutcome {
+        let owner = {
+            let observations = self
+                .observations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            observations.active_source()
+        };
+        let plan = match crate::action::plan(action, self.topology.phys_addr_read_back, owner) {
+            Ok(plan) => plan,
+            Err(refusal) => {
+                // At info, not warn: a refusal is the gate working. The journal
+                // should read as "declined, here is why", not as a fault.
+                tracing::info!("{action:?} refused: {}", refusal.reason);
+                return ActionOutcome::Refused(refusal.reason);
+            }
+        };
+        tracing::info!("{action:?}: transmitting {:?}", plan.transmits);
+        let transmitter = ops::DeviceTransmitter::new(self.device());
+        ops::execute(&transmitter, &self.observations, plan).await
+    }
+
     async fn snapshot(&self) -> AvState {
         // The lock is taken and released inside this expression and is never
         // held across an `.await`: the rx loop must not be able to make a

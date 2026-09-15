@@ -11,10 +11,14 @@
 # television. Until it is taken the ConditionPathExists= below keeps this unit
 # inert on every boot, which is exactly what "shipped but not enabled" means.
 #
-# As of this step the daemon is READ-ONLY: it opens the adapter, sets the
-# physical and logical addresses, reads the capabilities, and listens. It
-# TRANSMITS NOTHING on the CEC bus. The living-room bus carries an Apple TV and
-# a PS5 as well as the television and the AVR.
+# As of this step the daemon DOES transmit, but only when a client asks it to:
+# `wake`, `standby`, `input-claim`, `input-release` and `input-select` are the
+# whole set, and nothing here acts on a timer, on a session event or on its own
+# initiative. The living-room bus carries an Apple TV and a PS5 as well as the
+# television and the AVR, so two rules are enforced in code rather than by
+# convention: a <Standby> is always ADDRESSED and never broadcast (a broadcast
+# standby powers off every device on the bus), and `standby` requires positive
+# proof that this box holds the display before it transmits at all.
 Description=tv-shell v2 AV control (kernel CEC primary, IP recovery)
 
 # PartOf ONLY. Deliberately NOT BindsTo=tv-shell-gamescope.service, unlike

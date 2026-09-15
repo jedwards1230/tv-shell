@@ -6,20 +6,30 @@ The v2 AV-control daemon: HDMI-CEC over the **kernel** CEC API (`/dev/cecN`,
 2026-09-14, which made CEC the **primary** AV control backend and demoted the IP
 leg to the cold path and to recovery. This file is the crate's own map.
 
-> ## This step is READ-ONLY. **This daemon performs no CEC transmits.**
+> ## What this daemon puts on the bus, and when
 >
-> It opens the adapter, sets the physical and logical addresses, reads the
-> capability set, and runs a follower receive loop. That is all of it. The
-> living-room bus carries an Apple TV and a PS5 as well as the television and
-> the AVR, so a stray transmit is a real-world side effect on someone's evening
-> — which is why `kernel/device.rs` pins its call order by comment rather than
-> leaving it to chance (see "The one call that would transmit" below).
+> **Only when a client asks.** `wake`, `standby`, `input-claim`,
+> `input-release` and `input-select` are the whole transmit surface. Nothing
+> fires on a timer, on a session event, or on this daemon's own initiative, and
+> **starting it is still silent on the bus** — which is why `kernel/device.rs`
+> pins its open sequence's call order by comment rather than leaving it to
+> chance (see "The one call that would transmit" below).
 >
-> Power, input switching, volume, the health state machine and the IP recovery
-> leg are later steps of the plan for jedwards1230/tv-shell#504. Their verbs are
-> deliberately absent from the vocabulary rather than stubbed: an absent verb
-> answers `unknown`, which is a client learning the truth. A stub answering `ok`
-> would tell a caller the television had been woken when nothing happened.
+> The living-room bus carries an Apple TV and a PS5 as well as the television
+> and the AVR, so two rules are enforced by construction rather than by
+> convention:
+>
+> - **A `<Standby>` is always ADDRESSED, never broadcast.** A broadcast standby
+>   (`0x0F`) powers off every device on the bus. `action::StandbyTarget` has two
+>   variants and no broadcast, so the wrong constant is not spellable.
+> - **`standby` needs positive proof that this box holds the display**, and a
+>   refusal transmits *nothing at all*.
+>
+> Volume, the health state machine and the IP recovery leg are later steps of
+> the plan for jedwards1230/tv-shell#504. Their verbs are deliberately absent
+> from the vocabulary rather than stubbed: an absent verb answers `unknown`,
+> which is a client learning the truth. A stub answering `ok` would tell a
+> caller the volume had changed when nothing happened.
 
 ## Modules
 
@@ -30,7 +40,9 @@ leg to the cold path and to recovery. This file is the crate's own map.
 | `ipc` | The Unix-socket server — `LinesCodec`, one task per connection, socket bound 0600 under a tightened umask. Backend work sits behind the `AvBackend` trait so the whole request/reply surface is testable with no adapter |
 | `backend` | The seam. `linux-cec` types stop here and never reach `ipc` — which is what makes a swap to `cec_linux` or to hand-rolled ioctls a contained change |
 | `state` | The published snapshot: `PhysAddr`, the `Observation` tri-state, and the pure fold from a bus observation to what `av-state` reports. **The rule that `unknown` is never rendered as healthy and never as `false`** lives here |
-| `kernel` | `/dev/cecN`: open, configure, read the topology back, and listen. **Linux-only** |
+| `ownership` | **PURE.** The tri-state display-ownership model and the two transmit gates, ported from `daemon/src/display_owner.rs` and `daemon/src/cec.rs` |
+| `action` | **PURE.** A verb plus the two observed addresses becomes either a plan of messages or a refusal that transmits nothing. Every gate runs before any message is built |
+| `kernel` | `/dev/cecN`: open, configure, read the topology back, listen, and transmit a plan. **Linux-only**. `kernel/ops.rs` holds the pure `CecTx` → `linux-cec` `Message` table, so CI covers the whole message set with no adapter |
 | `notify` | `sd_notify` — `READY=1` for the unit's `Type=notify`, `WATCHDOG=1` for its `WatchdogSec=`. Transport only; it decides nothing |
 
 `../core/units/tv-shell-v2-cec.service` is this daemon's unit. It lives beside
@@ -55,9 +67,29 @@ is right for both, so this daemon publishes the tri-state and each consumer pick
 its own safe side. That reasoning is ported deliberately; it is the best thing in
 the v1 CEC code.
 
-The **whole** `av-state` shape ships from this first step, with honest `null`s
-for what this step cannot observe, rather than a smaller payload that changes
-shape in step 5.
+The **whole** `av-state` shape shipped from the first step, with honest `null`s
+for what it could not observe. `activeSource`, `weAreSource`, `displayOwnership`
+and the power fields are genuinely observable now; `volume` and `muted` stay
+`null` until step 5.
+
+### The gates: positive proof one way, proof-of-harm the other
+
+Two predicates, deliberately asymmetric, ported from `daemon/src/cec.rs`:
+
+- **`owns_display`** (the standby gate) is true only when the last observed
+  claim was **ours**. "Never seen a claim", "someone else claimed it" and "our
+  own address is undeterminable" all yield false. Suspending this box must not
+  be able to power off a television someone is watching on another input, and
+  that needs proof, not the absence of counter-evidence.
+- **`may_claim_active_source`** (the wake/claim gate) skips only on **positive
+  proof that a different real device holds the screen**. Requiring
+  `owner == ours` would make the claim a permanent no-op — if we already owned
+  the display there would be nothing to claim.
+
+It is not enough to derive the second from the tri-state. A real *other* owner
+must still win when our own address is unknown, and `classify` calls that case
+`unknown`, which would permit the claim. The mutation table below has a row for
+exactly that, because it is the one difference a plausible refactor erases.
 
 ### Every field is "what was observed and when", never an inferred verdict
 
@@ -202,21 +234,66 @@ bound `0600`.
 
 ## IPC
 
-| Verb | Reply |
-|---|---|
-| `ping` | `ok` |
-| `av-state` | one compact JSON document (below) |
+**This is the reference for the v2 AV verbs.** `docs/IPC_PROTOCOL.md` documents
+v1's `tv-shell-input.sock` and its `cec-*` verbs, which this daemon does not
+speak and which do not speak this one's; §11 keeps the two sockets, grammars and
+config files separate on purpose, so folding v2's verbs into that document would
+suggest a shared surface that does not exist.
 
-Anything else is `unknown`. Both verbs are bare reads, so nothing may follow
-them: `av-stateX` and `av-state 1` are different words and answer `unknown`.
+| Verb | Reply | Messages |
+|---|---|---|
+| `ping` | `ok` | — |
+| `av-state` | one compact JSON document (below) | — |
+| `wake` | `ok` / `refused:` / `error:` | `<Image View On>` → TV, then `<Active Source>` broadcast, then a `<Give Device Power Status>` read-back |
+| `standby` | `ok` / `refused:` / `error:` | `<Standby>` → TV, then → Audio System. **Never broadcast.** Gated on `owns_display` |
+| `input-claim` | `ok` / `refused:` / `error:` | `<Active Source>` broadcast |
+| `input-release` | `ok` / `error:` | `<Inactive Source>` → TV |
+| `input-select <phys-addr>` | `ok` / `error:usage:` / `error:` | `<Set Stream Path>` broadcast |
+
+Anything else is `unknown`. Every verb but `input-select` is a bare read or bare
+action, so nothing may follow it: `av-stateX`, `av-state 1` and `standby now`
+are all `unknown`. `input-select` takes exactly one `a.b.c.d` physical address;
+a missing, malformed or extra body is `error:usage: …`, **never a silent
+default** — a `<Set Stream Path>` naming a port that does not exist fails
+silently on the bus, so a body this daemon cannot parse has to be refused where
+the client still learns about it.
+
+### `refused:` — the one addition to the reply grammar
+
+`refused:<why>` means **the daemon deliberately did not act, nothing is broken,
+and zero messages reached the bus.** It is not `ok` and it is not `error:`,
+because neither is true and both mislead:
+
+- v1 replied `ok` to a skipped transmit, on the reasoning that a skip fails at
+  nothing. That makes "we deliberately declined to power off your television"
+  read exactly like "we powered off your television", and no later observation
+  separates them — on a shared bus the set may well go off for someone else's
+  reason.
+- `error:` would say a fault occurred and send an operator after a wedged
+  adapter. That is the `cec-health` failure shape this design exists to remove,
+  one layer down.
+
+The zero-transmit half is not a convention: every gate in `action.rs` runs
+before any message is built, and a test asserts over the whole action set that a
+refusal carries no plan.
 
 ```json
 {"backend":"cec","device":"/dev/cec0","physAddr":"2.5.0.0",
  "physAddrConfigured":"2.5.0.0","logAddrs":["playback-device1"],
  "capabilities":["PHYS_ADDR","LOG_ADDRS","TRANSMIT"],"monitorPin":false,
- "tvPower":null,"avrPower":null,"activeSource":null,"weAreSource":null,
- "volume":null,"muted":null,"observedAt":null,"lostMessages":0}
+ "tvPower":"on","avrPower":null,"activeSource":"2.5.0.0","weAreSource":true,
+ "displayOwnership":{"state":"owned-by-us","owner":"2.5.0.0","ours":"2.5.0.0",
+                     "changedAt":1757800000000,"everObserved":true},
+ "volume":null,"muted":null,"observedAt":1757800000000,"lostMessages":0}
 ```
+
+`displayOwnership` is published **beside** `weAreSource`, not instead of it, and
+it is the field a consumer whose fail-safe direction is the opposite one needs
+(see below). `state` is `owned-by-us` / `owned-by-other` / `unknown`;
+`everObserved` distinguishes "we are listening and this bus never announces
+ownership" from "we are not listening"; `changedAt` is how long the current
+owner has held the display, **not** a staleness measure — CEC ownership is
+edge-driven and a claim heard six hours ago is still the current truth.
 
 **Callers must bound their connect and read timeouts.** The unit's isolation from
 the session is topological — the only edge is a `Wants=` from the session target,
@@ -256,6 +333,31 @@ These four were checked that way on 2026-09-14:
 | `unknown` serializes as `null`, never `false`/`0` (`state::Observation`) | `serialize_none()` → `serialize_bool(false)` | 4 tests across `state` and `ipc` |
 | `weAreSource` is `unknown` until the bus says who it is | the fallthrough arm → `Observation::Known(false)` | 6 tests across `state` and `ipc` |
 | A `<Report Audio Status>` is only the AVR's if the AVR sent it | drop the initiator gate in `kernel::follower` | `a_third_party_report_is_not_attributed_to_the_tv_or_the_avr` |
+| `owns_display` needs positive proof | invert it (`!matches!(…, OwnedByUs)`) | **8 tests** across `ownership`, `action`, `ipc` and `kernel::ops` |
+| The claim gate is asymmetric with the standby gate | make it `owns_display(owner, ours)` | **10 tests** across `ownership`, `action`, `ipc` and `kernel::ops` |
+| …and asymmetric with the tri-state too | derive it as `classify(..) != OwnedByOther` | `may_claim_active_source_yields_only_to_a_known_other_owner` — the one row where our own address is unknown |
+| `standby` is gated on ownership | delete the `owns_display` check from `action::plan` | `standby_refuses_and_transmits_nothing_without_positive_proof` + the two `ipc` refusal tests |
+| A `<Standby>` is never broadcast | return `LogicalAddress::Broadcast` from `standby_destination` | `a_standby_is_always_addressed_and_never_broadcast` + 2 more in `kernel::ops` |
+| A malformed `input-select` body is a usage error | fall back to a default address | `a_malformed_input_select_body_is_a_usage_error` + the `ipc` twin |
+| The ownership timestamp moves only on a real change | drop the equality guard in `store_active_source` | `the_ownership_timestamp_moves_only_on_a_real_change` |
+| `input-release` sends `<Inactive Source>`, not `<Active Source>` | swap the message (what `set_active_source(None)` actually does — see below) | `every_intended_transmit_maps_to_its_message_and_destination` |
+
+**Every ownership state the gates are tested against is reachable from the real
+receive path**, and `the_receive_path_can_produce_every_ownership_verdict` walks
+that chain once — `linux-cec` `Message` → `observation_for` → the fold → the
+verdict — rather than poking a field. That includes `f.f.f.f`: the payload of an
+`<Active Source>` is folded verbatim, so the unaddressable case is something the
+bus can produce and not only something a unit test can construct.
+
+### One correction to the plan, found by reading the crate
+
+The plan for jedwards1230/tv-shell#504 lists `set_active_source(None)` as the
+release primitive ("→ `InactiveSource`"). **It is not.** `linux-cec` 0.2.1
+`device.rs:855` falls back to the device's *own* physical address and sends
+`<Active Source>`, i.e. it **claims** the display. Using it for `input-release`
+would have done the exact opposite of the verb. `kernel/ops.rs` constructs
+`Message::InactiveSource` explicitly, addressed to the TV as the specification
+directs, and the mutation row above pins it.
 
 A fifth lives in `core/`: hard-coding `/opt/tv-shell/bin/tv-shell-cec` into the
 unit's `ExecStart` fails `the_committed_units_name_no_absolute_install_path`.
@@ -291,11 +393,6 @@ look like "we measured and it was fine" (jedwards1230/tv-shell#469).
 
 Each of these lands with the module that reads it, never ahead of it:
 
-- **Power and input switching** — `wake`, `standby`, `input-claim`,
-  `input-release`, `input-select`, and the pure `owns_display` /
-  `may_claim_active_source` gates ported from `daemon/src/cec.rs`, which must
-  precede them. `standby` is gated on positive proof of ownership: a broadcast
-  standby powers off every device on a shared bus.
 - **Volume** — `volume up|down|mute|unmute`, `volume-state`, and system-audio-mode
   handling. A receiver ignores CEC from a non-selected input, so this must report
   a transmit that merely left the adapter honestly rather than as success.

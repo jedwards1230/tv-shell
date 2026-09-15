@@ -22,7 +22,7 @@ use linux_cec::device::{AsyncDevice, MessageData, PollResult, PollTimeout};
 use linux_cec::message::Message;
 use linux_cec::LogicalAddress;
 
-use crate::state::{now_ms, AvDevice, BusObservation, Observations, PhysAddr, PowerState};
+use crate::state::{now_ms, AvDevice, BusObservation, Observations, PhysAddr};
 
 /// How long one poll waits before coming back empty.
 ///
@@ -56,7 +56,7 @@ pub async fn run(device: Arc<AsyncDevice>, observations: Arc<Mutex<Observations>
         }
     };
 
-    tracing::info!("receive loop running (listening only — this daemon transmits nothing)");
+    tracing::info!("receive loop running (this loop listens and folds; it transmits nothing)");
     loop {
         let status = match poller.poll(timeout).await {
             Ok(s) => s,
@@ -133,7 +133,7 @@ fn observation_for(message: &Message, initiator: LogicalAddress) -> Option<BusOb
         )),
         Message::ReportPowerStatus { status } => Some(BusObservation::PowerStatus {
             device: av_device(initiator),
-            state: power_state(*status)?,
+            state: super::ops::power_state(*status)?,
         }),
         Message::ReportAudioStatus { status } => {
             // Only the AVR's audio status is the AVR's audio status. On a shared
@@ -165,26 +165,10 @@ fn av_device(address: LogicalAddress) -> AvDevice {
     }
 }
 
-/// The four power states CEC defines.
-///
-/// `PowerStatus` is `#[non_exhaustive]`, and a status this daemon does not
-/// recognise yields `None` rather than being folded into the nearest of the
-/// four. Reporting an unrecognised value as `on` or `standby` would be exactly
-/// the confident-and-wrong answer this crate publishes `unknown` to avoid.
-fn power_state(status: linux_cec::operand::PowerStatus) -> Option<PowerState> {
-    use linux_cec::operand::PowerStatus;
-    Some(match status {
-        PowerStatus::On => PowerState::On,
-        PowerStatus::Standby => PowerState::Standby,
-        PowerStatus::ToOn => PowerState::ToOn,
-        PowerStatus::ToStandby => PowerState::ToStandby,
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::PowerState;
     use linux_cec::operand::{AudioStatus, PowerStatus};
     use linux_cec::PhysicalAddress;
 
@@ -292,6 +276,78 @@ mod tests {
             fold(&PollResult::LostMessages(5)),
             Some(BusObservation::LostMessages(5))
         );
+    }
+
+    /// **Reachability: every ownership state the gates are tested against is
+    /// produced by THIS path, not poked into the store.**
+    ///
+    /// A test that asserts an unreachable state defends nothing. So this walks
+    /// the whole chain once — a `linux-cec` `Message` off the wire, through
+    /// `observation_for`, through the fold, to the verdict the transmit gates
+    /// read — for each of the three verdicts and for the malformed broadcast
+    /// that makes `f.f.f.f` a real input rather than a hypothetical one.
+    #[test]
+    fn the_receive_path_can_produce_every_ownership_verdict() {
+        use crate::ownership::Ownership;
+        use crate::state::Observation;
+
+        let ours = Observation::Known("2.5.0.0".parse::<PhysAddr>().unwrap());
+        let mut obs = Observations::default();
+
+        // 1. Nothing heard yet.
+        assert_eq!(obs.ownership(ours).state, Ownership::Unknown);
+
+        // 2. A real broadcast naming somebody else.
+        let heard = observation_for(
+            &Message::ActiveSource {
+                address: phys("1.0.0.0"),
+            },
+            LogicalAddress::PlaybackDevice2,
+        )
+        .expect("an <Active Source> is an observation");
+        obs.apply(heard, 10);
+        assert_eq!(obs.ownership(ours).state, Ownership::OwnedByOther);
+
+        // 3. A real broadcast naming us.
+        let heard = observation_for(
+            &Message::ActiveSource {
+                address: phys("2.5.0.0"),
+            },
+            LogicalAddress::PlaybackDevice1,
+        )
+        .expect("an <Active Source> is an observation");
+        obs.apply(heard, 20);
+        assert_eq!(obs.ownership(ours).state, Ownership::OwnedByUs);
+
+        // 4. `f.f.f.f` really can arrive: the payload is folded verbatim rather
+        //    than being filtered, so `ownership::is_addressable`'s false branch
+        //    is reachable from the bus and not only from a unit test.
+        let heard = observation_for(
+            &Message::ActiveSource {
+                address: phys("f.f.f.f"),
+            },
+            LogicalAddress::PlaybackDevice2,
+        )
+        .expect("a malformed <Active Source> is still an observation");
+        assert_eq!(
+            heard,
+            BusObservation::ActiveSource(PhysAddr::INVALID),
+            "the payload must reach the store unfiltered"
+        );
+        obs.apply(heard, 30);
+        assert_eq!(obs.ownership(ours).state, Ownership::Unknown);
+
+        // 5. And a release returns it to unknown.
+        let heard = observation_for(
+            &Message::InactiveSource {
+                address: phys("1.0.0.0"),
+            },
+            LogicalAddress::PlaybackDevice2,
+        )
+        .expect("an <Inactive Source> is an observation");
+        obs.apply(heard, 40);
+        assert_eq!(obs.ownership(ours).state, Ownership::Unknown);
+        assert!(obs.ownership(ours).ever_observed);
     }
 
     /// The poll timeout is bounded, so a stop does not wait on an idle bus.
