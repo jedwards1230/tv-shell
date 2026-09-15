@@ -61,6 +61,7 @@ jobs:
               - 'panel/**'
               - 'protocol/**'
               - 'core/**'
+              - 'cec/**'
               # The v2 installer and its reference session entry are inputs to
               # the core crate's install tests (they run install-v2.sh and read
               # config/tv-shell-v2.desktop), and the installer is shellchecked by

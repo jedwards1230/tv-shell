@@ -6,7 +6,7 @@ tv-shell is a Quickshell (QML) + Rust couch-gaming shell for Moonlight streaming
 
 - **Rust** (stable toolchain — see `host/`, `daemon/`, and `panel/` for minimum versions; daemon requires ≥1.75 MSRV, host and panel crates need Cargo ≥1.85)
 - **Qt 6.8** (for `qmlformat` and `qmltestrunner`)
-- **Linux** with evdev/uinput access (daemon only; `host/` and `protocol/` build on Linux, macOS, and Windows; `panel/` builds on Linux/macOS — it dials the daemon's Unix-socket IPC unconditionally, so it does not build on Windows; `core/` is Linux-only — it is an X11 client and binds a Unix socket)
+- **Linux** with evdev/uinput access (daemon only; `host/` and `protocol/` build on Linux, macOS, and Windows; `panel/` builds on Linux/macOS — it dials the daemon's Unix-socket IPC unconditionally, so it does not build on Windows; `core/` is Linux-only — it is an X11 client and binds a Unix socket; `cec/` is Linux-only too — its backend is the kernel CEC API, and it refuses to start elsewhere rather than serving an empty snapshot)
 
 ## Build, test & lint
 
@@ -111,6 +111,35 @@ script must stay lint-clean and executable:
 ```bash
 shellcheck -x core/units/*.sh scripts/install-v2.sh
 ```
+
+### AV control (`cec/` — v2 kernel HDMI-CEC daemon, Linux)
+
+```bash
+cargo fmt --check -p tv-shell-cec
+cargo clippy -p tv-shell-cec --all-targets -- -D warnings
+cargo build --release -p tv-shell-cec
+cargo test -p tv-shell-cec
+```
+
+**No device is needed, and none is faked into existence.** Every decision lives
+in a pure module beside the I/O — `cec.toml` parsing, the wire grammar, the
+physical-address form, the bus-observation fold, and the rule that `unknown` is
+never rendered as healthy or as `false` — and the IPC surface runs end-to-end
+against a stand-in backend over a real Unix socket. So the four commands above
+need no `/dev/cecN`, which is just as well: the deploy host does not have one
+(`pulse8-cec` is blocked by a modprobe drop-in and `pulse8-cec.service` is
+masked, both deliberately, since the 2026-08-07 adapter-contention incident).
+
+There is deliberately **no `#[ignore]`-gated device lane yet**. An `#[ignore]`d
+test wired into no job defends nothing (jedwards1230/tv-shell#469), and
+`continue-on-error` reports green on a *skip* as readily as on a failure — so
+the device-backed lane lands with something that needs a device to assert,
+rather than ahead of it.
+
+The crate builds no C and links no system library: `linux-cec-sys` ships
+pre-generated bindings, so there is no bindgen and no libclang, and the `cec` CI
+job needs no apt step. That is a different arrangement from v1's `--features
+cec` leg, which static-links a prebuilt libcec — see [cec/README.md](cec/README.md).
 
 ### v2 shell (`shell-v2/` — Qt Quick + CMake, Linux)
 

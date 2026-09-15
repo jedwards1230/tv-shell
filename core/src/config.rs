@@ -1822,8 +1822,17 @@ ENABLE_GAMESCOPE_WSI = "1"
                 );
             }
         }
-        // And the two that need a prefix say so with the token, so the installer
-        // has something to substitute and a hand-copied unit fails loudly.
+        // And the three that need a prefix say so with the token, so the
+        // installer has something to substitute and a hand-copied unit fails
+        // loudly.
+        //
+        // tv-shell-v2-cec.service is asserted here but is NOT in the installer's
+        // UNITS=() array yet: it is shipped disabled-by-condition
+        // (ConditionPathExists=/dev/cec0) while the CEC daemon is built out, so
+        // the committed file must already be token-correct even though nothing
+        // installs it. That is precisely the case this assertion exists for — a
+        // unit nobody installs is a unit nobody would notice had a hardcoded
+        // path.
         for (unit, needle) in [
             (
                 "tv-shell-core.service",
@@ -1832,6 +1841,10 @@ ENABLE_GAMESCOPE_WSI = "1"
             (
                 "tv-shell-gamescope.service",
                 "@TV_SHELL_V2_PREFIX@/bin/tv-shell-gamescope-child.sh",
+            ),
+            (
+                "tv-shell-v2-cec.service",
+                "ExecStart=@TV_SHELL_V2_PREFIX@/bin/tv-shell-cec",
             ),
         ] {
             let text = std::fs::read_to_string(dir.join(unit)).unwrap();
@@ -1843,7 +1856,17 @@ ENABLE_GAMESCOPE_WSI = "1"
     fn the_installed_units_carry_no_token_and_no_v1_path() {
         let s = stage_install("units");
         let units = installed_units(&s);
-        assert_eq!(units.len(), 3, "expected three v2 units, got {units:?}");
+        // THREE INSTALLED, not three committed. `core/units/` also holds
+        // tv-shell-v2-cec.service, which is deliberately absent from
+        // install-v2.sh's UNITS=() while the CEC daemon is built out — shipped,
+        // but not installed and not enabled. If that unit is added to UNITS=()
+        // this number goes to four; if this number is "fixed" without adding it
+        // there, the assertion has stopped meaning anything.
+        assert_eq!(
+            units.len(),
+            3,
+            "expected three INSTALLED v2 units, got {units:?}"
+        );
         for (name, text) in &units {
             assert!(
                 !text.contains(PREFIX_TOKEN),
