@@ -226,7 +226,17 @@ pub enum BusObservation {
     /// `<Report Power Status>` from a device we track.
     PowerStatus { device: AvDevice, state: PowerState },
     /// `<Report Audio Status>` — the AVR's volume and mute.
-    AudioStatus { volume: u8, muted: bool },
+    ///
+    /// **The volume is itself an [`Observation`]**, because the wire has a value
+    /// for "I do not know": CEC's 7-bit audio-volume field reserves `0x7F` for
+    /// *"audio volume status unknown"* and defines only `0..=100` as levels. An
+    /// AVR that has dropped out of system-audio mode really does send it. The
+    /// mute flag is one bit and always means something, so it is a plain
+    /// `bool`. See [`crate::volume::level_observation`].
+    AudioStatus {
+        volume: Observation<u8>,
+        muted: bool,
+    },
     /// The kernel says the adapter's configuration changed: it gained or lost
     /// its physical or logical address. Everything cached about the topology is
     /// stale from here.
@@ -299,8 +309,12 @@ impl Observations {
                 AvDevice::AudioSystem => self.avr_power = Observation::Known(state),
                 AvDevice::Other => {}
             },
+            // A report the AVR could not fill in returns the published level to
+            // `unknown` rather than leaving the previous number in place: the
+            // AVR has just said it does not know its own volume, and carrying a
+            // stale value forward would publish it as current.
             BusObservation::AudioStatus { volume, muted } => {
-                self.volume = Observation::Known(volume);
+                self.volume = volume;
                 self.muted = Observation::Known(muted);
             }
             // The adapter was reconfigured under us. Everything observed about
@@ -381,6 +395,24 @@ impl Observations {
     #[must_use]
     pub const fn lost_messages(&self) -> u64 {
         self.lost_messages
+    }
+
+    /// The last audio level the AVR reported, for `volume-state`'s fallback.
+    #[must_use]
+    pub const fn volume(&self) -> Observation<u8> {
+        self.volume
+    }
+
+    /// The last mute flag the AVR reported.
+    #[must_use]
+    pub const fn muted(&self) -> Observation<bool> {
+        self.muted
+    }
+
+    /// Unix ms of the most recent observation of any kind, or `None`.
+    #[must_use]
+    pub const fn observed_at(&self) -> Option<u64> {
+        self.observed_at
     }
 
     /// Whether `ours` currently holds the display.
@@ -673,7 +705,7 @@ mod tests {
         );
         obs.apply(
             BusObservation::AudioStatus {
-                volume: 42,
+                volume: Observation::Known(42),
                 muted: true,
             },
             12,
@@ -724,7 +756,7 @@ mod tests {
         );
         obs.apply(
             BusObservation::AudioStatus {
-                volume: 0,
+                volume: Observation::Known(0),
                 muted: false,
             },
             4,
@@ -741,6 +773,50 @@ mod tests {
         // of the tri-state.
         assert_eq!(json["volume"], serde_json::json!(0));
         assert_eq!(json["muted"], serde_json::json!(false));
+    }
+
+    /// **The rule: an AVR that reports it does not know its own volume returns
+    /// the published level to `unknown` — it does not leave the last number in
+    /// place and it does not become `0`.**
+    ///
+    /// Reachable from the real path: CEC's 7-bit audio-volume field reserves
+    /// `0x7F` for "audio volume status unknown", which a receiver sends when it
+    /// has dropped out of system-audio mode. `kernel::follower` folds it through
+    /// `volume::level_observation`, so this is the value the wire produces, not
+    /// one a test invented.
+    ///
+    /// Mutation-check (run 2026-09-14): make the `AudioStatus` arm keep the old
+    /// level (`if let Observation::Known(v) = volume { self.volume = ... }`) or
+    /// coerce it to `Known(0)` and this fails.
+    #[test]
+    fn an_avr_that_does_not_know_its_volume_returns_the_level_to_unknown() {
+        let mut obs = Observations::default();
+        obs.apply(
+            BusObservation::AudioStatus {
+                volume: Observation::Known(37),
+                muted: false,
+            },
+            1,
+        );
+        assert_eq!(obs.volume(), Observation::Known(37));
+
+        obs.apply(
+            BusObservation::AudioStatus {
+                volume: Observation::Unknown,
+                muted: true,
+            },
+            2,
+        );
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&AvState::assemble(&topology(), &obs)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["volume"], serde_json::Value::Null);
+        assert_ne!(json["volume"], serde_json::json!(0));
+        assert_ne!(json["volume"], serde_json::json!(37));
+        // The mute flag is one bit and always means something, so it stays
+        // known even when the level does not.
+        assert_eq!(json["muted"], serde_json::json!(true));
     }
 
     /// A device we do not track cannot move our fields.

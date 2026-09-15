@@ -42,19 +42,23 @@
 //! is built.
 
 use crate::state::PhysAddr;
+use crate::volume::VolumeAction;
 
 /// Maximum accepted line length, matching v1 and the core.
 pub const MAX_LINE: usize = 4096;
 
-/// Usage line for the one verb that takes a body.
+/// Usage line for `input-select`.
 pub const INPUT_SELECT_USAGE: &str = "input-select <phys-addr>  (e.g. input-select 1.0.0.0)";
+
+/// Usage line for `volume`.
+pub const VOLUME_USAGE: &str = "volume up|down|mute|unmute";
 
 /// One parsed request.
 ///
-/// The `volume` family, `av-health`, `backend` and `backend-pin` are steps 5-7
-/// of the plan for jedwards1230/tv-shell#504 and are deliberately absent — an
-/// unimplemented verb answers `unknown`, which is a client learning the truth
-/// rather than a stub answering `ok`.
+/// `av-health`, `backend` and `backend-pin` are steps 6-7 of the plan for
+/// jedwards1230/tv-shell#504 and are deliberately absent — an unimplemented verb
+/// answers `unknown`, which is a client learning the truth rather than a stub
+/// answering `ok`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// Liveness. Replies `ok`.
@@ -81,6 +85,18 @@ pub enum Command {
     /// "ours" or to any other default — a `<Set Stream Path>` to a port that
     /// does not exist fails *silently* on the bus.
     InputSelectUsage,
+    /// Step the AVR's volume, or set its mute flag.
+    Volume(VolumeAction),
+    /// The AVR's level and mute flag, with the source of each named.
+    VolumeState,
+    /// `volume` with a missing or unknown argument.
+    ///
+    /// **Distinct from [`Command::Unknown`], and never a silent default.** A
+    /// bare `volume`, or a `volume louder`, is a client that knows the verb and
+    /// got the call wrong. Defaulting it to `up` — or to anything — would make a
+    /// typo reply `ok` for a change the client never asked for, which is exactly
+    /// the confusion this design removes.
+    VolumeUsage,
     /// Not a verb this daemon has.
     Unknown,
 }
@@ -110,6 +126,14 @@ impl Command {
                 .parse::<PhysAddr>()
                 .map_or(Command::InputSelectUsage, Command::InputSelect),
             ("input-select", _) => Command::InputSelectUsage,
+            ("volume", [word]) => {
+                VolumeAction::parse(word).map_or(Command::VolumeUsage, Command::Volume)
+            }
+            // Covers both a bare `volume` and `volume up down`: neither is a
+            // request this daemon can act on, and neither may be coerced into
+            // one.
+            ("volume", _) => Command::VolumeUsage,
+            ("volume-state", []) => Command::VolumeState,
             _ => Command::Unknown,
         }
     }
@@ -228,6 +252,59 @@ mod tests {
     }
 
     #[test]
+    fn the_volume_family_parses() {
+        assert_eq!(
+            Command::parse("volume up"),
+            Command::Volume(VolumeAction::Up)
+        );
+        assert_eq!(
+            Command::parse("volume down"),
+            Command::Volume(VolumeAction::Down)
+        );
+        assert_eq!(
+            Command::parse("volume mute"),
+            Command::Volume(VolumeAction::Mute)
+        );
+        assert_eq!(
+            Command::parse("  volume   unmute  "),
+            Command::Volume(VolumeAction::Unmute)
+        );
+        assert_eq!(Command::parse("volume-state"), Command::VolumeState);
+    }
+
+    /// **The rule: `volume` with a missing or unknown argument is a USAGE error
+    /// — never a silent default, and never `unknown`.**
+    ///
+    /// A typo that read as `ok` would tell a caller the volume had changed when
+    /// nothing had; answering `unknown` would send a client looking for a verb
+    /// that exists.
+    ///
+    /// Mutation-check (run 2026-09-14): make the bare-`volume` arm fall back to
+    /// `Command::Volume(VolumeAction::Up)` and every row here fails, along with
+    /// the `ipc` twin.
+    #[test]
+    fn a_missing_or_unknown_volume_argument_is_a_usage_error() {
+        for line in [
+            "volume",
+            "volume ",
+            "  volume  ",
+            "volume louder",
+            "volume UP",
+            "volume 1",
+            "volume +",
+            "volume up down",
+            "volume up 1",
+            "volume mute unmute",
+        ] {
+            assert_eq!(
+                Command::parse(line),
+                Command::VolumeUsage,
+                "{line:?} must be a usage error"
+            );
+        }
+    }
+
+    #[test]
     fn surrounding_whitespace_is_trimmed() {
         assert_eq!(Command::parse("  ping  "), Command::Ping);
         assert_eq!(Command::parse("\tav-state\n"), Command::AvState);
@@ -263,6 +340,12 @@ mod tests {
             "input-release 1.0.0.0",
             "input-selectX 1.0.0.0",
             "input-selects 1.0.0.0",
+            "volumeX up",
+            "volumes up",
+            "volume-stateX",
+            "volume-states",
+            "volume-state 1",
+            "volumestate",
         ] {
             assert_eq!(
                 Command::parse(line),
@@ -281,15 +364,9 @@ mod tests {
         // write wearing a read's name.
         assert_eq!(Command::parse("cec-health"), Command::Unknown);
         assert_eq!(Command::parse("cec-scan"), Command::Unknown);
-        // And the verbs that land in steps 5-7. `unknown` is the honest answer
+        // And the verbs that land in steps 6-7. `unknown` is the honest answer
         // until they do something.
-        for later in [
-            "volume up",
-            "volume-state",
-            "av-health",
-            "backend",
-            "backend-pin cec",
-        ] {
+        for later in ["av-health", "backend", "backend-pin cec"] {
             assert_eq!(Command::parse(later), Command::Unknown, "{later}");
         }
     }

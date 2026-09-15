@@ -121,6 +121,12 @@ pub async fn dispatch(backend: &Arc<dyn AvBackend>, cmd: Command) -> String {
         Command::InputRelease => act(backend, Action::InputRelease).await,
         Command::InputSelect(addr) => act(backend, Action::InputSelect(addr)).await,
         Command::InputSelectUsage => protocol::resp_usage(protocol::INPUT_SELECT_USAGE),
+        Command::Volume(action) => outcome(backend.volume(action).await),
+        // Deliberately a bus read rather than a cached one — see
+        // [`AvBackend::volume_state`]. `av-state` is the verb that must answer
+        // when the device is the thing being diagnosed.
+        Command::VolumeState => protocol::resp_json(&backend.volume_state().await),
+        Command::VolumeUsage => protocol::resp_usage(protocol::VOLUME_USAGE),
         Command::Unknown => protocol::resp_unknown(),
     }
 }
@@ -131,7 +137,12 @@ pub async fn dispatch(backend: &Arc<dyn AvBackend>, cmd: Command) -> String {
 /// and it is the confusion this design removes; collapsing it into `error:`
 /// would report a fault where there is none.
 async fn act(backend: &Arc<dyn AvBackend>, action: Action) -> String {
-    match backend.act(action).await {
+    outcome(backend.act(action).await)
+}
+
+/// Three outcomes, three tokens. The only place the mapping is written.
+fn outcome(outcome: ActionOutcome) -> String {
+    match outcome {
         ActionOutcome::Done => protocol::resp_ok(),
         ActionOutcome::Refused(why) => protocol::resp_refused(&why),
         ActionOutcome::Failed(why) => protocol::resp_error(&why),
@@ -142,8 +153,9 @@ async fn act(backend: &Arc<dyn AvBackend>, action: Action) -> String {
 mod tests {
     use super::*;
     use crate::action::{CecTx, StandbyTarget};
-    use crate::backend::testing::FakeBackend;
+    use crate::backend::testing::{FakeAvr, FakeBackend};
     use crate::state::{BusObservation, PhysAddr, PowerState};
+    use crate::volume::{VolumeKey, VolumeTx};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn fake() -> Arc<FakeBackend> {
@@ -206,10 +218,10 @@ mod tests {
         let b: Arc<dyn AvBackend> = fake();
         assert_eq!(reply(&b, "frobnicate").await, "unknown");
         assert_eq!(reply(&b, "av-stateX").await, "unknown");
-        // The verbs steps 5-7 add. Until they transmit something, `unknown` is
-        // the honest answer — a stub `ok` would tell a caller the volume had
-        // changed when nothing happened.
-        for later in ["volume up", "volume-state", "av-health", "backend"] {
+        // The verbs steps 6-7 add. Until they answer something, `unknown` is
+        // the honest answer — a stub `ok` would tell a caller the daemon had
+        // judged a health it has not measured.
+        for later in ["av-health", "backend", "backend-pin cec"] {
             assert_eq!(reply(&b, later).await, "unknown", "{later}");
         }
     }
@@ -416,6 +428,221 @@ mod tests {
         assert_ne!(r, "ok");
     }
 
+    // -----------------------------------------------------------------------
+    // Volume, end to end over the seam.
+    // -----------------------------------------------------------------------
+
+    /// A volume step that the AVR acts on answers `ok`, and the level it
+    /// reported back reaches `av-state`.
+    ///
+    /// `volume` and `muted` were `null` in every step before this one; this is
+    /// the reachability check that the real path now populates them.
+    #[tokio::test]
+    async fn a_volume_step_the_avr_acts_on_is_ok_and_reaches_av_state() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        assert_eq!(reply(&b, "volume up").await, "ok");
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["volume"], serde_json::json!(41));
+        assert_eq!(json["muted"], serde_json::json!(false));
+
+        assert_eq!(reply(&b, "volume down").await, "ok");
+        assert_eq!(reply(&b, "volume down").await, "ok");
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["volume"], serde_json::json!(39));
+    }
+
+    /// **THE LOAD-BEARING NEGATIVE TEST OF THIS STEP, at the IPC surface: an
+    /// AVR whose selected input is not ours reports a FAILURE, never `ok`.**
+    ///
+    /// Every frame is accepted by the bus here — the AVR ACKs and ignores, which
+    /// is V2_DESIGN §8's constraint — so a daemon judging success from the
+    /// transmit would answer `ok` while the volume did not move. Asserted on the
+    /// reply AND on the transmits produced through the seam, so it is clear the
+    /// press really was sent and the failure is a judgement, not a refusal.
+    ///
+    /// Mutation-check (run 2026-09-14): make `volume::perform_level` return
+    /// `Done` without consulting `judge_level` and this fails, together with
+    /// `volume::an_avr_on_another_input_is_a_failure_and_never_an_ok`.
+    #[tokio::test]
+    async fn a_volume_step_an_avr_ignores_is_an_error_and_never_an_ok() {
+        let backend = fake();
+        backend.set_avr(FakeAvr {
+            acts: false,
+            ..FakeAvr::default()
+        });
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        let r = reply(&b, "volume up").await;
+        assert!(r.starts_with("error:"), "{r}");
+        assert!(r.contains("non-selected input"), "{r}");
+        assert_ne!(r, "ok");
+        assert!(!r.starts_with("refused:"));
+        assert!(
+            backend
+                .volume_transmits()
+                .contains(&VolumeTx::KeyPressAndRelease(VolumeKey::VolumeUp)),
+            "the press really was sent: {:?}",
+            backend.volume_transmits()
+        );
+    }
+
+    /// **The system-audio-mode step is not optional.**
+    ///
+    /// An AVR out of system-audio mode ignores every volume UI command, so the
+    /// request goes out before the press — and the whole ordered sequence is
+    /// asserted, not just its presence.
+    ///
+    /// Mutation-check (run 2026-09-14): delete the `ensure_system_audio_mode`
+    /// call from `volume::execute` and this fails on the sequence comparison.
+    #[tokio::test]
+    async fn a_volume_action_requests_system_audio_mode_before_pressing_anything() {
+        let backend = fake();
+        backend.set_avr(FakeAvr {
+            system_audio_mode: false,
+            ..FakeAvr::default()
+        });
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        assert_eq!(reply(&b, "volume up").await, "ok");
+        assert_eq!(
+            backend.volume_transmits(),
+            vec![
+                VolumeTx::SystemAudioModeQuery,
+                VolumeTx::SystemAudioModeRequest("2.5.0.0".parse().unwrap()),
+                VolumeTx::AudioStatusQuery,
+                VolumeTx::KeyPressAndRelease(VolumeKey::VolumeUp),
+                VolumeTx::AudioStatusQuery,
+            ]
+        );
+    }
+
+    /// `mute` / `unmute` converge instead of toggling, and a call that finds the
+    /// state already correct transmits no key at all.
+    #[tokio::test]
+    async fn the_mute_verbs_converge_and_do_not_toggle() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        assert_eq!(reply(&b, "volume mute").await, "ok");
+        assert_eq!(reply(&b, "volume mute").await, "ok");
+        assert_eq!(
+            backend
+                .volume_transmits()
+                .iter()
+                .filter(|tx| matches!(tx, VolumeTx::KeyPressAndRelease(_)))
+                .count(),
+            1,
+            "the second `mute` must transmit no toggle: {:?}",
+            backend.volume_transmits()
+        );
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["muted"], serde_json::json!(true));
+
+        assert_eq!(reply(&b, "volume unmute").await, "ok");
+        let json: serde_json::Value = serde_json::from_str(&reply(&b, "av-state").await).unwrap();
+        assert_eq!(json["muted"], serde_json::json!(false));
+    }
+
+    /// `volume-state` names where its values came from, and says `null`
+    /// throughout when it knows nothing.
+    #[tokio::test]
+    async fn volume_state_reports_the_avr_and_names_its_source() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+
+        let json: serde_json::Value =
+            serde_json::from_str(&reply(&b, "volume-state").await).unwrap();
+        assert_eq!(json["level"], serde_json::json!(40));
+        assert_eq!(json["muted"], serde_json::json!(false));
+        assert_eq!(json["source"], serde_json::json!("avr-report"));
+
+        // A receiver that answers nothing, and a bus that has said nothing:
+        // every field is null, and NOT `0` / `false`.
+        let silent = fake();
+        silent.set_avr(FakeAvr {
+            report: None,
+            ..FakeAvr::default()
+        });
+        let b: Arc<dyn AvBackend> = silent;
+        let json: serde_json::Value =
+            serde_json::from_str(&reply(&b, "volume-state").await).unwrap();
+        for field in ["level", "muted", "source", "observedAt"] {
+            assert_eq!(json[field], serde_json::Value::Null, "{field}: {json}");
+            assert_ne!(json[field], serde_json::json!(0), "{field}");
+            assert_ne!(json[field], serde_json::json!(false), "{field}");
+        }
+    }
+
+    /// And the fallback: a silent AVR, but something heard earlier on the bus.
+    ///
+    /// Reached the real way — a `<Report Audio Status>` folded by the receive
+    /// path — so the `observed` source is a state the daemon can actually be in.
+    #[tokio::test]
+    async fn volume_state_falls_back_to_what_the_bus_said_and_labels_it() {
+        let backend = fake();
+        backend.set_avr(FakeAvr {
+            report: None,
+            ..FakeAvr::default()
+        });
+        backend.observe(
+            BusObservation::AudioStatus {
+                volume: crate::state::Observation::Known(12),
+                muted: true,
+            },
+            1_699_000_000_000,
+        );
+        let b: Arc<dyn AvBackend> = backend;
+        let json: serde_json::Value =
+            serde_json::from_str(&reply(&b, "volume-state").await).unwrap();
+        assert_eq!(json["level"], serde_json::json!(12));
+        assert_eq!(json["muted"], serde_json::json!(true));
+        assert_eq!(json["source"], serde_json::json!("observed"));
+        assert_eq!(json["observedAt"], serde_json::json!(1_699_000_000_000u64));
+    }
+
+    /// **The rule: `volume` with a missing or unknown argument is a usage error
+    /// and transmits nothing.**
+    ///
+    /// Distinct from `unknown` (the client knows the verb) and from any silent
+    /// default (a typo must not report `ok` for a change nobody asked for).
+    #[tokio::test]
+    async fn a_missing_or_unknown_volume_argument_is_a_usage_error_and_transmits_nothing() {
+        let backend = fake();
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        for line in ["volume", "volume louder", "volume UP", "volume up down"] {
+            let r = reply(&b, line).await;
+            assert_eq!(
+                r, "error:usage: volume up|down|mute|unmute",
+                "{line} -> {r}"
+            );
+            assert_ne!(r, "unknown", "{line}");
+            assert_ne!(r, "ok", "{line}");
+        }
+        assert!(
+            backend.volume_transmits().is_empty(),
+            "{:?}",
+            backend.volume_transmits()
+        );
+    }
+
+    /// A volume action with no readable address of our own refuses — and a
+    /// refusal is zero transmits, here as everywhere else.
+    #[tokio::test]
+    async fn a_volume_action_refuses_when_our_own_address_is_unknown() {
+        let backend = Arc::new(FakeBackend::without_our_address());
+        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
+        let r = reply(&b, "volume up").await;
+        assert!(r.starts_with("refused:"), "{r}");
+        assert!(r.contains("CEC_ADAP_G_PHYS_ADDR"), "{r}");
+        assert!(
+            backend.volume_transmits().is_empty(),
+            "a refusal must put NOTHING on the bus, got {:?}",
+            backend.volume_transmits()
+        );
+    }
+
     #[tokio::test]
     async fn no_reply_ever_contains_a_newline() {
         let b: Arc<dyn AvBackend> = fake();
@@ -428,6 +655,10 @@ mod tests {
             "standby",
             "input-select",
             "input-select ???",
+            "volume",
+            "volume up",
+            "volume ???",
+            "volume-state",
         ] {
             let r = reply(&b, line).await;
             assert!(!r.contains('\n'), "{line} -> {r:?}");

@@ -143,12 +143,18 @@ fn observation_for(message: &Message, initiator: LogicalAddress) -> Option<BusOb
                 return None;
             }
             Some(BusObservation::AudioStatus {
-                // `AudioStatus::volume` is the 7-bit field; the CEC range is
-                // 0-100 and `0x7F` means "no change". `u8::try_from` cannot fail
-                // for a 7-bit field, and a value out of the 0-100 range is
-                // reported as observed rather than clamped — clamping would
-                // publish a number the AVR never sent.
-                volume: u8::try_from(status.volume()).unwrap_or(u8::MAX),
+                // `AudioStatus::volume` is the 7-bit field. CEC defines only
+                // `0..=100` as levels and reserves `0x7F` for "audio volume
+                // status unknown", which is what a receiver sends when it has
+                // dropped out of system-audio mode — so the out-of-range case
+                // is a real wire value, not a hypothetical. It becomes
+                // `unknown`, never a clamped number and never `0`:
+                // `volume::level_observation` is the one place that rule lives.
+                // (`u8::try_from` cannot fail for a 7-bit field; `u8::MAX` is
+                // out of range and so folds to `unknown` too.)
+                volume: crate::volume::level_observation(
+                    u8::try_from(status.volume()).unwrap_or(u8::MAX),
+                ),
                 muted: status.mute(),
             })
         }
@@ -217,8 +223,55 @@ mod tests {
                 LogicalAddress::AudioSystem,
             ),
             Some(BusObservation::AudioStatus {
-                volume: 37,
+                volume: crate::state::Observation::Known(37),
                 muted: true,
+            })
+        );
+    }
+
+    /// **The rule: an `<Report Audio Status>` carrying CEC's "volume unknown"
+    /// encoding folds to `unknown`, never to a number.**
+    ///
+    /// `0x7F` is the value a receiver sends when it does not know its own
+    /// volume — a real wire value, which is why the fold has to handle it rather
+    /// than clamping it into the 0-100 range. The mute bit is still meaningful
+    /// and survives.
+    ///
+    /// Mutation-check (run 2026-09-14): drop the `level_observation` call and
+    /// fold the raw byte through, and this fails (it becomes `Known(127)`);
+    /// coerce it to `Known(0)` and it fails too.
+    #[test]
+    fn a_volume_the_avr_does_not_know_folds_to_unknown() {
+        use crate::state::Observation;
+        for raw in [crate::volume::LEVEL_UNKNOWN, 101, 126] {
+            assert_eq!(
+                observation_for(
+                    &Message::ReportAudioStatus {
+                        status: AudioStatus::new()
+                            .with_volume(usize::from(raw))
+                            .with_mute(true),
+                    },
+                    LogicalAddress::AudioSystem,
+                ),
+                Some(BusObservation::AudioStatus {
+                    volume: Observation::Unknown,
+                    muted: true,
+                }),
+                "{raw:#x}"
+            );
+        }
+        // …and a real level still comes through as itself, so the rule is not
+        // vacuously passing by making everything unknown.
+        assert_eq!(
+            observation_for(
+                &Message::ReportAudioStatus {
+                    status: AudioStatus::new().with_volume(100).with_mute(false),
+                },
+                LogicalAddress::AudioSystem,
+            ),
+            Some(BusObservation::AudioStatus {
+                volume: Observation::Known(100),
+                muted: false,
             })
         );
     }

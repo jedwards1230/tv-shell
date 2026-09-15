@@ -19,13 +19,15 @@
 //! | [`state`] | The published snapshot, and the rule that `unknown` is never rendered as healthy or as `false` |
 //! | [`ownership`] | **PURE**: the tri-state display-ownership model and the two transmit gates, ported from v1's `display_owner.rs` |
 //! | [`action`] | **PURE**: a verb plus two observed addresses becomes a plan of messages, or a refusal that transmits nothing |
+//! | [`volume`] | **PURE**: the volume/mute sequence — system-audio mode, an inseparable press/release pair, and success judged from the AVR's own report |
 //! | [`kernel`] | `/dev/cecN`: open, configure, read the topology, and listen. **Linux-only** |
 //! | [`notify`] | `sd_notify` — `READY=1` for `Type=notify`, `WATCHDOG=1` for `WatchdogSec=` |
 //!
 //! # What this daemon puts on the bus, and when
 //!
 //! **Only on a client's request.** `wake`, `standby`, `input-claim`,
-//! `input-release` and `input-select` are the whole transmit surface; nothing
+//! `input-release`, `input-select`, the `volume` family and `volume-state` are
+//! the whole transmit surface; nothing
 //! fires on a timer, on a session event, or on this daemon's own initiative.
 //! The living-room bus carries an Apple TV and a PS5 as well as the television
 //! and the AVR, so two rules are enforced by construction rather than by
@@ -41,9 +43,9 @@
 //! no adapter and covers all three.
 //!
 //! Explicitly **not** here yet, each a later step of the plan for
-//! jedwards1230/tv-shell#504: volume and system-audio mode; the health state
-//! machine and `av-health`; and the IP recovery leg (Denon/Marantz telnet, WoL)
-//! with the failover decision. Each lands with the module that reads it.
+//! jedwards1230/tv-shell#504: the health state machine and `av-health`; and the
+//! IP recovery leg (Denon/Marantz telnet, WoL) with the failover decision. Each
+//! lands with the module that reads it.
 //!
 //! It is a lib plus a thin bin for the same reason the daemon and the core are:
 //! `pub` items in a library are public API and are never "dead", so
@@ -58,6 +60,7 @@ pub mod notify;
 pub mod ownership;
 pub mod protocol;
 pub mod state;
+pub mod volume;
 
 #[cfg(target_os = "linux")]
 pub mod kernel;

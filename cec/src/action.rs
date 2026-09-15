@@ -166,7 +166,7 @@ pub struct Refusal {
 }
 
 impl Refusal {
-    fn new(reason: impl Into<String>) -> Refusal {
+    pub(crate) fn new(reason: impl Into<String>) -> Refusal {
         Refusal {
             reason: reason.into(),
         }
@@ -275,16 +275,28 @@ pub fn plan(
 
 /// Our own address, or a refusal naming why we cannot claim without it.
 fn claimable_address(ours: Observation<PhysAddr>) -> Result<PhysAddr, Refusal> {
+    our_address(ours, "there is no port to name as the active source")
+}
+
+/// Our own address, or a refusal naming what it was needed for.
+///
+/// Shared with [`crate::volume::plan`], which needs the same address for a
+/// different message (`<System Audio Mode Request>` carries it) and must refuse
+/// on the same two grounds. `needed_for` completes the sentence "…, so {}".
+pub(crate) fn our_address(
+    ours: Observation<PhysAddr>,
+    needed_for: &str,
+) -> Result<PhysAddr, Refusal> {
     match ours {
         Observation::Known(a) if crate::ownership::is_addressable(a) => Ok(a),
         Observation::Known(a) => Err(Refusal::new(format!(
             "the adapter reports its physical address as {a}, the CEC invalid address, so \
-             there is no port to name as the active source"
+             {needed_for}"
         ))),
-        Observation::Unknown => Err(Refusal::new(
+        Observation::Unknown => Err(Refusal::new(format!(
             "our own physical address could not be read back from the adapter \
-             (CEC_ADAP_G_PHYS_ADDR), so a claim would name no port",
-        )),
+             (CEC_ADAP_G_PHYS_ADDR), so {needed_for}"
+        ))),
     }
 }
 
