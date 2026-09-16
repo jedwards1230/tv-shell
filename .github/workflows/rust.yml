@@ -44,6 +44,24 @@ on:
         # FAILS SAFE. An unset input must mean "run", never "skip": a caller
         # that forgets to pass this must get the measurement, not a silent hole.
         default: true
+      cec-mcp:
+        description: >-
+          Whether to run the `cec-mcp` job. Same shape, and same reason, as
+          `cec-mutants` above: the broad `rust` area covers six crates and
+          several scripts, but this leg only builds and tests `tv-shell-input`
+          with `--features cec,mcp`, so nothing outside the daemon crate, the
+          protocol crate it depends on, the workspace manifests, the TLS
+          acceptance script it runs, or these two workflows can move its result.
+          It is the most expensive job in this file, so a panel-only, core-only
+          or cec-only PR paying for it is the largest single piece of waste here.
+        type: boolean
+        required: false
+        # FAILS SAFE, for the same reason: unset means run.
+        #
+        # A skipped job must also render as a VISIBLY SKIPPED row, never as
+        # green-by-skip — hence an `if:` on the job and no `continue-on-error`
+        # anywhere near it.
+        default: true
 
 permissions:
   contents: read
@@ -72,6 +90,12 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: .
+          # Restore on every run; SAVE only on main. A save re-uploads the whole
+          # target dir at the end of each job — 2m13s on `cec-mcp` — to produce a
+          # cache no other PR can ever hit, because rust-cache keys each run by
+          # job + lockfile and a PR branch's entry is scoped to that branch.
+          # main's push run refreshes the entry every branch actually restores from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format check
         id: fmt
@@ -81,9 +105,20 @@ jobs:
         id: clippy
         run: cargo clippy -p tv-shell-input --all-targets -- -D warnings
 
-      - name: Build
+      # `cargo check --release`, not `cargo build --release`. Nothing in this
+      # job consumes the release binary — the acceptance gates here read
+      # `cargo tree`, not an artifact — so a release codegen+link pass built the
+      # whole dependency graph a SECOND time (release and debug share no
+      # artifacts) purely to throw the result away, and doubled the target dir
+      # the cache then has to save. `check` keeps the signal that actually
+      # differs by profile — release-only compile errors: code behind
+      # `cfg(debug_assertions)`, const eval, overflow-checked constants — at
+      # metadata cost instead of codegen cost.
+      # The release binary that actually ships is still built and linked after
+      # merge by release-input.yml.
+      - name: Check (release)
         id: build
-        run: cargo build --release -p tv-shell-input
+        run: cargo check --release -p tv-shell-input
 
       - name: Test
         id: test
@@ -108,7 +143,7 @@ jobs:
             echo "|------|--------|"
             echo "| Format | ${{ steps.fmt.outcome }} |"
             echo "| Clippy | ${{ steps.clippy.outcome }} |"
-            echo "| Build (release) | ${{ steps.build.outcome }} |"
+            echo "| Check (release) | ${{ steps.build.outcome }} |"
             echo "| Test | ${{ steps.test.outcome }} |"
             echo "| Pure-Rust TLS | ${{ steps.tls.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -136,6 +171,12 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: .
+          # Restore on every run; SAVE only on main. A save re-uploads the whole
+          # target dir at the end of each job — 2m13s on `cec-mcp` — to produce a
+          # cache no other PR can ever hit, because rust-cache keys each run by
+          # job + lockfile and a PR branch's entry is scoped to that branch.
+          # main's push run refreshes the entry every branch actually restores from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: panel
 
       - name: Format check
@@ -146,9 +187,18 @@ jobs:
         id: clippy
         run: cargo clippy -p tv-shell-panel --all-targets -- -D warnings
 
-      - name: Build
+      # `cargo check --release`, not `cargo build --release`. Nothing in this
+      # job consumes the release binary — the acceptance gates here read
+      # `cargo tree`, not an artifact — so a release codegen+link pass built the
+      # whole dependency graph a SECOND time (release and debug share no
+      # artifacts) purely to throw the result away, and doubled the target dir
+      # the cache then has to save. `check` keeps the signal that actually
+      # differs by profile — release-only compile errors: code behind
+      # `cfg(debug_assertions)`, const eval, overflow-checked constants — at
+      # metadata cost instead of codegen cost.
+      - name: Check (release)
         id: build
-        run: cargo build --release -p tv-shell-panel
+        run: cargo check --release -p tv-shell-panel
 
       - name: Test
         id: test
@@ -164,7 +214,7 @@ jobs:
             echo "|------|--------|"
             echo "| Format | ${{ steps.fmt.outcome }} |"
             echo "| Clippy | ${{ steps.clippy.outcome }} |"
-            echo "| Build (release) | ${{ steps.build.outcome }} |"
+            echo "| Check (release) | ${{ steps.build.outcome }} |"
             echo "| Test | ${{ steps.test.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -205,6 +255,12 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: .
+          # Restore on every run; SAVE only on main. A save re-uploads the whole
+          # target dir at the end of each job — 2m13s on `cec-mcp` — to produce a
+          # cache no other PR can ever hit, because rust-cache keys each run by
+          # job + lockfile and a PR branch's entry is scoped to that branch.
+          # main's push run refreshes the entry every branch actually restores from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: core
 
       - name: Format check
@@ -215,9 +271,23 @@ jobs:
         id: clippy
         run: cargo clippy -p tv-shell-core --all-targets -- -D warnings
 
-      - name: Build
+      # `cargo check --release`, not `cargo build --release`. Nothing in this
+      # job consumes the release binary — the acceptance gates here read
+      # `cargo tree`, not an artifact — so a release codegen+link pass built the
+      # whole dependency graph a SECOND time (release and debug share no
+      # artifacts) purely to throw the result away, and doubled the target dir
+      # the cache then has to save. `check` keeps the signal that actually
+      # differs by profile — release-only compile errors: code behind
+      # `cfg(debug_assertions)`, const eval, overflow-checked constants — at
+      # metadata cost instead of codegen cost.
+      # Release-profile compile coverage matters more than usual for this crate:
+      # the presenter slot-order invariant documented on `core-uinput` below was
+      # once a `debug_assert_eq!`, i.e. the kind of thing that compiles out of
+      # exactly the build the couch runs. `check --release` still compiles that
+      # configuration.
+      - name: Check (release)
         id: build
-        run: cargo build --release -p tv-shell-core
+        run: cargo check --release -p tv-shell-core
 
       # The default run: pure unit tests, no X server touched.
       - name: Test
@@ -306,7 +376,7 @@ jobs:
             echo "|------|--------|"
             echo "| Format | ${{ steps.fmt.outcome }} |"
             echo "| Clippy | ${{ steps.clippy.outcome }} |"
-            echo "| Build (release) | ${{ steps.build.outcome }} |"
+            echo "| Check (release) | ${{ steps.build.outcome }} |"
             echo "| Test | ${{ steps.test.outcome }} |"
             echo "| Test (Xvfb) | ${{ steps.test_xvfb.outcome }} |"
             echo "| Shellcheck | ${{ steps.shellcheck.outcome }} |"
@@ -346,6 +416,12 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: .
+          # Restore on every run; SAVE only on main. A save re-uploads the whole
+          # target dir at the end of each job — 2m13s on `cec-mcp` — to produce a
+          # cache no other PR can ever hit, because rust-cache keys each run by
+          # job + lockfile and a PR branch's entry is scoped to that branch.
+          # main's push run refreshes the entry every branch actually restores from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: cec
 
       - name: Format check
@@ -454,6 +530,12 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: .
+          # Restore on every run; SAVE only on main. A save re-uploads the whole
+          # target dir at the end of each job — 2m13s on `cec-mcp` — to produce a
+          # cache no other PR can ever hit, because rust-cache keys each run by
+          # job + lockfile and a PR branch's entry is scoped to that branch.
+          # main's push run refreshes the entry every branch actually restores from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: cec-mutants
 
       - name: Install cargo-mutants
@@ -528,6 +610,12 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: .
+          # Restore on every run; SAVE only on main. A save re-uploads the whole
+          # target dir at the end of each job — 2m13s on `cec-mcp` — to produce a
+          # cache no other PR can ever hit, because rust-cache keys each run by
+          # job + lockfile and a PR branch's entry is scoped to that branch.
+          # main's push run refreshes the entry every branch actually restores from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: core-uinput
 
       # Fail HERE, naming uinput, if the module cannot be loaded — rather than
@@ -620,6 +708,7 @@ jobs:
   # the runtime target. The default `build` job stays on bookworm (it never links
   # libcec).
   cec-mcp:
+    if: inputs.cec-mcp
     runs-on: ubuntu-latest
     container: rust:1-trixie
     steps:
@@ -642,6 +731,12 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: .
+          # Restore on every run; SAVE only on main. A save re-uploads the whole
+          # target dir at the end of each job — 2m13s on `cec-mcp` — to produce a
+          # cache no other PR can ever hit, because rust-cache keys each run by
+          # job + lockfile and a PR branch's entry is scoped to that branch.
+          # main's push run refreshes the entry every branch actually restores from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: cec
 
       # `mcp` rides along with `cec` rather than getting its own job: this is
@@ -657,9 +752,27 @@ jobs:
         id: clippy
         run: cargo clippy -p tv-shell-input --features cec,mcp --all-targets -- -D warnings
 
+      # DEBUG, not release — and deliberately BEFORE the test steps.
+      #
+      # The ldd gate below needs a linked binary, so unlike the other legs this
+      # job cannot drop its build step. It can stop building a SECOND copy of
+      # the graph: release and debug share no artifacts, so a release build here
+      # compiled every dependency once for a binary only `ldd` reads, and then
+      # the debug test steps compiled all of them again. Building debug makes
+      # this step and both `cargo test` steps below share one set of artifacts —
+      # the tests now link against what this step already built.
+      #
+      # WHAT THIS COSTS, STATED PLAINLY: the ldd assertion now inspects the debug
+      # binary rather than the release one. The invariant it defends is that
+      # libcec-sys STATIC-links the prebuilt archive instead of binding the
+      # system libcec.so — that is decided by the `cec` feature forwarding
+      # `libcec-sys/static` to its build script, which resolves identically in
+      # both profiles. Release-profile codegen of this exact feature set is
+      # still exercised on every push to main by release-input.yml, which builds
+      # `--release --features cec,mcp` before publishing.
       - name: Build (--features cec,mcp)
         id: build
-        run: cargo build --release -p tv-shell-input --features cec,mcp
+        run: cargo build -p tv-shell-input --features cec,mcp
 
       - name: Test (--features cec,mcp)
         id: test_mcp
@@ -668,11 +781,12 @@ jobs:
       # Acceptance gate (#179): the static build must NOT pull in the system
       # libcec.so / libp8-platform.so — those are bundled into the binary. The
       # workspace target dir is at the repo ROOT, so from working-directory:
-      # daemon the binary is one level up at ../target/release/.
+      # daemon the binary is one level up at ../target/debug/ (see the build
+      # step above for why this is the debug artifact).
       - name: Assert no system libcec dependency
         id: ldd
         run: |
-          BIN=../target/release/tv-shell-input
+          BIN=../target/debug/tv-shell-input
           echo "ldd $BIN:"
           ldd "$BIN" || true
           if ldd "$BIN" | grep -Eiq 'libcec|libp8-platform'; then
@@ -701,7 +815,7 @@ jobs:
             echo "| Step | Result |"
             echo "|------|--------|"
             echo "| Clippy (cec) | ${{ steps.clippy.outcome }} |"
-            echo "| Build (cec, release) | ${{ steps.build.outcome }} |"
+            echo "| Build (cec,mcp) | ${{ steps.build.outcome }} |"
             echo "| No system libcec (ldd) | ${{ steps.ldd.outcome }} |"
             echo "| Test (cec) | ${{ steps.test.outcome }} |"
             echo "| Test (cec,mcp) | ${{ steps.test_mcp.outcome }} |"

@@ -46,6 +46,7 @@ jobs:
       gamescope: ${{ steps.filter.outputs.gamescope }}
       shellv2: ${{ steps.filter.outputs.shellv2 }}
       cecmutants: ${{ steps.filter.outputs.cecmutants }}
+      cecmcp: ${{ steps.filter.outputs.cecmcp }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
@@ -115,6 +116,27 @@ jobs:
               - 'scripts/run-cec-mutants.sh'
               - '.github/workflows/rust.yml'
               - '.github/workflows/ci.yml'
+            # A second NARROWER filter inside the rust area, for the `cec-mcp`
+            # job — the most expensive leg in rust.yml (ten minutes on a cold
+            # cache). It builds and tests ONLY `tv-shell-input` with
+            # `--features cec,mcp`, so its result can move only when the daemon
+            # crate, the protocol crate it depends on, dependency resolution,
+            # the TLS acceptance script it runs, or the two workflows change.
+            # A v2 PR touching `core/` and `cec/` alone — or a panel-only one —
+            # used to pay ten minutes for a leg that could not have moved.
+            #
+            # `cec/**` is deliberately ABSENT: the v2 `cec` crate and the v1
+            # daemon's `cec` FEATURE are different code with confusingly similar
+            # names. This leg compiles `daemon/src/cec.rs` behind that feature,
+            # not the `cec/` crate, which has its own `cec` job.
+            cecmcp:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'daemon/**'
+              - 'protocol/**'
+              - 'scripts/assert-pure-rust-tls.sh'
+              - '.github/workflows/rust.yml'
+              - '.github/workflows/ci.yml'
             host:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -174,9 +196,12 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     uses: ./.github/workflows/rust.yml
     with:
-      # Gates rust.yml's `cec-mutants` job only. Every other job in that
-      # workflow still runs whenever the broad `rust` area changed.
+      # Gates rust.yml's `cec-mutants` job only. Along with `cec-mcp` below,
+      # these are the only two narrowed legs; every other job in that workflow
+      # still runs whenever the broad `rust` area changed.
       cec-mutants: ${{ needs.changes.outputs.cecmutants == 'true' }}
+      # Likewise gates rust.yml's `cec-mcp` job only.
+      cec-mcp: ${{ needs.changes.outputs.cecmcp == 'true' }}
 
   host:
     needs: changes
