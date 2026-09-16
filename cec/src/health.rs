@@ -101,10 +101,11 @@ impl HealthState {
 
 /// Whether fact 3 — passive, line-level bus activity — is actually available.
 ///
-/// **Read, never assumed** (plan §7 item 7). Whether `pulse8-cec` implements
-/// `CEC_CAP_MONITOR_PIN` could not be checked without a device, so the
-/// capability comes from `CEC_ADAP_G_CAPS` at open and the answer is *named in
-/// the reason string* either way.
+/// **Read, never assumed** (plan §7 item 7). The capability comes from
+/// `CEC_ADAP_G_CAPS` at open and the answer is *named in the reason string*
+/// either way. On htpc-1's Pulse-Eight adapter it is measured absent
+/// (2026-09-16), so [`PinMonitor::Unsupported`] is the deployed reality — but
+/// other adapters differ, which is why this is read at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinMonitor {
     /// `CEC_ADAP_G_CAPS` did not report `CEC_CAP_MONITOR_PIN`. Fact 3 does not
