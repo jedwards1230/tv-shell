@@ -325,7 +325,7 @@ decided rather than left to whoever ran last:
 
 - Precedent: the gamescope prototype's `.desktop` is written by
   `homelab-ansible`'s `roles/htpc_common/tasks/gamescope-prototype.yaml`, and
-  that is the session htpc-1 boots today.
+  that is the session the reference deployment boots today.
 - Only Ansible can produce the full `Exec=`: it renders the session env as a
   `/usr/bin/env` prefix, which is the only way to set environment for a
   greeter-launched or autologin session — there is no shell in between. The file

@@ -502,7 +502,7 @@ mod tests {
     /// **The rule: the four facts are AGES, and a fact that has not happened is
     /// `null` — not `0`, which would read as "just now".**
     ///
-    /// A silent bus is the normal state on this rack (everything can be off),
+    /// A silent bus is the normal state in this deployment (everything can be off),
     /// and it is reported as a silence, not as a fault.
     #[tokio::test]
     async fn av_health_reports_ages_and_a_silent_bus_is_not_a_fault() {

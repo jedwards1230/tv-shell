@@ -279,7 +279,7 @@ TestCase {
                 w.size = "small";
                 w.targets = [
                     {
-                        "host": "10.0.0.1",
+                        "host": "192.0.2.1",
                         "name": "Desktop",
                         "app": "Steam Big Picture"
                     }

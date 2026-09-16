@@ -36,13 +36,14 @@
 //!
 //! **The verdict comes from facts 1 and 2 alone.** Facts 3 and 4 are published
 //! as ages and judged by nobody here, because on this bus silence is not
-//! evidence of anything: everything in the rack can be switched off, and without
-//! the pin monitor there is no way to tell that apart from a deaf adapter.
-//! Deriving `degraded` from a quiet bus would be inventing exactly the kind of
-//! verdict this module exists to stop inventing — it is v1's mistake with the
-//! sign flipped. If the pin monitor ever comes into force, fact 3 is the signal
-//! that makes "we have stopped hearing" a *real* observation, and that is the
-//! point at which it may sharpen the verdict; it does not before then.
+//! evidence of anything: everything in the installation can be switched off,
+//! and without the pin monitor there is no way to tell that apart from a deaf
+//! adapter. Deriving `degraded` from a quiet bus would be inventing exactly the
+//! kind of verdict this module exists to stop inventing — it is v1's mistake
+//! with the sign flipped. If the pin monitor ever comes into force, fact 3 is
+//! the signal that makes "we have stopped hearing" a *real* observation, and
+//! that is the point at which it may sharpen the verdict; it does not before
+//! then.
 //!
 //! # The fail-safe direction inverts per consumer — so publish the tri-state
 //!
@@ -103,7 +104,7 @@ impl HealthState {
 ///
 /// **Read, never assumed** (plan §7 item 7). The capability comes from
 /// `CEC_ADAP_G_CAPS` at open and the answer is *named in the reason string*
-/// either way. On htpc-1's Pulse-Eight adapter it is measured absent
+/// either way. On the Pulse-Eight USB-CEC adapter measured here it is absent
 /// (2026-09-16), so [`PinMonitor::Unsupported`] is the deployed reality — but
 /// other adapters differ, which is why this is read at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -472,7 +473,7 @@ mod tests {
     /// verdict.**
     ///
     /// In particular a long-silent bus is reported as a large `busActivityMs` /
-    /// `lastRxMs` and a `healthy` state, because on this rack everything being
+    /// `lastRxMs` and a `healthy` state, because in this deployment everything being
     /// switched off is the normal case and calling it degraded would be an
     /// invented verdict.
     ///

@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn capabilities_roundtrips() {
         let c = Capabilities {
-            node_id: "htpc-1".to_string(),
+            node_id: "node-1".to_string(),
             kind: NodeKind::Shell,
             agent_version: "0.2.2".to_string(),
             platform: Platform::Linux,
@@ -674,7 +674,7 @@ mod tests {
         // (declaration order), so the whole body is byte-stable.
         assert_eq!(
             json,
-            r#"{"node_id":"htpc-1","kind":"shell","agent_version":"0.2.2","platform":"linux","features":["cec","controllers"]}"#
+            r#"{"node_id":"node-1","kind":"shell","agent_version":"0.2.2","platform":"linux","features":["cec","controllers"]}"#
         );
         let back: Capabilities = serde_json::from_str(&json).unwrap();
         assert_eq!(c, back);
@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn capabilities_mixing_known_and_unknown_features_parses() {
         // The mixed-version case: an older panel reading a newer node.
-        let json = r#"{"node_id":"desktop-2","kind":"sidecar","agent_version":"9.9.9","platform":"windows","features":["steam_library","holodeck"]}"#;
+        let json = r#"{"node_id":"node-3","kind":"sidecar","agent_version":"9.9.9","platform":"windows","features":["steam_library","holodeck"]}"#;
         let c: Capabilities = serde_json::from_str(json).unwrap();
         assert_eq!(c.kind, NodeKind::Sidecar);
         assert_eq!(c.platform, Platform::Windows);

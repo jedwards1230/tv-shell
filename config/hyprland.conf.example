@@ -3,7 +3,7 @@
 # path (ignored if absent), so a fresh clone boots on the generic
 # `monitor=,preferred,auto,auto` default until you drop a file in.
 #
-# The block below is the maintainer's reference setup (LG C2 OLED + Denon AVR,
+# The block below is a reference setup (LG C2 OLED + Denon AVR,
 # 4K@120Hz 10-bit HDR over HDMI). Use it as a worked example, not a default.
 
 # 4K@120Hz, 10-bit HDR, VRR via HDMI-connected display and AV receiver.

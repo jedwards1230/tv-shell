@@ -57,8 +57,9 @@ const REPLY_TIMEOUT: Timeout = Timeout::MAX;
 ///
 /// **This function is the only place a `<Standby>` gets a destination, and
 /// `LogicalAddress::Broadcast` is not among its results.** A broadcast standby
-/// (`0x0F`) powers off every device on the bus; the living-room bus carries an
-/// Apple TV and a PS5 as well as the television and the AVR.
+/// (`0x0F`) powers off every device on the bus, and a shared bus may carry
+/// other playback devices (a streaming box, a console) besides the television
+/// and the AVR.
 #[must_use]
 pub fn standby_destination(target: StandbyTarget) -> LogicalAddress {
     match target {
@@ -255,7 +256,7 @@ pub fn power_state(status: linux_cec::operand::PowerStatus) -> Option<PowerState
 /// Stops at the first transmit the bus does not accept and reports it, naming
 /// which message failed and how many had already landed — a half-performed
 /// sequence reported as a bare failure tells an operator nothing about the state
-/// the rack was left in.
+/// the installation was left in.
 ///
 /// **One deliberate exception**: the standby sequence addresses two devices, and
 /// a site with no AVR NAKs the second. That is not a failed standby — the
@@ -355,7 +356,7 @@ pub enum Wire {
 ///
 /// Everything here is addressed to `LogicalAddress::AudioSystem`. Volume is the
 /// AVR's business; broadcasting a volume key would offer it to every device on a
-/// bus that also carries an Apple TV and a PS5.
+/// bus that may also carry other playback devices.
 #[must_use]
 pub fn wire_for(tx: VolumeTx) -> Wire {
     match tx {
@@ -767,8 +768,8 @@ mod tests {
     /// The whole volume message table, asserted with no device present.
     ///
     /// Everything is addressed to the audio system: broadcasting a volume key
-    /// would offer it to every device on a bus that also carries an Apple TV and
-    /// a PS5.
+    /// would offer it to every device on a bus that may also carry other
+    /// playback devices.
     #[test]
     fn every_volume_intent_maps_to_its_messages_and_destination() {
         let ours = addr("2.5.0.0");

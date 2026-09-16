@@ -3,11 +3,11 @@
 > Status: **the pattern is built; the second node is not served yet.** Steps 1–4
 > of the sequencing have landed and are deployed — the panel authenticates, fails
 > closed on an insecure bind, and gates route *registration* on a capability
-> handshake, which htpc-1's daemon (`input-v0.3.0`) and desktop-2's sidecar
+> handshake, which node-1's daemon (`input-v0.3.0`) and node-3's sidecar
 > (`host-v0.7.0`) both answer in production.
 >
 > `HttpTransport` and the `[[panel.nodes]]` config that points one at a sidecar have
-> since **landed** too (step 5) — desktop-2's sidecar still has no UI, because
+> since **landed** too (step 5) — node-3's sidecar still has no UI, because
 > nothing yet constructs an `HttpTransport` from a resolved node and serves it;
 > that is the node switcher (step 6), not the transport. §4 has since been
 > amended — a sidecar is served **remotely** rather than running its own panel,
@@ -26,7 +26,7 @@ The panel is structurally single-node today, in four separate ways:
 
 The two rows that remain are **only** blockers for putting a panel *on* a Windows
 node. §4 stops requiring that, so neither is on the current path — the gap that
-actually keeps desktop-2 UI-less is the missing `HttpTransport`, not either of
+actually keeps node-3 UI-less is the missing `HttpTransport`, not either of
 these.
 
 `protocol/` already exists as the shared daemon↔host wire-type crate, which is
@@ -40,7 +40,7 @@ Add to `protocol/`:
 
 ```rust
 pub struct Capabilities {
-    pub node_id: String,        // "htpc-1", "desktop-2"
+    pub node_id: String,        // "node-1", "node-3"
     pub kind: NodeKind,         // Shell | Sidecar
     pub agent_version: String,  // the REAL release version — see §Version below
     pub platform: Platform,     // Linux | Windows | MacOS
@@ -97,9 +97,9 @@ cannot be added and left out.
 `daemon/src/ipc.rs::features()` deliberately never emits `wallpapers`,
 `processes`, `system_updates`, `steam_library` or `game_launch` — so gating
 System ▸ Processes or System ▸ Updates on the matching `Feature` would have
-deleted those working pages from htpc-1. They are recovery tier because the
-panel serves them itself, out of its own filesystem and exec tier.
-`Feature::Logs` describes the *daemon's* `GET /dev/logs`, so the panel's
+deleted those working pages from the reference deployment. They are recovery
+tier because the panel serves them itself, out of its own filesystem and exec
+tier. `Feature::Logs` describes the *daemon's* `GET /dev/logs`, so the panel's
 System ▸ Logs page — `journalctl` via direct exec — is recovery tier too.
 
 **Wallpaper is the deliberate exception, and it moved.** It reads like it
@@ -123,7 +123,7 @@ Enforced by test, not convention: `panel/src/tests.rs` parses `build_router`
 and attributes every route to its registration block, then asserts that against
 the hand-maintained `route_table()`; every unconditional `post` must appear in
 `RECOVERY_TIER_MUTATING` (**5** entries, each **with a written reason**); and a
-live-router test pins that htpc-1's declared set still registers exactly today's
+live-router test pins that node-1's declared set still registers exactly today's
 **108** routes.
 
 ### 2. A transport trait replaces the concrete clients — **landed**
@@ -222,7 +222,7 @@ not uniform. An earlier revision of this document said "one panel per node,
 federated by link" flatly. That is right for a shell node and wrong for a
 sidecar, for a reason worth keeping rather than deleting.
 
-**Shell node** (`kind: shell` — htpc-1): the panel runs **on** it.
+**Shell node** (`kind: shell` — node-1): the panel runs **on** it.
 
 - **The exec tier is inherently local.** The panel exists to be the recovery path
   when the daemon is wedged — `systemctl restart` on a hung unit. A remote panel
@@ -232,7 +232,7 @@ sidecar, for a reason worth keeping rather than deleting.
   HTTP *client*, not a process supervisor" of its sidecar (`CLAUDE.md`). A panel
   that supervises a remote shell node re-introduces that coupling.
 
-**Sidecar node** (`kind: sidecar` — desktop-2): served **remotely over HTTP** by
+**Sidecar node** (`kind: sidecar` — node-3): served **remotely over HTTP** by
 a Linux-built panel, via `HttpTransport`.
 
 Both arguments above evaporate here, which is why the rule splits:
@@ -267,11 +267,11 @@ credential-aggregator objection is reduced, not eliminated, so bound it:
 
 #### Open: where the remote panel process runs
 
-Serving desktop-2 remotely raises a question the per-node rule never had to
-answer — **which machine runs that panel**. Candidates: a second unit on htpc-1
+Serving node-3 remotely raises a question the per-node rule never had to
+answer — **which machine runs that panel**. Candidates: a second unit on node-1
 bound to another port, a separate Linux host, or the cluster. The deciding factor
-is which box is acceptable as the holder of desktop-2's token, and whether a
-sleeping htpc-1 taking the sidecar's UI down with it is acceptable. Unresolved
+is which box is acceptable as the holder of node-3's token, and whether a
+sleeping node-1 taking the sidecar's UI down with it is acceptable. Unresolved
 here on purpose; it is a deployment decision, not a design one.
 
 ### 5. Versioning: what each crate reports, and why the panel reports nothing
@@ -327,7 +327,7 @@ land before a second node ships.
 **S1 — The panel has no authentication, on a wildcard bind.**
 `[panel].token_file` is parsed and deliberately unused; v1 is "LAN-only, no
 auth". The code default is loopback with an explicit *"the panel has NO auth in
-v1, so firewall it yourself if you widen the bind"* warning — and htpc-1's
+v1, so firewall it yourself if you widen the bind"* warning — and node-1's
 Ansible widens it to `0.0.0.0:8091` anyway, for a cold-boot NetworkManager race.
 The safe default is already being overridden in the only deployment that exists.
 
@@ -392,7 +392,7 @@ Already documented in `MQTT.md`, and it becomes per-node policy under this
 pattern: the published button list is *not* the boundary — anything that can
 publish to `tv-shell/<device_id>/cmd/+` drives the entire intent vocabulary,
 including `app:<wmClass>` launches. Every new node needs its own MQTT user with
-an ACL scoped to its own `device_id`. (desktop-2 currently publishes as
+an ACL scoped to its own `device_id`. (node-3 currently publishes as
 `device_id = "desktop"`, a name inherited from when it was one boot of a
 dual-boot box; the ACL should be checked against the name actually in use.)
 
@@ -422,7 +422,7 @@ re-implementing the checks.
 2. **`Capabilities` in `protocol/`** + both `capabilities` endpoints, carrying a
    real version (§5).
 3. **`NodeTransport` trait**, `IpcTransport` behind `cfg(unix)`, pages migrated
-   off `state.ipc`. No behavior change on htpc-1 — this step should be invisible.
+   off `state.ipc`. No behavior change on node-1 — this step should be invisible.
 4. **Capability-gated routes + nav**, with the ungated-mutating-route test.
    **Landed** — `panel/src/capabilities.rs`; see §1.
 5. **`HttpTransport`** + an HTTP-status shape for `TransportError` (a 401/403/404
@@ -430,10 +430,10 @@ re-implementing the checks.
    render `unwrap_or_default()` garbage — nor `Unreachable`, which would make an
    auth misconfig indistinguishable from a down node). **Landed**
    (`panel/src/http.rs`, `panel/src/transport.rs`).
-6. **Serve desktop-2 remotely**: a `[[panel.nodes]]` config entry and its sidecar
+6. **Serve node-3 remotely**: a `[[panel.nodes]]` config entry and its sidecar
    token are **landed** too (`panel/src/config.rs`). What remains is the node
    switcher that actually constructs an `HttpTransport` from a resolved entry
-   and renders it — this is what actually gives desktop-2 a UI. Settle the
+   and renders it — this is what actually gives node-3 a UI. Settle the
    "where does it run" question in §4 first.
 
 **`PlatformOps` and a Windows panel build are no longer on this path.** They were

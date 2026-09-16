@@ -11,8 +11,8 @@
 //!
 //! **Read-only, deliberately.** Every transmit verb this daemon has (`wake`,
 //! `standby`, `input-claim`, `input-release`, `input-select`, the `volume`
-//! family) puts a message on a living-room bus that carries an Apple TV and a
-//! PS5. This page asks three questions and sends nothing, which is also why it
+//! family) puts a message on a shared bus that may carry other playback
+//! devices. This page asks three questions and sends nothing, which is also why it
 //! is a plain `GET` in the recovery tier with no mutating route to gate.
 //!
 //! # THE RULE THIS PAGE EXISTS TO OBEY

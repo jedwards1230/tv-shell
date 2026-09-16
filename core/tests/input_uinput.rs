@@ -348,7 +348,7 @@ fn each_player_gets_its_own_presenter_device() {
 /// advertised, and libinput ignores a device without that property — so a
 /// keyboard advertising only the keys it means to send is created successfully,
 /// looks right in `/proc/bus/input/devices`, and drives nothing
-/// (V2_GAMEPAD_HANDOFF §2.1.1, measured on htpc-1).
+/// (V2_GAMEPAD_HANDOFF §2.1.1, measured on the reference deployment).
 ///
 /// The unit test asserts the profile ASKS for the block. Only this one asserts
 /// the kernel gave it: a uinput device silently drops codes it did not accept,

@@ -475,17 +475,17 @@ windowrule, no workspace keybind, and there was not one `dispatch workspace` or
 `movetoworkspace` call anywhere in the shell or the daemon — so the premise was a
 belief about the box, with no invariant check, no telemetry, and no recovery.
 
-It was already false in the field. Observed on htpc-1 (2026-08-25): Plex HTPC on
-workspace 1, Steam Big Picture on workspace 4, and the monitor **displaying
-workspace 2, which held no windows at all**. Because the shell is a layer-shell
-surface it draws regardless of workspace, so the home screen looked perfectly
-healthy — but the instant a resume unmapped it, there was genuinely nothing
-beneath to render and the TV went black. `dispatch focuswindow` could not rescue
-it: it does not reliably follow across workspaces
-([hyprwm/Hyprland#1611](https://github.com/hyprwm/Hyprland/issues/1611)), the same
-issue cited under Phase 2 below. What put the windows there is **still unknown** —
-which is precisely why the consolidation below logs every move rather than
-self-healing silently.
+It was already false in the field. Observed on the reference deployment
+(2026-08-25): Plex HTPC on workspace 1, Steam Big Picture on workspace 4, and
+the monitor **displaying workspace 2, which held no windows at all**. Because
+the shell is a layer-shell surface it draws regardless of workspace, so the home
+screen looked perfectly healthy — but the instant a resume unmapped it, there
+was genuinely nothing beneath to render and the TV went black. `dispatch
+focuswindow` could not rescue it: it does not reliably follow across workspaces
+([hyprwm/Hyprland#1611](https://github.com/hyprwm/Hyprland/issues/1611)), the
+same issue cited under Phase 2 below. What put the windows there is **still
+unknown** — which is precisely why the consolidation below logs every move
+rather than self-healing silently.
 
 The resume path therefore reads `hypr-monitors` for the displayed workspace and,
 when its target has drifted elsewhere, dispatches
@@ -641,7 +641,7 @@ watchdog, and the NavigationDrawer running-apps list.
 
 ## On-device validation checklist (before merge)
 
-Deploy to htpc-1 and confirm:
+Deploy to the reference deployment and confirm:
 - [ ] **Two apps backgrounded, switch between them, never a split view.** Launch
   Plex HTPC, launch Steam (Plex backgrounds), resume Plex from a home card, resume
   Steam — each switch shows exactly one fullscreen app, never a side-by-side tile.

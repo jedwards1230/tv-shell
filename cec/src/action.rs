@@ -15,8 +15,8 @@
 //! 1. **A broadcast `<Standby>` is unrepresentable, not merely avoided.**
 //!    [`CecTx::Standby`] takes a [`StandbyTarget`], which has two variants and
 //!    no broadcast. CEC's broadcast standby (`0x0F`) powers off *every* device
-//!    on the bus, and the living-room bus carries an Apple TV and a PS5 as well
-//!    as the television and the AVR.
+//!    on the bus, and a shared bus may carry other playback devices (a
+//!    streaming box, a console) besides the television and the AVR.
 //! 2. **A refusal transmits nothing at all.** Every gate is evaluated before any
 //!    message is built, so [`Refusal`] means exactly zero bus traffic. That is
 //!    what makes "standby refused" a state a caller can trust, and it is why the

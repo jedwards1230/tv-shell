@@ -561,9 +561,10 @@ mod tests {
         }
     }
 
-    /// **The behaviour htpc-1 exercises today**: a unit is in `managed_units`,
-    /// no sudoers line exists for it, and `sudo -n` refuses. That must surface
-    /// as [`ExecError::NotPermitted`] — not `Ok`, not a generic failure.
+    /// **The behaviour the reference deployment exercises today**: a unit is in
+    /// `managed_units`, no sudoers line exists for it, and `sudo -n` refuses.
+    /// That must surface as [`ExecError::NotPermitted`] — not `Ok`, not a
+    /// generic failure.
     #[tokio::test]
     async fn a_system_scope_restart_with_no_sudoers_rule_fails_closed() {
         let fake = fake_sudo("refuse", true);

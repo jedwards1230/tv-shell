@@ -569,8 +569,8 @@ wired pads (no battery sysfs entry), `present` is `false`. An unknown id replies
 
 Examples:
 ```
-pad-battery uniq:e4:17:d8:ab:cd:ef
-{"id":"uniq:e4:17:d8:ab:cd:ef","present":true,"level":82,"charging":false}
+pad-battery uniq:aa:bb:cc:dd:ee:ff
+{"id":"uniq:aa:bb:cc:dd:ee:ff","present":true,"level":82,"charging":false}
 
 pad-battery uniq:unknown
 error:pad not found 'uniq:unknown'
@@ -598,8 +598,8 @@ it is currently enabled (the `rumbleEnabled` setting in `settings.json`).
 
 Example:
 ```
-pad-rumble-status uniq:e4:17:d8:ab:cd:ef
-{"id":"uniq:e4:17:d8:ab:cd:ef","supported":true,"enabled":true}
+pad-rumble-status uniq:aa:bb:cc:dd:ee:ff
+{"id":"uniq:aa:bb:cc:dd:ee:ff","supported":true,"enabled":true}
 ```
 
 | Condition | Response |
@@ -733,7 +733,7 @@ question adjacent to the one you asked, and is confidently wrong.
 | `features` | array | Sorted snake_case feature names (see below) |
 
 ```json
-{"node_id":"htpc-1","kind":"shell","agent_version":"0.2.2","platform":"linux","features":["cec","controllers","widgets","web_apps","settings_store","shell_lifecycle","screenshot","sleep","dev_deploy","logs"]}
+{"node_id":"node-1","kind":"shell","agent_version":"0.2.2","platform":"linux","features":["cec","controllers","widgets","web_apps","settings_store","shell_lifecycle","screenshot","sleep","dev_deploy","logs"]}
 ```
 
 **`node_id` resolution order:** `[mqtt].device_id` from `config.toml` → the
@@ -875,7 +875,7 @@ Current connectivity and primary/active connection state.
 **Response:** A compact single-line JSON **object**:
 
 ```json
-{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.168.1.50","gateway":"192.168.1.1","dns":["192.168.1.1","8.8.8.8"],"activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0","speed":1000}]}
+{"connectivity":"full","primaryType":"802-3-ethernet","hasWifi":true,"ipv4":"eth0: 192.0.2.50","gateway":"192.0.2.1","dns":["192.0.2.1","8.8.8.8"],"activeConnections":[{"name":"Wired connection 1","type":"802-3-ethernet","device":"eth0","speed":1000}]}
 ```
 
 | Field | Type | Notes |
@@ -1146,7 +1146,7 @@ This is a **best-effort, cap-gated no-op**:
 **Example (automation):**
 
 ```
-echo "rumble uniq:e4:17:d8:01:02:03 200" | nc -U "$TV_SHELL_SOCK"
+echo "rumble uniq:aa:bb:cc:dd:ee:ff 200" | nc -U "$TV_SHELL_SOCK"
 ```
 
 > **`rumbleEnabled` setting.** A QML-owned boolean in `settings.json`
@@ -1905,11 +1905,11 @@ curl / scripts can drive the shell without needing a Unix socket client.
 
 | Key (`[http]`) | Purpose |
 |----------------|---------|
-| `bind` | `host:port` address to bind (e.g. `192.168.1.50:8731` or `0.0.0.0:8731`). When **omitted** (the default), no TCP socket is opened and no control surface is exposed. |
+| `bind` | `host:port` address to bind (e.g. `192.0.2.50:8731` or `0.0.0.0:8731`). When **omitted** (the default), no TCP socket is opened and no control surface is exposed. |
 | `token_file` | Path to a `0600` file holding the bearer token (the token is **by reference only**, never inline). When auth is enabled (the default), every request must carry `Authorization: Bearer <token>` (constant-time match); requests without a valid token receive 401. |
 | `auth_enabled` | Auth toggle (a TOML bool, default `true`). Set to `false` to skip auth entirely for local-only dev. When auth is enabled but `token_file` resolves no token, **all requests are rejected with 401** (secure by default — you cannot authenticate without a token). |
 
-> **Security note**: bind to a trusted LAN interface (e.g. `192.168.1.x:8731`),
+> **Security note**: bind to a trusted LAN interface (e.g. `192.0.2.x:8731`),
 > not a public one. The bridge is a control surface — a mis-bound listener would
 > expose shell control to the public internet. Pair with `token_file` for
 > defence-in-depth even on a LAN. The daemon **refuses to start** on a non-loopback
@@ -1933,7 +1933,7 @@ Example to opt a box into the LAN HTTP bridge:
 # ~/.config/tv-shell/config.toml
 [http]
 # Bind the HTTP bridge to the LAN interface on this box.
-bind = "192.168.1.50:8731"
+bind = "192.0.2.50:8731"
 # A 0600 file holding the bearer token (required when auth is enabled, the default).
 token_file = "~/.config/tv-shell/http-token"
 # Uncomment to disable auth entirely for local-only dev:
@@ -1982,17 +1982,17 @@ re-validate).
 # configuration.yaml
 rest_command:
   tv_shell_intent:
-    url: "http://192.168.1.50:8731/intent/{{ intent }}"
+    url: "http://192.0.2.50:8731/intent/{{ intent }}"
     method: POST
     headers:
       Authorization: "Bearer {{ token }}"
   tv_shell_key:
-    url: "http://192.168.1.50:8731/key/{{ key }}"
+    url: "http://192.0.2.50:8731/key/{{ key }}"
     method: POST
     headers:
       Authorization: "Bearer mysecret"
   tv_shell_screenshot:
-    url: "http://192.168.1.50:8731/screenshot"
+    url: "http://192.0.2.50:8731/screenshot"
     method: GET
     headers:
       Authorization: "Bearer mysecret"
@@ -2011,24 +2011,24 @@ data:
 
 ```bash
 # Open Bluetooth settings (no auth)
-curl -X POST http://192.168.1.50:8731/intent/settings:bluetooth
+curl -X POST http://192.0.2.50:8731/intent/settings:bluetooth
 
 # Same with bearer token
-curl -X POST http://192.168.1.50:8731/intent/settings:bluetooth \
+curl -X POST http://192.0.2.50:8731/intent/settings:bluetooth \
      -H "Authorization: Bearer mysecret"
 
 # Colon percent-encoded (HA encodes `:` as `%3A`)
-curl -X POST http://192.168.1.50:8731/intent/settings%3Abluetooth
+curl -X POST http://192.0.2.50:8731/intent/settings%3Abluetooth
 
 # Synthesize a key press
-curl -X POST http://192.168.1.50:8731/key/select
+curl -X POST http://192.0.2.50:8731/key/select
 
 # Capture a screenshot (returns image/png)
 curl -H "Authorization: Bearer mysecret" \
-     http://192.168.1.50:8731/screenshot > screenshot.png
+     http://192.0.2.50:8731/screenshot > screenshot.png
 
 # Screenshot without auth ([http] auth_enabled = false)
-curl http://192.168.1.50:8731/screenshot > screenshot.png
+curl http://192.0.2.50:8731/screenshot > screenshot.png
 ```
 
 ### Relation to the Unix socket intent surface
@@ -2194,25 +2194,25 @@ table apply. Additional codes specific to dev routes:
 
 ```bash
 # Check daemon status
-curl -H "Authorization: Bearer mysecret" http://192.168.1.50:8731/dev/status
+curl -H "Authorization: Bearer mysecret" http://192.0.2.50:8731/dev/status
 
 # Tail the last 50 lines of the quickshell log, filtered to errors
-curl -H "Authorization: Bearer mysecret"      "http://192.168.1.50:8731/dev/logs?lines=50&filter=error"
+curl -H "Authorization: Bearer mysecret"      "http://192.0.2.50:8731/dev/logs?lines=50&filter=error"
 
 # Restart quickshell and see initial WARN/ERROR output
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/restart-shell
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.0.2.50:8731/dev/restart-shell
 
 # Build the daemon (~15 s)
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/build
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.0.2.50:8731/dev/build
 
 # Deploy the main branch
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/deploy
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.0.2.50:8731/dev/deploy
 
 # Deploy a specific branch
-curl -X POST -H "Authorization: Bearer mysecret"      "http://192.168.1.50:8731/dev/deploy?ref=feat/my-branch"
+curl -X POST -H "Authorization: Bearer mysecret"      "http://192.0.2.50:8731/dev/deploy?ref=feat/my-branch"
 
 # Hot-swap the binary after a build (daemon re-execs; bridge back in ~3 s)
-curl -X POST -H "Authorization: Bearer mysecret"      http://192.168.1.50:8731/dev/restart-daemon
+curl -X POST -H "Authorization: Bearer mysecret"      http://192.0.2.50:8731/dev/restart-daemon
 ```
 
 ### Unrecognized Commands
@@ -2460,7 +2460,7 @@ bt:device:{"mac":"AA:BB:CC:DD:EE:FF","name":"Xbox Wireless Controller","paired":
 bt:device-removed:AA:BB:CC:DD:EE:FF
 bt:scanning:off
 net:connectivity:full
-net:wifi:{"connectivity":"full","primaryType":"802-11-wireless","hasWifi":true,"ipv4":"wlan0: 192.168.1.50","activeConnections":[]}
+net:wifi:{"connectivity":"full","primaryType":"802-11-wireless","hasWifi":true,"ipv4":"wlan0: 192.0.2.50","activeConnections":[]}
 net:primary:Wired connection 1
 power:battery:{"present":true,"percentage":74,"state":"discharging","onBattery":true,"icon":"battery-good-symbolic"}
 ```

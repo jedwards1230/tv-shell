@@ -1421,8 +1421,8 @@ mod tests {
 
     fn node_entry(token_path: &Path) -> RawRemoteNode {
         RawRemoteNode {
-            id: "desktop-2".to_string(),
-            base_url: "http://192.168.8.153:47995".to_string(),
+            id: "node-3".to_string(),
+            base_url: "http://192.0.2.153:47995".to_string(),
             sidecar_token_file: token_path.to_str().unwrap().to_string(),
         }
     }
@@ -1432,8 +1432,8 @@ mod tests {
         let (dir, token) = node_fixture("ok", "  sidecar-s3kret\n", 0o600);
         let nodes = read_remote_nodes(&[node_entry(&token)], &dir).unwrap();
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].id, "desktop-2");
-        assert_eq!(nodes[0].base_url, "http://192.168.8.153:47995");
+        assert_eq!(nodes[0].id, "node-3");
+        assert_eq!(nodes[0].base_url, "http://192.0.2.153:47995");
         assert_eq!(nodes[0].token, "sidecar-s3kret");
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1453,8 +1453,7 @@ mod tests {
                 .expect_err("a world-readable sidecar credential must abort startup");
             assert!(err.to_string().contains("group/other-accessible"), "{err}");
             assert!(
-                err.to_string()
-                    .contains("nodes.desktop-2.sidecar_token_file"),
+                err.to_string().contains("nodes.node-3.sidecar_token_file"),
                 "the message must name WHICH node's token: {err}"
             );
             std::fs::remove_dir_all(&dir).ok();
@@ -1503,7 +1502,7 @@ mod tests {
     fn a_panel_nodes_entry_refuses_a_base_url_that_is_not_http() {
         let (dir, token) = node_fixture("url", "s3kret\n", 0o600);
         for bad in [
-            "192.168.8.153:47995", // no scheme — the common hand-edit mistake
+            "192.0.2.153:47995", // no scheme — the common hand-edit mistake
             "unix:///run/user/1000/sock",
             "file:///etc/passwd",
             "",
@@ -1526,7 +1525,7 @@ mod tests {
         // The other half: a valid URL is accepted, and a trailing slash is
         // normalized away so `…:47995/` and `…:47995` address one node rather
         // than building `…:47995//library` for one of them.
-        for good in ["http://192.168.8.153:47995", "https://desktop-2.lan:47995/"] {
+        for good in ["http://192.0.2.153:47995", "https://node-3.example:47995/"] {
             let entry = RawRemoteNode {
                 base_url: good.to_string(),
                 ..node_entry(&token)
@@ -1561,8 +1560,8 @@ mod tests {
     #[test]
     fn a_panel_nodes_debug_redacts_its_token() {
         let node = RemoteNode {
-            id: "desktop-2".to_string(),
-            base_url: "http://192.168.8.153:47995".to_string(),
+            id: "node-3".to_string(),
+            base_url: "http://192.0.2.153:47995".to_string(),
             token: "super-secret-bearer".to_string(),
         };
         let rendered = format!("{node:?}");
@@ -1573,8 +1572,8 @@ mod tests {
         assert!(rendered.contains("<redacted>"), "{rendered}");
         // The non-secret fields must still be there — a Debug that hides
         // everything is useless for the diagnostics it exists for.
-        assert!(rendered.contains("desktop-2"), "{rendered}");
-        assert!(rendered.contains("192.168.8.153"), "{rendered}");
+        assert!(rendered.contains("node-3"), "{rendered}");
+        assert!(rendered.contains("192.0.2.153"), "{rendered}");
     }
 
     #[test]
@@ -1590,17 +1589,17 @@ mod tests {
             bind = "127.0.0.1:8091"
 
             [[panel.nodes]]
-            id = "desktop-2"
-            base_url = "http://192.168.8.153:47995"
-            sidecar_token_file = "~/.config/tv-shell/desktop-2-sidecar-token"
+            id = "node-3"
+            base_url = "http://192.0.2.153:47995"
+            sidecar_token_file = "~/.config/tv-shell/node-3-sidecar-token"
         "#;
         let raw: RawConfig = toml::from_str(toml_text).expect("parse");
         assert_eq!(raw.panel.nodes.len(), 1);
-        assert_eq!(raw.panel.nodes[0].id, "desktop-2");
-        assert_eq!(raw.panel.nodes[0].base_url, "http://192.168.8.153:47995");
+        assert_eq!(raw.panel.nodes[0].id, "node-3");
+        assert_eq!(raw.panel.nodes[0].base_url, "http://192.0.2.153:47995");
         assert_eq!(
             raw.panel.nodes[0].sidecar_token_file,
-            "~/.config/tv-shell/desktop-2-sidecar-token"
+            "~/.config/tv-shell/node-3-sidecar-token"
         );
     }
 

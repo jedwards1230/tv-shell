@@ -20,9 +20,9 @@ driven with HTTP and captured with a browser. Neither catalog covers the other.
 Two auth layers, and both stop headless tooling:
 
 1. **Authentik forward-auth** sits on the public hostname
-   `https://tv-shell.lilbro.cloud/`. A headless client gets a 302 to
-   `auth.lilbro.cloud` it cannot pass. Use the LAN origin instead:
-   **`http://192.168.8.50:8091`**.
+   `https://tv-shell.example.com/`. A headless client gets a 302 to
+   `auth.example.com` it cannot pass. Use the LAN origin instead:
+   **`http://192.0.2.50:8091`**.
 2. **The panel's own token** — `[panel].token_file`, i.e.
    `~/.config/tv-shell/panel-token` on the device. This is **not** the daemon's
    `[http].token_file`; that one 401s here. Either send
@@ -92,10 +92,10 @@ Restart the daemon afterwards. Pinned by
 advice in the banner. Both are worth reading, since the whole point is that
 they do not say the same thing.
 
-**`allow_dangerous = false`** (the default, and what htpc-1 runs). Dev ▸ Console
-renders an explanation and **no form**; Deploy, Build, Reboot, Suspend and the
-full-update button are absent behind explanatory banners rather than present
-and erroring.
+**`allow_dangerous = false`** (the default, and what the reference deployment
+runs). Dev ▸ Console renders an explanation and **no form**; Deploy, Build,
+Reboot, Suspend and the full-update button are absent behind explanatory banners
+rather than present and erroring.
 
 **Empty `[panel].managed_units`.** System ▸ Services explains itself rather
 than rendering an empty table, and still offers the read path — the inspector
@@ -105,7 +105,7 @@ works with no allowlist at all.
 explicit refusal naming the unit and the missing NOPASSWD line — never a silent
 no-op. On a node whose ansible run has applied
 [`homelab-ansible#271`](https://github.com/jedwards1230/homelab-ansible/pull/271)
-(htpc-1 has), the restart succeeds instead.
+(the reference deployment has), the restart succeeds instead.
 
 **Auth enabled.** `/login` renders the token form; an unauthenticated browser
 navigation redirects there rather than 401ing blindly at the page.

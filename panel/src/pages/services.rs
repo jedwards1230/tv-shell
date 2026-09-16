@@ -534,8 +534,9 @@ mod tests {
         assert_eq!(user.scope, "user");
     }
 
-    /// The behaviour htpc-1 shows today. Not "failed", not "ok" — an explicit
-    /// refusal that names the unit and the missing prerequisite.
+    /// The behaviour the reference deployment shows today. Not "failed", not
+    /// "ok" — an explicit refusal that names the unit and the missing
+    /// prerequisite.
     #[test]
     fn a_missing_sudoers_line_renders_an_explicit_refusal_naming_the_unit() {
         let target = managed("sshd", "sshd.service", "system");

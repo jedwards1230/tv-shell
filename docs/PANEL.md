@@ -8,7 +8,7 @@ config management.
 
 > Status: all four milestones (M1-M4) plus a final-polish pass are **merged to
 > `main`** — every page is fully implemented, and the panel is deployed on
-> htpc-1. This document is the panel's living doc.
+> the reference deployment. This document is the panel's living doc.
 >
 > **Single-node today.** The panel dials the daemon's Unix-socket IPC
 > unconditionally, so it serves exactly one node and does not build on Windows.
@@ -51,7 +51,7 @@ socket plugs into — see [MULTI_NODE_PANEL.md](MULTI_NODE_PANEL.md) §2.
 
 ### The sidecar/remote-node transport
 
-A **sidecar** node (`tv-shell-host`, e.g. desktop-2) has no local recovery
+A **sidecar** node (`tv-shell-host`, e.g. node-3) has no local recovery
 tier worth serving — see [MULTI_NODE_PANEL.md](MULTI_NODE_PANEL.md) §4 — so it
 is reached remotely over HTTP by `HttpTransport` (`panel/src/http.rs`): a
 second `NodeTransport` implementation beside `IpcTransport`, speaking the
@@ -72,9 +72,9 @@ Configured per node via `[[panel.nodes]]` in `config.toml` (see
 
 ```toml
 [[panel.nodes]]
-id = "desktop-2"
-base_url = "http://192.168.8.153:47995"
-sidecar_token_file = "~/.config/tv-shell/desktop-2-sidecar-token"
+id = "node-3"
+base_url = "http://192.0.2.153:47995"
+sidecar_token_file = "~/.config/tv-shell/node-3-sidecar-token"
 ```
 
 `sidecar_token_file`, not `token_file` — a panel may hold credentials only for
@@ -136,7 +136,7 @@ partials moved without redirects — they are poll targets, not bookmarks.
 | Launcher | `/remote/launcher` | `list-apps` rendered with a per-app Launch button (`intent app:<wmClass>`), plus `get-recents`. What *can* launch is Shell ▸ Apps; this is what to launch now |
 | Recovery | `/dev/recovery` | restart daemon/restart shell (always available — unit restart is recovery) plus reboot/suspend behind `allow_dangerous` and deploy/build behind `allow_dangerous` **and** the node's `dev_deploy` capability, all with tier labels + confirms. Every action's response carries out-of-band unit chips + a nav-dot refresh, so the operator sees the unit actually came back |
 | Screenshot | `/dev/screenshot` | the screenshot viewer, its own page since phase 4 — the one read-only surface on a page otherwise made of destructive buttons, and legible at full width. `POST /dev/screenshot/capture` confirms the bridge answers and reads the provenance line (sha/branch/version/captured-at); only then is an `<img>` emitted, pointing at `GET /dev/screenshot/image` — the PNG proxy, renamed from `/dev/screenshot` to free that path for the page. Gated on the node's `screenshot` capability; a node that declares it while this panel has no HTTP bridge configured is told so up front rather than on click |
-| Console | `/dev/console` | the raw IPC line console from the dissolved Tools page: sends any single command from the daemon's vocabulary and shows the raw reply, with a warning banner on the verbs owned by another page's guarded flow (`set-config`, `set-binding`, `grab`, `release`, `handoff`) and a sharpened client-side confirm for the same list. The **page** is node tier; `POST /dev/console/raw` is in the `allow_dangerous` set, so with that off (the default, and htpc-1's setting) the page renders an explanatory banner and **no form** — never a button that 404s |
+| Console | `/dev/console` | the raw IPC line console from the dissolved Tools page: sends any single command from the daemon's vocabulary and shows the raw reply, with a warning banner on the verbs owned by another page's guarded flow (`set-config`, `set-binding`, `grab`, `release`, `handoff`) and a sharpened client-side confirm for the same list. The **page** is node tier; `POST /dev/console/raw` is in the `allow_dangerous` set, so with that off (the default, and the reference deployment's setting) the page renders an explanatory banner and **no form** — never a button that 404s |
 | Logs | `/system/logs` | shell + daemon log tails (ANSI-stripped — including "bare" ESC-dropped residue like `[33m`/`[0m` — and wrapped rather than clipped), free-text filter plus one-click "Errors only"/"Hide icon noise" presets, and a Focus Shell/Focus Daemon toggle to expand one pane to full width (state lives on `#log-panels` itself, so it survives every htmx refresh of the panes inside it) |
 
 ### Scoped settings saves
@@ -293,13 +293,13 @@ daemon — Overview's Updates tile and the System ▸ Updates page
 
 ### Deployment prerequisite: passwordless sudo for the apply path
 
-**The panel's systemd-unit user needs a NOPASSWD sudoers rule scoped to
-`pacman -Syu`** — `-n` ("never prompt") is what makes `sudo -n pacman -Syu
---noconfirm` safe to shell out to from an unattended background task in the
-first place; without a real terminal to prompt at, a plain `sudo pacman -Syu`
-would otherwise just hang until the 30-minute timeout killed it. htpc-1 (the
-reference deploy host) grants this today; a fresh deploy host needs the
-equivalent, e.g. a drop-in under `/etc/sudoers.d/`:
+**The panel's systemd-unit user needs a NOPASSWD sudoers rule scoped to `pacman
+-Syu`** — `-n` ("never prompt") is what makes `sudo -n pacman -Syu --noconfirm`
+safe to shell out to from an unattended background task in the first place;
+without a real terminal to prompt at, a plain `sudo pacman -Syu` would otherwise
+just hang until the 30-minute timeout killed it. The reference deploy host
+grants this today; a fresh deploy host needs the equivalent, e.g. a drop-in
+under `/etc/sudoers.d/`:
 
 ```
 tv-shell ALL=(root) NOPASSWD: /usr/bin/pacman -Syu --noconfirm
@@ -397,8 +397,9 @@ problem — the two send an operator to different places.
 > `jedwards1230/homelab-ansible` is where these sudoers lines will be
 > generated, from the same list that renders `managed_units` so the two cannot
 > drift. Until it does, **every `scope = "system"` restart fails closed on every
-> node, htpc-1 included.** Listing a system unit in `managed_units` today makes
-> it readable and visible on the page; it does not make it restartable.
+> node, the reference deployment included.** Listing a system unit in
+> `managed_units` today makes it readable and visible on the page; it does not
+> make it restartable.
 > `scope = "user"` entries work now.
 
 ## Authentication
@@ -574,7 +575,7 @@ saying so, and the resolved set is logged at `info!` beside the
 `bind`/`auth`/`allow_dangerous` line:
 
 ```
-tv-shell-panel: capabilities — handshake=ok, node_id="htpc-1", features=[cec,controllers,widgets,web_apps,settings_store,shell_lifecycle,screenshot,sleep,dev_deploy,logs]
+tv-shell-panel: capabilities — handshake=ok, node_id="node-1", features=[cec,controllers,widgets,web_apps,settings_store,shell_lifecycle,screenshot,sleep,dev_deploy,logs]
 ```
 
 (The order is `Feature`'s derived `Ord`, i.e. **declaration** order — not
@@ -597,8 +598,9 @@ wait for a daemon that is already running. Deploy the daemon first, or deploy bo
 
 The handshake itself is bounded: 4 attempts on a 1.2s budget each, 1.5s apart
 (~9.3s worst case), retried **only** while the node is unreachable — the
-documented htpc-1 cold-boot race where the panel unit starts before the daemon's
-socket exists. A node that *answers* with a refusal has answered; that fails fast.
+documented cold-boot race on the reference deployment where the panel unit
+starts before the daemon's socket exists. A node that *answers* with a refusal
+has answered; that fails fast.
 
 ### Startup refusal
 
@@ -656,7 +658,7 @@ arbitrary-command surface, and gating it further would not remove a capability
 lie (it reports the node's own error when the node is down). Note the scope
 honestly: with the handshake failed, `/dev/console` is gone too, so what
 survives is reachable by `curl`, not from the UI. The inverse case — the page
-registered while the route is not, which is htpc-1's actual state — renders an
+registered while the route is not, which is node-1's actual state — renders an
 explanatory banner and no form at all.
 
 `/dev/deploy` and `/dev/build` are the one intersection — they need

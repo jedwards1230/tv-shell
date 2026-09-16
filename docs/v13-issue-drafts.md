@@ -25,7 +25,7 @@ Title: v2 shell has no install path — nothing deploys shell-v2/ to the box
 ```
 
 ```markdown
-The v2 shell cannot be run on htpc-1 by any supported route. This is the top blocker for v2:
+The v2 shell cannot be run on the reference deployment by any supported route. This is the top blocker for v2:
 it is why §13 Q2 (plugin mechanism) is deferred, and it is why v2 UI work has no couch to
 land on.
 
@@ -87,7 +87,7 @@ protocol failure. Kernel `pulse8-cec` plus the kernel CEC API is a much thinner 
 
 ## Step one: there is no CEC device yet
 
-Measured on htpc-1 2026-09-14:
+Measured on the reference deployment 2026-09-14:
 
 - `pulse8-cec` is **not loaded**.
 - There is **no `/dev/cec*` node at all**.
@@ -174,7 +174,7 @@ colorspace" — including under the Deck flags `-steamos3 -steampal -steamdeck -
 
 That is **one client, on one build, declining one offer**. It is not evidence that
 Steam/gamescope HDR is broken on Linux generally: local games under gamescope get HDR fine
-(SteamOS and the Steam Deck do exactly this), and htpc-1 itself runs Moonlight at 4K120 HDR10
+(SteamOS and the Steam Deck do exactly this), and the reference deployment itself runs Moonlight at 4K120 HDR10
 through the same compositor and the same WSI layer.
 
 ## Why re-measure
@@ -272,10 +272,11 @@ measured session.
 
 ---
 
-## 7. Increase journald retention on htpc-1
+## 7. Increase journald retention on the reference deployment
 
 ```
-Title: htpc-1 journald retention is too short to survey stream starts
+Title: the reference deployment's journald retention is too short to survey
+stream starts
 ```
 
 ```markdown
@@ -290,16 +291,16 @@ lifecycle outright and narrow the field to the AVR or an audio infoframe renegot
 stream start.
 
 The check came back **inconclusive**, and the reason is retention rather than the hypothesis.
-journald on htpc-1 only reaches back to **2026-09-13 16:54** (43.8 MB on disk), so roughly
+journald on the reference deployment only reaches back to **2026-09-13 16:54** (43.8 MB on disk), so roughly
 **21 hours** could be surveyed rather than the **eight days** v2 has actually been running.
 A 21-hour window that happened to contain no stream start proves nothing about eight days that
 did.
 
 ## Scope
 
-- Raise journald retention on htpc-1 so the window covers ordinary use — `SystemMaxUse=` /
+- Raise journald retention on the reference deployment so the window covers ordinary use — `SystemMaxUse=` /
   `MaxRetentionSec=` in `journald.conf`, sized against the observed ~44 MB per day.
-- This is an htpc-1 host-config change, so it belongs in the Ansible role, not a hand edit on
+- This is a the reference deployment host-config change, so it belongs in the Ansible role, not a hand edit on
   the box.
 
 ## Then

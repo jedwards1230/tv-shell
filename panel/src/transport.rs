@@ -524,13 +524,13 @@ mod tests {
         let node: Arc<dyn NodeTransport> = Arc::new(FakeTransport::new(vec![(
             "capabilities",
             Scripted::Reply(
-                r#"{"node_id":"htpc-1","kind":"shell","agent_version":"0.2.2",
+                r#"{"node_id":"node-1","kind":"shell","agent_version":"0.2.2",
                     "platform":"linux","features":["shell.intent"]}"#,
             ),
         )]));
 
         let caps = node.capabilities().await.unwrap();
-        assert_eq!(caps.node_id, "htpc-1");
+        assert_eq!(caps.node_id, "node-1");
         assert_eq!(caps.kind, tv_shell_protocol::NodeKind::Shell);
         assert_eq!(caps.platform, tv_shell_protocol::Platform::Linux);
         assert!(!caps.features.is_empty());

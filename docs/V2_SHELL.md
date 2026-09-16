@@ -731,11 +731,11 @@ claim whose subject can drift from its object.
 
 ### 11.9a It rendered on hardware, and the window was 160x160
 
-Run on htpc-1 on 2026-09-08 under the live gamescope beside Moonlight: it maps,
-tags as 9001, `show 9001` puts it on screen, and the clock, the live
-"On screen: 9003" read from core state, and the Continue heading are all really
-there. That closes most of §11.10's first bullet — it *has* now been seen
-rendering.
+Run on the reference deployment on 2026-09-08 under the live gamescope beside
+Moonlight: it maps, tags as 9001, `show 9001` puts it on screen, and the clock,
+the live "On screen: 9003" read from core state, and the Continue heading are
+all really there. That closes most of §11.10's first bullet — it *has* now been
+seen rendering.
 
 It also immediately produced a defect **no lane in this repo could have caught**:
 
@@ -790,8 +790,8 @@ never smaller than its output.
 
 ### 11.9b gamescope keeps compositing an overlay after it unmaps
 
-Measured on htpc-1, 2026-09-08, and it is the reason closing the drawer left the
-television showing it (jedwards1230/tv-shell#481).
+Measured on the reference deployment, 2026-09-08, and it is the reason closing
+the drawer left the television showing it (jedwards1230/tv-shell#481).
 
 **Two symptoms that look like one and are not.** After Escape the drawer unmaps
 correctly and `GAMESCOPE_FOCUSED_WINDOW` returns to the base — but

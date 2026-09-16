@@ -175,7 +175,7 @@ command — see [IPC_PROTOCOL.md](IPC_PROTOCOL.md#capabilities) for the field ta
 and the forward-compatibility rule for unknown feature names.
 
 ```json
-{"node_id":"desktop-2","kind":"sidecar","agent_version":"0.6.0","platform":"windows","features":["steam_library","game_launch","sleep"]}
+{"node_id":"node-3","kind":"sidecar","agent_version":"0.6.0","platform":"windows","features":["steam_library","game_launch","sleep"]}
 ```
 
 Bearer-authenticated like every route but `/art/{appid}`: the feature set is an

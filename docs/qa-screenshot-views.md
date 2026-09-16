@@ -8,14 +8,14 @@ screenshot batch. Keep this updated as views are added or changed.
 > gamescope 3.16.28 implements no Wayland screen-capture protocol — neither
 > `wlr-screencopy-unstable-v1` nor `ext-image-copy-capture-v1` exists in its
 > tree — so `grim` fails with `compositor doesn't support the screen capture
-> protocol` (measured on htpc-1's live v2 session, 2026-09-08). That is
-> structural, not a misconfiguration, and no flag changes it. **Every capture
-> route in this document is `grim`-based and therefore unavailable on v2**, as
-> are the other v1 surfaces built on it: the daemon's `GET /screenshot`, the MCP
-> `take_screenshot` tool and `screenshot://current` resource
-> ([`CONTROL_SURFACE.md`](CONTROL_SURFACE.md)), and the panel's Dev ▸ Screenshot
-> page ([`PANEL.md`](PANEL.md)). Those are documented for the v1 session they
-> serve and are deliberately **not** rewritten here.
+> protocol` (measured on the reference deployment's live v2 session,
+> 2026-09-08). That is structural, not a misconfiguration, and no flag changes
+> it. **Every capture route in this document is `grim`-based and therefore
+> unavailable on v2**, as are the other v1 surfaces built on it: the daemon's
+> `GET /screenshot`, the MCP `take_screenshot` tool and `screenshot://current`
+> resource ([`CONTROL_SURFACE.md`](CONTROL_SURFACE.md)), and the panel's Dev ▸
+> Screenshot page ([`PANEL.md`](PANEL.md)). Those are documented for the v1
+> session they serve and are deliberately **not** rewritten here.
 >
 > Reading pixels out of X instead does not work either, and is not worth
 > retrying: gamescope runs Xwayland `-rootless` under manual Composite

@@ -980,11 +980,11 @@ mod tests {
     #[test]
     fn apply_osd_name_preserves_document() {
         let doc = "# my comment\n[http]\nbind = \"127.0.0.1:8089\"\n\n[cec]\nlifecycle = true\n";
-        let set = apply_osd_name(doc, Some("htpc-1")).unwrap();
+        let set = apply_osd_name(doc, Some("node-1")).unwrap();
         assert!(set.contains("# my comment"), "comment must survive: {set}");
         assert!(set.contains("bind = \"127.0.0.1:8089\""));
         assert!(set.contains("lifecycle = true"));
-        assert!(set.contains("osd_name = \"htpc-1\""));
+        assert!(set.contains("osd_name = \"node-1\""));
 
         // Clearing removes only the key; the rest stays intact.
         let cleared = apply_osd_name(&set, None).unwrap();
@@ -995,9 +995,9 @@ mod tests {
 
     #[test]
     fn apply_osd_name_creates_cec_table_when_absent() {
-        let out = apply_osd_name("", Some("htpc-1")).unwrap();
+        let out = apply_osd_name("", Some("node-1")).unwrap();
         assert!(out.contains("[cec]"));
-        assert!(out.contains("osd_name = \"htpc-1\""));
+        assert!(out.contains("osd_name = \"node-1\""));
         // Clearing on a doc with no [cec] table is a clean no-op.
         assert_eq!(apply_osd_name("", None).unwrap(), "");
     }
@@ -1006,10 +1006,10 @@ mod tests {
     fn apply_osd_name_handles_inline_cec_table() {
         // A hand-written inline table must be edited, not silently no-opped.
         let doc = "cec = { lifecycle = true }\n";
-        let set = apply_osd_name(doc, Some("htpc-1")).unwrap();
+        let set = apply_osd_name(doc, Some("node-1")).unwrap();
         assert!(set.contains("lifecycle = true"));
         assert!(
-            set.contains("osd_name = \"htpc-1\""),
+            set.contains("osd_name = \"node-1\""),
             "set must land: {set}"
         );
         let cleared = apply_osd_name(&set, None).unwrap();

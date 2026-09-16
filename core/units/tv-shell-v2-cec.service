@@ -14,7 +14,7 @@
 # As of this step the daemon DOES transmit, but only when a client asks it to:
 # `wake`, `standby`, `input-claim`, `input-release` and `input-select` are the
 # whole set, and nothing here acts on a timer, on a session event or on its own
-# initiative. The living-room bus carries an Apple TV and a PS5 as well as the
+# initiative. A shared bus may carry other playback devices as well as the
 # television and the AVR, so two rules are enforced in code rather than by
 # convention: a <Standby> is always ADDRESSED and never broadcast (a broadcast
 # standby powers off every device on the bus), and `standby` requires positive

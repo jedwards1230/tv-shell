@@ -1,9 +1,9 @@
 // The one binding that opens the drawer from a real key.
 //
-// gamescope does not deliver KEY_MENU to its clients (measured on htpc-1,
-// 2026-09-10 — jedwards1230/tv-shell#489), so the Menu-only binding this
-// replaced could not be reached by any input device on the couch. Tab can, and
-// this lane is where that stays true.
+// gamescope does not deliver KEY_MENU to its clients (measured on the reference
+// deployment, 2026-09-10 — jedwards1230/tv-shell#489), so the Menu-only binding
+// this replaced could not be reached by any input device on the couch. Tab can,
+// and this lane is where that stays true.
 import QtQuick
 import QtTest
 import TvShell

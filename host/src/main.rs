@@ -739,7 +739,7 @@ mod tests {
         assert!(is_loopback_bind("::1"));
         assert!(!is_loopback_bind("0.0.0.0"));
         assert!(!is_loopback_bind("::"));
-        assert!(!is_loopback_bind("192.168.1.10"));
+        assert!(!is_loopback_bind("192.0.2.10"));
         assert!(!is_loopback_bind("localhost"));
         assert!(!is_loopback_bind(""));
     }
@@ -819,8 +819,8 @@ mod tests {
     fn pick_node_id_follows_the_documented_precedence() {
         // Every candidate present: the explicit mqtt device_id wins outright.
         assert_eq!(
-            pick_node_id(Some("htpc-1"), Some("WINBOX"), Some("procfs"), Some("envh")),
-            "htpc-1"
+            pick_node_id(Some("node-1"), Some("WINBOX"), Some("procfs"), Some("envh")),
+            "node-1"
         );
         // Then COMPUTERNAME (always set on Windows)...
         assert_eq!(

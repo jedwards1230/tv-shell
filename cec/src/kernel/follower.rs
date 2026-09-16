@@ -381,7 +381,7 @@ mod tests {
     /// **The rule: a power or audio report is attributed to its initiator, never
     /// assumed to be the television's or the AVR's.**
     ///
-    /// The living-room bus carries an Apple TV and a PS5. Folding their reports
+    /// A shared bus may carry other playback devices. Folding their reports
     /// in would publish another device's power state as the television's.
     #[test]
     fn a_third_party_report_is_not_attributed_to_the_tv_or_the_avr() {
