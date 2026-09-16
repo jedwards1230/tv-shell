@@ -59,8 +59,12 @@ Three things are worth knowing before reading them:
   a misreading, which is the exact incident §9 was written about. The session
   script stops and `mask --runtime`s the v1 units instead, so a stray start fails
   loudly rather than tearing down a live session, and a runtime mask cannot
-  outlive the user manager. **That is a mitigation: §9 still requires the
-  watchdog to stand down at cutover, and that is unfiled on the Ansible side.**
+  outlive the user manager. **That is a mitigation; the watchdog stand-down §9
+  requires is the real fix, and it is DONE** — `htpc_cec_watchdog_active` derives
+  from the selected boot session, and the timer was read on the deploy box as
+  `disabled`/`inactive` on 2026-09-14. The Ansible unit still exists on disk, so
+  it must never be re-enabled; what retires it rather than disabling it is
+  `tv-shell-v2-cec.service`'s `Type=notify` + `WatchdogSec=` (§9).
 
 ### The rule the ExecStart is written under
 
@@ -295,9 +299,9 @@ those tests has been mutation-checked (`## Build, test & lint`).
 sudo ./scripts/install-v2.sh --user "$(id -un)"
 ```
 
-That builds `tv-shell-core`, installs it plus the two session scripts to
-`/opt/tv-shell-v2/bin/`, writes the three units into `~/.config/systemd/user/`
-with `@TV_SHELL_V2_PREFIX@` substituted, writes
+That builds `tv-shell-core` and `tv-shell-cec`, installs them plus the two
+session scripts to `/opt/tv-shell-v2/bin/`, writes the four units into
+`~/.config/systemd/user/` with `@TV_SHELL_V2_PREFIX@` substituted, writes
 `/usr/share/wayland-sessions/tv-shell-v2.desktop`, and seeds
 `~/.config/tv-shell/core.toml` from the example. Then select **TV Shell v2
 (gamescope)** at the display manager; **TV Shell (Wayland)** is still there and
@@ -697,7 +701,10 @@ Each of these is a follow-up, and none of it is implemented in this crate today:
   and safety-combo escapes (`intent home` with no shell lands on an empty
   compositor — a black television), rumble/battery/LED, and the companion
   touchpad/motion-node inhibition §7 calls for (SteamOS's `ds-inhibit` shape).
-- CEC — which leaves the core entirely in v2 and becomes an observer sidecar (§8)
+- CEC and the rest of AV control — which leave the core entirely in v2 and live in
+  their own daemon, `cec/` (`tv-shell-cec`). §13 Q7 made CEC the **primary** AV
+  control backend on 2026-09-14, not the observer §8 first described; a backend
+  with a wedge history must not sit in the process that keeps Moonlight alive
 - the QML shell (§13 Q1 is still open on its runtime) and any panel changes
 - the HTTP bridge, MCP server, MQTT publisher and `/metrics` (§4 carries their
   contracts over; the code has not moved)

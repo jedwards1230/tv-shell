@@ -41,10 +41,14 @@
 #   v1's config and dialling v1's socket, and it would look like the v2 panel
 #   simply misbehaving. So every v2 sidecar carries the infix.
 #
-#   NONE OF THESE UNITS EXIST YET (`tv-shell-v2-shell`, `-stats`, `-cec`; the
-#   panel is a separate case, above). They are `Wants=` because a `Wants=` on a
-#   missing unit is a soft skip at load — but note that a soft skip is also
-#   invisible, so the session comes up as if they were there.
+#   `tv-shell-v2-cec.service` NOW EXISTS and is installed; `tv-shell-v2-shell`
+#   and `-stats` still do not (the panel is a separate case, above). They are
+#   `Wants=` because a `Wants=` on a missing unit is a soft skip at load — but
+#   note that a soft skip is also invisible, so the session comes up as if they
+#   were there. The CEC unit adds a SECOND silent skip of its own:
+#   `ConditionPathExists=/dev/cec0`, which is unmet on any box without an
+#   adapter. Both are recorded in the journal and in `systemctl --user status`;
+#   neither fails the session.
 #
 # None of Binds/Upholds/Wants carries ordering, INCLUDING the `After=` on this
 # target: ordering a target does not order the units it upholds. So each child
