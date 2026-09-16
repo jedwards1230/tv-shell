@@ -59,28 +59,6 @@
 
 <section class="controllers-section">
   <h2>Backend</h2>
-  {% match backend %}
-  {% when Some with (b) %}
-  <p>
-    {# Only `cec` is green: the IP leg carrying actions is a working degraded
-       mode, never a steady state. #}
-    <span class="dot {{ b.dot_class }}" title="{{ b.active }}"></span>
-    <strong>{{ b.active }}</strong>
-    <span class="muted">· available: {{ b.available }}</span>
-  </p>
-  <p class="muted">{{ b.reason }}</p>
-  {% if b.pinned %}
-  <p class="banner banner-warn">
-    Pinned to <strong>{{ b.pin }}</strong> by an operator, so the automatic decision is not in
-    force. Clear it with <code>backend-pin auto</code> on the daemon's socket.
-  </p>
-  {% endif %}
-  <p class="muted">
-    Read-only here. <code>backend-pin cec|ip|auto</code> is an operator override on the daemon's
-    socket; this page sends nothing.
-  </p>
-  {% when None %}
-  <p class="banner banner-warn">{{ backend_error }}</p>
-  {% endmatch %}
+  <p class="muted">{{ backend_note }}</p>
 </section>
 {% endblock %}

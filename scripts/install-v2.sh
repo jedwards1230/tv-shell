@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Install the tv-shell **v2** (gamescope) session BESIDE an existing v1 install:
-# build tv-shell-core and tv-shell-cec, lay a v2-only prefix, install the four v2
-# systemd --user units with their prefix token substituted, and register a v2
-# session entry the display manager can offer next to v1's.
+# build tv-shell-core, lay a v2-only prefix, install the three v2 systemd --user
+# units with their prefix token substituted, and register a v2 session entry the
+# display manager can offer next to v1's.
 #
 # WHY THIS IS A SEPARATE SCRIPT AND NOT A `--v2` MODE IN scripts/install.sh
 #
@@ -68,8 +68,7 @@
 #   --unit-dir DIR      systemd --user unit dir
 #                       (default: <home>/.config/systemd/user).
 #   --config-dir DIR    Per-user config dir (default: <home>/.config/tv-shell).
-#   --no-build          Skip building tv-shell-core and tv-shell-cec (reuse the
-#                       existing binaries).
+#   --no-build          Skip building tv-shell-core (reuse an existing binary).
 #   --no-session        Do not write (or create the dir for) the session
 #                       .desktop. Use on an Ansible-managed host, where Ansible
 #                       owns that file — see SESSION FILE OWNERSHIP above.
@@ -104,20 +103,10 @@ WRITE_SESSION=1
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UNIT_SRC_DIR="$REPO_ROOT/core/units"
 
-# The four units this installs, and the two scripts that go in <prefix>/bin.
-#
-# tv-shell-v2-cec.service joined this list at the cutover, and installing it is
-# SAFE ON A BOX WITH NO ADAPTER: the unit carries
-# ConditionPathExists=/dev/cec0, so where there is no CEC device systemd skips
-# it and records the skip — it does not fail, and the session target only
-# Wants= it in any case. On the deploy host /dev/cec0 does not exist yet (the
-# pulse8-cec module is blacklisted and pulse8-cec.service is masked, both since
-# the 2026-08-07 two-owners incident); undoing that is an operator step in
-# homelab-ansible, so until it is taken this install lays an inert unit.
+# The three units this installs, and the two scripts that go in <prefix>/bin.
 UNITS=(
     tv-shell-gamescope.service
     tv-shell-core.service
-    tv-shell-v2-cec.service
     tv-shell-session.target
 )
 BIN_SCRIPTS=(
@@ -221,25 +210,14 @@ need_writable "$CONFIG_DIR" "config"
 
 log "prefix=$PREFIX user=$TARGET_USER units=$UNIT_DIR session=$SESSION_DIR/$SESSION_FILE"
 
-# 1. Build the core and the CEC daemon. Workspace-scoped, so the binaries land
-#    in the repo-root target/ (the same place scripts/build-daemon.sh puts the
-#    daemon).
-#
-#    tv-shell-cec is built HERE and not left to the operator, because its unit
-#    is now in UNITS=() above: installing a unit whose ExecStart names a binary
-#    nobody laid down would give a box with a real /dev/cec0 a start failure
-#    (203/EXEC) under Restart=always — a silent-looking install that fails only
-#    on the one host it is meant for. Both binaries are pure Rust with no system
-#    C dependency, so this adds a compile, not a toolchain.
+# 1. Build the core. Workspace-scoped, so the binary lands in the repo-root
+#    target/ (the same place scripts/build-daemon.sh puts the daemon).
 CORE_BIN="$REPO_ROOT/target/release/tv-shell-core"
-CEC_BIN="$REPO_ROOT/target/release/tv-shell-cec"
 if [ "$DO_BUILD" -eq 1 ]; then
-    log "building tv-shell-core and tv-shell-cec ..."
-    ( cd "$REPO_ROOT" && cargo build --release -p tv-shell-core -p tv-shell-cec ) \
-        || die "build failed"
+    log "building tv-shell-core ..."
+    ( cd "$REPO_ROOT" && cargo build --release -p tv-shell-core ) || die "core build failed"
     [ -f "$CORE_BIN" ] || die "build finished but $CORE_BIN is missing"
-    [ -f "$CEC_BIN" ] || die "build finished but $CEC_BIN is missing"
-    log "build succeeded"
+    log "core build succeeded"
 fi
 
 # 2. <prefix>/bin: the core binary plus the two session scripts. The session
@@ -252,17 +230,6 @@ elif [ -x "$PREFIX/bin/tv-shell-core" ]; then
     log "no build artifact at $CORE_BIN — keeping the installed core binary"
 else
     log "WARNING: no core binary built or installed — the session will fail at 'write-session-env'"
-fi
-if [ -f "$CEC_BIN" ]; then
-    install -m755 "$CEC_BIN" "$PREFIX/bin/tv-shell-cec"
-elif [ -x "$PREFIX/bin/tv-shell-cec" ]; then
-    log "no build artifact at $CEC_BIN — keeping the installed CEC binary"
-else
-    # Not fatal, and deliberately a weaker warning than the core's: the CEC unit
-    # is ConditionPathExists=/dev/cec0-gated, so on a box without an adapter a
-    # missing binary is never reached. On a box WITH one it is a restart loop,
-    # which is why the default path builds it.
-    log "WARNING: no tv-shell-cec binary built or installed — tv-shell-v2-cec.service will fail to start on a box that has /dev/cec0"
 fi
 for s in "${BIN_SCRIPTS[@]}"; do
     [ -f "$UNIT_SRC_DIR/$s" ] || die "missing $UNIT_SRC_DIR/$s"

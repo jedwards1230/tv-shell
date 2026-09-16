@@ -63,11 +63,9 @@ session entry, so v1 stays selectable as the rollback.
 sudo ./scripts/install-v2.sh --user "$USER"   # default prefix /opt/tv-shell-v2
 ```
 
-It builds `tv-shell-core` and `tv-shell-cec`, installs them and the two session
-scripts to `<prefix>/bin/`, writes the four v2 systemd `--user` units with their
-install prefix substituted (one of them, `tv-shell-v2-cec.service`, is
-`ConditionPathExists=/dev/cec0`-gated, so on a box with no CEC adapter systemd
-records the unmet condition and starts nothing), writes `/usr/share/wayland-sessions/tv-shell-v2.desktop`, and
+It builds `tv-shell-core`, installs it and the two session scripts to
+`<prefix>/bin/`, writes the three v2 systemd `--user` units with their install
+prefix substituted, writes `/usr/share/wayland-sessions/tv-shell-v2.desktop`, and
 seeds `~/.config/tv-shell/core.toml` (v2's config file — **not** `config.toml`,
 which is v1's and would abort the v1 daemon if it carried v2 tables). It refuses
 a `--prefix` at or under `/opt/tv-shell` (normalised first, so `/opt//tv-shell`

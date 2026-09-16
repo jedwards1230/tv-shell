@@ -131,18 +131,6 @@ pub async fn dispatch(backend: &Arc<dyn AvBackend>, cmd: Command) -> String {
         // when the device is the thing being diagnosed.
         Command::VolumeState => protocol::resp_json(&backend.volume_state().await),
         Command::VolumeUsage => protocol::resp_usage(protocol::VOLUME_USAGE),
-        // A read of a decision already made. No adapter, no network: it answers
-        // while the adapter is the thing being diagnosed, which is when a caller
-        // most wants to know which backend is carrying actions.
-        Command::Backend => protocol::resp_json(&backend.backend().await),
-        // A pin to a backend this box does not have is an `error:`, not an `ok`:
-        // accepting it and acting over CEC anyway would be a control that
-        // reports an effect nothing applies.
-        Command::BackendPin(pin) => match backend.pin_backend(pin).await {
-            Ok(()) => protocol::resp_ok(),
-            Err(why) => protocol::resp_error(&why),
-        },
-        Command::BackendPinUsage => protocol::resp_usage(protocol::BACKEND_PIN_USAGE),
         Command::Unknown => protocol::resp_unknown(),
     }
 }
@@ -234,231 +222,12 @@ mod tests {
         let b: Arc<dyn AvBackend> = fake();
         assert_eq!(reply(&b, "frobnicate").await, "unknown");
         assert_eq!(reply(&b, "av-stateX").await, "unknown");
-        assert_eq!(reply(&b, "backendX").await, "unknown");
-        assert_eq!(reply(&b, "backend cec").await, "unknown");
-    }
-
-    // -----------------------------------------------------------------------
-    // The backend verbs, and the IP leg, end to end over the seam.
-    // -----------------------------------------------------------------------
-
-    fn with_ip() -> Arc<FakeBackend> {
-        Arc::new(FakeBackend::with_ip_leg())
-    }
-
-    /// **The rule: with a healthy adapter, `cec` is authoritative — and on a box
-    /// with no IP leg it is the only backend there is.**
-    #[tokio::test]
-    async fn backend_reports_cec_while_the_adapter_is_healthy() {
-        let b: Arc<dyn AvBackend> = fake();
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(json["active"], serde_json::json!("cec"));
-        assert_eq!(json["available"], serde_json::json!(["cec"]));
-        assert_eq!(json["pin"], serde_json::json!("auto"));
-        assert!(!json["reason"].as_str().unwrap().is_empty());
-
-        // And with an IP leg configured, it is listed as available without
-        // being active.
-        let b: Arc<dyn AvBackend> = with_ip();
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(json["active"], serde_json::json!("cec"));
-        assert_eq!(json["available"], serde_json::json!(["cec", "ip"]));
-    }
-
-    /// **THE LOAD-BEARING TEST OF THIS STEP: a wedged adapter flips the backend
-    /// to `ip`, the reply names the observation, and `standby` still reaches the
-    /// receiver over telnet.**
-    ///
-    /// The failover is reached the real way — a degraded health verdict that
-    /// holds past the hysteresis, folded through the same `Failover` the kernel
-    /// backend uses — not by poking a field.
-    ///
-    /// Mutation-check (run 2026-09-14): make `failover::desired` return
-    /// `Backend::Cec` for a degraded adapter and this fails on the first
-    /// assertion; drop the `plan_for` call from the fake's `act` and it fails on
-    /// the telnet assertion.
-    #[tokio::test]
-    async fn a_wedged_adapter_moves_the_backend_to_ip_and_standby_still_reaches_the_receiver() {
-        let backend = Arc::new(FakeBackend::with_ip_leg().with_avr_main_power());
-        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
-
-        backend.fail_over_to_ip();
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(json["active"], serde_json::json!("ip"));
-        let reason = json["reason"].as_str().unwrap();
-        assert!(
-            reason.contains("degraded"),
-            "the reply must name the observation that caused it: {reason}"
-        );
-
-        // Standby now goes over telnet — and it is NOT gated on the CEC
-        // ownership proof, which a dead bus can never supply.
-        assert_eq!(reply(&b, "standby").await, "ok");
-        let sessions = backend.ip_sessions();
-        assert_eq!(sessions.len(), 1, "one connection: {sessions:?}");
-        assert_eq!(
-            sessions[0].1,
-            vec!["Z2OFF".to_string(), "PWSTANDBY".to_string()]
-        );
-        // Nothing reached the CEC bus.
-        assert!(backend.transmits().is_empty(), "{:?}", backend.transmits());
-    }
-
-    /// **The rule: an IP standby that cannot power the main zone down is an
-    /// `error:`, never an `ok`.**
-    ///
-    /// This is the DEFAULT configuration — `main_power` is opt-in — so it is the
-    /// common case, not an edge one. The Zone-2 command really did go out and
-    /// the reply says so.
-    #[tokio::test]
-    async fn an_ip_standby_that_leaves_the_main_zone_on_says_so() {
-        let backend = with_ip();
-        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
-        backend.fail_over_to_ip();
-
-        let r = reply(&b, "standby").await;
-        assert!(r.starts_with("error:"), "{r}");
-        assert!(r.contains("main_power"), "{r}");
-        assert_ne!(r, "ok");
-        // Zone 2 still went off: the shortfall is the main zone, not the action.
-        assert_eq!(backend.ip_sessions()[0].1, vec!["Z2OFF".to_string()]);
-    }
-
-    /// **THE CAPABILITY-COMPLEMENT RULE, at the IPC surface: the IP steps run
-    /// with a perfectly healthy CEC bus, and they run BEFORE the CEC steps.**
-    ///
-    /// A `wake` broadcasts the magic packet (a television at mains standby hears
-    /// no CEC at all) and a `standby` sends `Z2OFF` (no CEC equivalent exists),
-    /// while `backend` still reports `cec`.
-    ///
-    /// Mutation-check (run 2026-09-14): make `ip::plan_for` return an empty plan
-    /// unless the role is `Authority` — the "IP is only a fallback" reading of
-    /// §13 Q7 — and both halves of this fail.
-    #[tokio::test]
-    async fn the_cold_path_steps_run_with_a_healthy_cec_bus() {
-        let backend = with_ip();
-        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
-
-        assert_eq!(reply(&b, "wake").await, "ok");
-        assert_eq!(
-            backend.wol_packets(),
-            2,
-            "a cold television needs the packet"
-        );
-        assert_eq!(
-            backend.ip_sessions()[0].1,
-            vec!["SIGAME".to_string()],
-            "no PWON: CEC is authoritative and powers the main zone"
-        );
-        // …and the CEC steps still happened.
-        assert_eq!(
-            backend.transmits(),
-            vec![
-                CecTx::ImageViewOn,
-                CecTx::ActiveSource("2.5.0.0".parse().unwrap())
-            ]
-        );
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(json["active"], serde_json::json!("cec"));
-
-        assert_eq!(reply(&b, "standby").await, "ok");
-        assert_eq!(
-            backend.ip_sessions()[1].1,
-            vec!["Z2OFF".to_string()],
-            "Zone 2 has no CEC equivalent, so it goes on every standby"
-        );
-    }
-
-    /// A `standby` refused by the CEC ownership gate transmits nothing on the
-    /// bus — but the Zone-2 command has already gone, because it is not part of
-    /// what the gate protects.
-    ///
-    /// The gate exists to stop this box powering off a television somebody else
-    /// is watching. Zone 2 is a different room.
-    #[tokio::test]
-    async fn a_refused_cec_standby_still_switches_zone_two_off() {
-        let backend = with_ip();
-        backend.observe(
-            BusObservation::ActiveSource("1.0.0.0".parse::<PhysAddr>().unwrap()),
-            1_700_000_000_000,
-        );
-        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
-
-        let r = reply(&b, "standby").await;
-        assert!(r.starts_with("refused:"), "{r}");
-        assert!(backend.transmits().is_empty());
-        assert_eq!(backend.ip_sessions()[0].1, vec!["Z2OFF".to_string()]);
-    }
-
-    /// **The rule: while the IP leg is carrying actions, a volume verb reports
-    /// that there is nothing to send — it does not transmit into a bus the
-    /// daemon has just concluded it cannot use.**
-    #[tokio::test]
-    async fn volume_over_the_ip_leg_reports_that_there_is_nothing_to_send() {
-        let backend = with_ip();
-        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
-        backend.fail_over_to_ip();
-
-        let r = reply(&b, "volume up").await;
-        assert!(r.starts_with("error:"), "{r}");
-        assert!(r.contains("only reachable over CEC"), "{r}");
-        assert!(
-            backend.volume_transmits().is_empty(),
-            "{:?}",
-            backend.volume_transmits()
-        );
-    }
-
-    /// `backend-pin` overrides the decision; `auto` gives it back.
-    #[tokio::test]
-    async fn backend_pin_overrides_the_decision_and_auto_returns_it() {
-        let backend = with_ip();
-        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
-        backend.fail_over_to_ip();
-
-        assert_eq!(reply(&b, "backend-pin cec").await, "ok");
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(json["active"], serde_json::json!("cec"));
-        assert_eq!(json["pin"], serde_json::json!("cec"));
-        assert!(json["reason"].as_str().unwrap().contains("pinned to cec"));
-
-        assert_eq!(reply(&b, "backend-pin auto").await, "ok");
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(json["active"], serde_json::json!("ip"));
-    }
-
-    /// **The rule: pinning to a backend this box does not have is an `error:`,
-    /// not an `ok` that is then ignored.**
-    #[tokio::test]
-    async fn pinning_to_an_absent_backend_is_an_error() {
-        let b: Arc<dyn AvBackend> = fake();
-        let r = reply(&b, "backend-pin ip").await;
-        assert!(r.starts_with("error:"), "{r}");
-        assert!(r.contains("no IP leg is configured"), "{r}");
-        assert_ne!(r, "ok");
-        // The pin did not take effect.
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(json["pin"], serde_json::json!("auto"));
-    }
-
-    /// A missing or unknown `backend-pin` argument is a usage error and changes
-    /// nothing — never `unknown`, and never a silent default to `auto`.
-    #[tokio::test]
-    async fn a_missing_backend_pin_argument_is_a_usage_error() {
-        let backend = with_ip();
-        let b: Arc<dyn AvBackend> = Arc::clone(&backend) as Arc<dyn AvBackend>;
-        assert_eq!(reply(&b, "backend-pin cec").await, "ok");
-        for line in ["backend-pin", "backend-pin libcec", "backend-pin cec ip"] {
-            let r = reply(&b, line).await;
-            assert_eq!(r, "error:usage: backend-pin cec|ip|auto", "{line} -> {r}");
-            assert_ne!(r, "unknown", "{line}");
+        // The verbs step 7 adds. Until they answer something, `unknown` is the
+        // honest answer — a stub `ok` would tell a caller this daemon had an IP
+        // leg it does not have.
+        for later in ["backend", "backend-pin cec"] {
+            assert_eq!(reply(&b, later).await, "unknown", "{later}");
         }
-        let json: serde_json::Value = serde_json::from_str(&reply(&b, "backend").await).unwrap();
-        assert_eq!(
-            json["pin"],
-            serde_json::json!("cec"),
-            "a usage error must not clear the operator's pin"
-        );
     }
 
     // -----------------------------------------------------------------------
@@ -1017,10 +786,6 @@ mod tests {
             "volume up",
             "volume ???",
             "volume-state",
-            "backend",
-            "backend-pin",
-            "backend-pin ???",
-            "backend-pin ip",
         ] {
             let r = reply(&b, line).await;
             assert!(!r.contains('\n'), "{line} -> {r:?}");

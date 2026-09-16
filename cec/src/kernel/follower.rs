@@ -37,9 +37,8 @@ use linux_cec::device::{AsyncDevice, MessageData, PollResult, PollTimeout};
 use linux_cec::message::Message;
 use linux_cec::LogicalAddress;
 
-use crate::failover::{Failover, Observed};
 use crate::health::Health;
-use crate::kernel::device::{log_transition, read_addressing};
+use crate::kernel::device::read_addressing;
 use crate::state::{now_ms, AvDevice, BusObservation, Observations, PhysAddr};
 
 /// How long one poll waits before coming back empty.
@@ -58,7 +57,6 @@ pub async fn run(
     device: Arc<AsyncDevice>,
     observations: Arc<Mutex<Observations>>,
     health: Arc<Mutex<Health>>,
-    failover: Arc<Mutex<Failover>>,
 ) {
     let timeout = match PollTimeout::try_from(POLL_INTERVAL) {
         Ok(t) => t,
@@ -100,7 +98,7 @@ pub async fn run(
             }
         };
         for result in results {
-            note_health(&device, &health, &failover, &result).await;
+            note_health(&device, &health, &result).await;
             let Some(observation) = fold(&result) else {
                 continue;
             };
@@ -127,26 +125,14 @@ pub async fn run(
 /// adapter's addressing, and holding the health lock across that ioctl would let
 /// a slow device block `av-health` — the one verb that has to answer when the
 /// device is what is being diagnosed.
-async fn note_health(
-    device: &AsyncDevice,
-    health: &Mutex<Health>,
-    failover: &Mutex<Failover>,
-    result: &PollResult,
-) {
+async fn note_health(device: &AsyncDevice, health: &Mutex<Health>, result: &PollResult) {
     let lock = |f: &mut dyn FnMut(&mut Health)| match health.lock() {
         Ok(mut h) => f(&mut h),
         Err(poisoned) => f(&mut poisoned.into_inner()),
     };
     match result {
         // Fact 4. Any message at all — this is "we are still hearing".
-        PollResult::Message(_) => {
-            lock(&mut |h| h.record_rx(now_ms()));
-            // …and the same fact is what clears the transmit-side failover rule:
-            // a bus we can still hear is not a deaf adapter, so a run of
-            // transmit failures alongside live traffic says something about the
-            // device that did not answer, not about us.
-            note_failover(failover, Observed::Rx);
-        }
+        PollResult::Message(_) => lock(&mut |h| h.record_rx(now_ms())),
         // Fact 3. Line-level activity, observed passively.
         PollResult::PinEvent(event) => {
             tracing::debug!("CEC pin event: {event:?}");
@@ -159,39 +145,12 @@ async fn note_health(
             lock(&mut |h| h.record_state_change(now_ms()));
             let addressed = read_addressing(device).await;
             tracing::info!("adapter state change; addressing re-read as {addressed:?}");
-            let mut state = None;
-            lock(&mut |h| {
-                h.record_addressing(addressed, now_ms());
-                state = Some(h.state());
-            });
-            // **This is the un-failover path, and it is an EVENT.** The kernel
-            // tells us the adapter regained its address; the addressing is
-            // re-read on the spot and the resulting verdict — not a timer —
-            // is what lets the warm-path decision come back to CEC. The device
-            // was never closed, so there is nothing to re-open.
-            if let Some(state) = state {
-                note_failover(failover, Observed::Health(state));
-            }
+            lock(&mut |h| h.record_addressing(addressed, now_ms()));
         }
         // A dropped message is not evidence either way about hearing: the
         // kernel dropped it, we did not fail to receive it. `state::Observations`
         // counts it.
         _ => {}
-    }
-}
-
-/// Fold one observation into the warm-path decision, logging a change if it
-/// caused one.
-///
-/// One line per change, never one per observation: this runs on every message
-/// heard on the bus.
-fn note_failover(failover: &Mutex<Failover>, observed: Observed) {
-    let transition = match failover.lock() {
-        Ok(mut f) => f.observe(observed, now_ms()),
-        Err(poisoned) => poisoned.into_inner().observe(observed, now_ms()),
-    };
-    if let Some(t) = transition {
-        log_transition(&t);
     }
 }
 

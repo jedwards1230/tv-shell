@@ -199,10 +199,7 @@ async fn av_page_renders_what_a_running_v2_daemon_reports() {
         "av-state",
         r#"{"backend":"cec","device":"/dev/cec0","physAddr":"2.5.0.0","physAddrConfigured":"2.5.0.0","logAddrs":["playback-device1"],"capabilities":["PHYS_ADDR","LOG_ADDRS"],"monitorPin":false,"tvPower":"on","avrPower":null,"activeSource":"2.5.0.0","weAreSource":true,"displayOwnership":{"state":"owned-by-us"},"volume":40,"muted":false,"observedAt":1700000000000,"lostMessages":0}"#,
     );
-    replies.insert(
-        "backend",
-        r#"{"active":"cec","available":["cec","ip"],"pin":"auto","reason":"the adapter fd answers and the adapter holds an address, so the kernel CEC backend is authoritative"}"#,
-    );
+    replies.insert("backend", "unknown");
     let sock = spawn_canned_daemon("av-healthy", replies);
     tokio::time::sleep(Duration::from_millis(20)).await;
     let state = state_for_av_socket(sock);
@@ -223,117 +220,12 @@ async fn av_page_renders_what_a_running_v2_daemon_reports() {
     assert!(html.contains("/dev/cec0"), "{html}");
     assert!(html.contains("owned-by-us"), "{html}");
     assert!(html.contains("playback-device1"), "{html}");
-    // The backend the daemon named, the ones it has, and its own sentence.
-    assert!(html.contains("available: cec ip"), "{html}");
+    // `backend` is honestly reported as not implemented — no invented value.
+    assert!(html.contains("Not yet implemented"), "{html}");
     assert!(
-        html.contains("the kernel CEC backend is authoritative"),
-        "the daemon's own reason must be rendered verbatim: {html}"
+        html.contains("step 7"),
+        "the placeholder must say what fills it in: {html}"
     );
-    assert!(
-        !html.contains("Pinned to"),
-        "no override is in force: {html}"
-    );
-}
-
-/// **THE RULE OF THIS SECTION: the IP leg carrying actions is NOT rendered as
-/// healthy.**
-///
-/// A `backend` of `ip` means the adapter stopped answering (or that somebody
-/// pinned it), which is a working degraded mode and never a steady state. A
-/// green dot there would make the one page that can report a wedged adapter look
-/// exactly like the page for a healthy one — the same mistake as rendering an
-/// `unknown` health as green, one section down.
-///
-/// Mutation-check (run 2026-09-14): make `pages::av::backend_dot_class` return
-/// `dot-ok` unconditionally and both rows here fail.
-#[tokio::test]
-async fn an_ip_backend_is_not_rendered_as_healthy() {
-    for (active, expected_dot) in [("ip", "dot-warn"), ("cec", "dot-ok")] {
-        let mut replies = HashMap::new();
-        let backend: &'static str = Box::leak(
-            format!(
-                r#"{{"active":"{active}","available":["cec","ip"],"pin":"auto","reason":"4 consecutive transmit failures with nothing heard from the bus in the same window; the IP leg is carrying actions"}}"#
-            )
-            .into_boxed_str(),
-        );
-        replies.insert("backend", backend);
-        // A degraded health, which is the observation that put it there.
-        replies.insert(
-            "av-health",
-            r#"{"state":"degraded","sinceMs":10,"lastTxOk":null,"lastRxMs":null,"busActivityMs":null,"reason":"the adapter fd is not answering CEC_ADAP_G_CAPS"}"#,
-        );
-        replies.insert("av-state", "{}");
-        let sock = spawn_canned_daemon(&format!("av-backend-{active}"), replies);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        let state = state_for_av_socket(sock);
-
-        let html = pages::av::render_page(&state).await;
-        assert!(
-            html.contains(expected_dot),
-            "backend {active} must render {expected_dot}: {html}"
-        );
-        if active == "ip" {
-            assert!(
-                !html.contains("dot-ok"),
-                "an ip backend must not render as healthy: {html}"
-            );
-            // The reason the daemon gave is what an operator acts on.
-            assert!(
-                html.contains("consecutive transmit failures"),
-                "the page must name the observation that caused the change: {html}"
-            );
-        }
-    }
-}
-
-/// An operator pin is called out, because it is a decision a person made and
-/// forgot — and while it is in force the automatic decision is not.
-#[tokio::test]
-async fn an_operator_pin_is_called_out_on_the_page() {
-    let mut replies = HashMap::new();
-    replies.insert(
-        "backend",
-        r#"{"active":"cec","available":["cec","ip"],"pin":"cec","reason":"pinned to cec by an operator; the automatic decision would be ip (the adapter's observed health is degraded)"}"#,
-    );
-    replies.insert("av-state", "{}");
-    replies.insert(
-        "av-health",
-        r#"{"state":"degraded","sinceMs":10,"lastTxOk":null,"lastRxMs":null,"busActivityMs":null,"reason":"why"}"#,
-    );
-    let sock = spawn_canned_daemon("av-backend-pinned", replies);
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    let state = state_for_av_socket(sock);
-
-    let html = pages::av::render_page(&state).await;
-    assert!(html.contains("Pinned to"), "{html}");
-    assert!(
-        html.contains("the automatic decision would be ip"),
-        "the automatic answer must stay visible behind the pin: {html}"
-    );
-}
-
-/// A daemon that does not answer `backend` at all — one built before the verb
-/// existed — reports that, rather than a page inventing a backend name.
-#[tokio::test]
-async fn a_daemon_without_the_backend_verb_is_reported_as_unreadable() {
-    let mut replies = HashMap::new();
-    replies.insert("backend", "unknown");
-    replies.insert("av-state", "{}");
-    replies.insert(
-        "av-health",
-        r#"{"state":"healthy","sinceMs":10,"lastTxOk":null,"lastRxMs":null,"busActivityMs":null,"reason":"why"}"#,
-    );
-    let sock = spawn_canned_daemon("av-backend-absent", replies);
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    let state = state_for_av_socket(sock);
-
-    let html = pages::av::render_page(&state).await;
-    assert!(
-        html.contains("could not read"),
-        "an unreadable backend reply must say so: {html}"
-    );
-    // …and no backend name is invented from it.
-    assert!(!html.contains("available: cec"), "{html}");
 }
 
 /// **THE RULE, at the last surface it can be broken: an `unknown` health is

@@ -60,14 +60,9 @@ PartOf=tv-shell-session.target
 # a runtime mask cannot outlive the user manager, so a v2 session that dies badly
 # can never leave v1 unstartable.
 #
-# THAT IS A MITIGATION; THE FIX IS THE STAND-DOWN, AND IT IS DONE. §9 requires
-# the watchdog to stand down at cutover. `htpc_cec_watchdog_active` derives from
-# the selected boot session, and the timer was read on the deploy box as
-# disabled/inactive on 2026-09-14. The unit still exists on disk under Ansible's
-# ownership, so it must never be re-enabled; and its probe reads v1's
-# `cec-health` verb, which v2 does not have. What RETIRES it rather than
-# disabling it is tv-shell-v2-cec.service's Type=notify + WatchdogSec=, which
-# makes systemd the only supervisor here with restart authority.
+# THAT IS A MITIGATION, NOT THE FIX. §9 requires the watchdog to STAND DOWN at
+# cutover and its health probe to distinguish a stopped unit from a wedged
+# adapter. That work is on the Ansible side and is still unfiled there.
 
 [Service]
 Type=simple

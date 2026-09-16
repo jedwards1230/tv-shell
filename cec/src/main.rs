@@ -162,17 +162,11 @@ async fn open_backend(config: &CecConfig) -> anyhow::Result<Opened> {
     let observations = backend.observations();
 
     let health = backend.health();
-    let failover = backend.failover();
 
     let prober = Arc::clone(&backend);
     Ok(Opened {
         ipc: Arc::clone(&backend) as Arc<dyn AvBackend>,
-        receive_loop: Some(Box::pin(follower::run(
-            device,
-            observations,
-            health,
-            failover,
-        ))),
+        receive_loop: Some(Box::pin(follower::run(device, observations, health))),
         probe: Some(Box::new(move || {
             let prober = Arc::clone(&prober);
             Box::pin(async move { prober.probe().await })

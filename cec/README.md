@@ -41,13 +41,11 @@ leg to the cold path and to recovery. This file is the crate's own map.
 >   answers from recorded facts, so the verb still answers when the device is the
 >   thing being diagnosed.
 >
-> **The IP leg is a capability complement first and a failover second.** Two
-> things have no CEC expression at all — a receiver's **Zone 2** (`Z2OFF`) and a
-> **cold wake of a television at mains standby** — so those steps run *before*
-> the CEC steps of `wake` and `standby`, with a perfectly healthy bus. On top of
-> that, `failover` decides the warm path: which backend carries an action when
-> the adapter stops answering. `backend` publishes that decision and
-> `backend-pin` overrides it. See "The IP leg" below.
+> The IP recovery leg is the last step of the plan for
+> jedwards1230/tv-shell#504. Its verbs (`backend`, `backend-pin`) are
+> deliberately absent from the vocabulary rather than stubbed: an absent verb
+> answers `unknown`, which is a client learning the truth. A stub answering `ok`
+> would tell a caller something had happened when nothing had.
 
 ## Modules
 
@@ -62,22 +60,13 @@ leg to the cold path and to recovery. This file is the crate's own map.
 | `action` | **PURE.** A verb plus the two observed addresses becomes either a plan of messages or a refusal that transmits nothing. Every gate runs before any message is built |
 | `health` | **PURE.** The four observed facts, the tri-state derived from **two** of them, and the single rule the `WATCHDOG=1` feed is gated on. `unknown` is a first-class state and is never rendered as healthy |
 | `volume` | **PURE.** The volume/mute sequence: system-audio mode first, an inseparable press/release pair, and success judged from the AVR's own report. The bus is a one-method `VolumeBus` trait, so the whole sequence runs in CI with no adapter |
-| `failover` | **PURE.** Which backend is authoritative on the warm path, from the *observed* health plus a transmit-failure rule, with hysteresis on both edges and a reason for every change. Its four thresholds live in `cec.toml` and every one of them is consumed |
-| `ip` | The IP leg: `ip/wol.rs` (a magic packet, and nothing else) and `ip/avr.rs` (Denon/Marantz ASCII telnet). All I/O is behind the one-trait `IpWire` seam, so **no test in this crate opens a socket or sends a packet** |
 | `kernel` | `/dev/cecN`: open, configure, read the topology back, listen, and transmit a plan. **Linux-only**. `kernel/ops.rs` holds the pure `CecTx` → `linux-cec` `Message` table, so CI covers the whole message set with no adapter |
 | `notify` | `sd_notify` — `READY=1` for the unit's `Type=notify`, `WATCHDOG=1` for its `WatchdogSec=`. Transport only; it decides nothing |
 
 `../core/units/tv-shell-v2-cec.service` is this daemon's unit. It lives beside
-the other v2 units because the session target that `Wants=` it does, and since
-the cutover it is **installed**: it is the fourth entry in
-`scripts/install-v2.sh`'s `UNITS=()`, and that script now builds and installs
-this binary alongside `tv-shell-core`.
-
-Installing it on a box with no adapter is a **silent, correct skip** — the unit
-carries `ConditionPathExists=/dev/cec0`, so systemd records the unmet condition
-and starts nothing, and the session target only `Wants=` it in any case. On the
-deploy host `/dev/cec0` does not exist yet; creating it is an operator step in
-`jedwards1230/homelab-ansible#338`, taken with nobody at the television.
+the other v2 units because the session target that `Wants=` it does, and it is
+**shipped but not installed**: `scripts/install-v2.sh`'s `UNITS=()` array does
+not carry it yet.
 
 ## The rules this code enforces
 
@@ -267,114 +256,6 @@ inside this daemon; it lives in the callers. The panel's `/devices/av` page is
 the first of them (800 ms, `panel/src/pages/av.rs`), and it has a test that
 stands up a socket which accepts and never replies.
 
-## The IP leg
-
-### Q7's "IP only when CEC is unavailable" is too narrow, and this crate models the complement
-
-V2_DESIGN §13 Q7 describes the IP leg as used "when the CEC bus is unavailable or
-the adapter has wedged" — purely a failover. The never-merged
-jedwards1230/tv-shell#191's problem statement documents two things **CEC
-physically cannot do at all**:
-
-1. **AVR Zone 2 is not CEC-addressable.** `Z2OFF` has no CEC equivalent
-   whatsoever. If Zone 2 is wanted, telnet runs on *every* standby, with a
-   perfectly healthy bus. `ip::avr::Avr::standby_commands` takes no role
-   parameter, which is that statement in a signature.
-2. **A fully-off television cannot be cold-woken by CEC.** `<Image View On>`
-   reaches nothing at mains standby; that needs a magic packet — as does the
-   receiver itself, when its network-control-in-standby menu setting is off.
-
-So the IP steps run **before** the CEC steps on both `wake` and `standby`,
-unconditionally, exactly as #191 sequenced them. Standby is ordered that way for
-a second reason: a `Z2OFF` has to reach a receiver that is still *awake*, and the
-CEC `<Standby>` going first would put it (and, with network control in standby
-off, its NIC) to sleep before the one command CEC cannot express had been sent.
-
-**§13 Q7's wording wants amending to say this.** That edit is step 8 of the plan,
-not this change.
-
-### The television's IP leg is Wake-on-LAN only — by decision
-
-§8 promises "webOS for state and standby". **There is no webOS code in this tree
-— no SSAP client, no pairing key — and none was written here.** The TV IP leg is
-**WoL-only, write-only, with no state read**:
-
-- WoL is the only IP operation the television genuinely needs that CEC cannot do.
-- A webOS client is a **second auth surface** with a documented history of
-  breaking across firmware, which is one of the three reasons §13 Q7 demoted IP
-  in the first place.
-
-A magic packet is acknowledged by nobody, so `wol_packets` counts what left this
-host and claims nothing about what received it. `av-state` gains no field from
-the IP leg at all.
-
-### Ported, not copied — and #191 is shape coverage, not hardware evidence
-
-`ip/avr.rs` is a port of #191's `daemon/src/av_net.rs` onto typed `cec.toml`
-(§8's own instruction); #191 was env-var-driven via `AvNetConfig::from_env`.
-`ip/wol.rs` ports `Mac::parse` and `magic_packet` from `daemon/src/wol.rs` and
-**only** those two — everything from `pick_mac` onward there (`ip neigh`
-scraping, the `host-macs.json` cache, `handle_wol`) is Steam-host wiring for
-waking the streaming PC, and `daemon/src/wol.rs` is not the television's WoL.
-#191's own `MacAddr`/`magic_packet` pair is dropped in favour of these, so there
-is one implementation rather than two.
-
-**#191 was never hardware-tested, by its own admission** ("No on-device test of
-the actual WoL/telnet against the real TV/AVR"). Its nine tests pin command
-strings and config parsing; they are not evidence that this rack's receiver
-answers to them. Neither is anything here — see the on-box checklist in the pull
-request.
-
-One deliberate correction to #191: it ordered standby as `[PWSTANDBY, Z2OFF]`.
-This sends **`Z2OFF` first**, because a receiver told to stand by may drop the
-control connection before the second line is read, which would silently lose the
-one command the leg exists for.
-
-### Failover: what moves the backend, and what does not
-
-`failover.rs` is pure and takes its clock from its caller. Five rules:
-
-1. **CEC is authoritative whenever `health.state == Healthy`** — the four
-   *observed* facts, not a count of our own transmit failures. v1 inferred
-   adapter health from transmit outcomes and that is the model this crate
-   replaces.
-2. **A single failed transmit does not fail over.** One NAK is the normal texture
-   of a bus whose television is off. The transmit-side trigger is *N consecutive*
-   failures **with no receive traffic in the same window** — traffic proves the
-   adapter is still hearing, which makes the failures a fact about the *other*
-   device. `Thresholds::validate` refuses `tx_error_threshold < 2`, so the
-   "fail over on one NAK" mutation is unspellable in config as well as untrue in
-   code.
-3. **Hysteresis on both edges**, from `cec.toml`, and both consumed.
-4. **Un-failover is kernel-driven, not timer-driven.** The device is kept OPEN
-   through a degraded period — nothing is closed, so nothing has to be
-   re-opened — and `PollResult::StateChange` re-reads the addressing the moment
-   the adapter regains it. A recovery is committed **only** inside a fresh
-   healthy *health* observation; elapsed time, heard traffic and accepted
-   transmits cannot commit one. That is the structural fix for "a watchdog
-   recovered a daemon three times that was never broken".
-5. **Every change publishes its reason** — one log line naming the observation,
-   and the same sentence in `backend`.
-
-With **no IP leg configured** there is nowhere to fail over to, so `cec` stays
-active and the reason says the adapter is degraded *and* that no IP leg exists.
-Announcing an `ip` backend that does not exist would be the same class of claim
-as reporting `unknown` as healthy.
-
-While the IP leg is carrying actions, `volume` answers `error:` naming that fact
-rather than transmitting into a bus the daemon has just concluded it cannot use.
-
-### What this does and does not retire of jedwards1230/tv-shell#251
-
-- **Retired: the reboot requirement.** A true adapter wedge is now a degraded
-  mode recoverable in place — the backend moves to `ip`, says why, and moves back
-  on a kernel event with no restart.
-- **NOT retired: the USB-reset self-heal.** Re-enumerating the adapter by writing
-  `authorized` or issuing `USBDEVFS_RESET` on the hub port needs root or a
-  udev-granted write, and is **explicitly out of scope** here; it belongs with
-  the privilege-model work (§13 Q8: a sudoers allowlist now, polkit later). Until
-  then the daemon detects the wedge, fails over, and says so.
-
 ## Why a new crate, not an evolution of `daemon/`
 
 §13 Q12's precedent, and the same reason the core needed it: v1's `config.toml`
@@ -435,38 +316,7 @@ file is all-defaults.
 path      = "/dev/cec0"   # the CEC device node
 phys_addr = "2.5.0.0"     # a.b.c.d — explicit, never derived; see above
 osd_name  = "tv-shell"    # ≤14 ASCII bytes (the CEC cap), refused if longer
-
-# The IP leg. BOTH SECTIONS ARE OPT-IN: with `host` and `wol_mac` empty — the
-# defaults — nothing here opens a socket or sends a packet, and `backend`
-# reports `cec` as the only backend there is.
-[avr]
-host       = ""           # the receiver's telnet control host; empty = no AVR
-port       = 23           # Denon/Marantz speak ASCII over TCP/23
-input      = ""           # `SI<input>` on wake, e.g. "GAME"; ASCII alphanumeric
-main_power = false        # PWON / PWSTANDBY over telnet. OPT-IN: see below
-zone2_off  = true         # Z2OFF on EVERY standby — CEC cannot address Zone 2
-
-[tv]
-wol_mac       = ""                  # the television's MAC; empty = no WoL
-wol_broadcast = "255.255.255.255:9" # numeric addr:port, never a name
-
-# The warm-path failover decision. Every key here is READ — see the mutation
-# table's `every_threshold_changes_a_decision` row.
-[failover]
-tx_error_threshold = 3      # consecutive transmit failures. At least 2, enforced
-tx_error_window_ms = 10000  # how far apart they may be and still be one run
-fail_after_ms      = 5000   # how long a failing reading must hold
-recover_after_ms   = 10000  # how long health must hold to come back
 ```
-
-`[avr].main_power` stays an explicit opt-in **even when the IP leg is the
-authority**: powering the receiver's main zone *down* is the action that can
-black out a television somebody is watching, and this daemon does not grant
-itself that authority merely because its own adapter stopped answering. What it
-does instead is say so — an `ip`-carried `standby` with `main_power` off answers
-`error:` naming the setting, after sending the `Z2OFF` that CEC could never
-send. A power-**on** is not symmetrical (it blacks nothing out), so the
-authority path sends `PWON` without an opt-in.
 
 The socket is `$TV_SHELL_CEC_SOCK`, else `/run/user/<uid>/tv-shell-v2-cec.sock`,
 bound `0600`.
@@ -492,11 +342,9 @@ suggest a shared surface that does not exist.
 | `volume up\|down` | `ok` / `refused:` / `error:` / `error:usage:` | `<Give System Audio Mode Status>` (+ `<System Audio Mode Request>` if off) → `<Give Audio Status>` → `<User Control Pressed>[Volume Up/Down]` **and** `<User Control Released>` → `<Give Audio Status>` |
 | `volume mute\|unmute` | as above | the same sequence, with `<User Control Pressed>[Mute]` — and **no key at all** when the AVR already reports the state asked for |
 | `volume-state` | one compact JSON document (below) | `<Give Audio Status>`, falling back to the last one overheard |
-| `backend` | `{active, available:[…], pin, reason}` | — (a read of a decision already made; no bus, no network) |
-| `backend-pin cec\|ip\|auto` | `ok` / `error:` / `error:usage:` | — (it changes which wire the NEXT action uses) |
 
-Anything else is `unknown`. Every verb but `input-select`, `volume` and
-`backend-pin` is a bare read or bare action, so nothing may follow it: `av-stateX`, `av-healthX`,
+Anything else is `unknown`. Every verb but `input-select` and `volume` is a bare
+read or bare action, so nothing may follow it: `av-stateX`, `av-healthX`,
 `av-health 1`, `av-state 1`,
 `standby now` and `volume-state 1` are all `unknown`. The two that take a body
 take exactly one word, and a missing, malformed or extra body is
@@ -504,8 +352,7 @@ take exactly one word, and a missing, malformed or extra body is
 knows the verb; it got the call wrong). `input-select` because a
 `<Set Stream Path>` naming a port that does not exist fails *silently* on the
 bus; `volume` because a typo that read as `ok` would report a change nobody
-asked for; `backend-pin` because defaulting a bare call to `auto` would silently
-clear an override an operator had set.
+asked for.
 
 ### What `volume` does, and what the bus can actually express
 
@@ -679,15 +526,6 @@ Every row below was checked that way on 2026-09-14:
 | A silent bus is not a fault | add a last-rx age threshold that degrades the state | **5 tests** across `health` and `ipc` |
 | The reason never claims a pin monitor `CEC_ADAP_G_CAPS` says is absent | `PinMonitor::from_capability` → `InForce` | `the_reason_names_the_signal_in_force_and_never_claims_an_absent_one` + the `ipc` twin |
 | The state's age moves only on a real transition | drop the equality guard in `reclassify` | `the_state_age_moves_only_on_a_real_transition` |
-| **A single failed transmit does not fail over** | set `deaf = true` on any `TxError` (i.e. `tx_error_threshold = 1`) | **4 tests** in `failover` |
-| **A degraded adapter is not authoritative** | `desired` returns `Cec` for a degraded verdict | **10 tests** across `failover` and `ipc` |
-| **The transmit rule needs silence in the same window** | drop `&& !heard_in_window` | `transmit_failures_with_traffic_in_the_window_do_not_fail_over` |
-| **Hysteresis on the failing edge** | `hold = 0` for a failing candidate | **3 tests** in `failover` |
-| **Hysteresis on the recovering edge** | `hold = 0` for a recovering candidate | `a_blip_is_suppressed_on_the_recovering_edge`, `every_threshold_changes_a_decision` |
-| **Un-failover is kernel-driven, not timer-driven** | `may_commit = true` (any observation may commit a recovery) | `recovery_needs_a_fresh_healthy_observation_and_not_merely_elapsed_time` |
-| **The IP leg is a complement, not only a fallback** | `plan_for` returns an empty plan unless the role is `Authority` | **6 tests** across `ip` and `ipc` |
-| An accepted transmit ends the run of failures | drop the counter reset from `record`'s `TxOk` arm | `an_accepted_transmit_ends_the_run_of_failures` |
-| Every `[failover]` threshold is READ | delete a field's only reader | `every_threshold_changes_a_decision` |
 
 Two more live in `panel/` (`cargo test -p tv-shell-panel`), because that is where
 the caller-side rules are:
@@ -695,7 +533,6 @@ the caller-side rules are:
 | Rule | Mutation | What went red |
 |---|---|---|
 | The panel never renders `unknown` health as healthy | `pages::av::dot_class`'s fallthrough → `dot-ok` | `an_unknown_av_health_is_not_rendered_as_healthy` |
-| **The panel never renders an `ip` backend as healthy** | `pages::av::backend_dot_class` → `dot-ok` | `an_ip_backend_is_not_rendered_as_healthy` |
 | **A caller bounds its own wait** | `command_timeout(line, AV_TIMEOUT)` → `command(line)`, and → a one-hour bound | `av_page_renders_degraded_rather_than_hanging_on_a_wedged_daemon` (both times; the test wraps the render in its own 5 s bound so the unbounded case FAILS rather than hanging the suite) |
 
 **Every ownership state the gates are tested against is reachable from the real
@@ -749,22 +586,13 @@ look like "we measured and it was fine" (jedwards1230/tv-shell#469).
 
 Each of these lands with the module that reads it, never ahead of it:
 
-- **The USB-reset self-heal of jedwards1230/tv-shell#251** — re-enumerating a
-  wedged adapter needs root or a udev-granted write, so it belongs with the
-  privilege-model work (§13 Q8). This crate detects the wedge, fails over to the
-  IP leg, and says so.
-- **An LG webOS / SSAP client** — and it should stay absent. The television's IP
-  leg is Wake-on-LAN only, by decision; see "The IP leg" above.
-- **A `backend-pin` control on the panel** — the `/devices/av` page stays
-  read-only. The verb is available on the daemon's socket.
-- **An on-hardware run of any of it.** Everything below "Not yet here" used to
-  include the §8 rewrite and enabling the unit; both landed. What is left is the
-  operator step that gives this daemon a device to open.
+- **The IP recovery leg** — the Denon/Marantz telnet client ported from the
+  never-merged jedwards1230/tv-shell#191 onto typed config, `Mac::parse` and
+  `magic_packet` from `daemon/src/wol.rs`, and the failover decision with
+  hysteresis. Zone 2 and a cold TV wake have **no** CEC equivalent, so the IP leg
+  is a capability complement on the cold path, not only a fallback.
+- **Enabling the unit** — adding it to `scripts/install-v2.sh`'s `UNITS=()`.
 
 Nothing here can be verified against real hardware yet: `/dev/cec0` does not
-exist on the deploy box, and the receiver and television are live equipment in a
-living room. The on-box checklists for after that operator step are in the pull
-requests that added `health` and the IP leg. Note that the deploy box's journal
-retains about a day (jedwards1230/tv-shell#509), so a failover soak **cannot be
-evidenced after the fact** — raise retention or capture to a file before running
-one.
+exist on the deploy box. The on-box checklist for after that operator step is in
+the pull request that added `health`.
