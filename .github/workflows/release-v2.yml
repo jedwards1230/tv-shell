@@ -1,0 +1,446 @@
+# Release workflow for the v2 session binaries (core/ + cec/).
+#
+# Opt-in via a `semver:session:*` label on the merged PR (or a manual
+# `workflow_dispatch`). Version compute, tagging, and AI release notes are
+# delegated to the shared `ai-release.yml@v1` reusable; this workflow then builds
+# `tv-shell-core` and `tv-shell-cec` for `x86_64-unknown-linux-musl` and
+# publishes ONE GitHub Release at the tag carrying both binaries plus a
+# `checksums.txt`.
+#
+# WHY ONE RELEASE CARRYING TWO BINARIES, NOT TWO STREAMS
+#
+#   `host-v*` and `input-v*` version two independently deployable artifacts: the
+#   host sidecar runs on a different machine from the daemon, and either can be
+#   upgraded without the other. The v2 pair is not like that. `core` and `cec`
+#   are ONE SESSION — `scripts/install-v2.sh` builds and installs both in a
+#   single run, the v2 session target names both units, and their IPC contract is
+#   settled at build time, not negotiated. Two streams would let a deployment sit
+#   at core X + cec Y, a combination nothing tests. One tag, both assets, one
+#   version: the pin names a session, and a session is what gets installed.
+#
+# WHY THE TAG PREFIX IS `session-` AND NOT `v2-` OR `core-`
+#
+#   The existing prefixes name the deployable unit (`host-` = the cross-platform
+#   sidecar, `input-` = the Linux input daemon). The deployable unit here is the
+#   v2 session, so `session-` is the name that follows the rule already in force.
+#
+#   `v2-` was rejected: `v2-v0.1.0` stutters, and it pins the stream's name to a
+#   generation number that stops meaning anything the moment v2 stops being "the
+#   new one" and becomes just "the shell". `core-` was rejected because it names
+#   one half of a release that ships two binaries — a `core-v*` tag carrying a
+#   `tv-shell-cec` asset is a tag that lies about its contents. (`core/Cargo.toml`
+#   anticipates a `core-v*` series in a comment; this workflow supersedes that
+#   guess, and the comment is updated to match.)
+#
+#   `session-` also survives the shell joining later. `shell-v2/` is a CMake/Qt
+#   C++ project, not a cargo crate, so it is NOT built here — but when it does
+#   ship, it ships as part of the same session, and `session-v*` already covers
+#   it. `core-v*` never could have.
+#
+# ROLLBACK IS SELECTING AN OLDER TAG. Every release is immutable and carries its
+# own `checksums.txt`, so rolling the deploy host back means pointing the fetch
+# at an earlier `session-v*` tag and re-running it — there is nothing to rebuild
+# and no source tree to rewind. That is the whole reason the pin moved off a
+# hand-typed 40-char SHA in a private provisioning repo, where a stale pin was
+# visible to nobody.
+#
+# WHY `x86_64-unknown-linux-musl` AND NOT `-gnu`
+#
+#   Both crates were built for musl and checked before this workflow was written:
+#   `cargo build --release -p tv-shell-core -p tv-shell-cec --target
+#   x86_64-unknown-linux-musl` succeeds with no extra system packages, and both
+#   binaries come out `static-pie linked` with no `PT_INTERP` segment and no
+#   dynamic dependencies at all.
+#
+#   That works because the v2 dependency graph was chosen to make it work.
+#   `tv-shell-core` uses `x11rb` (pure Rust, `default-features = false`, no
+#   libxcb/libX11) and `evdev`; `tv-shell-cec` uses `linux-cec`, whose `-sys`
+#   crate ships PRE-GENERATED bindings and declares only `bitflags` + `nix` — no
+#   bindgen, no libclang, no system libcec. That is the workspace's "a default
+#   build needs no system C libraries" invariant (`scripts/assert-no-system-c.sh`),
+#   and a static musl artifact is what that invariant buys.
+#
+#   A static binary is the right shape for this artifact specifically: it is
+#   fetched onto a rolling-release Arch box, so a glibc-linked binary built
+#   against the runner's glibc would carry a floor that the deploy host has to
+#   keep satisfying. `tv-shell-input` is on `-gnu` (release-input.yml) for a
+#   reason that does NOT apply here — it links a prebuilt static libcec.a with
+#   glibc C23 symbol requirements. The v2 `cec` crate does not use libcec at all.
+#
+# ADDING A THIRD BINARY IS ONE LIST ENTRY. `V2_CRATES` below is the single list
+# every step iterates: stamping, verification, `-p` flags, staging and checksums
+# all derive from it. A third *cargo* crate is one `name:dir` pair. `shell-v2/`
+# is not a cargo crate (CMake/Qt), so it would need its own build step feeding
+# the same `dist/` directory — the release job downstream needs no change either
+# way, because it publishes whatever was staged.
+#
+# NOTE: this workflow sets `TV_SHELL_BUILD_SHA` to the exact commit being
+# released. The sibling version-provenance change (branch
+# `feat/v2-version-provenance`) adds a `build.rs` to both crates that treats that
+# variable as the authoritative source for the embedded git sha, falling back to
+# a live `git rev-parse` and then to `unknown`. Until that lands the variable is
+# simply an unread env var and this workflow behaves identically — but once it
+# does, a released binary reports the RELEASE's sha instead of whatever HEAD the
+# build tree happened to be sitting on.
+
+name: Release V2 Session
+
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch'
+      && format('Release V2 Session: {0}{1}', inputs.dry_run && 'dry-run ' || '', inputs.bump_type)
+      || format('Release V2 Session: {0}', github.event.head_commit.message || github.sha)
+  }}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      dry_run:
+        description: "Compute version + preview notes without tagging or publishing"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-v2-session
+  cancel-in-progress: false
+
+# ai-release.yml@v1 reads merged PRs for the changelog and the detect job runs
+# `gh pr list` — both need pull-requests:read. A restricted permissions block
+# defaults every unlisted scope to none, so grant it explicitly.
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  detect:
+    name: Detect bump type
+    runs-on: ubuntu-latest
+    outputs:
+      bump_type: ${{ steps.bump.outputs.type }}
+      release: ${{ steps.bump.outputs.release }}
+      dry_run: ${{ steps.bump.outputs.dry_run }}
+    steps:
+      - name: Determine bump type
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TYPE="${{ inputs.bump_type }}"; RELEASE="true"; DRY="${{ inputs.dry_run }}"
+          else
+            # push event: opt-in via the merged PR's semver:session:* label. The
+            # label is component-scoped because this monorepo versions each
+            # artifact independently — a `semver:host:*` or `semver:input:*`
+            # label must not cut a v2 session release. No matching label -> no
+            # release.
+            # Retry -- the GitHub API may not have the merge commit indexed yet.
+            LABELS=""
+            for attempt in 1 2 3; do
+              LABELS=$(gh pr list --state merged --base main --limit 100 \
+                --json labels,mergeCommit \
+                | jq -r --arg sha "$GITHUB_SHA" \
+                  '.[] | select(.mergeCommit.oid == $sha) | .labels[].name' 2>/dev/null || echo "")
+              [ -n "$LABELS" ] && break
+              echo "Attempt ${attempt}: no labels for ${GITHUB_SHA}, retrying in 5s..."
+              sleep 5
+            done
+            echo "Labels: ${LABELS:-<none>}"
+            DRY="false"
+            if echo "$LABELS" | grep -q 'semver:session:major'; then
+              TYPE="major"; RELEASE="true"
+            elif echo "$LABELS" | grep -q 'semver:session:minor'; then
+              TYPE="minor"; RELEASE="true"
+            elif echo "$LABELS" | grep -q 'semver:session:patch'; then
+              TYPE="patch"; RELEASE="true"
+            else
+              echo "::notice::No semver:session:* label -- skipping v2 session release."
+              TYPE="none"; RELEASE="false"
+            fi
+          fi
+          { echo "type=$TYPE"; echo "release=$RELEASE"; echo "dry_run=$DRY"; } >> "$GITHUB_OUTPUT"
+
+  prepare:
+    name: Tag & Generate Notes
+    needs: [detect]
+    if: needs.detect.outputs.release == 'true'
+    uses: jedwards1230/release-workflows/.github/workflows/ai-release.yml@v1
+    with:
+      service_name: tv-shell-v2-session
+      service_description: "the tv-shell v2 session — tv-shell-core (gamescope base-layer policy, input and screen state) and tv-shell-cec (AV control over the kernel HDMI-CEC API), installed together as one session"
+      bump_type: ${{ needs.detect.outputs.bump_type }}
+      tag_prefix: session-
+      create_release: false
+      dry_run: ${{ needs.detect.outputs.dry_run == 'true' }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  release:
+    name: Build & Publish Release
+    needs: [detect, prepare]
+    if: needs.detect.outputs.release == 'true' && needs.detect.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # THE list. `name:dir` pairs, space-separated — `name` is both the cargo
+      # package and the produced binary, `dir` is the crate directory holding its
+      # Cargo.toml. Every step below iterates this; adding a fourth cargo crate
+      # to the session is one more pair and nothing else.
+      V2_CRATES: "tv-shell-core:core tv-shell-cec:cec"
+      V2_TARGET: x86_64-unknown-linux-musl
+    steps:
+      # The tag the reusable just created is the source of truth for the released
+      # version — build from it, never from the branch head.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: ${{ env.V2_TARGET }}
+
+      # The musl target links with rust-lld and a bundled musl libc, so neither
+      # crate strictly needs this. It is installed anyway to match
+      # release-host.yml's musl leg exactly: one less difference between the two
+      # Linux release paths, and it keeps the job working if a future dependency
+      # brings a C shim along.
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: .
+          key: release-v2-session
+
+      # Both v2 crates sit at `0.0.0` in-repo (no tag series existed until this
+      # workflow), so without a stamp every released binary would report `0.0.0`
+      # forever — exactly the bug release-host.yml and release-input.yml exist to
+      # have fixed for their own crates. Write the tag being built into BOTH
+      # manifests before cargo reads them.
+      #
+      # Stamping the manifest (not a build-time env var) is deliberate: cargo's
+      # fingerprint includes the package version, so the rust-cache restore above
+      # cannot serve a stale artifact carrying the previous version. It also runs
+      # AFTER the cache step so the cache key is computed from the unstamped
+      # manifests and stays stable across releases.
+      - name: Stamp release version into the v2 crate manifests
+        id: stamp
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#session-}"; VERSION="${VERSION#v}"
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Tag '$TAG' did not yield a semver version (got '$VERSION')"; exit 1 ;;
+          esac
+
+          # Fingerprint every manifest BEFORE the stamp so the verify step can
+          # prove which ones moved without asking git. release-input.yml uses
+          # hashes rather than `git diff` because its container has no git at
+          # all; this job runs on a stock runner and does have git, but the hash
+          # check is kept because it measures the property the guard actually
+          # claims ("no other manifest changed") directly, instead of inferring
+          # it from VCS state.
+          find . -name Cargo.toml -not -path './target/*' -print0 \
+            | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/manifests.before"
+
+          for pair in $V2_CRATES; do
+            dir="${pair#*:}"
+            manifest="$dir/Cargo.toml"
+            test -f "$manifest" || { echo "::error::$manifest does not exist — V2_CRATES is out of sync with the tree"; exit 1; }
+            # Rewrites ONLY the `version` key of the `[package]` table: awk tracks
+            # the current table header and edits the first matching key while
+            # inside `[package]`. A dependency's version (`foo = { version = "1" }`)
+            # lives in another table AND is not a line-leading `version` key, so
+            # neither gate can reach it. A manifest with no `[package] version`
+            # exits 3 rather than silently no-op'ing. Records are compared with
+            # the trailing CR stripped (and re-emitted) so a CRLF checkout still
+            # matches the `[package]` header — kept identical to the step in
+            # release-host.yml, where the Windows runner's `core.autocrlf=true`
+            # makes that case real.
+            awk -v ver="$VERSION" '
+              { line = $0; cr = sub(/\r$/, "", line) ? "\r" : "" }
+              /^\[/ { pkg = (line == "[package]") }
+              pkg && !stamped && line ~ /^version[ \t]*=/ {
+                print "version = \"" ver "\"" cr; stamped = 1; next
+              }
+              { print }
+              END { if (!stamped) exit 3 }
+            ' "$manifest" > "$manifest.stamped"
+            mv "$manifest.stamped" "$manifest"
+            echo "Stamped $manifest -> $VERSION"
+          done
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # A stamp that silently no-ops is the bug this machinery exists to delete,
+      # so read every version back through cargo's own manifest parser (NOT
+      # `cargo pkgid`, which answers from the stale Cargo.lock) and fail the job
+      # on a mismatch. Then assert no manifest OUTSIDE the session moved — the
+      # guard release-host.yml and release-input.yml each run for their single
+      # crate, widened here to allow exactly the crates in V2_CRATES.
+      - name: Verify the stamps landed
+        shell: bash
+        env:
+          EXPECTED: ${{ steps.stamp.outputs.version }}
+        run: |
+          set -euo pipefail
+          ALLOWED="$RUNNER_TEMP/allowed-manifests"
+          : > "$ALLOWED"
+          for pair in $V2_CRATES; do
+            name="${pair%%:*}"; dir="${pair#*:}"
+            ACTUAL=$(cargo read-manifest --manifest-path "$dir/Cargo.toml" | jq -r .version)
+            if [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo "::error::$dir/Cargo.toml reports version '$ACTUAL', expected '$EXPECTED' — the stamp did not land"
+              exit 1
+            fi
+            echo "./$dir/Cargo.toml" >> "$ALLOWED"
+            echo "OK: $name $ACTUAL"
+          done
+
+          # The `.before` file must exist — if the stamp step did not run, an
+          # absent snapshot would otherwise make `diff` fail in a way that could
+          # read as "nothing changed".
+          test -f "$RUNNER_TEMP/manifests.before" \
+            || { echo "::error::pre-stamp manifest snapshot missing — the stamp step did not run"; exit 1; }
+          find . -name Cargo.toml -not -path './target/*' -print0 \
+            | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/manifests.after"
+          # SUBSET check, not equality: the read-backs above already proved each
+          # session crate's version is right, so all this guard owes us is "no
+          # manifest outside the session moved". Demanding exact equality also
+          # failed when the stamp was a legitimate no-op — a dispatch re-run of
+          # an already-released version, or a PR that hand-bumped a floor while
+          # carrying a `semver:*` label — leaving the change set empty and
+          # killing a correct job. `grep -v` exits 1 when nothing survives the
+          # filter, which is the SUCCESS case here, so `|| true` keeps
+          # `set -o pipefail` from aborting.
+          CHANGED=$(diff "$RUNNER_TEMP/manifests.before" "$RUNNER_TEMP/manifests.after" \
+            | sed -n 's/^[<>] [0-9a-f]\{64\}  //p' | sort -u || true)
+          OTHERS=$(printf '%s\n' "$CHANGED" | grep -v -x -F -f "$ALLOWED" | grep -v -e '^$' || true)
+          if [ -n "$OTHERS" ]; then
+            echo "::error::A v2 session release must not modify a manifest outside the session; also changed: $(echo "$OTHERS" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "OK: no manifest outside the v2 session changed"
+
+      # `TV_SHELL_BUILD_SHA` is the commit the reusable tagged. Read it back out
+      # of the checkout rather than trusting `github.sha` — on a
+      # `workflow_dispatch` that is the dispatch ref's head, not necessarily the
+      # commit that ended up tagged, and HEAD here is the tag by construction.
+      - name: Resolve the commit being released
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          case "$SHA" in
+            [0-9a-f][0-9a-f]*) ;;
+            *) echo "::error::could not resolve the released commit (got '$SHA')"; exit 1 ;;
+          esac
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Releasing commit $SHA"
+
+      # No `--locked`: the stamped versions make Cargo.lock's entries for these
+      # packages stale by design, and cargo refreshes them in place.
+      - name: Build
+        shell: bash
+        env:
+          # Read by each crate's build.rs (sibling version-provenance change) as
+          # the authoritative embedded git sha. Harmless if that has not landed.
+          TV_SHELL_BUILD_SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          set -euo pipefail
+          PKGS=()
+          for pair in $V2_CRATES; do PKGS+=(-p "${pair%%:*}"); done
+          cargo build --release --target "$V2_TARGET" "${PKGS[@]}"
+
+      - name: Stage binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for pair in $V2_CRATES; do
+            name="${pair%%:*}"
+            cp "target/$V2_TARGET/release/$name" "dist/$name-$V2_TARGET"
+          done
+          ls -l dist
+
+      # Acceptance gate: the whole point of the musl target is an artifact with
+      # no runtime dependency on the deploy host's C library, which is a rolling
+      # release. A static-pie ELF has no PT_INTERP segment; a dynamically linked
+      # one always does. Read the STAGED artifacts so the gate verifies exactly
+      # what gets published.
+      - name: Assert the binaries are statically linked
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pair in $V2_CRATES; do
+            name="${pair%%:*}"
+            bin="dist/$name-$V2_TARGET"
+            if readelf -l "$bin" | grep -q INTERP; then
+              echo "::error::$bin has a PT_INTERP segment — it is dynamically linked, not a static musl build"
+              readelf -l "$bin" | grep -A1 INTERP
+              exit 1
+            fi
+            echo "OK: $bin is statically linked"
+          done
+
+      # sha256 over the staged binaries; the fetch-and-install path on the deploy
+      # host pins each artifact's line from this file to verify what it fetched
+      # before installing it.
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum tv-shell-* | tee checksums.txt
+
+      # The reusable base64-encodes the body so it survives GitHub Actions' job
+      # output character restrictions — decode before handing it to the release.
+      - name: Decode release notes
+        env:
+          RELEASE_BODY: ${{ needs.prepare.outputs.release_body }}
+        run: printf '%s' "$RELEASE_BODY" | base64 -d > body.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          body_path: body.md
+          files: dist/*
+          fail_on_unmatched_files: true
+
+      - name: Summary
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          BUMP: ${{ needs.detect.outputs.bump_type }}
+          VERSION: ${{ steps.stamp.outputs.version }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          {
+            echo "## Release V2 Session"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Tag | \`${TAG}\` |"
+            echo "| Bump | ${BUMP} |"
+            echo "| Commit | \`${SHA}\` |"
+            echo "| CARGO_PKG_VERSION | \`${VERSION}\` (stamped into every v2 session manifest) |"
+            echo "| Target | \`${V2_TARGET}\` (static) |"
+            echo "| Artifacts | ${V2_CRATES} + checksums.txt |"
+            echo
+            echo "[View release](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG})"
+          } >> "$GITHUB_STEP_SUMMARY"

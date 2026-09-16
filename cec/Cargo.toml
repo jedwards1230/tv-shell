@@ -1,8 +1,11 @@
 [package]
 name = "tv-shell-cec"
-# The v2 AV-control daemon. No release stream exists yet (V2_DESIGN §11 gives a
-# v2 binary its own stream when it ships), so this is 0.0.0 like `core`,
-# `protocol` and `panel` — nothing reports it and editing it cuts no release.
+# The v2 AV-control daemon. Released as part of the v2 SESSION, not on its own:
+# the `session-v*` stream (`.github/workflows/release-v2.yml`) stamps this
+# version and `core`'s to the same tag and ships both binaries in one release,
+# because `scripts/install-v2.sh` installs them together and nothing tests a
+# mismatched pair. This 0.0.0 is the in-repo floor for local and dev builds —
+# editing it cuts no release.
 version = "0.0.0"
 edition = "2021"
 # DECLARED, NOT ENFORCED — the same caveat `core/Cargo.toml` records: no CI leg

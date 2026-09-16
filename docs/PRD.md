@@ -118,7 +118,7 @@ A dedicated TV box has requirements a desktop session structurally cannot meet:
 | Text entry | **A narrow on-screen keyboard** for flows that strand a user mid-use (Wi-Fi password, stream target) — not a general keyboard | A fresh install must be able to join a network without a second device; nothing more |
 | Wedge recovery | **Sensor in the daemon, actuator outside** — export a frame-presentation counter; let external automation decide to act | An actuator that fires wrongly kills a live game; the daemon cannot see enough context |
 | Doctrine | **The daemon reports; the caller decides** — no `busy` boolean, no auto-suspend on unknown | Policy belongs to the automation, not the device |
-| Versioning | Per-artifact tag streams (`input-v*`, `host-v*`, `widget-<id>-v*`); the tag *is* the version, stamped into `Cargo.toml` at build | Shell and panel ship from git and carry no version |
+| Versioning | Per-artifact tag streams (`input-v*`, `host-v*`, `session-v*`, `widget-<id>-v*`); the tag *is* the version, stamped into `Cargo.toml` at build. `session-v*` is the one stream that stamps two manifests, because the v2 core and cec binaries ship as one session | Shell and panel ship from git and carry no version |
 
 ## 6. Product surface
 

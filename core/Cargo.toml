@@ -1,9 +1,13 @@
 [package]
 name = "tv-shell-core"
-# v2 core. No release stream exists yet (V2_DESIGN §11 gives the core its own
-# stream when it ships), so this is 0.0.0 like `protocol` and `panel` — nothing
-# reports it and editing it cuts no release. It gains a real floor once a
-# `core-v*` tag series exists.
+# v2 core. Released as part of the v2 SESSION, not on its own: the `session-v*`
+# stream (`.github/workflows/release-v2.yml`) stamps this version and `cec`'s to
+# the same tag and ships both binaries in one release, because
+# `scripts/install-v2.sh` installs them together and nothing tests a mismatched
+# pair. This 0.0.0 is the in-repo floor for local and dev builds — editing it
+# cuts no release, and it gains a real floor once the first `session-v*` tag
+# exists. (An earlier note here guessed at a per-crate `core-v*` series; the
+# session stream supersedes that.)
 version = "0.0.0"
 edition = "2021"
 # DECLARED, NOT ENFORCED. No CI leg builds this crate on a pinned old toolchain
