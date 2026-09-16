@@ -60,6 +60,16 @@ still welcome — write it impersonally ("measured on the reference deployment,
    switched off, and then it catches nothing at all. A narrow rule that always
    fires beats a broad one nobody runs.
 
+   **Known gap, accepted as the price of that trade.** Because the pattern
+   requires the `roles/` prefix, it matches the *path* shape only: a bare prose
+   mention of a private role by name, with no `roles/` prefix — "the Ansible
+   `<role>-common` role fetches the musl binary" — is NOT detected. That is
+   exactly how such a line survived a by-hand sweep in `.github/workflows/`
+   (plain `rg` skips hidden directories too; re-verify with `rg --hidden
+   --no-ignore`). Closing the gap needs the `<word>_<word>` shape rejected
+   above, so the rule's reach stops at the path form on purpose. Bare prose
+   mentions are caught by review, not by this gate.
+
 ## Why the shape check needs an allowlist
 
 `utf-8` and `x86-64` are the same shape as `htpc-1`. `ALLOWED_TOKENS` below is

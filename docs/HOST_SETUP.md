@@ -163,8 +163,8 @@ and **hibernates** whenever hibernation is enabled. See `host/src/power.rs`.
 > `powercfg /query <scheme> SUB_NONE CONSOLELOCK`, never by reading that
 > registry path**.
 >
-> In the homelab this is `windows_common_disable_lock_on_wake` in
-> homelab-ansible's `windows-common` role.
+> In the homelab this is a flag on the Windows host-configuration Ansible
+> role in `jedwards1230/homelab-ansible`.
 
 ### `GET /capabilities`
 
