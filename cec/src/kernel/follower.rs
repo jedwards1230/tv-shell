@@ -35,6 +35,7 @@ use std::time::Duration;
 
 use linux_cec::device::{AsyncDevice, MessageData, PollResult, PollTimeout};
 use linux_cec::message::Message;
+use linux_cec::Error;
 use linux_cec::LogicalAddress;
 
 use crate::failover::{Failover, Observed};
@@ -83,6 +84,14 @@ pub async fn run(
     loop {
         let status = match poller.poll(timeout).await {
             Ok(s) => s,
+            // An expired poll is the bus being quiet, which is what a CEC bus
+            // mostly is. It is NOT a failure, and treating it as one cost both
+            // halves at once: the loop `return`ed, so the daemon stopped
+            // listening after its first idle second, and it logged ERROR on the
+            // way out, so the journal asserted a fault where there was only
+            // silence. Silence folded into a verdict is the one thing this
+            // crate exists not to do.
+            Err(e) if is_quiet_bus(&e) => continue,
             Err(e) => {
                 tracing::error!("polling the CEC device failed: {e}");
                 return;
@@ -114,6 +123,22 @@ pub async fn run(
             }
         }
     }
+}
+
+/// Is this poll error the bus being quiet rather than the adapter being broken?
+///
+/// An expired poll is the normal state of a CEC bus: nothing is said on it for
+/// long stretches, and [`POLL_INTERVAL`] deliberately bounds the wait so a stop
+/// is prompt. Every expiry therefore arrives here as an `Err`, and the first
+/// version of this loop read that `Err` as a fault — it logged ERROR and
+/// `return`ed, so the daemon stopped listening one second after it started and
+/// left a journal line claiming a device failure that had not happened.
+///
+/// The distinction is worth a named function: the caller's other arm gives up
+/// listening entirely, which is the right response to our own fd failing and the
+/// wrong response to a television with nothing to say.
+fn is_quiet_bus(error: &Error) -> bool {
+    matches!(error, Error::Timeout)
 }
 
 /// Fold one poll result into the health facts.
@@ -510,5 +535,39 @@ mod tests {
     fn the_poll_interval_is_bounded() {
         assert!(PollTimeout::try_from(POLL_INTERVAL).is_ok());
         assert!(POLL_INTERVAL <= Duration::from_secs(5));
+    }
+}
+
+#[cfg(test)]
+mod quiet_bus_tests {
+    use super::*;
+
+    /// **An idle bus is not a broken adapter.**
+    ///
+    /// The regression this pins: `poll` reports its own expiry as
+    /// `Error::Timeout`, and the receive loop used to treat that as a reason to
+    /// stop listening and to log ERROR. On a bus where nothing is said for a
+    /// second — which is most seconds — that ended the loop at startup.
+    #[test]
+    fn an_expired_poll_is_quiet_not_broken() {
+        assert!(is_quiet_bus(&Error::Timeout));
+    }
+
+    /// Everything else still ends the loop. The arm exists to narrow one case,
+    /// not to make the loop unstoppable: a failure on our own file descriptor
+    /// must still stop the feed and let systemd restart the unit.
+    #[test]
+    fn a_real_device_failure_is_not_mistaken_for_quiet() {
+        for error in [
+            Error::Disconnected,
+            Error::InvalidData,
+            Error::Abort,
+            Error::NoLogicalAddress,
+        ] {
+            assert!(
+                !is_quiet_bus(&error),
+                "{error} must still stop the receive loop"
+            );
+        }
     }
 }

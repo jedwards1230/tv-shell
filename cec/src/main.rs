@@ -26,6 +26,29 @@
 //! script, no `cec-health` probe with bus side effects, no second mechanism that
 //! can "recover" a daemon that was never broken.
 //!
+//! # The thread budget, and why it is written down
+//!
+//! The unit ships `TasksMax=` as a resource fence. A tokio multi-threaded
+//! runtime built with the default settings spawns **one worker per CPU**, so the
+//! daemon's thread count was a property of whichever box it ran on and the
+//! fence's was a constant — two numbers that could never be checked against each
+//! other, and on a 16-CPU host they did not agree.
+//!
+//! What that cost: the runtime's own workers plus the main thread exhausted the
+//! cgroup's pid limit, and the next thread the daemon asked for was the tokio
+//! blocking-pool thread that backs the `tokio::fs` open inside
+//! `AsyncDevice::open`. `clone(2)` returned `EAGAIN`, which tokio classifies as
+//! a *temporary* spawn failure — so it did not fail the task, it left it queued
+//! for a thread that could never arrive. The first `.await` in startup never
+//! returned. Nothing was logged, because nothing had got far enough to log, and
+//! `Type=notify` turned a silent hang into a start-job timeout and a restart
+//! loop.
+//!
+//! So the budget is fixed here, in constants, and [`THREAD_BUDGET`] is asserted
+//! against the shipped unit's `TasksMax=` by a test. This daemon relays a
+//! handful of ioctls and serves one socket; it has no use for a worker per CPU,
+//! and a CPU-derived thread count is exactly what it must not have.
+//!
 //! **This file decides nothing about health.** It performs the probe and asks
 //! [`tv_shell_cec::health::Health::should_feed_watchdog`], which is gated on
 //! fact 1 — `CEC_ADAP_G_CAPS` round-tripping on our own file descriptor, a pure
@@ -45,6 +68,29 @@ use tv_shell_cec::notify::Notifier;
 /// systemd's own rule: feed at half the configured interval, so one missed or
 /// delayed feed is not immediately fatal.
 const WATCHDOG_DIVISOR: u32 = 2;
+
+/// Worker threads for the runtime, fixed rather than derived from the CPU count.
+///
+/// Two, not one: the IPC server and the receive loop are both long-lived, and a
+/// single worker makes a slow reply on one of them a stall on the other. Two is
+/// also small enough that the budget below stays true on any host, which is the
+/// property that matters — see the module docs.
+const WORKER_THREADS: usize = 2;
+
+/// Ceiling on tokio's blocking pool, which defaults to 512.
+///
+/// The daemon's only blocking work is the `tokio::fs` open of the device node at
+/// startup. Left at the default the pool is an unbounded hole in the budget, and
+/// an unbounded hole is not a budget.
+const MAX_BLOCKING_THREADS: usize = 2;
+
+/// Every OS thread this daemon can have at once.
+///
+/// The main thread, the runtime's workers, the blocking pool at its ceiling, and
+/// the two threads `linux-cec` dedicates to the device and to the poller — it
+/// relays each ioctl to a thread of its own rather than polling an fd. A test
+/// asserts the shipped unit's `TasksMax=` leaves room for all of them.
+pub const THREAD_BUDGET: usize = 1 + WORKER_THREADS + MAX_BLOCKING_THREADS + 2;
 
 /// Fallback feed interval when `WATCHDOG_USEC` is unset — i.e. when the binary
 /// is run by hand. Nothing is listening then, so the value only bounds a
@@ -91,8 +137,7 @@ fn parse_args(args: &[String]) -> Cli {
     }
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     init_tracing();
 
     match parse_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
@@ -114,6 +159,29 @@ async fn main() -> ExitCode {
         }
     }
 
+    // Built by hand rather than with `#[tokio::main]`, because the attribute's
+    // default is a worker per CPU and this daemon's thread count has to be a
+    // constant the unit's `TasksMax=` can be checked against. See the module
+    // docs for what the CPU-derived default cost.
+    //
+    // After the argument dispatch above on purpose: `--version` and `--help`
+    // must not need a runtime, and a refused argument must not need one either.
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKER_THREADS)
+        .max_blocking_threads(MAX_BLOCKING_THREADS)
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!("cannot build the tokio runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    runtime.block_on(run())
+}
+
+async fn run() -> ExitCode {
     let config = match CecConfig::load() {
         Ok(c) => c,
         Err(e) => {
@@ -396,5 +464,35 @@ mod tests {
         for flag in ["--version", "-V", "--help", "-h"] {
             assert!(USAGE.contains(flag), "usage omits {flag}: {USAGE}");
         }
+    }
+
+    /// The unit's resource fence must leave room for every thread the daemon can
+    /// have.
+    ///
+    /// **This is the regression test for the bug that made the first hardware
+    /// run fail**, and it is a consistency check rather than a runtime one on
+    /// purpose: the defect was two numbers in two files that nothing compared —
+    /// a `TasksMax=` constant in the unit and a worker count derived from the
+    /// host's CPUs. Reproducing the failure itself needs a cgroup and a box with
+    /// enough CPUs to exhaust it; keeping the two numbers honest needs neither,
+    /// and it is the half that can drift silently.
+    ///
+    /// It fails if someone lowers `TasksMax=`, raises a thread constant, or adds
+    /// a component that spawns threads without saying so in [`THREAD_BUDGET`].
+    #[test]
+    fn the_unit_allows_every_thread_the_daemon_can_have() {
+        let unit = include_str!("../../core/units/tv-shell-v2-cec.service");
+        let tasks_max: usize = unit
+            .lines()
+            .find_map(|l| l.strip_prefix("TasksMax="))
+            .expect("the unit must set TasksMax=")
+            .trim()
+            .parse()
+            .expect("TasksMax= must be a plain number");
+        assert!(
+            tasks_max >= THREAD_BUDGET,
+            "TasksMax={tasks_max} is below the daemon's thread budget of {THREAD_BUDGET}; \
+             the runtime cannot start and the failure is a silent hang, not an error"
+        );
     }
 }
