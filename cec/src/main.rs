@@ -577,6 +577,101 @@ mod tests {
         );
     }
 
+    /// **The sandbox permits the socket the daemon actually binds.**
+    ///
+    /// `ProtectSystem=strict` mounts the whole hierarchy read-only except a few
+    /// kernel paths, and `$XDG_RUNTIME_DIR` is not among them — so the unit as
+    /// first written forbade the one file the daemon must create. It started
+    /// cleanly, sent `READY=1`, and then died on `EROFS` binding its socket.
+    ///
+    /// This is the shape of bug the test exists for: a hardening directive that
+    /// is correct in isolation and forbids something the daemon needs. Nothing
+    /// compared the two, because the requirement lives in Rust and the
+    /// permission lives in a unit file.
+    #[test]
+    fn the_sandbox_permits_the_socket_the_daemon_binds() {
+        let unit = include_str!("../../core/units/tv-shell-v2-cec.service");
+        let directive = |key: &str| {
+            unit.lines()
+                .filter_map(|l| l.trim().strip_prefix(key))
+                .next()
+                .map(str::trim)
+                .map(str::to_string)
+        };
+
+        // Only meaningful while something is taking the filesystem away. If the
+        // hardening is ever dropped, there is nothing to grant back.
+        let read_only = directive("ProtectSystem=").as_deref() == Some("strict");
+        if !read_only {
+            return;
+        }
+        let writable = directive("ReadWritePaths=").unwrap_or_default();
+        assert!(
+            writable.split_whitespace().any(|p| p == "%t"),
+            "ProtectSystem=strict makes $XDG_RUNTIME_DIR read-only, but the daemon binds \
+             its socket there; the unit must carry ReadWritePaths=%t (got {writable:?})"
+        );
+    }
+
+    /// The socket stays directly in `$XDG_RUNTIME_DIR`, which is what `%t`
+    /// grants.
+    ///
+    /// The pair to the test above: `ReadWritePaths=%t` grants that one
+    /// directory and not a subdirectory of it, so moving the socket deeper
+    /// silently reintroduces the same `EROFS`. Whoever moves it has to come
+    /// here and change the unit too.
+    #[test]
+    fn the_socket_sits_directly_in_the_runtime_directory() {
+        // The REAL resolver, not a rebuilt copy of it — a test that reassembles
+        // the same format string would pass no matter what the daemon does.
+        // `$TV_SHELL_CEC_SOCK` is a developer affordance that may point
+        // anywhere, so the assertion is about the default the unit must match.
+        if std::env::var_os(tv_shell_cec::config::SOCKET_PATH_ENV).is_some() {
+            return;
+        }
+        let path = tv_shell_cec::config::socket_path();
+        let parent = std::path::Path::new(&path)
+            .parent()
+            .expect("the socket path has a directory");
+        let runtime_dir = format!("/run/user/{}", unsafe { libc::getuid() });
+        assert_eq!(
+            parent,
+            std::path::Path::new(&runtime_dir),
+            "the socket moved out of $XDG_RUNTIME_DIR; ReadWritePaths=%t no longer covers it"
+        );
+    }
+
+    /// Every address family the daemon opens is permitted.
+    ///
+    /// `RestrictAddressFamilies=` is the other directive on this unit that can
+    /// forbid real behaviour, and unlike the socket bind it would not fail at
+    /// startup — it would fail the first time someone asked for a wake, which
+    /// is the worst moment to discover it.
+    ///
+    /// The list is what the code uses, not what the unit happens to say:
+    /// `AF_UNIX` for the IPC socket and sd_notify, `AF_INET`/`AF_INET6` for the
+    /// Wake-on-LAN broadcast and the AVR control connection, and `AF_NETLINK`
+    /// because `getaddrinfo` reaches for it when resolving the AVR's hostname.
+    #[test]
+    fn the_sandbox_permits_every_address_family_the_daemon_opens() {
+        let unit = include_str!("../../core/units/tv-shell-v2-cec.service");
+        let allowed: Vec<&str> = unit
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("RestrictAddressFamilies="))
+            .flat_map(str::split_whitespace)
+            .collect();
+        assert!(
+            !allowed.is_empty(),
+            "the unit must state RestrictAddressFamilies= explicitly"
+        );
+        for family in ["AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"] {
+            assert!(
+                allowed.contains(&family),
+                "the daemon opens {family} sockets but the unit forbids them: {allowed:?}"
+            );
+        }
+    }
+
     /// The daemon gives up on a stuck open before the service manager gives up
     /// on the daemon.
     ///
