@@ -92,6 +92,19 @@ const MAX_BLOCKING_THREADS: usize = 2;
 /// asserts the shipped unit's `TasksMax=` leaves room for all of them.
 pub const THREAD_BUDGET: usize = 1 + WORKER_THREADS + MAX_BLOCKING_THREADS + 2;
 
+/// How long the adapter may take to open before startup gives up and says so.
+///
+/// A bound rather than a plain `.await`, because **the failure this daemon
+/// actually suffered was a hang, not an error**: a blocking-pool thread that
+/// could not spawn left the very first await queued forever, and a queued await
+/// logs nothing. Whatever the next cause of a stuck startup turns out to be,
+/// this converts it into a message and a non-zero exit, which `Restart=always`
+/// retries — instead of a blank journal and a start-job timeout.
+///
+/// Well under the unit's `TimeoutStartSec=`, so the daemon is always the one
+/// that reports the failure rather than the service manager; a test asserts it.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// Fallback feed interval when `WATCHDOG_USEC` is unset — i.e. when the binary
 /// is run by hand. Nothing is listening then, so the value only bounds a
 /// harmless no-op.
@@ -159,6 +172,10 @@ fn main() -> ExitCode {
         }
     }
 
+    // Before the runtime, because building it is the first thing that can fail
+    // for want of a thread — and it must not fail silently.
+    check_thread_budget();
+
     // Built by hand rather than with `#[tokio::main]`, because the attribute's
     // default is a worker per CPU and this daemon's thread count has to be a
     // constant the unit's `TasksMax=` can be checked against. See the module
@@ -196,9 +213,20 @@ async fn run() -> ExitCode {
 
     let notifier = Notifier::from_env();
 
-    let backend = match open_backend(&config).await {
-        Ok(b) => b,
-        Err(e) => {
+    let backend = match tokio::time::timeout(OPEN_TIMEOUT, open_backend(&config)).await {
+        Err(_elapsed) => {
+            // Deliberately its own arm, with its own message. A startup that
+            // stops making progress used to be indistinguishable from a startup
+            // that was merely slow, and the service manager reported it with a
+            // line that named nothing.
+            tracing::error!(
+                "opening the CEC adapter made no progress within {OPEN_TIMEOUT:?}; giving up                  rather than hanging the start job. If the thread budget warning above fired,                  that is the cause."
+            );
+            notifier.status("adapter open timed out");
+            return ExitCode::FAILURE;
+        }
+        Ok(Ok(b)) => b,
+        Ok(Err(e)) => {
             // Fatal, and loudly so. The unit is `ConditionPathExists=/dev/cec0`
             // gated, so reaching here means the node exists and the adapter
             // still would not configure — which is a real fault, not a box
@@ -364,6 +392,57 @@ async fn watchdog_feed(
     }
 }
 
+/// Say, before the runtime is built, whether the cgroup can hold the daemon.
+///
+/// The one line this daemon most needed and did not have. Its first hardware run
+/// failed because the cgroup's pid limit was below the thread count the runtime
+/// wanted, and the shape of that failure is the problem: the thread that could
+/// not be created was one tokio asks for on behalf of a blocking task, tokio
+/// treats `EAGAIN` as *temporary* rather than fatal, and so the task waited for
+/// a thread that would never exist. No error was returned to anyone. Nothing was
+/// logged. The journal held nothing but the service manager's own timeout.
+///
+/// So this reads the limit and says so up front, while there is still a thread
+/// to say it with. It never refuses to start: the budget is a ceiling the daemon
+/// may not reach, `pids.max` can legitimately be `max`, and a daemon that
+/// declines to run on a limit it might have fitted inside is worse than one that
+/// warns and tries.
+fn check_thread_budget() {
+    let Some(limit) = cgroup_pids_max() else {
+        tracing::debug!("no cgroup pid limit found; thread budget is {THREAD_BUDGET}");
+        return;
+    };
+    if limit < THREAD_BUDGET {
+        tracing::warn!(
+            "this cgroup allows {limit} tasks but the daemon needs up to \
+             {THREAD_BUDGET} threads; if startup stops here, raise TasksMax= in the unit. \
+             A thread that cannot be created does not fail loudly, it waits."
+        );
+    } else {
+        tracing::debug!("cgroup allows {limit} tasks; thread budget is {THREAD_BUDGET}");
+    }
+}
+
+/// This process's `pids.max`, or `None` when there is no finite limit to read.
+///
+/// cgroup v2 only, which is what a `systemd --user` service runs under. Every
+/// failure is a `None` rather than an error: this is advice, and advice that
+/// fails to load must not be able to stop the daemon.
+fn cgroup_pids_max() -> Option<usize> {
+    let own = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let path = own.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
+    let raw = std::fs::read_to_string(format!("/sys/fs/cgroup{path}/pids.max")).ok()?;
+    parse_pids_max(&raw)
+}
+
+/// Parse a `pids.max` value: a number, or the literal `max` for "no limit".
+fn parse_pids_max(raw: &str) -> Option<usize> {
+    match raw.trim() {
+        "max" => None,
+        n => n.parse().ok(),
+    }
+}
+
 /// Half of `$WATCHDOG_USEC`, which systemd sets from the unit's `WatchdogSec=`.
 ///
 /// Read from the environment rather than hardcoded, so the unit is the single
@@ -494,5 +573,48 @@ mod tests {
             "TasksMax={tasks_max} is below the daemon's thread budget of {THREAD_BUDGET}; \
              the runtime cannot start and the failure is a silent hang, not an error"
         );
+    }
+
+    /// The daemon gives up on a stuck open before the service manager gives up
+    /// on the daemon.
+    ///
+    /// Which of the two reports the failure decides whether anyone can read the
+    /// cause: the daemon names what it was doing, while the service manager can
+    /// only say the start job timed out. That is the whole difference between
+    /// the journal from the first hardware run and a useful one.
+    ///
+    /// `TimeoutStartSec=` is read from the shipped unit rather than assumed.
+    /// It is set explicitly there for this reason — left unset it inherits a
+    /// manager default that varies by distribution and is invisible in the unit.
+    #[test]
+    fn the_daemon_reports_a_stuck_open_before_systemd_times_out() {
+        let unit = include_str!("../../core/units/tv-shell-v2-cec.service");
+        let start_timeout = unit
+            .lines()
+            .find_map(|l| l.strip_prefix("TimeoutStartSec="))
+            .expect("the unit must set TimeoutStartSec= rather than inherit a manager default")
+            .trim()
+            .strip_suffix('s')
+            .and_then(|n| n.parse::<u64>().ok())
+            .expect("TimeoutStartSec= must be a plain number of seconds");
+        assert!(
+            OPEN_TIMEOUT < Duration::from_secs(start_timeout),
+            "OPEN_TIMEOUT={OPEN_TIMEOUT:?} is not inside TimeoutStartSec={start_timeout}s, \
+             so systemd reports the failure first and the cause goes unlogged"
+        );
+    }
+
+    /// `pids.max` is a number or the word `max`, and `max` is not a limit.
+    ///
+    /// Worth pinning because the wrong reading is the dangerous one: parsing
+    /// `max` as a failure would make the check silent on exactly the hosts that
+    /// have no limit, and parsing it as zero would make it warn on all of them
+    /// until the warning got ignored.
+    #[test]
+    fn an_unlimited_pids_max_is_not_a_tiny_one() {
+        assert_eq!(parse_pids_max("max\n"), None);
+        assert_eq!(parse_pids_max("16\n"), Some(16));
+        assert_eq!(parse_pids_max("  24  "), Some(24));
+        assert_eq!(parse_pids_max("nonsense"), None);
     }
 }

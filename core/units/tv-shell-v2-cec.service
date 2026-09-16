@@ -80,6 +80,16 @@ WatchdogSec=30s
 Restart=always
 RestartSec=2
 
+# Explicit, NOT inherited. Left unset this takes the service manager's
+# DefaultTimeoutStartUSec, which is distribution-dependent (15s on the deploy
+# host, 90s on stock systemd) and invisible to anyone reading this file — the
+# first hardware run was diagnosed against the wrong number for exactly that
+# reason. The daemon bounds its own adapter open well inside this, so a stuck
+# startup is reported by the daemon, which knows what it was doing, rather than
+# by systemd, which can only say the start job timed out. A test asserts the two
+# numbers stay in that order.
+TimeoutStartSec=20s
+
 # Resource fence, so a runaway rx loop cannot starve gamescope.
 #
 # TasksMax= IS LOAD-BEARING AND IS CHECKED AGAINST THE CODE. It must stay at or
