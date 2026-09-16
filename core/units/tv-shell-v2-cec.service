@@ -113,6 +113,28 @@ CPUWeight=20
 DeviceAllow=char-cec rw
 PrivateTmp=yes
 ProtectSystem=strict
+
+# THE DAEMON'S SOCKET LIVES HERE, AND ProtectSystem=strict TAKES IT AWAY.
+# `strict` mounts the entire hierarchy read-only except a few kernel paths, and
+# $XDG_RUNTIME_DIR is NOT among them — so the bind of
+# `tv-shell-v2-cec.sock` failed with EROFS, and so did the daemon's unlink of
+# its own socket on the way out. The hardening was written but never exercised
+# against the two things the daemon must do at startup.
+#
+# `%t` is $XDG_RUNTIME_DIR for a user unit, which is exactly the directory
+# `cec/src/config.rs::socket_path()` resolves into.
+#
+# NOT `RuntimeDirectory=`, which is the more idiomatic spelling and was measured
+# against this: it grants write to the subdirectory IT creates, not to the
+# runtime directory itself, so the socket's path still fails under it. Adopting
+# it means moving the socket into that subdirectory — a path change that breaks
+# `cec/src/config.rs`, the panel's independent `av_socket_path()` in
+# `panel/src/config.rs`, the documented `$TV_SHELL_CEC_SOCK` default, and any
+# already-deployed client built at a different revision from the daemon. The
+# only thing it buys is automatic cleanup, which the daemon already does for
+# itself (see the unlink in `cec/src/main.rs`). A cross-binary path break is too
+# much to pay for cleanup that is already handled.
+ReadWritePaths=%t
 ProtectHome=read-only
 NoNewPrivileges=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
