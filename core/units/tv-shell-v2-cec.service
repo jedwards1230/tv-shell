@@ -80,7 +80,30 @@ WatchdogSec=30s
 Restart=always
 RestartSec=2
 
+# Explicit, NOT inherited. Left unset this takes the service manager's
+# DefaultTimeoutStartUSec, which is distribution-dependent (15s on the deploy
+# host, 90s on stock systemd) and invisible to anyone reading this file — the
+# first hardware run was diagnosed against the wrong number for exactly that
+# reason. The daemon bounds its own adapter open well inside this, so a stuck
+# startup is reported by the daemon, which knows what it was doing, rather than
+# by systemd, which can only say the start job timed out. A test asserts the two
+# numbers stay in that order.
+TimeoutStartSec=20s
+
 # Resource fence, so a runaway rx loop cannot starve gamescope.
+#
+# TasksMax= IS LOAD-BEARING AND IS CHECKED AGAINST THE CODE. It must stay at or
+# above the daemon's thread budget (`THREAD_BUDGET` in cec/src/main.rs), and a
+# test asserts exactly that against this file, because the first hardware run
+# failed on the two numbers disagreeing: the daemon built its tokio runtime with
+# the default worker-per-CPU count, so on a 16-thread host the runtime alone
+# wanted 17 threads against this cap of 16. The thread it could not get was the
+# blocking-pool thread backing the device-node open, and tokio treats that
+# clone(2) EAGAIN as a *temporary* failure — it queued the task for a thread that
+# would never exist instead of erroring. Startup's first await never returned,
+# nothing was logged, and Type=notify turned the hang into a start-job timeout
+# and a restart loop. The daemon now fixes its own thread count; do not lower
+# this number without reading that constant.
 MemoryMax=128M
 TasksMax=16
 CPUWeight=20

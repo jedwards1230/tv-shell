@@ -193,6 +193,55 @@ mod tests {
         n.status("nothing to see here");
     }
 
+    /// **`READY=1` actually leaves the process and arrives at a listener.**
+    ///
+    /// Every other test in this module checks a part: that both socket forms
+    /// resolve, that a relative name is refused, that an absent socket is a
+    /// no-op. None of them proves a datagram is sent, which is the thing
+    /// `Type=notify` waits on — and a daemon that resolves the address perfectly
+    /// and then sends nothing hangs its unit exactly as loudly as one that never
+    /// tried. So this stands up a real listener on a real socket and reads the
+    /// bytes back.
+    ///
+    /// It does NOT reproduce the failure seen on the first hardware run, and
+    /// should not be read as covering it: that daemon never reached its
+    /// `ready()` call at all. The test that guards *that* is the thread-budget
+    /// assertion in `main.rs`.
+    #[test]
+    fn ready_is_a_datagram_that_actually_arrives() {
+        let dir = std::env::temp_dir().join(format!(
+            "tv-shell-cec-notify-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let path = dir.join("notify");
+        let listener = UnixDatagram::bind(&path).expect("binding the fake notify socket");
+        listener
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("a bounded read, so a lost datagram fails rather than hangs");
+
+        let notifier = Notifier {
+            socket: Some(
+                Notifier::open(path.to_str().expect("a utf-8 temp path"))
+                    .expect("opening the fake notify socket"),
+            ),
+        };
+        notifier.ready();
+        notifier.watchdog();
+
+        let mut buf = [0u8; 64];
+        let len = listener
+            .recv(&mut buf)
+            .expect("READY=1 must arrive; a Type=notify unit hangs at start without it");
+        assert_eq!(&buf[..len], b"READY=1\n");
+
+        let len = listener.recv(&mut buf).expect("WATCHDOG=1 must arrive too");
+        assert_eq!(&buf[..len], b"WATCHDOG=1\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A status line is one line, whatever it is handed.
     #[test]
     fn a_status_message_cannot_forge_extra_protocol_lines() {
