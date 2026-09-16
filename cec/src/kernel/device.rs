@@ -34,11 +34,12 @@
 //!
 //! `get_capabilities()` runs before anything is configured, and the result gates
 //! the two calls that need it (`CEC_CAP_PHYS_ADDR`, `CEC_CAP_LOG_ADDRS`) and is
-//! published verbatim in `av-state`. Whether `pulse8-cec` implements
-//! `CEC_CAP_MONITOR_PIN` is UNVERIFIED — it could not be checked without a
-//! device — so nothing here assumes the pin monitor exists. Step 6's `av-health`
-//! reads [`crate::state::Topology::monitor_pin`] to name which health signal is
-//! actually in force.
+//! published verbatim in `av-state`. `CEC_CAP_MONITOR_PIN` is measured ABSENT on
+//! htpc-1's adapter (Pulse-Eight USB-CEC, firmware `000c`: caps `0x23f`, read
+//! 2026-09-16), so nothing here assumes the pin monitor exists — and the check
+//! stays a runtime read rather than a constant, because other adapters differ.
+//! Step 6's `av-health` reads [`crate::state::Topology::monitor_pin`] to name
+//! which health signal is actually in force.
 
 use std::sync::{Arc, Mutex};
 

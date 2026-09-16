@@ -27,9 +27,13 @@ leg to the cold path and to recovery. This file is the crate's own map.
 >   refusal transmits *nothing at all*.
 >
 > - **A volume action reports what the AVR did, not what left the adapter.** A
->   receiver ignores CEC from a non-selected input *after* ACKing the frame, so
->   success is judged from the AVR's own `<Report Audio Status>` read before and
->   after. An unchanged level is an `error:` naming that cause, never an `ok`.
+>   receiver *may* ignore CEC from a non-selected input after ACKing the frame —
+>   vendor-specific, and measured **not** to bite on this rack's Denon
+>   AVR-X1700H (2026-09-16) — so success is judged from the AVR's own
+>   `<Report Audio Status>` read before and after. An unchanged level is an
+>   `error:` naming that cause, never an `ok`. The readback rule stands
+>   regardless: it is what makes the answer true on a receiver that *does*
+>   ignore it.
 > - **A key press is inseparable from its release.** `volume::VolumeTx::
 >   KeyPressAndRelease` is one intent and `kernel::ops::wire_for` turns it into a
 >   `Wire::KeyPair` carrying both messages, so a press cannot be spelled on its
@@ -157,19 +161,28 @@ is transmitted. Said out loud, because "no transmits" should mean what it says.
 
 ### The physical address is explicit, and both values are published
 
-`phys_addr` is a `cec.toml` key and is **not** auto-derived.
-`cec-ctl --phys-addr-from-edid` reads the EDID of the connector the adapter sits
-on, and this adapter sits on a *different* HDMI input from the video leg —
-`card1-HDMI-A-1`'s EDID is readable but belongs to the AVR's video path, so it
-is the wrong port's answer.
+`phys_addr` is a `cec.toml` key and is **not** auto-derived. The kernel cannot
+derive it either: `CEC_ADAP_G_CONNECTOR_INFO` answers `None` on this adapter, so
+it has no DRM connector to read an EDID from and the value *must* be set by hand.
 
-**`2.5.0.0` is UNVERIFIED against the current rack.** It is the pre-2026-08-07
-value and the rack has changed since. A wrong value fails *silently*: a later
-`<Active Source>` addresses a port that does not exist and nothing on the bus
-complains. So the daemon logs the value it set alongside what
-`CEC_ADAP_G_PHYS_ADDR` reads back, warns loudly on a mismatch, and `av-state`
-publishes `physAddrConfigured` and `physAddr` side by side. Verify against
-`cec-ctl -d /dev/cec0 --show-topology` once the device exists.
+**`2.5.0.0` is confirmed against the live rack, measured 2026-09-16 — and
+claiming it is a deliberate fiction, not a bug.** `2.5.0.0` is the **video
+leg's** address, read from `card1-HDMI-A-1`'s EDID; it is not the AVR port the
+adapter's own HDMI plug sits in. That is the point: `<Active Source>` and the
+volume traffic should refer to the input that actually shows picture, which is
+the video leg. A future reader should not "correct" this to the adapter's port.
+
+It does not collide. The bus scanned live as LG `OLED65C2PU` `0.0.0.0`, Denon
+`AVR-X1700H` `2.0.0.0`, Apple TV `2.1.0.0`, PlayStation 5 `2.4.0.0`, and us at
+`2.5.0.0`. **We land on Playback Device 2 (LA 8), not LA 4** — the PS5 holds
+LA 4 — so nothing may assume a particular logical address; successful
+negotiation on a live bus is itself proof that tx and rx work.
+
+A wrong value would fail *silently*: a later `<Active Source>` addresses a port
+that does not exist and nothing on the bus complains. So the daemon logs the
+value it set alongside what `CEC_ADAP_G_PHYS_ADDR` reads back, warns loudly on a
+mismatch, and `av-state` publishes `physAddrConfigured` and `physAddr` side by
+side.
 
 ### Capabilities are read, never assumed
 
@@ -179,12 +192,21 @@ naming the capability rather than an opaque ioctl errno, and the full flag set
 reaches `av-state` verbatim — read off the bitflags, so a flag this crate has
 never heard of is still reported rather than dropped.
 
-**Whether `pulse8-cec` implements `CEC_CAP_MONITOR_PIN` is unverified** and could
-not be checked without a device. Nothing here assumes the pin monitor exists.
-It matters because the pin monitor is the one signal that separates "the bus is
-quiet because everything is off" from "our adapter has stopped hearing";
-`av-state.monitorPin` reports what was actually found, and `av-health`'s `reason`
-names which signal is in force.
+**`CEC_CAP_MONITOR_PIN` is measured ABSENT on this adapter** — the Pulse-Eight
+USB-CEC, firmware `000c`, read live on 2026-09-16: `CEC_ADAP_G_CAPS` reports
+`0x23f` = Physical Address, Logical Addresses, Transmit, Passthrough, Remote
+Control Support, Monitor All, Reply Vendor ID. No pin monitor.
+
+That is a fact about *this* adapter, not about the code: the capability is still
+read at open and never assumed, because other adapters differ and the runtime
+check is what makes the degradation correct anywhere. It matters because the pin
+monitor is the one signal that separates "the bus is quiet because everything is
+off" from "our adapter has stopped hearing"; `av-state.monitorPin` reports what
+was actually found, and `av-health`'s `reason` names which signal is in force.
+**`Monitor All` is the fallback vantage** this hardware does have — passive
+visibility of all bus traffic without transmitting — but it is not fact 3: it
+sees frames, not line level, so a bus with nothing to say still looks the same
+as a deaf adapter.
 
 ### Health is four observed facts, not one inferred verdict
 
@@ -211,10 +233,10 @@ sign flipped. If the pin monitor ever comes into force, fact 3 is what makes "we
 have stopped hearing" a real observation, and that is when it may sharpen the
 verdict.
 
-**`CEC_CAP_MONITOR_PIN` is an open question, and the reply says so.** Whether
-`pulse8-cec` implements it could not be checked without a device, so the
-capability is read at open and `reason` always names which bus-liveness signal is
-in force. Even where the capability is present the daemon does **not** enter a
+**`CEC_CAP_MONITOR_PIN` is absent on the deployed adapter, and the reply says
+so.** It is read at open rather than assumed — other adapters may have it — and
+`reason` always names which bus-liveness signal is in force; on htpc-1 that is
+`last-heard ages`, permanently, because the capability is not there. Even where the capability is present the daemon does **not** enter a
 pin-monitoring mode: `FollowerMode` is one value, so a monitor mode *replaces*
 `FollowerMode::Enabled` and the receive loop would stop folding `<Active
 Source>` — and the kernel gates the monitor modes on `CAP_NET_ADMIN`, which a
@@ -266,6 +288,23 @@ that backend eventually reaches the television. The rule cannot be enforced from
 inside this daemon; it lives in the callers. The panel's `/devices/av` page is
 the first of them (800 ms, `panel/src/pages/av.rs`), and it has a test that
 stands up a socket which accepts and never replies.
+
+**The bounds are sane against measured round trips (2026-09-16, htpc-1).** On
+the live bus a `<Give Audio Status>` was answered in **18 ms** and a
+`<Give System Audio Mode Status>` in **39 ms**. Against that:
+
+| Bound | Value | Verdict |
+|---|---|---|
+| `kernel::ops::REPLY_TIMEOUT` | 1000 ms | ~25x the slowest measured reply. Not a free choice anyway — `CEC_TRANSMIT` coerces anything larger, and zero, to one second |
+| `[failover] tx_error_window_ms` | 10 000 ms | Three orders above a round trip; a window this wide cannot mistake one slow reply for a wedge |
+| `[failover] fail_after_ms` | 5 000 ms | Same |
+| `[failover] recover_after_ms` | 10 000 ms | Same |
+| The panel's caller bound | 800 ms | The tightest of the set, and still ~20x the slowest measured reply |
+
+No value is changed on the strength of these numbers. The measurement narrows
+nothing: every bound already sits orders of magnitude above the observed
+latency, and they are sized for a *wedged* adapter — an absence of any reply —
+not for a slow one.
 
 ## The IP leg
 
