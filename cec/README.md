@@ -275,8 +275,8 @@ being broken.
 **That is what RETIRES the Ansible CEC watchdog** rather than merely disabling
 it. No polling script, no `cec-health` probe with bus side effects, no second
 supervisor. The watchdog timer is already `disabled`/`inactive` on the deploy box
-(verified read-only 2026-09-14, and `htpc_cec_watchdog_active` derives from
-`htpc_boot_session`), so nothing needs stopping — it must simply never be
+(verified read-only 2026-09-14, and the role's CEC-watchdog toggle derives from
+its boot-session variable), so nothing needs stopping — it must simply never be
 re-enabled.
 
 ### Every caller must bound its own timeout

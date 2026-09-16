@@ -44,7 +44,8 @@ PartOf=tv-shell-session.target
 # seat, the pads and the CEC adapter, and both claim restart authority. But
 # `Conflicts=` is BIDIRECTIONAL, and that is a loaded gun on this box.
 #
-# The `htpc_common` Ansible role ships a CEC watchdog as a SYSTEM unit that
+# The host-configuration Ansible role that provisions this deployment's TV box
+# ships a CEC watchdog as a SYSTEM unit that
 # probes `cec-health`, misreads a deliberately stopped `tv-shell-input` as a
 # wedged adapter, and restarts it (§9; jedwards1230/homelab-ansible#266). With
 # `Conflicts=` in place, that restart issues a start job for tv-shell-input,
@@ -61,8 +62,8 @@ PartOf=tv-shell-session.target
 # can never leave v1 unstartable.
 #
 # THAT IS A MITIGATION; THE FIX IS THE STAND-DOWN, AND IT IS DONE. §9 requires
-# the watchdog to stand down at cutover. `htpc_cec_watchdog_active` derives from
-# the selected boot session, and the timer was read on the deploy box as
+# the watchdog to stand down at cutover. The role's CEC-watchdog toggle derives
+# from the selected boot session, and the timer was read on the deploy box as
 # disabled/inactive on 2026-09-14. The unit still exists on disk under Ansible's
 # ownership, so it must never be re-enabled; and its probe reads v1's
 # `cec-health` verb, which v2 does not have. What RETIRES it rather than

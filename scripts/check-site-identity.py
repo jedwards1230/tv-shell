@@ -38,6 +38,27 @@ still welcome — write it impersonally ("measured on the reference deployment,
    the very names it exists to keep out, and it would not catch the next
    deployment's naming at all.
 3. **A MAC address**, except the documentation placeholders.
+4. **An Ansible role path** — `roles/<name>/`. The deployment's provisioning
+   lives in a private repo, and its role names leaked into this one the same way
+   the addresses did: `roles/htpc_common/tasks/gamescope-prototype.yaml` and
+   `roles/desktop-common/templates/tv-shell-host.service.j2` were cited as
+   pointers in prose, a doc comment, a shipped systemd unit and an install
+   script. A pointer into a repo the reader cannot open is not useful to them
+   and is site identity to everyone else — describe what the role *does*
+   instead, and keep the public `jedwards1230/homelab-ansible` repo name and the
+   `#NNN` issue links, which are readable.
+
+   This shape is checked everywhere, with no scope restriction: `roles/<name>/`
+   has no legitimate occurrence anywhere in a Rust/QML tree, so its
+   false-positive rate is zero.
+
+   **A broader `<word>_<word>` role-name check was considered and REJECTED.**
+   `[a-z]+_[a-z]+` is the shape of every snake_case identifier in a Rust tree —
+   every function, field, local and module would trip it. That is the same
+   argument `HOST_SHAPE_SCOPE` below already makes about Debian package names,
+   and it has the same ending: a gate whose signal is buried in noise gets
+   switched off, and then it catches nothing at all. A narrow rule that always
+   fires beats a broad one nobody runs.
 
 ## Why the shape check needs an allowlist
 
@@ -137,6 +158,13 @@ PRIVATE_IPV4 = re.compile(
 HOST_SHAPED = re.compile(r"\b[a-z][a-z0-9]{2,}-[0-9]+\b")
 
 MAC = re.compile(r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b")
+
+# An Ansible role path from the private provisioning repo. Deliberately narrow:
+# it matches the `roles/<name>/` directory shape and nothing else, which has no
+# legitimate occurrence in this tree (see the docstring for why the broader
+# snake_case role-name check was rejected). `\b` keeps `user_roles/` and
+# `member_roles/` out — there is no word boundary after an underscore.
+ANSIBLE_ROLE_PATH = re.compile(r"\broles/[A-Za-z0-9_.-]+/")
 
 # Documentation MACs. Anything else is presumed to be a real NIC.
 ALLOWED_MACS = {"aa:bb:cc:dd:ee:ff", "aa-bb-cc-dd-ee-ff", "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"}
@@ -373,6 +401,8 @@ def violations_in(rel: str, numbered: list[tuple[int, str]]) -> list[tuple[int, 
         for mac in MAC.findall(line):
             if mac.lower() not in ALLOWED_MACS:
                 found.append((lineno, f"MAC address {mac}", line.strip()))
+        for role in ANSIBLE_ROLE_PATH.findall(line):
+            found.append((lineno, f"Ansible role path {role!r}", line.strip()))
         if not check_shape:
             continue
         for tok in HOST_SHAPED.findall(line):
@@ -413,7 +443,8 @@ def main() -> int:
         print(
             f"\n{len(failures)} violation(s). Use RFC 5737 addresses (192.0.2.x) and "
             "placeholder ids (node-a, <sidecar-host>) in examples; real addresses and "
-            "host names belong in config.toml, never in source.",
+            "host names belong in config.toml, never in source. Describe what a "
+            "private Ansible role DOES rather than naming its roles/<name>/ path.",
             file=sys.stderr,
         )
         return 1

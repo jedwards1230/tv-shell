@@ -32,6 +32,18 @@ run-name: "Rust CI — ${{ github.event_name }} on ${{ github.ref_name }} by @${
 
 on:
   workflow_call:
+    inputs:
+      cec-mutants:
+        description: >-
+          Whether to run the `cec-mutants` job. The caller (ci.yml) sets this
+          from a filter narrower than the broad `rust` area, because the
+          mutation result can only move when the cec crate, its scope config or
+          its runner script changes.
+        type: boolean
+        required: false
+        # FAILS SAFE. An unset input must mean "run", never "skip": a caller
+        # that forgets to pass this must get the measurement, not a silent hole.
+        default: true
 
 permissions:
   contents: read
@@ -414,6 +426,23 @@ jobs:
   # preserves that property, and keeps a slow advisory run off the critical
   # path of the blocking one. Same shape as `core-uinput` above.
   cec-mutants:
+    # SKIPPED IS NOT GREEN, AND IT IS NOT `continue-on-error`. A job-level `if:`
+    # renders as a visible "Skipped" row in the PR checks list — the reader sees
+    # that no measurement was taken. `continue-on-error` is categorically
+    # different: it reports GREEN on a skip as readily as on a failure, which is
+    # exactly jedwards1230/tv-shell#469, where a gated leg was wired to nothing
+    # and read as passing for months. Do not "simplify" this into one.
+    #
+    # The input defaults to `true`, so an unset value RUNS the job. The only way
+    # to skip is for the caller to have evaluated its filter and decided nothing
+    # in scope changed.
+    #
+    # WHAT THIS DOES NOT DO: a path filter cannot tell a comments-only edit from
+    # a logic edit, so any touch inside `cec/src/**` — a reworded doc comment
+    # included — still runs the full ~9 minutes. The saving is on docs-only,
+    # panel-only and daemon-only PRs, which previously paid for a measurement
+    # that could not have moved.
+    if: inputs.cec-mutants
     runs-on: ubuntu-latest
     defaults:
       run:

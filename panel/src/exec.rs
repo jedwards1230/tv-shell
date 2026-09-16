@@ -186,8 +186,8 @@ impl Recovery {
     ///   elevation, and it keeps working with the daemon down — that is what
     ///   makes System ▸ Services a recovery surface rather than a convenience.
     /// * [`UnitScope::System`] → `sudo -n systemctl restart <unit>`, matching
-    ///   the per-unit NOPASSWD sudoers line the `htpc_common` ansible role
-    ///   ships (`docs/PANEL.md` § Deployment prerequisite). The argv is
+    ///   the per-unit NOPASSWD sudoers line the host-configuration ansible
+    ///   role ships (`docs/PANEL.md` § Deployment prerequisite). The argv is
     ///   deliberately `systemctl restart <unit>` with no `--` separator and no
     ///   extra flags: sudoers matches on the exact command line, so anything
     ///   else would silently stop matching the rule. Safe because `<unit>`

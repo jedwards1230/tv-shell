@@ -18,7 +18,7 @@ reasoning that was wrong is the part worth keeping. Three are load-bearing:
   `POST /system/updates/apply` is the exception and stays under System ▸
   Updates. See [Dev](#dev).
 - **`scope = "system"` restarts work on the reference deployment and fail
-  closed elsewhere.** The `htpc_common` sudoers generation shipped in
+  closed elsewhere.** The host-configuration role's sudoers generation shipped in
   [`jedwards1230/homelab-ansible#271`](https://github.com/jedwards1230/homelab-ansible/pull/271)
   and is deployed there; a node whose role run has not applied it still fails
   closed, by design. See [Privilege](#privilege) and [Phasing](#phasing).
@@ -295,7 +295,8 @@ tv-shell ALL=(root) NOPASSWD: /usr/bin/systemctl restart sshd.service, \
                               /usr/bin/systemctl restart NetworkManager.service
 ```
 
-To be shipped by the `htpc_common` ansible role, generated from the same list
+To be shipped by the host-configuration ansible role that provisions this
+deployment's TV box, generated from the same list
 that renders `managed_units`, so the two cannot drift. **That generation has not
 landed** (it was out of scope for the panel PR), so today *every* system-scope
 entry is a unit without a matching sudoers line. Which is exactly the case the

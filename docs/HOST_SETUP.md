@@ -277,8 +277,8 @@ change (credential rotation included) needs a sidecar restart.
 
 ## Install path A — Ansible-managed (homelab)
 
-On the gaming host the service is a managed `systemd --user` unit via the `desktop-common`
-role. You don't run anything by hand — set the flags and apply:
+On the gaming host the service is a managed `systemd --user` unit via the
+homelab desktop Ansible role in `jedwards1230/homelab-ansible`. You don't run anything by hand — set the flags and apply:
 
 ```yaml
 # host_vars/gaming-host.yaml
@@ -321,8 +321,8 @@ firewall to port 47995. See the role for the full variable list.
 
    To keep it running, install it as a service. On Linux a user unit bound to the
    graphical session works (Steam must reach the live desktop session to launch a
-   game) — mirror `roles/desktop-common/templates/tv-shell-host.service.j2` from
-   the homelab-ansible repo. On Windows use Task Scheduler (at-logon); on macOS a
+   game) — mirror the `tv-shell-host.service` template the homelab desktop Ansible
+   role in `jedwards1230/homelab-ansible` ships. On Windows use Task Scheduler (at-logon); on macOS a
    launchd LaunchAgent.
 
 3. **Open the firewall** to the LAN so the TV box can reach it:

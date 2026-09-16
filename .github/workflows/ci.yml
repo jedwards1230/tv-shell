@@ -45,6 +45,7 @@ jobs:
       mqtt: ${{ steps.filter.outputs.mqtt }}
       gamescope: ${{ steps.filter.outputs.gamescope }}
       shellv2: ${{ steps.filter.outputs.shellv2 }}
+      cecmutants: ${{ steps.filter.outputs.cecmutants }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
@@ -83,6 +84,35 @@ jobs:
               # The mutation gate's SCOPE. Editing it can silently shrink what
               # is measured, so it must re-run the area that measures it.
               - '.cargo/mutants.toml'
+              - '.github/workflows/rust.yml'
+              - '.github/workflows/ci.yml'
+            # A NARROWER filter INSIDE the rust area, for the cec-mutants job
+            # only. The `rust` area above is broad on purpose (daemon/, panel/,
+            # protocol/, core/, cec/, several scripts), but the mutation gate's
+            # result can only be changed by the cec crate's own code, its
+            # dependency resolution, the scope config, the runner script, or the
+            # workflows that invoke it. A panel-only or daemon-only PR paid nine
+            # minutes for a measurement that could not have moved.
+            #
+            # `cec/src/**` rather than the six in-scope decision modules by name:
+            # `.cargo/mutants.toml` resolves scope by GLOB precisely so modules
+            # picked up as the PR stack lands are covered without a second edit,
+            # and `scripts/run-cec-mutants.sh` hard-fails when a module exists on
+            # disk but is not examined — a check whose input is the whole of
+            # `cec/src/`, not just the six current files. Enumerating six paths
+            # here would under-trigger on exactly the rename that check exists to
+            # catch. `cec/README.md` is excluded: prose cannot move a mutant.
+            #
+            # LIMIT, STATED PLAINLY: a path filter cannot tell a comments-only
+            # edit from a logic edit, so a PR that only rewords a comment inside
+            # `cec/src/*.rs` still pays for the run. The win is that docs-only,
+            # panel-only and daemon-only PRs stop paying for it.
+            cecmutants:
+              - 'cec/src/**'
+              - 'cec/Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/mutants.toml'
+              - 'scripts/run-cec-mutants.sh'
               - '.github/workflows/rust.yml'
               - '.github/workflows/ci.yml'
             host:
@@ -143,6 +173,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     uses: ./.github/workflows/rust.yml
+    with:
+      # Gates rust.yml's `cec-mutants` job only. Every other job in that
+      # workflow still runs whenever the broad `rust` area changed.
+      cec-mutants: ${{ needs.changes.outputs.cecmutants == 'true' }}
 
   host:
     needs: changes

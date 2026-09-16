@@ -393,9 +393,9 @@ missing. Never a silent no-op, never a misleading success. A genuine restart
 failure (`Job for sshd.service failed…`) is *not* reported as a permission
 problem — the two send an operator to different places.
 
-> **The ansible side has not landed.** The `htpc_common` role in
-> `jedwards1230/homelab-ansible` is where these sudoers lines will be
-> generated, from the same list that renders `managed_units` so the two cannot
+> **The ansible side has not landed.** The host-configuration role in
+> `jedwards1230/homelab-ansible` — the one that provisions this deployment's TV
+> box — is where these sudoers lines will be generated, from the same list that renders `managed_units` so the two cannot
 > drift. Until it does, **every `scope = "system"` restart fails closed on every
 > node, the reference deployment included.** Listing a system unit in
 > `managed_units` today makes it readable and visible on the page; it does not
