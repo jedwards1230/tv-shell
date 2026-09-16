@@ -25,6 +25,7 @@
 //! | [`failover`] | **PURE**: which backend is authoritative on the warm path, with hysteresis on both edges and a reason for every change |
 //! | [`ip`] | The IP leg: a Wake-on-LAN magic packet and a Denon/Marantz telnet session, both behind a seam so no test dials anything |
 //! | [`notify`] | `sd_notify` — `READY=1` for `Type=notify`, `WATCHDOG=1` for `WatchdogSec=` |
+//! | [`version`] | What this binary is — the package version and the revision `build.rs` stamped into it, which is what `--version` prints |
 //!
 //! # What this daemon puts on the bus, and when
 //!
@@ -75,6 +76,7 @@ pub mod notify;
 pub mod ownership;
 pub mod protocol;
 pub mod state;
+pub mod version;
 pub mod volume;
 
 #[cfg(target_os = "linux")]

@@ -41,14 +41,26 @@
 #   v1's config and dialling v1's socket, and it would look like the v2 panel
 #   simply misbehaving. So every v2 sidecar carries the infix.
 #
-#   `tv-shell-v2-cec.service` NOW EXISTS and is installed; `tv-shell-v2-shell`
-#   and `-stats` still do not (the panel is a separate case, above). They are
-#   `Wants=` because a `Wants=` on a missing unit is a soft skip at load — but
-#   note that a soft skip is also invisible, so the session comes up as if they
-#   were there. The CEC unit adds a SECOND silent skip of its own:
+#   `tv-shell-v2-cec.service` NOW EXISTS and is installed. `tv-shell-v2-shell`
+#   and `-stats` do NOT exist anywhere in this repository, and they are no
+#   longer named on the `Wants=` line below. They were, and that was the bug: a
+#   `Wants=` on a missing unit is a soft skip at load, and a soft skip is
+#   INVISIBLE — so the session came up believing it had a shell and a stats
+#   sidecar, and `systemctl --user status` on this target showed nothing wrong.
+#
+#   THE RULE THAT REPLACES IT: a unit joins this target IN THE SAME CHANGE THAT
+#   ADDS THE UNIT FILE. Not before. `scripts/install-v2.sh` now refuses to
+#   install a target that names a unit it did not lay down (it parses the
+#   installed target's `Wants=`/`BindsTo=`/`Requires=`/`Requisite=`/`PartOf=`/
+#   `Upholds=` lines and checks each named unit is in the unit dir), so the
+#   forward-reference above is not merely discouraged — it fails the install,
+#   loudly, at the moment someone makes it.
+#
+#   The CEC unit still carries a SECOND silent skip of its own:
 #   `ConditionPathExists=/dev/cec0`, which is unmet on any box without an
-#   adapter. Both are recorded in the journal and in `systemctl --user status`;
-#   neither fails the session.
+#   adapter. That one is legitimate — the unit exists, it is installed, and the
+#   condition is how "shipped but inert" is spelled. It is recorded in the
+#   journal and in `systemctl --user status`, and it does not fail the session.
 #
 # None of Binds/Upholds/Wants carries ordering, INCLUDING the `After=` on this
 # target: ordering a target does not order the units it upholds. So each child
@@ -89,8 +101,11 @@ After=tv-shell-gamescope.service
 #
 # The panel is deliberately absent: it is the recovery surface and belongs to
 # default.target, not to the session it recovers.
+# EVERY unit named here must exist in this directory and be installed by
+# scripts/install-v2.sh — see "WHY THE `v2-` INFIX" above for the rule and what
+# enforces it.
 Wants=tv-shell-core.service
-Wants=tv-shell-v2-shell.service tv-shell-v2-stats.service tv-shell-v2-cec.service
+Wants=tv-shell-v2-cec.service
 
 # NO `Conflicts=` — see the long comment in tv-shell-core.service. It is
 # bidirectional, so the Ansible CEC watchdog restarting tv-shell-input on a bad

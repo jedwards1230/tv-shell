@@ -36,14 +36,31 @@ async fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         None => serve().await,
         Some("write-session-env") => write_session_env(args.get(1).map(String::as_str)),
+        // STDOUT, not the tracing layer. `--version` is the one thing an
+        // operator pipes, greps or diffs against the other half of the deploy,
+        // and `init_tracing` writes to stderr with a timestamp and a level in
+        // front of every line. A version report that needs stripping before it
+        // can be compared is a version report nobody uses.
+        Some("--version" | "-V") => {
+            println!("{}", tv_shell_core::version::version_string());
+            ExitCode::SUCCESS
+        }
+        Some("--help" | "-h") => {
+            println!("{USAGE}");
+            ExitCode::SUCCESS
+        }
         Some(other) => {
-            tracing::error!(
-                "unknown argument {other:?}; usage: tv-shell-core [write-session-env <path>]"
-            );
+            // Still an ERROR on stderr with a failure exit: a typo'd mode must
+            // not look like a successful start. Only the usage text moved.
+            tracing::error!("unknown argument {other:?}; usage: {USAGE}");
             ExitCode::FAILURE
         }
     }
 }
+
+/// The whole argument surface, in one place so the error path and `--help`
+/// cannot drift apart.
+const USAGE: &str = "tv-shell-core [write-session-env <path>] [--version|-V] [--help|-h]";
 
 /// Render `[display]`/`[session]` into the env file the gamescope unit reads.
 ///

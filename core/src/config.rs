@@ -1701,6 +1701,17 @@ ENABLE_GAMESCOPE_WSI = "1"
     const PREFIX_TOKEN: &str = "@TV_SHELL_V2_PREFIX@";
     /// v1's install prefix. A v2 unit naming a path under it would run v1's tree.
     const V1_PREFIX: &str = "/opt/tv-shell";
+    /// Every systemd directive that pulls in another unit. `Wants=` alone is not
+    /// enough: a forward reference moved one line down to `Requires=` is the
+    /// stronger and more dangerous form, and `install-v2.sh` reads all six.
+    const UNIT_DEP_DIRECTIVES: [&str; 6] = [
+        "Wants",
+        "BindsTo",
+        "Requires",
+        "Requisite",
+        "PartOf",
+        "Upholds",
+    ];
 
     struct Staged {
         root: std::path::PathBuf,
@@ -1888,6 +1899,121 @@ ENABLE_GAMESCOPE_WSI = "1"
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_unit_the_session_target_names_is_installed() {
+        // THE SILENT-SKIP HOLE. systemd skips a missing `Wants=` by design and
+        // records nothing that reads as wrong, so the target named
+        // tv-shell-v2-shell.service and tv-shell-v2-stats.service — neither of
+        // which exists anywhere in this repository — and the session came up
+        // believing it had a shell and a stats sidecar.
+        //
+        // Read from the INSTALLED target, which is the file systemd loads.
+        let s = stage_install("deps");
+        let target = std::fs::read_to_string(s.units.join("tv-shell-session.target")).unwrap();
+        let installed: Vec<String> = installed_units(&s).into_iter().map(|(n, _)| n).collect();
+
+        let mut named = 0;
+        for (n, line) in directive_lines(&target) {
+            let Some((directive, value)) = line.split_once('=') else {
+                continue;
+            };
+            if !UNIT_DEP_DIRECTIVES.contains(&directive.trim()) {
+                continue;
+            }
+            for unit in value.split_whitespace() {
+                named += 1;
+                assert!(
+                    installed.contains(&unit.to_string()),
+                    "tv-shell-session.target:{} names {unit}, which is not installed — \
+                     systemd would skip it silently and the session would come up believing \
+                     it had one",
+                    n + 1
+                );
+            }
+        }
+        // A target that named nothing would pass the loop above vacuously.
+        assert!(
+            named >= 2,
+            "the session target should still name its members"
+        );
+    }
+
+    #[test]
+    fn the_installer_refuses_a_target_naming_a_unit_it_did_not_install() {
+        // The check above asserts the tree is currently honest; this one asserts
+        // the INSTALLER catches the next person who makes it dishonest. Without
+        // it, "the target only names installed units" is a property held by
+        // nothing but review — which is exactly how the two phantom units lived
+        // in this file for as long as they did.
+        //
+        // The installer resolves its repo root from its own path, so the
+        // mutation is staged as a miniature repo: the real script, the real
+        // units, one line changed.
+        let fake = repo_root()
+            .join("target")
+            .join(format!("install-test-phantom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&fake);
+        std::fs::create_dir_all(fake.join("scripts")).unwrap();
+        std::fs::create_dir_all(fake.join("core/units")).unwrap();
+        std::fs::copy(
+            repo_root().join("scripts/install-v2.sh"),
+            fake.join("scripts/install-v2.sh"),
+        )
+        .unwrap();
+        let units_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("units");
+        for entry in std::fs::read_dir(&units_src).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            std::fs::copy(&path, fake.join("core/units").join(&name)).unwrap();
+        }
+        let target_path = fake.join("core/units/tv-shell-session.target");
+        let mutated = std::fs::read_to_string(&target_path).unwrap().replace(
+            "Wants=tv-shell-core.service",
+            "Wants=tv-shell-core.service tv-shell-v2-phantom.service",
+        );
+        assert!(
+            mutated.contains("tv-shell-v2-phantom.service"),
+            "the mutation did not apply — the target's Wants= line has changed shape"
+        );
+        std::fs::write(&target_path, mutated).unwrap();
+
+        // The same explicit `--user` stage_install passes, for the same reason:
+        // the installer refuses an IMPLICIT root user, and CI runs in a
+        // root-only container.
+        let user = String::from_utf8(
+            Command::new("id")
+                .arg("-un")
+                .output()
+                .expect("running id -un")
+                .stdout,
+        )
+        .expect("id -un is utf-8");
+        let out = Command::new("bash")
+            .arg(fake.join("scripts/install-v2.sh"))
+            .arg("--no-build")
+            .args(["--user", user.trim(), "--no-session"])
+            .arg("--prefix")
+            .arg(fake.join("prefix"))
+            .arg("--unit-dir")
+            .arg(fake.join("units"))
+            .arg("--config-dir")
+            .arg(fake.join("config"))
+            .output()
+            .expect("running the staged scripts/install-v2.sh");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        let _ = std::fs::remove_dir_all(&fake);
+
+        assert!(
+            !out.status.success(),
+            "the installer accepted a target naming a unit it did not write"
+        );
+        assert!(
+            stderr.contains("tv-shell-v2-phantom.service"),
+            "the refusal must NAME the missing unit — a generic failure sends the \
+             operator looking in the wrong place: {stderr}"
+        );
     }
 
     #[test]
