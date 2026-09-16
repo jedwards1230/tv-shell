@@ -293,6 +293,29 @@ those tests has been mutation-checked (`## Build, test & lint`).
   take"; `failures` is the case that is otherwise invisible from the couch — the
   user held the button, the core agreed, and the screen did not change.
 
+## Which build is this?
+
+```bash
+tv-shell-core --version   # tv-shell-core 0.0.0 (a1b2c3d4e5f6)
+```
+
+The revision is stamped at **compile** time by `build.rs`: `$TV_SHELL_BUILD_SHA`
+if the build set it (a release workflow, or a build from a tarball with no git
+history), else `git rev-parse --short=12 HEAD` in this crate with `-dirty`
+appended when the tree was not clean, else the literal `unknown`. No failure
+path there can fail the build.
+
+That is deliberately **not** how v1 answers the same question.
+`tv_shell_build_info` shells out to `git` at runtime, so on a box that has a
+source tree — which is how v2 is deployed today, cloned at a revision and built
+in place — it reports the *tree's* HEAD rather than the running binary's. Pull
+without restarting and it starts lying. A compile-time stamp travels with the
+artifact and cannot.
+
+The package version is `0.0.0` until a v2 release stream exists (see
+`Cargo.toml`), so the sha carries the whole answer for now. `--help` prints the
+argument surface; `write-session-env <path>` is unchanged.
+
 ## Install
 
 ```bash

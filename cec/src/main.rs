@@ -51,9 +51,68 @@ const WATCHDOG_DIVISOR: u32 = 2;
 /// harmless no-op.
 const DEFAULT_WATCHDOG_PERIOD: Duration = Duration::from_secs(15);
 
+/// The whole argument surface, in one place so the error path and `--help`
+/// cannot drift apart.
+const USAGE: &str = "tv-shell-cec [--version|-V] [--help|-h]";
+
+/// What the command line asked for.
+///
+/// A pure decision, split out of `main` so the dispatch is testable without a
+/// process: `main` is `#[tokio::main]` and opens an adapter, so nothing about
+/// it can be exercised from a unit test.
+#[derive(Debug, PartialEq, Eq)]
+enum Cli {
+    /// No arguments: open the adapter and serve. What the unit does.
+    Serve,
+    /// Print the version line and exit 0.
+    Version,
+    /// Print the usage line and exit 0.
+    Help,
+    /// Anything else, carried so the message can name it.
+    Unknown(String),
+}
+
+/// Parse the argument list (already stripped of argv[0]).
+///
+/// UNKNOWN ARGUMENTS ARE REFUSED rather than ignored. Silently serving despite
+/// an argument nobody understood is how a typo'd flag becomes a daemon running
+/// with settings the operator believes it has.
+///
+/// This is safe for the unit: `tv-shell-v2-cec.service` starts
+/// `@TV_SHELL_V2_PREFIX@/bin/tv-shell-cec` with NO arguments at all, so the
+/// only path systemd ever takes is `Serve`. A refusal can only be reached by a
+/// human typing one.
+fn parse_args(args: &[String]) -> Cli {
+    match args.first().map(String::as_str) {
+        None => Cli::Serve,
+        Some("--version" | "-V") => Cli::Version,
+        Some("--help" | "-h") => Cli::Help,
+        Some(other) => Cli::Unknown(other.to_string()),
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     init_tracing();
+
+    match parse_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        Cli::Serve => {}
+        // STDOUT, not the tracing layer: `init_tracing` writes to stderr with a
+        // timestamp and a level in front of every line, and `--version` is the
+        // one output an operator pipes or diffs against the core's.
+        Cli::Version => {
+            println!("{}", tv_shell_cec::version::version_string());
+            return ExitCode::SUCCESS;
+        }
+        Cli::Help => {
+            println!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        Cli::Unknown(other) => {
+            tracing::error!("unknown argument {other:?}; usage: {USAGE}");
+            return ExitCode::FAILURE;
+        }
+    }
 
     let config = match CecConfig::load() {
         Ok(c) => c,
@@ -292,4 +351,50 @@ fn init_tracing() {
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_arguments_serves_which_is_what_the_unit_does() {
+        // The load-bearing case. `ExecStart=` passes nothing, so any parse that
+        // made the empty list an error would be a unit that never starts.
+        assert_eq!(parse_args(&args(&[])), Cli::Serve);
+    }
+
+    #[test]
+    fn both_version_spellings_are_accepted() {
+        assert_eq!(parse_args(&args(&["--version"])), Cli::Version);
+        assert_eq!(parse_args(&args(&["-V"])), Cli::Version);
+        // Lowercase `-v` is conventionally verbosity, not version, and this
+        // daemon's verbosity is `RUST_LOG`. It must NOT be a silent alias.
+        assert_eq!(
+            parse_args(&args(&["-v"])),
+            Cli::Unknown("-v".to_string()),
+            "-v must be refused, not quietly treated as --version"
+        );
+    }
+
+    #[test]
+    fn an_unknown_argument_is_refused_and_named() {
+        // Refused, not ignored: a daemon that serves anyway is a daemon running
+        // with settings the operator believes it has.
+        assert_eq!(
+            parse_args(&args(&["--adapter=/dev/cec1"])),
+            Cli::Unknown("--adapter=/dev/cec1".to_string())
+        );
+    }
+
+    #[test]
+    fn the_usage_line_names_every_flag_the_parser_accepts() {
+        for flag in ["--version", "-V", "--help", "-h"] {
+            assert!(USAGE.contains(flag), "usage omits {flag}: {USAGE}");
+        }
+    }
 }

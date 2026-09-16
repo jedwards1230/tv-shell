@@ -86,8 +86,32 @@ carry a `/usr/bin/env` prefix in `Exec=` for session environment, and only its
 toggle can remove the entry. Everything else still installs, so the launcher its
 `Exec=` points at is in place.
 
+The installer also **refuses to install a session target naming a unit it did
+not write**. `tv-shell-session.target` pulls its members with `Wants=`, and
+systemd skips a missing `Wants=` silently — so a target naming a unit that does
+not exist gives a session that comes up believing it has one. The check reads
+the installed target's `Wants=`/`BindsTo=`/`Requires=`/`Requisite=`/`PartOf=`/
+`Upholds=` lines and fails, naming the unit, if any of them is not in the unit
+directory.
+
 At the display manager you then get **TV Shell v2 (gamescope)** alongside **TV
 Shell (Wayland)**. v2 is unproven on hardware — see `core/README.md`.
+
+**Which build is installed?** Both v2 binaries answer for themselves:
+
+```bash
+/opt/tv-shell-v2/bin/tv-shell-core --version   # tv-shell-core 0.0.0 (a1b2c3d4e5f6)
+/opt/tv-shell-v2/bin/tv-shell-cec --version    # tv-shell-cec 0.0.0 (a1b2c3d4e5f6)
+```
+
+The revision in parentheses is stamped at **compile** time from the tree the
+binary was built in (`-dirty` when that tree had uncommitted changes,
+`unknown` when there was no git to ask, or whatever `$TV_SHELL_BUILD_SHA` was
+set to for the build). It describes the *binary*, not the source directory
+sitting beside it — so pulling the tree forward without rebuilding and
+restarting does not change the answer, which is exactly the question "is what is
+running what I deployed?" needs. The version is `0.0.0` until a v2 release
+stream exists; the sha is the load-bearing half today.
 
 ## 3. Configure
 

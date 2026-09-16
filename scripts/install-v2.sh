@@ -303,6 +303,68 @@ for u in "${UNITS[@]}"; do
         || die "$UNIT_DIR/$u names a path under v1's prefix ($V1_PREFIX/)"
 done
 
+# 3b. THE SECOND POSTCONDITION, beside the two in that loop: the session target
+#     may not name a unit this install did not lay down.
+#
+#     systemd skips a missing `Wants=` SILENTLY, BY DESIGN. That is a reasonable
+#     default and it was a real hole here: the target named
+#     tv-shell-v2-shell.service and tv-shell-v2-stats.service, neither of which
+#     exists anywhere in this repository, and the session came up believing it
+#     had a shell and a stats sidecar. Nothing failed, nothing was red, and
+#     `systemctl --user status` on the target showed a clean start.
+#
+#     So the check is here rather than in systemd: after the units are written,
+#     read the INSTALLED target back and require every unit it names to be a
+#     file in $UNIT_DIR. Reading the installed copy, not the committed source,
+#     is deliberate — it is the file systemd will actually load.
+#
+#     ALL SIX dependency directives, not just Wants=: systemd allows several,
+#     each may appear more than once, and each may carry a space-separated list.
+#     A check that only knew `Wants=` would pass a forward reference moved one
+#     line down to `Requires=`, which is the stronger and more dangerous form.
+UNIT_DEP_DIRECTIVES='Wants|BindsTo|Requires|Requisite|PartOf|Upholds'
+
+# Units systemd (or the session) provides, which this installer does not own and
+# must not look for in $UNIT_DIR. The target names none of these today; the list
+# exists so that adding one later is an edit to a unit file rather than a
+# mysterious install failure.
+FOREIGN_UNITS=(
+    graphical-session.target
+    graphical-session-pre.target
+    basic.target
+    default.target
+    dbus.socket
+)
+
+# Every unit named on a dependency directive of <file>, one per line. Comments
+# are skipped — this directory comments at length, and several of those comments
+# name units (including the two that were just removed from the Wants= line).
+referenced_units() { # referenced_units <unit-file>
+    awk -v directives="$UNIT_DEP_DIRECTIVES" '
+        /^[[:space:]]*[#;]/ { next }
+        $0 ~ "^[[:space:]]*(" directives ")[[:space:]]*=" {
+            sub(/^[^=]*=/, "")
+            for (i = 1; i <= NF; i++) print $i
+        }' "$1"
+}
+
+SESSION_TARGET_NAME="tv-shell-session.target"
+if [ -f "$UNIT_DIR/$SESSION_TARGET_NAME" ]; then
+    while IFS= read -r ref; do
+        [ -n "$ref" ] || continue
+        skip=0
+        for foreign in "${FOREIGN_UNITS[@]}"; do
+            [ "$ref" = "$foreign" ] || continue
+            skip=1
+            break
+        done
+        [ "$skip" -eq 0 ] || continue
+        [ -f "$UNIT_DIR/$ref" ] \
+            || die "$SESSION_TARGET_NAME names $ref, which this install did not write to $UNIT_DIR. systemd would skip it SILENTLY and the session would come up believing it had one. Fix it by adding the unit file (to core/units/ and to UNITS=() in this script) or by dropping $ref from the target."
+    done < <(referenced_units "$UNIT_DIR/$SESSION_TARGET_NAME")
+    log "checked $SESSION_TARGET_NAME: every unit it names is installed"
+fi
+
 # 4. The v2 session entry — UNLESS --no-session. A DIFFERENT file name from both
 #    v1's (tv-shell-wayland.desktop) and the Ansible measurement prototype's
 #    (tv-shell-gamescope.desktop) — see config/tv-shell-v2.desktop, and SESSION

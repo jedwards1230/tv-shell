@@ -19,6 +19,7 @@
 //! | [`ipc`] | The Unix-socket server |
 //! | [`compositor`] | The seam between the two: verbs → X primitives |
 //! | [`input`] | The pad fleet: discovery, `EVIOCGRAB`, permanent per-player presenters (§7). **Default-off** |
+//! | [`version`] | What this binary is — the package version and the revision `build.rs` stamped into it, which is what `--version` prints |
 //!
 //! Explicitly **not** here yet, each a follow-up: CEC, the QML shell, panel
 //! changes, HTTP/MCP/MQTT/metrics, the forced-paint heartbeat, per-app Xwayland
@@ -54,3 +55,4 @@ pub mod launch;
 pub mod protocol;
 pub mod screen;
 pub mod screenshot;
+pub mod version;

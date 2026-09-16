@@ -665,6 +665,21 @@ minutes" to zero. `reason` names what was observed **and** which bus-liveness
 signal is in force. It is answered from the recorded facts with no device access
 at all, for the same reason `av-state` is.
 
+## Which build is this?
+
+```bash
+tv-shell-cec --version   # tv-shell-cec 0.0.0 (a1b2c3d4e5f6)
+```
+
+Same mechanism, same shape and the same reasoning as the core's — see
+`core/README.md` § "Which build is this?" and `build.rs`. It matters a little
+more here: this daemon is the one whose restarts belong to `WatchdogSec=`, and
+"which build is on the bus?" is the first question of a CEC incident.
+
+The binary also **refuses an argument it does not understand** rather than
+serving anyway. The unit starts it with no arguments at all, so that refusal is
+reachable only by a human typing one.
+
 ## Build, test & lint
 
 ```bash
