@@ -186,7 +186,7 @@ impl<T: Serialize> Serialize for Observation<T> {
 /// Which device on the bus a power reading is about.
 ///
 /// Only the two this daemon has any business tracking. A reading from anything
-/// else on the bus (the living-room bus carries an Apple TV and a PS5) is
+/// else on the bus (a shared bus may carry other playback devices) is
 /// recorded as [`AvDevice::Other`] and folded into nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AvDevice {
@@ -821,7 +821,7 @@ mod tests {
 
     /// A device we do not track cannot move our fields.
     ///
-    /// The living-room bus carries an Apple TV and a PS5; their power reports
+    /// A shared bus may carry other playback devices; their power reports
     /// are not the television's.
     #[test]
     fn a_third_party_power_report_changes_nothing() {

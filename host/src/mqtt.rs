@@ -978,7 +978,7 @@ mod tests {
             "tv-shell/desktop/cmd/",         // empty name
             "tv-shell/desktop/cmd/a/b",      // extra level
             "tv-shell/desktop/state",        // wrong suffix
-            "tv-shell/htpc-1/cmd/sleep",     // another device
+            "tv-shell/node-1/cmd/sleep",     // another device
             "homeassistant/device/x/config", // wrong prefix entirely
             "cmd/sleep",
         ] {

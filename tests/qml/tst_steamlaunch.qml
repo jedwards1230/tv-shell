@@ -23,12 +23,12 @@ TestCase {
     name: "SteamLaunch"
 
     readonly property var linuxBoot: ({
-            "name": "desktop-1",
-            "host": "192.168.8.10"
+            "name": "node-2",
+            "host": "192.0.2.10"
         })
     readonly property var windowsBoot: ({
-            "name": "desktop-2",
-            "host": "192.168.8.153"
+            "name": "node-3",
+            "host": "192.0.2.153"
         })
 
     function rootWith(targets, activeSteamHost, shellState) {
@@ -41,39 +41,39 @@ TestCase {
 
     // The regression: with both boots configured, the active Steam host decides.
     function test_matches_active_steam_host() {
-        var r = rootWith([linuxBoot, windowsBoot], "192.168.8.153");
-        compare(SteamLaunch.streamTargetFor(r).name, "desktop-2", "streams the host actually serving the library, not targets[0]");
+        var r = rootWith([linuxBoot, windowsBoot], "192.0.2.153");
+        compare(SteamLaunch.streamTargetFor(r).name, "node-3", "streams the host actually serving the library, not targets[0]");
     }
 
     function test_matches_active_steam_host_when_it_is_first() {
-        var r = rootWith([linuxBoot, windowsBoot], "192.168.8.10");
-        compare(SteamLaunch.streamTargetFor(r).name, "desktop-1");
+        var r = rootWith([linuxBoot, windowsBoot], "192.0.2.10");
+        compare(SteamLaunch.streamTargetFor(r).name, "node-2");
     }
 
     // No match (host not in targets.json) → previous behaviour: primary target.
     function test_falls_back_to_first_target_on_no_match() {
-        var r = rootWith([linuxBoot, windowsBoot], "192.168.8.99");
-        compare(SteamLaunch.streamTargetFor(r).name, "desktop-1", "unknown active host falls back to targets[0]");
+        var r = rootWith([linuxBoot, windowsBoot], "192.0.2.99");
+        compare(SteamLaunch.streamTargetFor(r).name, "node-2", "unknown active host falls back to targets[0]");
     }
 
     // Daemon too old to report a host (or first poll not back yet).
     function test_falls_back_to_first_target_with_no_reported_host() {
         var r = rootWith([linuxBoot, windowsBoot], "");
-        compare(SteamLaunch.streamTargetFor(r).name, "desktop-1");
+        compare(SteamLaunch.streamTargetFor(r).name, "node-2");
     }
 
     function test_no_targets_returns_null() {
-        compare(SteamLaunch.streamTargetFor(rootWith([], "192.168.8.153")), null);
+        compare(SteamLaunch.streamTargetFor(rootWith([], "192.0.2.153")), null);
         compare(SteamLaunch.streamTargetFor(rootWith(undefined, "")), null, "an absent targets list must not throw");
     }
 
     // canStream — the Resume gate.
     function test_can_stream_with_a_target() {
-        verify(SteamLaunch.canStream(rootWith([windowsBoot], "192.168.8.153")));
+        verify(SteamLaunch.canStream(rootWith([windowsBoot], "192.0.2.153")));
     }
 
     function test_cannot_stream_with_no_target() {
-        verify(!SteamLaunch.canStream(rootWith([], "192.168.8.153")), "no target and not streaming ⇒ Resume is unavailable");
+        verify(!SteamLaunch.canStream(rootWith([], "192.0.2.153")), "no target and not streaming ⇒ Resume is unavailable");
     }
 
     // Already in the stream: the host-side navigate alone moves the live session,

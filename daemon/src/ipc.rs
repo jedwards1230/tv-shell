@@ -1708,10 +1708,10 @@ mod tests {
     /// `resolve_osd_name`, so the two identities can't diverge.
     #[test]
     fn node_id_prefers_the_configured_device_id() {
-        assert_eq!(resolve_node_id(Some("htpc-1"), Some("box")), "htpc-1");
+        assert_eq!(resolve_node_id(Some("node-1"), Some("box")), "node-1");
         assert_eq!(resolve_node_id(None, Some("box")), "box");
         assert_eq!(resolve_node_id(Some("  "), Some("box")), "box");
-        assert_eq!(resolve_node_id(Some(" htpc-1 "), None), "htpc-1");
+        assert_eq!(resolve_node_id(Some(" node-1 "), None), "node-1");
         assert_eq!(resolve_node_id(None, None), "tv-shell");
         assert_eq!(resolve_node_id(Some(""), Some(" ")), "tv-shell");
     }

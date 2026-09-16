@@ -346,8 +346,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// desktop-2's REAL `GET /capabilities` payload, captured from the live
-    /// sidecar (`host-v0.7.0` at 192.168.8.153:47995) on 2026-08-07:
+    /// node-3's REAL `GET /capabilities` payload, captured from the live
+    /// sidecar (`host-v0.7.0` at 192.0.2.153:47995) on 2026-08-07:
     ///
     /// ```text
     /// {"node_id":"desktop","kind":"sidecar","agent_version":"0.7.0",
@@ -357,7 +357,7 @@ mod tests {
     /// Verbatim rather than reconstructed: a payload built from
     /// `Capabilities { .. }` in the test would prove the panel can parse what
     /// the panel serialized, which is not the question.
-    const DESKTOP_2_CAPABILITIES: &str = r#"{"node_id":"desktop","kind":"sidecar","agent_version":"0.7.0","platform":"windows","features":["steam_library","game_launch","sleep"]}"#;
+    const NODE_3_CAPABILITIES: &str = r#"{"node_id":"desktop","kind":"sidecar","agent_version":"0.7.0","platform":"windows","features":["steam_library","game_launch","sleep"]}"#;
 
     const TOKEN: &str = "s3kret-sidecar-token";
 
@@ -401,7 +401,7 @@ mod tests {
                 get(|State(s): State<Arc<Seen>>, h: HeaderMap| async move {
                     match guard(&s, &h, "GET /capabilities", "").await {
                         Some(code) => (code, "unauthorized".to_string()),
-                        None => (StatusCode::OK, DESKTOP_2_CAPABILITIES.to_string()),
+                        None => (StatusCode::OK, NODE_3_CAPABILITIES.to_string()),
                     }
                 }),
             )
@@ -587,9 +587,9 @@ mod tests {
 
     // ── Against a live fake sidecar ───────────────────────────────────────
 
-    /// The handshake against desktop-2's real payload.
+    /// The handshake against node-3's real payload.
     #[tokio::test]
-    async fn capabilities_parses_the_live_desktop_2_payload() {
+    async fn capabilities_parses_the_live_node_3_payload() {
         let (base, _seen) = spawn_sidecar().await;
         let t = HttpTransport::new(&base, TOKEN);
         let caps = t.capabilities().await.expect("handshake");
@@ -839,11 +839,11 @@ mod tests {
     /// bearer token into a value that ends up in logs and the node switcher.
     #[tokio::test]
     async fn reachability_reports_the_base_url_and_never_the_token() {
-        let t = HttpTransport::new("http://192.168.8.153:47995/", TOKEN);
+        let t = HttpTransport::new("http://192.0.2.153:47995/", TOKEN);
         let before = t.reachability();
         assert_eq!(
             before,
-            Reachability::Remote("http://192.168.8.153:47995".to_string())
+            Reachability::Remote("http://192.0.2.153:47995".to_string())
         );
         assert!(!format!("{before:?}").contains(TOKEN));
 

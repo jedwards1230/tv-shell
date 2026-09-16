@@ -82,13 +82,13 @@ pub struct DeviceConfig {
     /// readable but belongs to the AVR's video path, so it is the wrong port's
     /// answer. An explicit key is the only honest option.
     ///
-    /// **`2.5.0.0` is UNVERIFIED against the current rack** (plan §7 item 3). It
-    /// is the pre-2026-08-07 value and the rack has changed since. A wrong value
-    /// fails SILENTLY — a later `<Active Source>` addresses a port that does not
-    /// exist and nothing on the bus complains — which is why the daemon logs the
-    /// value it set alongside what `CEC_ADAP_G_PHYS_ADDR` reads back, and why
-    /// `av-state` publishes both. Verify against `cec-ctl --show-topology` once
-    /// `/dev/cec0` exists.
+    /// **`2.5.0.0` is UNVERIFIED against the current rack** (plan §7 item 3).
+    /// It is the pre-2026-08-07 value and the installation has changed since. A
+    /// wrong value fails SILENTLY — a later `<Active Source>` addresses a port
+    /// that does not exist and nothing on the bus complains — which is why the
+    /// daemon logs the value it set alongside what `CEC_ADAP_G_PHYS_ADDR` reads
+    /// back, and why `av-state` publishes both. Verify against `cec-ctl
+    /// --show-topology` once `/dev/cec0` exists.
     pub phys_addr: String,
 
     /// The OSD name this adapter announces — the input label a TV or AVR shows.

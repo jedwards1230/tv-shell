@@ -380,12 +380,12 @@ mod tests {
     async fn capabilities_parses_the_daemon_handshake() {
         let sock = spawn_fake_daemon(
             "caps",
-            r#"{"node_id":"htpc-1","kind":"shell","agent_version":"0.2.2","platform":"linux","features":["shell.intent","shell.screenshot"]}"#,
+            r#"{"node_id":"node-1","kind":"shell","agent_version":"0.2.2","platform":"linux","features":["shell.intent","shell.screenshot"]}"#,
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
         let client = IpcTransport::new(sock);
         let caps = client.capabilities().await.unwrap();
-        assert_eq!(caps.node_id, "htpc-1");
+        assert_eq!(caps.node_id, "node-1");
         assert_eq!(caps.kind, tv_shell_protocol::NodeKind::Shell);
         assert_eq!(caps.platform, tv_shell_protocol::Platform::Linux);
         assert_eq!(caps.features.len(), 2);

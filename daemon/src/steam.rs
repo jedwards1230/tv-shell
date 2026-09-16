@@ -549,15 +549,15 @@ mod tests {
     #[test]
     fn hosts_reply_lists_names_and_active() {
         let hosts = vec![
-            host_cfg("desktop-1", "http://192.0.2.1:47995"),
-            host_cfg("desktop-2", "http://192.0.2.2:47995"),
+            host_cfg("node-2", "http://192.0.2.1:47995"),
+            host_cfg("node-3", "http://192.0.2.2:47995"),
         ];
-        let out = parse(&hosts_reply(hosts, Some("desktop-2")));
+        let out = parse(&hosts_reply(hosts, Some("node-3")));
         assert_eq!(out["status"], "ok");
-        assert_eq!(out["active"], "desktop-2");
+        assert_eq!(out["active"], "node-3");
         let entries = out["hosts"].as_array().unwrap();
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0]["name"], "desktop-1");
+        assert_eq!(entries[0]["name"], "node-2");
         assert_eq!(entries[0]["host"], "192.0.2.1");
         // URLs and tokens never leave the daemon.
         assert!(entries[0].get("url").is_none());

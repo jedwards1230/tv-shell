@@ -748,23 +748,23 @@ mod tests {
 
     #[test]
     fn command_name_strips_only_our_prefix() {
-        let device = id("htpc-1");
+        let device = id("node-1");
         assert_eq!(
-            command_name(&device, "tv-shell/htpc-1/cmd/suspend"),
+            command_name(&device, "tv-shell/node-1/cmd/suspend"),
             Some("suspend")
         );
         assert_eq!(
-            command_name(&device, "tv-shell/htpc-1/cmd/restart-shell"),
+            command_name(&device, "tv-shell/node-1/cmd/restart-shell"),
             Some("restart-shell")
         );
         // Another device's command topic must never be actioned by this one.
         assert_eq!(command_name(&device, "tv-shell/desktop/cmd/sleep"), None);
         // Our state/avail topics are not commands.
-        assert_eq!(command_name(&device, "tv-shell/htpc-1/state"), None);
-        assert_eq!(command_name(&device, "tv-shell/htpc-1/avail"), None);
+        assert_eq!(command_name(&device, "tv-shell/node-1/state"), None);
+        assert_eq!(command_name(&device, "tv-shell/node-1/avail"), None);
         // Bare prefix, extra level, and an unrelated topic.
-        assert_eq!(command_name(&device, "tv-shell/htpc-1/cmd/"), None);
-        assert_eq!(command_name(&device, "tv-shell/htpc-1/cmd/a/b"), None);
+        assert_eq!(command_name(&device, "tv-shell/node-1/cmd/"), None);
+        assert_eq!(command_name(&device, "tv-shell/node-1/cmd/a/b"), None);
         assert_eq!(command_name(&device, "homeassistant/status"), None);
     }
 
@@ -966,27 +966,27 @@ mod tests {
         // A will set after connecting does not exist; retain=true so a late
         // subscriber still sees "offline".
         let settings = MqttSettings {
-            device_id: id("htpc-1"),
+            device_id: id("node-1"),
             endpoint: MqttEndpoint {
                 host: "broker.invalid".to_string(),
                 port: 1883,
                 tls: false,
             },
             ca_pem: None,
-            username: Some("tv-shell-htpc-1".to_string()),
+            username: Some("tv-shell-node-1".to_string()),
             password: Some("secret".to_string()),
             heartbeat: Duration::from_secs(30),
             keepalive: Duration::from_secs(60),
         };
         // No socket is opened here — MqttOptions is a plain value object.
         let opts = build_options(&settings).expect("plaintext options always build");
-        assert_eq!(opts.client_id(), "tv-shell-htpc-1");
+        assert_eq!(opts.client_id(), "tv-shell-node-1");
         assert_eq!(opts.keep_alive(), Duration::from_secs(60));
         let login = opts.credentials().expect("credentials must be set");
-        assert_eq!(login.username, "tv-shell-htpc-1");
+        assert_eq!(login.username, "tv-shell-node-1");
         assert_eq!(login.password, "secret");
         let will = opts.last_will().expect("a Last Will must be registered");
-        assert_eq!(will.topic, "tv-shell/htpc-1/avail");
+        assert_eq!(will.topic, "tv-shell/node-1/avail");
         assert_eq!(&will.message[..], AVAIL_OFFLINE.as_bytes());
         assert_eq!(will.qos, QoS::AtLeastOnce);
         assert!(will.retain);
@@ -995,7 +995,7 @@ mod tests {
     #[test]
     fn options_omit_credentials_when_unset() {
         let settings = MqttSettings {
-            device_id: id("htpc-1"),
+            device_id: id("node-1"),
             endpoint: MqttEndpoint {
                 host: "broker.invalid".to_string(),
                 port: 1883,

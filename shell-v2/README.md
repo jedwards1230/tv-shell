@@ -3,8 +3,8 @@
 Built beside v1's `shell/`, wired into no session. It began as a spike proving
 three things under gamescope: **it maps, it self-tags its X11 atoms before it
 maps, and it takes controller focus.** All three held on real hardware
-(htpc-1, 2026-09-08), so what it renders is now a real home screen rather than a
-placeholder grid.
+(reference deployment, 2026-09-08), so what it renders is now a real home screen
+rather than a placeholder grid.
 
 Why the tagging shim has to exist at all is measured, not assumed: gamescope
 resolves a window's app id at **creation** and never re-reads it, so a property

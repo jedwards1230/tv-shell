@@ -16,9 +16,9 @@ leg to the cold path and to recovery. This file is the crate's own map.
 > pins its open sequence's call order by comment rather than leaving it to
 > chance (see "The one call that would transmit" below).
 >
-> The living-room bus carries an Apple TV and a PS5 as well as the television
-> and the AVR, so two rules are enforced by construction rather than by
-> convention:
+> A shared bus may carry other playback devices (a streaming box, a console)
+> besides the television and the AVR, so two rules are enforced by
+> construction rather than by convention:
 >
 > - **A `<Standby>` is always ADDRESSED, never broadcast.** A broadcast standby
 >   (`0x0F`) powers off every device on the bus. `action::StandbyTarget` has two
@@ -28,8 +28,8 @@ leg to the cold path and to recovery. This file is the crate's own map.
 >
 > - **A volume action reports what the AVR did, not what left the adapter.** A
 >   receiver *may* ignore CEC from a non-selected input after ACKing the frame —
->   vendor-specific, and measured **not** to bite on this rack's Denon
->   AVR-X1700H (2026-09-16) — so success is judged from the AVR's own
+>   vendor-specific, and measured **not** to bite on a Denon AVR-X1700H on
+>   2026-09-16 — so success is judged from the AVR's own
 >   `<Report Audio Status>` read before and after. An unchanged level is an
 >   `error:` naming that cause, never an `ok`. The readback rule stands
 >   regardless: it is what makes the answer true on a receiver that *does*
@@ -165,17 +165,18 @@ is transmitted. Said out loud, because "no transmits" should mean what it says.
 derive it either: `CEC_ADAP_G_CONNECTOR_INFO` answers `None` on this adapter, so
 it has no DRM connector to read an EDID from and the value *must* be set by hand.
 
-**`2.5.0.0` is confirmed against the live rack, measured 2026-09-16 — and
+**`2.5.0.0` is confirmed against the live installation, measured 2026-09-16 — and
 claiming it is a deliberate fiction, not a bug.** `2.5.0.0` is the **video
 leg's** address, read from `card1-HDMI-A-1`'s EDID; it is not the AVR port the
 adapter's own HDMI plug sits in. That is the point: `<Active Source>` and the
 volume traffic should refer to the input that actually shows picture, which is
 the video leg. A future reader should not "correct" this to the adapter's port.
 
-It does not collide. The bus scanned live as LG `OLED65C2PU` `0.0.0.0`, Denon
-`AVR-X1700H` `2.0.0.0`, Apple TV `2.1.0.0`, PlayStation 5 `2.4.0.0`, and us at
-`2.5.0.0`. **We land on Playback Device 2 (LA 8), not LA 4** — the PS5 holds
-LA 4 — so nothing may assume a particular logical address; successful
+It does not collide. On a bus that also carries other playback devices, the
+negotiated *logical* address is not the one a first playback device would get:
+on the measured bus we landed on **Playback Device 2 (LA 8), not LA 4**, because
+another playback device already held LA 4. So nothing may assume a particular
+logical address — the daemon reads back what it was actually given. Successful
 negotiation on a live bus is itself proof that tx and rx work.
 
 A wrong value would fail *silently*: a later `<Active Source>` addresses a port
@@ -225,8 +226,8 @@ broken. `av-health` replaces that with what was **observed**, and when:
 | 4. Last accepted tx / last rx | recorded by the transmit path and the receive loop | `lastTxOk` / `lastRxMs`, as ages |
 
 **Only facts 1 and 2 derive the verdict.** Facts 3 and 4 are published as ages
-and judged by nobody, because on this rack silence is not evidence: everything
-can be switched off, and without the pin monitor there is no way to tell that
+and judged by nobody, because in this deployment silence is not evidence:
+everything can be switched off, and without the pin monitor there is no way to tell that
 apart from a deaf adapter. Degrading on a quiet bus would be inventing exactly
 the kind of verdict this module exists to stop inventing — v1's mistake with the
 sign flipped. If the pin monitor ever comes into force, fact 3 is what makes "we
@@ -235,8 +236,9 @@ verdict.
 
 **`CEC_CAP_MONITOR_PIN` is absent on the deployed adapter, and the reply says
 so.** It is read at open rather than assumed — other adapters may have it — and
-`reason` always names which bus-liveness signal is in force; on htpc-1 that is
-`last-heard ages`, permanently, because the capability is not there. Even where the capability is present the daemon does **not** enter a
+`reason` always names which bus-liveness signal is in force; on the reference
+deployment that is `last-heard ages`, permanently, because the capability is not
+there. Even where the capability is present the daemon does **not** enter a
 pin-monitoring mode: `FollowerMode` is one value, so a monitor mode *replaces*
 `FollowerMode::Enabled` and the receive loop would stop folding `<Active
 Source>` — and the kernel gates the monitor modes on `CAP_NET_ADMIN`, which a
@@ -273,8 +275,8 @@ being broken.
 **That is what RETIRES the Ansible CEC watchdog** rather than merely disabling
 it. No polling script, no `cec-health` probe with bus side effects, no second
 supervisor. The watchdog timer is already `disabled`/`inactive` on the deploy box
-(verified read-only 2026-09-14, and `htpc_cec_watchdog_active` derives from
-`htpc_boot_session`), so nothing needs stopping — it must simply never be
+(verified read-only 2026-09-14, and the role's CEC-watchdog toggle derives from
+its boot-session variable), so nothing needs stopping — it must simply never be
 re-enabled.
 
 ### Every caller must bound its own timeout
@@ -289,8 +291,8 @@ inside this daemon; it lives in the callers. The panel's `/devices/av` page is
 the first of them (800 ms, `panel/src/pages/av.rs`), and it has a test that
 stands up a socket which accepts and never replies.
 
-**The bounds are sane against measured round trips (2026-09-16, htpc-1).** On
-the live bus a `<Give Audio Status>` was answered in **18 ms** and a
+**The bounds are sane against measured round trips (reference deployment,
+2026-09-16).** On the live bus a `<Give Audio Status>` was answered in **18 ms** and a
 `<Give System Audio Mode Status>` in **39 ms**. Against that:
 
 | Bound | Value | Verdict |
@@ -360,7 +362,7 @@ is one implementation rather than two.
 
 **#191 was never hardware-tested, by its own admission** ("No on-device test of
 the actual WoL/telnet against the real TV/AVR"). Its nine tests pin command
-strings and config parsing; they are not evidence that this rack's receiver
+strings and config parsing; they are not evidence that a given receiver
 answers to them. Neither is anything here — see the on-box checklist in the pull
 request.
 

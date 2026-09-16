@@ -3,9 +3,28 @@
 
 `docs/PRD.md` §5 locks the rule: *AV device addresses, node addresses and the
 panel's deployment target are configuration, never literals in code.* The repo
-is public, and site identity has been rejected from it three separate times
-(#183, #287, #417) — each time by hand, and each time it came back. This is the
-gate that makes the rule enforceable instead of aspirational.
+is public, and site identity has been rejected from it four separate times
+(#183, #287, #417, and #521's regression) — each time by hand, and each time it
+came back. This is the gate that makes the rule enforceable instead of
+aspirational.
+
+## Why prose and the v2 trees are in scope now
+
+The gate originally scanned source suffixes only, exempted `docs/`, and ran the
+host-shape check over the v1 trees alone. `ced4aeb` (2026-06-06, "decouple
+homelab-specific leakage from public repo") scrubbed the AVR and television
+model numbers out of the tree by hand; `0a50a06` (2026-09-16, #521) put them
+straight back — into `cec/README.md`, a Markdown file in a crate the gate did
+not scan, under either exemption. A rule the gate cannot see is a rule that
+regresses on the next documentation pass, and it did, four times.
+
+So the exemptions are gone. `.md` is scanned like any other source, and the
+host-shape check covers `cec/`, `core/`, `shell-v2/`, `docs/` and the root-level
+Markdown (`CLAUDE.md`, `README.md`, `CONTRIBUTING.md`) alongside the v1 trees.
+Prose is where site identity actually lands, because prose is where the
+temptation to name the box you measured on lives. Measurement provenance is
+still welcome — write it impersonally ("measured on the reference deployment,
+2026-09-16") and keep every date and every number.
 
 ## What counts as a violation
 
@@ -19,6 +38,37 @@ gate that makes the rule enforceable instead of aspirational.
    the very names it exists to keep out, and it would not catch the next
    deployment's naming at all.
 3. **A MAC address**, except the documentation placeholders.
+4. **An Ansible role path** — `roles/<name>/`. The deployment's provisioning
+   lives in a private repo, and its role names leaked into this one the same way
+   the addresses did: `roles/htpc_common/tasks/gamescope-prototype.yaml` and
+   `roles/desktop-common/templates/tv-shell-host.service.j2` were cited as
+   pointers in prose, a doc comment, a shipped systemd unit and an install
+   script. A pointer into a repo the reader cannot open is not useful to them
+   and is site identity to everyone else — describe what the role *does*
+   instead, and keep the public `jedwards1230/homelab-ansible` repo name and the
+   `#NNN` issue links, which are readable.
+
+   This shape is checked everywhere, with no scope restriction: `roles/<name>/`
+   has no legitimate occurrence anywhere in a Rust/QML tree, so its
+   false-positive rate is zero.
+
+   **A broader `<word>_<word>` role-name check was considered and REJECTED.**
+   `[a-z]+_[a-z]+` is the shape of every snake_case identifier in a Rust tree —
+   every function, field, local and module would trip it. That is the same
+   argument `HOST_SHAPE_SCOPE` below already makes about Debian package names,
+   and it has the same ending: a gate whose signal is buried in noise gets
+   switched off, and then it catches nothing at all. A narrow rule that always
+   fires beats a broad one nobody runs.
+
+   **Known gap, accepted as the price of that trade.** Because the pattern
+   requires the `roles/` prefix, it matches the *path* shape only: a bare prose
+   mention of a private role by name, with no `roles/` prefix — "the Ansible
+   `<role>-common` role fetches the musl binary" — is NOT detected. That is
+   exactly how such a line survived a by-hand sweep in `.github/workflows/`
+   (plain `rg` skips hidden directories too; re-verify with `rg --hidden
+   --no-ignore`). Closing the gap needs the `<word>_<word>` shape rejected
+   above, so the rule's reach stops at the path form on purpose. Bare prose
+   mentions are caught by review, not by this gate.
 
 ## Why the shape check needs an allowlist
 
@@ -53,21 +103,38 @@ from pathlib import Path
 
 # --- what we scan -----------------------------------------------------------
 
-# Extensions worth scanning. Docs are deliberately absent: prose about a real
-# deployment is a documentation choice, not a source literal, and `docs/` is
-# where the deployment notes are allowed to live.
+# Extensions worth scanning. `.md` is included: documentation is published with
+# the code, a reader cannot tell prose from source when both are on GitHub, and
+# every recurrence of this leak so far arrived through prose (#521 through
+# `cec/README.md`). There is no documentation exemption.
 SOURCE_SUFFIXES = {
     ".rs", ".qml", ".js", ".py", ".sh", ".toml", ".json", ".yaml", ".yml",
+    ".md",
     ".service", ".example",  # shipped config templates count: they are read and copied
 }
 
-# The host-shape check runs only over the trees that carry node identity: the
-# Rust crates, the QML shell, and the shipped config examples. It is deliberately
-# NOT run over workflows or install scripts, where `<word>-<digits>` is the shape
-# of half of Debian's package names (`libdbus-1-dev`, `libpng16-16`) and the
-# false-positive rate would swamp the signal. Addresses and MACs are still
-# checked everywhere — an RFC1918 literal in a workflow is a leak too.
-HOST_SHAPE_SCOPE = ("daemon/", "panel/", "protocol/", "host/", "shell/", "config/")
+# The host-shape check runs over every tree that carries node identity — all the
+# Rust crates (v1 *and* the v2 `core/`, `cec/`, `shell-v2/`), the QML shells, the
+# shipped config examples, and `docs/`. It is still deliberately NOT run over
+# workflows or install scripts, where `<word>-<digits>` is the shape of half of
+# Debian's package names (`libdbus-1-dev`, `libpng16-16`) and the false-positive
+# rate would swamp the signal. Addresses and MACs are checked everywhere — an
+# RFC1918 literal in a workflow is a leak too.
+HOST_SHAPE_SCOPE = (
+    "daemon/", "panel/", "protocol/", "host/", "shell/", "shell-v2/",
+    "core/", "cec/", "config/", "docs/",
+)
+
+# Root-level Markdown (CLAUDE.md, README.md, CONTRIBUTING.md) has no directory
+# prefix to match on, and it is exactly where an architecture overview names the
+# box it was written on. It is in the host-shape scope too.
+ROOT_DOC_SUFFIXES = (".md",)
+
+
+def in_host_shape_scope(rel: str) -> bool:
+    if rel.startswith(HOST_SHAPE_SCOPE):
+        return True
+    return "/" not in rel and rel.endswith(ROOT_DOC_SUFFIXES)
 
 # Directory names that make everything beneath them test material — as a path
 # SEGMENT, so Cargo's per-crate `host/tests/` is caught alongside the top-level
@@ -102,28 +169,47 @@ HOST_SHAPED = re.compile(r"\b[a-z][a-z0-9]{2,}-[0-9]+\b")
 
 MAC = re.compile(r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b")
 
+# An Ansible role path from the private provisioning repo. Deliberately narrow:
+# it matches the `roles/<name>/` directory shape and nothing else, which has no
+# legitimate occurrence in this tree (see the docstring for why the broader
+# snake_case role-name check was rejected). `\b` keeps `user_roles/` and
+# `member_roles/` out — there is no word boundary after an underscore.
+ANSIBLE_ROLE_PATH = re.compile(r"\broles/[A-Za-z0-9_.-]+/")
+
 # Documentation MACs. Anything else is presumed to be a real NIC.
 ALLOWED_MACS = {"aa:bb:cc:dd:ee:ff", "aa-bb-cc-dd-ee-ff", "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"}
 
 # `<word>-<digits>` tokens in this tree that are demonstrably not machine names.
 # Keep sorted; keep each one obviously not a host.
 ALLOWED_TOKENS = {
-    "arch2-2",     # a pacman package version ("6.6.30.arch2-2")
+    "app9003-2970",  # a systemd scope name, `app-steam-app<appid>-<pid>.scope`
+    "arch1-1",       # a pacman package version ("6.9.3-arch1-1")
+    "arch2-2",       # a pacman package version ("6.6.30.arch2-2")
     "base-16",
+    "dev-167",       # a Markdown heading anchor (#dev-control-surface-dev-167)
+    "gamescope-0",   # WAYLAND_DISPLAY value gamescope hands its children
+    "gamescope-3",   # the SteamOS package version "gamescope-3.16.26-2"
+    "incident-1",    # docs/KIOSK_WINDOW_MODEL.md's label for a recorded incident
     "iso-8601",
-    "mode-0644",   # file-mode prose in a doc comment
+    "libdbus-1",     # a Debian package name ("libdbus-1-dev")
+    "measurements-2026",  # a research-report filename with an ISO date in it
+    "mode-0644",     # file-mode prose in a doc comment
+    "pre-2026",      # date prose ("the pre-2026-08-07 value")
     "rfc-1918",
     "rfc-5737",
+    "scale-2",       # a display scale factor
     "sha-1",
     "sha-256",
     "sha-512",
-    "usb-0000",    # sysfs/udev device paths
+    "steamos-39",    # a research-report filename ("steamos-39-gamescope-shell.md")
+    "usb-0000",      # sysfs/udev device paths
     "usb-1",
     "utf-8",
     "utf-16",
-    "wayland-0",   # WAYLAND_DISPLAY values
+    "wayland-0",     # WAYLAND_DISPLAY values
     "wayland-1",
     "x86-64",
+    "zone-2",        # the AV receiver's second zone, a CEC/telnet concept
 }
 
 # Generic words that read as a role rather than a machine, when followed by an
@@ -317,7 +403,7 @@ def is_skipped_path(rel: str, path: Path) -> bool:
 
 
 def violations_in(rel: str, numbered: list[tuple[int, str]]) -> list[tuple[int, str, str]]:
-    check_shape = rel.startswith(HOST_SHAPE_SCOPE)
+    check_shape = in_host_shape_scope(rel)
     found = []
     for lineno, line in numbered:
         for ip in PRIVATE_IPV4.findall(line):
@@ -325,6 +411,8 @@ def violations_in(rel: str, numbered: list[tuple[int, str]]) -> list[tuple[int, 
         for mac in MAC.findall(line):
             if mac.lower() not in ALLOWED_MACS:
                 found.append((lineno, f"MAC address {mac}", line.strip()))
+        for role in ANSIBLE_ROLE_PATH.findall(line):
+            found.append((lineno, f"Ansible role path {role!r}", line.strip()))
         if not check_shape:
             continue
         for tok in HOST_SHAPED.findall(line):
@@ -365,7 +453,8 @@ def main() -> int:
         print(
             f"\n{len(failures)} violation(s). Use RFC 5737 addresses (192.0.2.x) and "
             "placeholder ids (node-a, <sidecar-host>) in examples; real addresses and "
-            "host names belong in config.toml, never in source.",
+            "host names belong in config.toml, never in source. Describe what a "
+            "private Ansible role DOES rather than naming its roles/<name>/ path.",
             file=sys.stderr,
         )
         return 1

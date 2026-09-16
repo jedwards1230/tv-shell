@@ -3682,7 +3682,7 @@ fn cfg_authenticated(allow_dangerous: bool) -> AppConfig {
     }
 }
 
-/// The capability set **htpc-1's real daemon build declares**, derived line by
+/// The capability set **node-1's real daemon build declares**, derived line by
 /// line from `daemon/src/ipc.rs::features()` for that build — Linux,
 /// `--features cec,mcp` (`scripts/build-daemon.sh`), `[http].bind` set:
 ///
@@ -3697,9 +3697,9 @@ fn cfg_authenticated(allow_dangerous: bool) -> AppConfig {
 /// **`wallpapers`, `processes`, `system_updates`, `steam_library` and
 /// `game_launch` are deliberately absent** — the daemon serves none of them.
 /// Gating a route on one would delete a working page from this node, which is
-/// exactly what `htpc_1_declared_set_registers_todays_entire_route_set` exists
+/// exactly what `node_1_declared_set_registers_todays_entire_route_set` exists
 /// to catch.
-fn htpc_1_features() -> BTreeSet<Feature> {
+fn node_1_features() -> BTreeSet<Feature> {
     [
         Feature::SettingsStore,
         Feature::Widgets,
@@ -3720,7 +3720,7 @@ fn htpc_1_features() -> BTreeSet<Feature> {
 fn caps_with(features: BTreeSet<Feature>) -> CapabilitySnapshot {
     CapabilitySnapshot {
         handshake: crate::capabilities::Handshake::Ok,
-        node_id: "htpc-1".to_string(),
+        node_id: "node-1".to_string(),
         features,
     }
 }
@@ -3892,7 +3892,7 @@ async fn dangerous_routes_are_registered_when_allow_dangerous_is_true() {
 ///
 /// The page is node tier and `POST /dev/console/raw` is in the danger block,
 /// so `allow_dangerous = false` — the default, and what the reference node
-/// htpc-1 runs — leaves a registered page in front of an unregistered action.
+/// runs — leaves a registered page in front of an unregistered action.
 /// It must explain itself and render no form; the failure mode this forbids is
 /// a Send button that 404s.
 #[tokio::test]
@@ -4096,19 +4096,19 @@ async fn a_single_feature_opens_only_its_own_block() {
 }
 
 /// **The no-regression test for the one deployed node.** Given the feature set
-/// htpc-1's real daemon build declares ([`htpc_1_features`]), the registered
+/// node-1's real daemon build declares ([`node_1_features`]), the registered
 /// route set is exactly today's — every row of `route_table()` is live. This
-/// PR therefore changes nothing on htpc-1.
+/// PR therefore changes nothing on node-1.
 ///
 /// This is the test that catches the trap: gating the wallpaper routes on
 /// `Feature::Wallpapers`, `/processes` on `Feature::Processes`, or
 /// `/system/updates/*` on `Feature::SystemUpdates` would fail here, because
 /// `daemon/src/ipc.rs::features()` never emits any of those three.
 #[tokio::test]
-async fn htpc_1_declared_set_registers_todays_entire_route_set() {
+async fn node_1_declared_set_registers_todays_entire_route_set() {
     let base = spawn_panel(state_with_caps(
         cfg_authenticated(true),
-        caps_with(htpc_1_features()),
+        caps_with(node_1_features()),
     ))
     .await;
     let c = client();
@@ -4122,7 +4122,7 @@ async fn htpc_1_declared_set_registers_todays_entire_route_set() {
         match spec.access {
             Authenticated => assert_eq!(
                 status, 401,
-                "{} vanished from htpc-1's panel — it is gated on a capability that \
+                "{} vanished from node-1's panel — it is gated on a capability that \
                  daemon/src/ipc.rs::features() does not emit for that build",
                 spec.request
             ),
@@ -4131,8 +4131,8 @@ async fn htpc_1_declared_set_registers_todays_entire_route_set() {
     }
 }
 
-/// desktop-2's REAL declared feature set, parsed from the live sidecar's
-/// `GET /capabilities` (`host-v0.7.0` at 192.168.8.153:47995, captured
+/// node-3's REAL declared feature set, parsed from the live sidecar's
+/// `GET /capabilities` (`host-v0.7.0` at 192.0.2.153:47995, captured
 /// 2026-08-07):
 ///
 /// ```text
@@ -4144,10 +4144,10 @@ async fn htpc_1_declared_set_registers_todays_entire_route_set() {
 /// `[Feature::SteamLibrary, …]` would be a fixture asserting what this test
 /// already believes; going through the wire format means a rename or an
 /// `as_str()` drift on either side shows up here.
-fn desktop_2_capabilities() -> CapabilitySnapshot {
+fn node_3_capabilities() -> CapabilitySnapshot {
     const LIVE: &str = r#"{"node_id":"desktop","kind":"sidecar","agent_version":"0.7.0","platform":"windows","features":["steam_library","game_launch","sleep"]}"#;
     let caps: tv_shell_protocol::Capabilities =
-        serde_json::from_str(LIVE).expect("desktop-2's live /capabilities payload");
+        serde_json::from_str(LIVE).expect("node-3's live /capabilities payload");
     assert_eq!(caps.kind, tv_shell_protocol::NodeKind::Sidecar);
     assert_eq!(
         caps.features,
@@ -4165,10 +4165,10 @@ fn desktop_2_capabilities() -> CapabilitySnapshot {
 ///
 /// A sidecar declares `steam_library`, `game_launch` and `sleep`. **No [`Gate`]
 /// names any of the three** (`no_gate_names_a_feature_the_daemon_never_emits`
-/// pins that), so a panel pointed at desktop-2 must register exactly the
+/// pins that), so a panel pointed at node-3 must register exactly the
 /// recovery tier plus the node tier — the handshake did succeed — and **not one
 /// capability-tier route**. CEC, Controllers, Widgets, Settings, WebApps and
-/// Screenshot must all 404: desktop-2 has no CEC adapter, no gamepad fleet, no
+/// Screenshot must all 404: node-3 has no CEC adapter, no gamepad fleet, no
 /// QML shell and no `settings.json`, so rendering any of those pages would be
 /// the panel inventing a surface the node never claimed.
 ///
@@ -4177,10 +4177,10 @@ fn desktop_2_capabilities() -> CapabilitySnapshot {
 /// because their block ALSO requires `Gate::DevDeploy`, which a sidecar does
 /// not declare.
 #[tokio::test]
-async fn desktop_2_sidecar_registers_the_node_tier_and_no_capability_route() {
+async fn node_3_sidecar_registers_the_node_tier_and_no_capability_route() {
     let base = spawn_panel(state_with_caps(
         cfg_authenticated(true),
-        desktop_2_capabilities(),
+        node_3_capabilities(),
     ))
     .await;
     let c = client();
@@ -4206,7 +4206,7 @@ async fn desktop_2_sidecar_registers_the_node_tier_and_no_capability_route() {
         assert_eq!(
             status,
             expected,
-            "{} (Gate::{}) against desktop-2's declared set \
+            "{} (Gate::{}) against node-3's declared set \
              [steam_library, game_launch, sleep]",
             spec.request,
             spec.gate.ident()
@@ -4251,11 +4251,11 @@ async fn desktop_2_sidecar_registers_the_node_tier_and_no_capability_route() {
 }
 
 /// The five features `daemon/src/ipc.rs::features()` deliberately never emits
-/// must not appear in htpc-1's set — if one crept in, the test above would go
+/// must not appear in node-1's set — if one crept in, the test above would go
 /// green on a fiction.
 #[test]
-fn htpc_1_set_omits_every_feature_the_daemon_never_emits() {
-    let set = htpc_1_features();
+fn node_1_set_omits_every_feature_the_daemon_never_emits() {
+    let set = node_1_features();
     for absent in [
         Feature::Wallpapers,
         Feature::Processes,
@@ -4269,13 +4269,13 @@ fn htpc_1_set_omits_every_feature_the_daemon_never_emits() {
              fixture that claims it would prove nothing about the live node"
         );
     }
-    // And htpc-1 must satisfy every gate the panel has, or a page really would
+    // And node-1 must satisfy every gate the panel has, or a page really would
     // disappear from the deployed node.
     let caps = caps_with(set);
     for gate in Gate::ALL {
         assert!(
             caps.allows(*gate),
-            "htpc-1 does not satisfy Gate::{} — the pages behind it would 404 on \
+            "node-1 does not satisfy Gate::{} — the pages behind it would 404 on \
              the one node this panel is deployed to",
             gate.ident()
         );
@@ -4302,7 +4302,7 @@ async fn dashboard_tiles_never_link_to_a_page_the_snapshot_gated_away() {
         ),
         (
             "sys-status",
-            r#"{"os":"Arch","kernel":"6.12","hostname":"htpc-1","uptime":"1h"}"#,
+            r#"{"os":"Arch","kernel":"6.12","hostname":"node-1","uptime":"1h"}"#,
         ),
         ("sys-metrics", "{}"),
         ("storage-status", "[]"),
@@ -4350,7 +4350,7 @@ fn replies_for_tiles() -> std::collections::HashMap<&'static str, &'static str> 
         ),
         (
             "sys-status",
-            r#"{"os":"Arch","kernel":"6.12","hostname":"htpc-1","uptime":"1h"}"#,
+            r#"{"os":"Arch","kernel":"6.12","hostname":"node-1","uptime":"1h"}"#,
         ),
         ("sys-metrics", "{}"),
         ("storage-status", "[]"),

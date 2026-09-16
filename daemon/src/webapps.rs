@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn validate_url_accepts_http_and_rejects_the_rest() {
         assert!(validate_url("https://youtube.com/tv").is_ok());
-        assert!(validate_url("http://192.168.1.5:8096").is_ok());
+        assert!(validate_url("http://192.0.2.5:8096").is_ok());
         assert!(validate_url("HTTPS://Example.com").is_ok());
         for bad in [
             "",

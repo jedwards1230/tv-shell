@@ -10,7 +10,7 @@
 //! **#191 was never hardware-tested, by its own admission** — "No on-device test
 //! of the actual WoL/telnet against the real TV/AVR". Its nine tests are shape
 //! coverage: they pin the command strings and the config parsing, and they are
-//! not evidence that this rack's receiver answers to them. Nothing here has been
+//! not evidence that this deployment's receiver answers to them. Nothing here has been
 //! run against a receiver either; see the crate README's on-box checklist.
 //!
 //! # Two site preconditions, carried over because they are still true

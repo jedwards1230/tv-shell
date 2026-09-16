@@ -2481,8 +2481,8 @@ mod tests {
     #[test]
     fn parses_steam_set_host_body() {
         assert_eq!(
-            Command::parse("steam-set-host desktop-2"),
-            Command::SteamSetHost("desktop-2".into())
+            Command::parse("steam-set-host node-3"),
+            Command::SteamSetHost("node-3".into())
         );
         // The name is taken verbatim (names may contain spaces).
         assert_eq!(

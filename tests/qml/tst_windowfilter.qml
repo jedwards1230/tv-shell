@@ -21,9 +21,9 @@ import "../../shell/components/resumeModel.js" as ResumeModel
 // start; it has a real window class, so it used to be enumerated as a running
 // app (a Home running card + a nav-drawer Resume row for a window nobody can
 // resume). The 12x `Could not load icon "hyprland-donate-screen"` warnings per
-// cold start were a downstream symptom of that, not the defect. Confirmed live on
-// htpc-1 via `hyprctl clients -j`; `config/hyprland.conf` already floats/centers
-// the same class pair.
+// cold start were a downstream symptom of that, not the defect. Confirmed live
+// on the reference deployment via `hyprctl clients -j`; `config/hyprland.conf`
+// already floats/centers the same class pair.
 TestCase {
     id: testCase
     name: "WindowFilter"

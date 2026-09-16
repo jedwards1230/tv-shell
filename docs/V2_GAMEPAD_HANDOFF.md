@@ -40,8 +40,9 @@ Two consequences, and they are the spine of the plan:
 
 ## 2. Measurements — phase 0
 
-All four have now been run on htpc-1 (2026-09-09/10). Two settle open questions; one
-found a sharp, unexplained contrast that phase 1 depends on.
+All four have now been run on the reference deployment (2026-09-09/10). Two
+settle open questions; one found a sharp, unexplained contrast that phase 1
+depends on.
 
 Method notes: the shell runs as an ordinary client beside Moonlight, launched by hand;
 the session unit is never touched (Moonlight is the boot app with
@@ -428,7 +429,7 @@ Against the three recorded ways a green suite can be empty:
   session double, and owner/route/mask state must be in `InputReport` from phase 1, so a
   hardware session reads the decision instead of inferring it.
 
-Note also that `justin` is **not** in the `input` group on htpc-1, so `/dev/uinput` can
-be written but the resulting `/dev/input/eventN` cannot be read back there. Creation
-works; readback does not. `CONTRIBUTING.md` already documents this as the two-permission
-trap.
+Note also that the session user is **not** in the `input` group on the reference
+deployment, so `/dev/uinput` can be written but the resulting
+`/dev/input/eventN` cannot be read back there. Creation works; readback does
+not. `CONTRIBUTING.md` already documents this as the two-permission trap.

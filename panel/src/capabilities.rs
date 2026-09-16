@@ -671,7 +671,7 @@ mod tests {
                 return Err((self.error)());
             }
             Ok(Capabilities {
-                node_id: "htpc-1".to_string(),
+                node_id: "node-1".to_string(),
                 kind: tv_shell_protocol::NodeKind::Shell,
                 agent_version: "0.2.2".to_string(),
                 platform: tv_shell_protocol::Platform::Linux,
@@ -799,7 +799,7 @@ mod tests {
     fn snapshot(features: &[Feature]) -> CapabilitySnapshot {
         CapabilitySnapshot {
             handshake: Handshake::Ok,
-            node_id: "htpc-1".to_string(),
+            node_id: "node-1".to_string(),
             features: features.iter().cloned().collect(),
         }
     }
@@ -1139,7 +1139,7 @@ mod tests {
     #[test]
     fn a_capabilities_reply_becomes_a_successful_snapshot() {
         let caps = Capabilities {
-            node_id: "htpc-1".to_string(),
+            node_id: "node-1".to_string(),
             kind: tv_shell_protocol::NodeKind::Shell,
             agent_version: "0.2.2".to_string(),
             platform: tv_shell_protocol::Platform::Linux,
@@ -1147,7 +1147,7 @@ mod tests {
         };
         let snap: CapabilitySnapshot = caps.into();
         assert!(snap.handshake.is_ok());
-        assert_eq!(snap.node_id, "htpc-1");
+        assert_eq!(snap.node_id, "node-1");
         assert!(snap.allows(Gate::Cec));
     }
 }

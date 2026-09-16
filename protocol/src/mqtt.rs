@@ -1086,7 +1086,7 @@ mod tests {
             ("a$b", Some(DeviceIdError::InvalidChar('$'))),
             ("café", Some(DeviceIdError::InvalidChar('é'))),
             (&too_long, Some(DeviceIdError::TooLong)),
-            ("htpc-1", None),
+            ("node-1", None),
             ("desktop", None),
             ("a_b-1", None),
         ];
@@ -1102,16 +1102,16 @@ mod tests {
     #[test]
     fn device_id_builds_the_frozen_topics() {
         // These literals ARE the frozen contract — written out, never computed.
-        let htpc = id("htpc-1");
-        assert_eq!(htpc.ha_device_identifier(), "tv-shell-htpc-1");
-        assert_eq!(htpc.unique_id("shell_state"), "tv-shell-htpc-1-shell_state");
-        assert_eq!(htpc.state_topic(), "tv-shell/htpc-1/state");
-        assert_eq!(htpc.avail_topic(), "tv-shell/htpc-1/avail");
-        assert_eq!(htpc.cmd_topic("home"), "tv-shell/htpc-1/cmd/home");
-        assert_eq!(htpc.cmd_topic_filter(), "tv-shell/htpc-1/cmd/+");
+        let htpc = id("node-1");
+        assert_eq!(htpc.ha_device_identifier(), "tv-shell-node-1");
+        assert_eq!(htpc.unique_id("shell_state"), "tv-shell-node-1-shell_state");
+        assert_eq!(htpc.state_topic(), "tv-shell/node-1/state");
+        assert_eq!(htpc.avail_topic(), "tv-shell/node-1/avail");
+        assert_eq!(htpc.cmd_topic("home"), "tv-shell/node-1/cmd/home");
+        assert_eq!(htpc.cmd_topic_filter(), "tv-shell/node-1/cmd/+");
         assert_eq!(
             htpc.discovery_topic(),
-            "homeassistant/device/tv-shell-htpc-1/config"
+            "homeassistant/device/tv-shell-node-1/config"
         );
 
         let desktop = id("desktop");
@@ -1129,9 +1129,9 @@ mod tests {
 
     #[test]
     fn device_id_serde_goes_through_a_validated_string() {
-        let parsed: DeviceId = serde_json::from_str(r#""htpc-1""#).unwrap();
-        assert_eq!(parsed.as_str(), "htpc-1");
-        assert_eq!(serde_json::to_string(&parsed).unwrap(), r#""htpc-1""#);
+        let parsed: DeviceId = serde_json::from_str(r#""node-1""#).unwrap();
+        assert_eq!(parsed.as_str(), "node-1");
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), r#""node-1""#);
         // A bad device_id must fail the PARSE (i.e. daemon startup), not later.
         assert!(serde_json::from_str::<DeviceId>(r#""a/b""#).is_err());
     }
@@ -1262,7 +1262,7 @@ mod tests {
             ]
         );
 
-        let shell = shell_discovery(&id("htpc-1"));
+        let shell = shell_discovery(&id("node-1"));
         let shell_keys: Vec<&str> = shell.cmps.keys().map(String::as_str).collect();
         assert_eq!(
             shell_keys,
@@ -1295,7 +1295,7 @@ mod tests {
     fn discovery_unique_ids_are_prefixed() {
         for (device, doc) in [
             (id("desktop"), host_discovery(&id("desktop"))),
-            (id("htpc-1"), shell_discovery(&id("htpc-1"))),
+            (id("node-1"), shell_discovery(&id("node-1"))),
         ] {
             let prefix = format!("{}-", device.ha_device_identifier());
             for (key, cmp) in &doc.cmps {
@@ -1315,7 +1315,7 @@ mod tests {
         // payload — so every binary sensor must use the if/else ON/OFF form.
         for (device, doc) in [
             (id("desktop"), host_discovery(&id("desktop"))),
-            (id("htpc-1"), shell_discovery(&id("htpc-1"))),
+            (id("node-1"), shell_discovery(&id("node-1"))),
         ] {
             for (key, cmp) in &doc.cmps {
                 if cmp.platform != "binary_sensor" {
@@ -1348,7 +1348,7 @@ mod tests {
         // `| default('unknown', true)` treats a real 0 as falsy.
         for doc in [
             host_discovery(&id("desktop")),
-            shell_discovery(&id("htpc-1")),
+            shell_discovery(&id("node-1")),
         ] {
             for (key, cmp) in &doc.cmps {
                 if let Some(template) = &cmp.value_template {
@@ -1375,7 +1375,7 @@ mod tests {
     fn nullable_templates_use_the_documented_none_sentinel() {
         for doc in [
             host_discovery(&id("desktop")),
-            shell_discovery(&id("htpc-1")),
+            shell_discovery(&id("node-1")),
         ] {
             for (key, cmp) in &doc.cmps {
                 let Some(template) = &cmp.value_template else {
@@ -1405,9 +1405,9 @@ mod tests {
 
     #[test]
     fn discovery_root_carries_the_shared_topics_and_payloads() {
-        let device = id("htpc-1");
+        let device = id("node-1");
         let doc = shell_discovery(&device);
-        assert_eq!(doc.dev.identifiers, vec!["tv-shell-htpc-1".to_string()]);
+        assert_eq!(doc.dev.identifiers, vec!["tv-shell-node-1".to_string()]);
         assert_eq!(doc.o.name, "tv-shell");
         // No software version in the RETAINED document — the two desktop boots
         // update independently, so a version here would rewrite the retained
@@ -1418,7 +1418,7 @@ mod tests {
         // have no state topic and must not inherit one.
         assert_eq!(
             doc.cmps["shell_state"].state_topic.as_deref(),
-            Some("tv-shell/htpc-1/state")
+            Some("tv-shell/node-1/state")
         );
         assert_eq!(doc.cmps["suspend"].state_topic, None);
         // Availability is per-component, not at the root — see the module docs.
@@ -1427,7 +1427,7 @@ mod tests {
             .as_ref()
             .expect("a button must be availability-gated");
         assert_eq!(avail.len(), 1);
-        assert_eq!(avail[0].topic, "tv-shell/htpc-1/avail");
+        assert_eq!(avail[0].topic, "tv-shell/node-1/avail");
         assert_eq!(avail[0].payload_available, "online");
         assert_eq!(avail[0].payload_not_available, "offline");
         assert_eq!(doc.qos, 0);
@@ -1442,7 +1442,7 @@ mod tests {
     /// either direction is invisible without a live broker AND a live HA.
     #[test]
     fn availability_is_gated_per_tier() {
-        let doc = shell_discovery(&id("htpc-1"));
+        let doc = shell_discovery(&id("node-1"));
 
         // Commands: unavailable while asleep, because pressing them cannot work.
         for key in ["suspend", "home", "menu", "settings", "restart_shell"] {
@@ -1506,7 +1506,7 @@ mod tests {
     fn connected_sensor_reads_the_avail_topic_ungated() {
         for (device, doc) in [
             (id("desktop"), host_discovery(&id("desktop"))),
-            (id("htpc-1"), shell_discovery(&id("htpc-1"))),
+            (id("node-1"), shell_discovery(&id("node-1"))),
         ] {
             let cmp = &doc.cmps["connected"];
             assert_eq!(cmp.platform, "binary_sensor");
@@ -1537,7 +1537,7 @@ mod tests {
     #[test]
     fn availability_serialises_as_the_list_form_ha_reads() {
         for doc in [
-            shell_discovery(&id("htpc-1")),
+            shell_discovery(&id("node-1")),
             host_discovery(&id("desktop")),
         ] {
             let json = serde_json::to_string(&doc).unwrap();
@@ -1574,7 +1574,7 @@ mod tests {
         // Pinning HA entity_ids belongs to the deferred cutover phase.
         for doc in [
             host_discovery(&id("desktop")),
-            shell_discovery(&id("htpc-1")),
+            shell_discovery(&id("node-1")),
         ] {
             for (key, cmp) in &doc.cmps {
                 assert!(cmp.object_id.is_none(), "{key} pins an object_id");

@@ -186,8 +186,8 @@ impl Recovery {
     ///   elevation, and it keeps working with the daemon down — that is what
     ///   makes System ▸ Services a recovery surface rather than a convenience.
     /// * [`UnitScope::System`] → `sudo -n systemctl restart <unit>`, matching
-    ///   the per-unit NOPASSWD sudoers line the `htpc_common` ansible role
-    ///   ships (`docs/PANEL.md` § Deployment prerequisite). The argv is
+    ///   the per-unit NOPASSWD sudoers line the host-configuration ansible
+    ///   role ships (`docs/PANEL.md` § Deployment prerequisite). The argv is
     ///   deliberately `systemctl restart <unit>` with no `--` separator and no
     ///   extra flags: sudoers matches on the exact command line, so anything
     ///   else would silently stop matching the rule. Safe because `<unit>`
@@ -561,9 +561,10 @@ mod tests {
         }
     }
 
-    /// **The behaviour htpc-1 exercises today**: a unit is in `managed_units`,
-    /// no sudoers line exists for it, and `sudo -n` refuses. That must surface
-    /// as [`ExecError::NotPermitted`] — not `Ok`, not a generic failure.
+    /// **The behaviour the reference deployment exercises today**: a unit is in
+    /// `managed_units`, no sudoers line exists for it, and `sudo -n` refuses.
+    /// That must surface as [`ExecError::NotPermitted`] — not `Ok`, not a
+    /// generic failure.
     #[tokio::test]
     async fn a_system_scope_restart_with_no_sudoers_rule_fails_closed() {
         let fake = fake_sudo("refuse", true);

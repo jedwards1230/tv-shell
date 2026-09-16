@@ -124,7 +124,8 @@
 #                     the panel reports "NOT PERMITTED on this node" naming the
 #                     unit — it fails CLOSED, never a silent no-op. That is the
 #                     state of every node today: the ansible-side generation of
-#                     these sudoers lines (htpc_common role) has not landed, so
+#                     these sudoers lines (in the host-configuration role that
+#                     provisions this deployment) has not landed, so
 #                     listing a system-scope unit here makes it readable and
 #                     visible, but not yet restartable.
 #managed_units = [

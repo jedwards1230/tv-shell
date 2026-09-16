@@ -3,11 +3,12 @@
 //! # The OPEN sequence is transmit-free, and the ordering below is what makes
 //! it so
 //!
-//! The living-room bus carries an Apple TV and a PS5 as well as the television
-//! and the AVR, so a stray transmit from this daemon is a real-world side effect
-//! on someone else's evening. Starting this daemon must therefore put **nothing**
-//! on the bus: every message it sends comes from a client asking for one, via
-//! [`crate::action::plan`] and [`crate::kernel::ops`].
+//! A shared bus may carry other playback devices (a streaming box, a console)
+//! besides the television and the AVR, so a stray transmit from this daemon is
+//! a real-world side effect on someone else's evening. Starting this daemon
+//! must therefore put **nothing** on the bus: every message it sends comes from
+//! a client asking for one, via [`crate::action::plan`] and
+//! [`crate::kernel::ops`].
 //!
 //! One call in the sequence would break that if it were moved:
 //! **`set_osd_name` must be called BEFORE `set_logical_addresses`.**
@@ -35,7 +36,7 @@
 //! `get_capabilities()` runs before anything is configured, and the result gates
 //! the two calls that need it (`CEC_CAP_PHYS_ADDR`, `CEC_CAP_LOG_ADDRS`) and is
 //! published verbatim in `av-state`. `CEC_CAP_MONITOR_PIN` is measured ABSENT on
-//! htpc-1's adapter (Pulse-Eight USB-CEC, firmware `000c`: caps `0x23f`, read
+//! the Pulse-Eight USB-CEC adapter measured here (firmware `000c`: caps `0x23f`, read
 //! 2026-09-16), so nothing here assumes the pin monitor exists — and the check
 //! stays a runtime read rather than a constant, because other adapters differ.
 //! Step 6's `av-health` reads [`crate::state::Topology::monitor_pin`] to name

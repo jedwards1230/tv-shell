@@ -687,11 +687,11 @@ mod tests {
             av_sock: sock.with_extension("av.sock"),
             bridge: Arc::new(crate::bridge::BridgeClient::new(None, None)),
             recovery: crate::exec::Recovery::new(),
-            // NOT UpdatesState::default() — that argv is a real
-            // `sudo -n pacman -Syu --noconfirm`, and on htpc-1 or any Arch dev
-            // box this test would start an unattended system upgrade. `sleep`
-            // also outlives the assertions below, so the Running state cannot
-            // race to Done before they run.
+            // NOT UpdatesState::default() — that argv is a real `sudo -n pacman
+            // -Syu --noconfirm`, and on the reference deployment or any Arch
+            // dev box this test would start an unattended system upgrade.
+            // `sleep` also outlives the assertions below, so the Running state
+            // cannot race to Done before they run.
             updates: UpdatesState::with_apply_command(["sleep", "30"]),
         });
 
@@ -730,8 +730,8 @@ mod tests {
     /// The hazard this seam exists for: no test may run the real thing.
     ///
     /// The dangerous combination is `UpdatesState::default()` **plus** a call
-    /// to `start_apply` in the same test: that spawns the real
-    /// `sudo -n pacman -Syu --noconfirm`, and htpc-1 has NOPASSWD sudo for
+    /// to `start_apply` in the same test: that spawns the real `sudo -n pacman
+    /// -Syu --noconfirm`, and the reference deployment has NOPASSWD sudo for
     /// exactly that command by design, so `cargo test -p tv-shell-panel` on a
     /// deploy or Arch dev box would begin an unattended system upgrade.
     ///

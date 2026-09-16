@@ -118,12 +118,12 @@ a counter catches, so alert on the *rate*:
 ```promql
 # Sustained warning flood: >1 WARN/ERROR per second averaged over 15 minutes.
 # The pre-fix baseline was ~16/s; a healthy start is a handful, then ~0.
-rate(tv_shell_quickshell_warnings_total{job="htpc-1-tv-shell"}[15m]) > 1
+rate(tv_shell_quickshell_warnings_total{job="node-1-tv-shell"}[15m]) > 1
 ```
 
 ```promql
 # Noisy start: more than 100 warnings in the 10 minutes after a shell restart.
-increase(tv_shell_quickshell_warnings_total{job="htpc-1-tv-shell"}[10m]) > 100
+increase(tv_shell_quickshell_warnings_total{job="node-1-tv-shell"}[10m]) > 100
 ```
 
 ### Counting a truncated log monotonically

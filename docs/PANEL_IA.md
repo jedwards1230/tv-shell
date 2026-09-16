@@ -17,8 +17,8 @@ reasoning that was wrong is the part worth keeping. Three are load-bearing:
 - **Five of the six `allow_dangerous` controls are in Dev, not all six.**
   `POST /system/updates/apply` is the exception and stays under System ▸
   Updates. See [Dev](#dev).
-- **`scope = "system"` restarts work on htpc-1 and fail closed elsewhere.** The
-  `htpc_common` sudoers generation shipped in
+- **`scope = "system"` restarts work on the reference deployment and fail
+  closed elsewhere.** The host-configuration role's sudoers generation shipped in
   [`jedwards1230/homelab-ansible#271`](https://github.com/jedwards1230/homelab-ansible/pull/271)
   and is deployed there; a node whose role run has not applied it still fails
   closed, by design. See [Privilege](#privilege) and [Phasing](#phasing).
@@ -240,9 +240,10 @@ were exact duplicates of the Controllers page's own.
 > ✅ **Landed in phase 5**, both halves. The panel side shipped in #412; the
 > sudoers generation under [Privilege](#privilege) shipped in
 > [`jedwards1230/homelab-ansible#271`](https://github.com/jedwards1230/homelab-ansible/pull/271)
-> and is applied to htpc-1. A node whose role run has not applied it fails
-> closed, which is the intended behaviour rather than a gap — see PANEL.md's
-> [Restartable units](PANEL.md#restartable-units-panelmanaged_units).
+> and is applied to the reference deployment. A node whose role run has not
+> applied it fails closed, which is the intended behaviour rather than a gap —
+> see PANEL.md's [Restartable
+> units](PANEL.md#restartable-units-panelmanaged_units).
 
 The gap that prompted this: there is no way to see whether `sshd` is running, let
 alone restart it, without SSHing in — which is precisely what you cannot do when
@@ -294,7 +295,8 @@ tv-shell ALL=(root) NOPASSWD: /usr/bin/systemctl restart sshd.service, \
                               /usr/bin/systemctl restart NetworkManager.service
 ```
 
-To be shipped by the `htpc_common` ansible role, generated from the same list
+To be shipped by the host-configuration ansible role that provisions this
+deployment's TV box, generated from the same list
 that renders `managed_units`, so the two cannot drift. **That generation has not
 landed** (it was out of scope for the panel PR), so today *every* system-scope
 entry is a unit without a matching sudoers line. Which is exactly the case the
@@ -348,7 +350,7 @@ tracked on #409, not on this table.
 | **2** ✅ landed | Split **Processes** → Services (shell only, three built-in units) + Processes + Updates. | 1 | #406 |
 | **3** ✅ landed | Dissolve **Settings** → Shell/Appearance, Shell/Apps, Shell/Advanced, Devices/Display & Audio, Devices/CEC — plus the `Input` group onto Devices/Controllers. Saves are now scoped to the groups the submitting form rendered. | 1 | #407 |
 | **4** ✅ landed | Dissolve **Media** and **Tools** → Shell/Appearance + Shell/Apps, Devices/Network, Devices/Display & Audio, Remote/Navigation + Remote/Launcher, Dev/Screenshot + Dev/Console. Six duplicate routes deleted rather than moved. | 1, 3 | #408 |
-| **5** ✅ landed | Services: read any unit; `managed_units` config; danger-tier confirms. Panel half in #412; ansible-side sudoers generation in [homelab-ansible#271](https://github.com/jedwards1230/homelab-ansible/pull/271), applied to htpc-1. | 2 | #409 |
+| **5** ✅ landed | Services: read any unit; `managed_units` config; danger-tier confirms. Panel half in #412; ansible-side sudoers generation in [homelab-ansible#271](https://github.com/jedwards1230/homelab-ansible/pull/271), applied to the reference deployment. | 2 | #409 |
 | **6** ✅ landed | Overview rebuilt as pure read-only tiles with deep links. Gained a system-services tile on its own 30s poll; the three poll targets now fill one grid. | 2-5 | #410 |
 
 Phase 1 was deliberately mechanical — it changed navigation without changing any
@@ -364,7 +366,7 @@ shipped separately in
 [`jedwards1230/homelab-ansible#271`](https://github.com/jedwards1230/homelab-ansible/pull/271):
 `tv_shell_panel_managed_units` renders both the `managed_units` table and
 `/etc/sudoers.d/tv-shell-panel` from one list, so config and privilege cannot
-drift. It is applied to htpc-1 (sshd, NetworkManager, bluetooth).
+drift. It is applied to the reference deployment (sshd, NetworkManager, bluetooth).
 
 **On a node whose role run has not applied those lines, a `scope = "system"`
 restart fails closed** — `sudo -n` refuses and the page reports "NOT PERMITTED

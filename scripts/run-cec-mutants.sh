@@ -34,9 +34,18 @@
 # `missed > 0` (or on a ratchet) once the numbers are known and the survivors
 # have been triaged.
 #
+# RUNTIME. Every mutant is a separate rebuild, so the run is dominated by rustc
+# and scales with cores. It is run with `--jobs` set to the machine's core count
+# (override with MUTANTS_JOBS) rather than cargo-mutants' serial default.
+# `minimum_test_timeout` in .cargo/mutants.toml is the guard that keeps that from
+# turning healthy mutants into spurious TIMEOUTs on a loaded box — if timeouts
+# ever appear under parallelism and not at `--jobs 1`, raise that floor rather
+# than accepting a flaky gate.
+#
 # USAGE
 #   scripts/run-cec-mutants.sh            # run from the workspace root
 #   MUTANTS_OUTPUT=/tmp/x scripts/run-cec-mutants.sh
+#   MUTANTS_JOBS=1 scripts/run-cec-mutants.sh   # force the serial behaviour
 
 set -euo pipefail
 
@@ -56,6 +65,10 @@ INTENDED_MODULES=(
 
 OUT_DIR=${MUTANTS_OUTPUT:-mutants-output}
 SUMMARY=${GITHUB_STEP_SUMMARY:-/dev/stdout}
+# The runner's ACTUAL core count, not a hardcoded guess: `ubuntu-latest` has 4
+# today and a developer box has more, and either number would be wrong on the
+# other. Falls back to 1 if nproc is unavailable, which is the old behaviour.
+JOBS=${MUTANTS_JOBS:-$(nproc 2>/dev/null || echo 1)}
 
 for tool in cargo jq; do
   command -v "$tool" >/dev/null || { echo "::error::$tool is required"; exit 1; }
@@ -105,7 +118,7 @@ for m in "${INTENDED_MODULES[@]}"; do
 done
 
 echo
-echo "== Running cargo-mutants (scope: .cargo/mutants.toml) =="
+echo "== Running cargo-mutants (scope: .cargo/mutants.toml, --jobs $JOBS) =="
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
@@ -114,7 +127,7 @@ mkdir -p "$OUT_DIR"
 # it produced a parsable outcomes.json — checked below. A failure to BUILD is
 # caught by that same check, because no outcomes file appears.
 set +e
-cargo mutants -p tv-shell-cec --no-times -o "$OUT_DIR"
+cargo mutants -p tv-shell-cec --no-times --jobs "$JOBS" -o "$OUT_DIR"
 mutants_status=$?
 set -e
 echo "cargo-mutants exited $mutants_status"
@@ -183,6 +196,11 @@ echo "== Result: $total mutants — $caught caught, $missed missed, $unviable un
   echo "| **Missed (survived)** | **$missed** |"
   echo "| Unviable (did not build) | $unviable |"
   echo "| Timeout | $timeout |"
+  echo ""
+  echo "Run with \`--jobs $JOBS\`. A non-zero **Timeout** count on a run that is"
+  echo "clean at \`--jobs 1\` means the parallel load squeezed the per-mutant"
+  echo "budget — raise \`minimum_test_timeout\` in \`.cargo/mutants.toml\` rather"
+  echo "than living with a flaky gate."
   echo ""
   echo "### Scope — intended modules"
   echo ""

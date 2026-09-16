@@ -5,8 +5,9 @@
 # delegated to the shared `ai-release.yml@v1` reusable; this workflow then builds
 # `tv-shell-host` for Linux (static musl), macOS (arm64 + x86_64), and Windows,
 # and publishes ONE GitHub Release at the tag carrying every binary plus a
-# `checksums.txt`. The Ansible `desktop-common` role fetches the musl binary by
-# this tag (`install_method: fetch`) instead of building it on-host.
+# `checksums.txt`. The homelab desktop Ansible role in
+# `jedwards1230/homelab-ansible` fetches the musl binary by this tag
+# (`install_method: fetch`) instead of building it on-host.
 #
 # The host crate is pure Rust (tokio/axum/serde/subtle/keyvalues-parser — no
 # evdev/cec/zbus, no C deps), so every target cross-compiles with nothing but the

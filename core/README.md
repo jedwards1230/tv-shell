@@ -60,8 +60,8 @@ Three things are worth knowing before reading them:
   script stops and `mask --runtime`s the v1 units instead, so a stray start fails
   loudly rather than tearing down a live session, and a runtime mask cannot
   outlive the user manager. **That is a mitigation; the watchdog stand-down §9
-  requires is the real fix, and it is DONE** — `htpc_cec_watchdog_active` derives
-  from the selected boot session, and the timer was read on the deploy box as
+  requires is the real fix, and it is DONE** — the role's CEC-watchdog toggle
+  derives from the selected boot session, and the timer was read on the deploy box as
   `disabled`/`inactive` on 2026-09-14. The Ansible unit still exists on disk, so
   it must never be re-enabled; what retires it rather than disabling it is
   `tv-shell-v2-cec.service`'s `Type=notify` + `WatchdogSec=` (§9).
@@ -323,9 +323,10 @@ selectable at the display manager with no second tool. On an **Ansible-managed**
 host it is run with **`--no-session`** and Ansible owns that path — one writer,
 decided rather than left to whoever ran last:
 
-- Precedent: the gamescope prototype's `.desktop` is written by
-  `homelab-ansible`'s `roles/htpc_common/tasks/gamescope-prototype.yaml`, and
-  that is the session htpc-1 boots today.
+- Precedent: the gamescope prototype's `.desktop` is written by the
+  gamescope-prototype task of the host-configuration role in
+  `jedwards1230/homelab-ansible` — the role that provisions this deployment's
+  TV box — and that is the session the reference deployment boots today.
 - Only Ansible can produce the full `Exec=`: it renders the session env as a
   `/usr/bin/env` prefix, which is the only way to set environment for a
   greeter-launched or autologin session — there is no shell in between. The file

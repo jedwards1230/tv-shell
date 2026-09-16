@@ -30,11 +30,11 @@
 //!
 //! **Only on a client's request.** `wake`, `standby`, `input-claim`,
 //! `input-release`, `input-select`, the `volume` family and `volume-state` are
-//! the whole transmit surface; nothing
-//! fires on a timer, on a session event, or on this daemon's own initiative.
-//! The living-room bus carries an Apple TV and a PS5 as well as the television
-//! and the AVR, so two rules are enforced by construction rather than by
-//! convention: a `<Standby>` is always addressed and never broadcast
+//! the whole transmit surface; nothing fires on a timer, on a session event, or
+//! on this daemon's own initiative. A shared bus may carry other playback
+//! devices (a streaming box, a console) besides the television and the AVR, so
+//! two rules are enforced by construction rather than by convention: a
+//! `<Standby>` is always addressed and never broadcast
 //! ([`action::StandbyTarget`] has no broadcast variant to pass), and `standby`
 //! needs positive proof that this box holds the display before it transmits at
 //! all ([`ownership::owns_display`]).

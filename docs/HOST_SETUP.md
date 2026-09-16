@@ -163,8 +163,8 @@ and **hibernates** whenever hibernation is enabled. See `host/src/power.rs`.
 > `powercfg /query <scheme> SUB_NONE CONSOLELOCK`, never by reading that
 > registry path**.
 >
-> In the homelab this is `windows_common_disable_lock_on_wake` in
-> homelab-ansible's `windows-common` role.
+> In the homelab this is a flag on the Windows host-configuration Ansible
+> role in `jedwards1230/homelab-ansible`.
 
 ### `GET /capabilities`
 
@@ -175,7 +175,7 @@ command — see [IPC_PROTOCOL.md](IPC_PROTOCOL.md#capabilities) for the field ta
 and the forward-compatibility rule for unknown feature names.
 
 ```json
-{"node_id":"desktop-2","kind":"sidecar","agent_version":"0.6.0","platform":"windows","features":["steam_library","game_launch","sleep"]}
+{"node_id":"node-3","kind":"sidecar","agent_version":"0.6.0","platform":"windows","features":["steam_library","game_launch","sleep"]}
 ```
 
 Bearer-authenticated like every route but `/art/{appid}`: the feature set is an
@@ -277,8 +277,8 @@ change (credential rotation included) needs a sidecar restart.
 
 ## Install path A — Ansible-managed (homelab)
 
-On the gaming host the service is a managed `systemd --user` unit via the `desktop-common`
-role. You don't run anything by hand — set the flags and apply:
+On the gaming host the service is a managed `systemd --user` unit via the
+homelab desktop Ansible role in `jedwards1230/homelab-ansible`. You don't run anything by hand — set the flags and apply:
 
 ```yaml
 # host_vars/gaming-host.yaml
@@ -321,8 +321,8 @@ firewall to port 47995. See the role for the full variable list.
 
    To keep it running, install it as a service. On Linux a user unit bound to the
    graphical session works (Steam must reach the live desktop session to launch a
-   game) — mirror `roles/desktop-common/templates/tv-shell-host.service.j2` from
-   the homelab-ansible repo. On Windows use Task Scheduler (at-logon); on macOS a
+   game) — mirror the `tv-shell-host.service` template the homelab desktop Ansible
+   role in `jedwards1230/homelab-ansible` ships. On Windows use Task Scheduler (at-logon); on macOS a
    launchd LaunchAgent.
 
 3. **Open the firewall** to the LAN so the TV box can reach it:

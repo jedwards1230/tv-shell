@@ -16,7 +16,7 @@
 //!
 //! # Only codes measured to ARRIVE are emitted
 //!
-//! gamescope **silently drops `KEY_MENU`** (§2.1, measured on htpc-1
+//! gamescope **silently drops `KEY_MENU`** (§2.1, measured on the reference deployment
 //! 2026-09-10): XTEST `Menu` — injected inside Xwayland, past gamescope — opened
 //! the drawer, and the same key from a uinput device never reached the client at
 //! all. That is why the drawer moved to Tab (jedwards1230/tv-shell#490) and why
@@ -55,7 +55,7 @@ pub mod key {
 }
 
 /// The key codes **measured to reach the v2 shell through gamescope**
-/// (V2_GAMEPAD_HANDOFF §2.1, htpc-1, 2026-09-09/10).
+/// (V2_GAMEPAD_HANDOFF §2.1, the reference deployment, 2026-09-09/10).
 ///
 /// `KEY_MENU` is absent because it was measured NOT to arrive, which is the
 /// whole reason this list is a list and not a comment.

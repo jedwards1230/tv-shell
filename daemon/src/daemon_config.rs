@@ -1135,11 +1135,11 @@ mod tests {
     #[test]
     fn osd_name_prefers_config_then_hostname_then_fallback() {
         assert_eq!(
-            resolve_osd_name(Some("living-room"), Some("htpc-1")),
+            resolve_osd_name(Some("living-room"), Some("node-1")),
             "living-room"
         );
-        assert_eq!(resolve_osd_name(None, Some("htpc-1")), "htpc-1");
-        assert_eq!(resolve_osd_name(Some("  "), Some("htpc-1")), "htpc-1");
+        assert_eq!(resolve_osd_name(None, Some("node-1")), "node-1");
+        assert_eq!(resolve_osd_name(Some("  "), Some("node-1")), "node-1");
         assert_eq!(resolve_osd_name(None, None), "tv-shell");
         assert_eq!(resolve_osd_name(Some(""), Some(" ")), "tv-shell");
     }
@@ -1334,12 +1334,12 @@ mod tests {
         let c = DaemonConfig::parse(
             r#"
             [[steam.hosts]]
-            name = "desktop-1"
+            name = "node-2"
             url = "http://192.0.2.10:47995"
             mac = "AA-BB-CC-DD-EE-FF"
 
             [[steam.hosts]]
-            name = "desktop-1-windows"
+            name = "node-2-windows"
             url = "http://192.0.2.20:47995"
         "#,
         )
@@ -1459,9 +1459,9 @@ mod tests {
             bind = "127.0.0.1:8091"
 
             [[panel.nodes]]
-            id = "desktop-2"
-            base_url = "http://192.168.8.153:47995"
-            sidecar_token_file = "~/.config/tv-shell/desktop-2-sidecar-token"
+            id = "node-3"
+            base_url = "http://192.0.2.153:47995"
+            sidecar_token_file = "~/.config/tv-shell/node-3-sidecar-token"
 
             [http]
             bind = "127.0.0.1:8089"
@@ -1479,9 +1479,9 @@ mod tests {
         let err = DaemonConfig::parse(
             r#"
             [[nodes]]
-            id = "desktop-2"
-            base_url = "http://192.168.8.153:47995"
-            sidecar_token_file = "~/.config/tv-shell/desktop-2-sidecar-token"
+            id = "node-3"
+            base_url = "http://192.0.2.153:47995"
+            sidecar_token_file = "~/.config/tv-shell/node-3-sidecar-token"
         "#,
         )
         .expect_err(
@@ -1502,8 +1502,8 @@ mod tests {
             r#"
             [mqtt]
             broker = "mqtts://mqtt.example:8883"
-            device_id = "htpc-1"
-            username = "tv-shell-htpc-1"
+            device_id = "node-1"
+            username = "tv-shell-node-1"
             password_file = "~/.config/tv-shell/mqtt-password"
             ca_file = "~/.config/tv-shell/mqtt-ca.pem"
             heartbeat_secs = 15
@@ -1512,8 +1512,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.mqtt.broker.as_deref(), Some("mqtts://mqtt.example:8883"));
-        assert_eq!(c.mqtt.device_id.as_deref(), Some("htpc-1"));
-        assert_eq!(c.mqtt.username.as_deref(), Some("tv-shell-htpc-1"));
+        assert_eq!(c.mqtt.device_id.as_deref(), Some("node-1"));
+        assert_eq!(c.mqtt.username.as_deref(), Some("tv-shell-node-1"));
         assert_eq!(
             c.mqtt.password_file.as_deref(),
             Some("~/.config/tv-shell/mqtt-password")
@@ -1525,7 +1525,7 @@ mod tests {
                 .unwrap()
                 .map(|d| d.to_string())
                 .as_deref(),
-            Some("htpc-1")
+            Some("node-1")
         );
 
         // An empty [mqtt] table is all-default (MQTT off).
@@ -1622,11 +1622,11 @@ mod tests {
             // Identity present but invalid (topic wildcard).
             "[mqtt]\nbroker = \"mqtts://h\"\ndevice_id = \"a/b\"\n",
             // Unparseable broker URL.
-            "[mqtt]\nbroker = \"http://h\"\ndevice_id = \"htpc-1\"\n",
+            "[mqtt]\nbroker = \"http://h\"\ndevice_id = \"node-1\"\n",
             // Half-configured credentials.
-            "[mqtt]\nbroker = \"mqtts://h\"\ndevice_id = \"htpc-1\"\nusername = \"u\"\n",
+            "[mqtt]\nbroker = \"mqtts://h\"\ndevice_id = \"node-1\"\nusername = \"u\"\n",
             // Zero intervals.
-            "[mqtt]\nbroker = \"mqtts://h\"\ndevice_id = \"htpc-1\"\nheartbeat_secs = 0\n",
+            "[mqtt]\nbroker = \"mqtts://h\"\ndevice_id = \"node-1\"\nheartbeat_secs = 0\n",
         ];
         for raw in broken {
             let cfg = DaemonConfig::parse(raw).expect("parses");
@@ -1673,12 +1673,12 @@ mod tests {
         let base = || {
             let mut c = DaemonConfig::default();
             c.mqtt.broker = Some("mqtts://h".to_string());
-            c.mqtt.device_id = Some("htpc-1".to_string());
+            c.mqtt.device_id = Some("node-1".to_string());
             c
         };
 
         let mut user_only = base();
-        user_only.mqtt.username = Some("tv-shell-htpc-1".to_string());
+        user_only.mqtt.username = Some("tv-shell-node-1".to_string());
         let err = user_only.mqtt_settings().unwrap_err().to_string();
         assert!(err.contains("without [mqtt].password_file"), "got: {err}");
 
@@ -1698,7 +1698,7 @@ mod tests {
         {
             let mut c = DaemonConfig::default();
             c.mqtt.broker = Some("mqtts://h".to_string());
-            c.mqtt.device_id = Some("htpc-1".to_string());
+            c.mqtt.device_id = Some("node-1".to_string());
             c.mqtt.heartbeat_secs = heartbeat;
             c.mqtt.keepalive_secs = keepalive;
             let err = c.mqtt_settings().unwrap_err().to_string();
@@ -1750,8 +1750,8 @@ mod tests {
             let pw = write_token(gs, "mqtt-password", "hunter2\n", 0o644);
             let mut c = DaemonConfig::default();
             c.mqtt.broker = Some("mqtts://h".to_string());
-            c.mqtt.device_id = Some("htpc-1".to_string());
-            c.mqtt.username = Some("tv-shell-htpc-1".to_string());
+            c.mqtt.device_id = Some("node-1".to_string());
+            c.mqtt.username = Some("tv-shell-node-1".to_string());
             c.mqtt.password_file = Some(pw.to_string_lossy().into_owned());
             let err = c.mqtt_password().unwrap_err().to_string();
             assert!(err.contains("group/other-accessible"), "got: {err}");

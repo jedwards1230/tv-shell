@@ -32,9 +32,11 @@
 #   that flip-flops per run:
 #
 #     1. Precedent on this box: the gamescope prototype's .desktop is written by
-#        homelab-ansible's roles/htpc_common/tasks/gamescope-prototype.yaml, and
-#        that is the session htpc-1 boots today. One mental model for "who writes
-#        wayland-sessions entries here".
+#        the gamescope-prototype task of the host-configuration role in
+#        jedwards1230/homelab-ansible (the role that provisions this
+#        deployment's TV box), and that is the session the reference deployment
+#        boots today. One mental model for "who writes wayland-sessions entries
+#        here".
 #     2. ONLY Ansible can produce the full Exec. The role renders a session env
 #        list into `Exec=` as a `/usr/bin/env` prefix, which is the only way to
 #        set environment for a greeter-launched or autologin session — there is

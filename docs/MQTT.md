@@ -7,7 +7,7 @@ by default on both.
 
 | Device | `device_id` | Binary | `status` payload |
 |---|---|---|---|
-| the TV client | `htpc-1` | `tv-shell-input` (`daemon/`) | `ShellSnapshot` |
+| the TV client | `node-1` | `tv-shell-input` (`daemon/`) | `ShellSnapshot` |
 | the gaming PC (dual-boot, ONE machine) | `desktop` | `tv-shell-host` (`host/`) | `StatusResponse` verbatim |
 
 > **Status: both devices are live and their discovery entities exist in Home
@@ -181,7 +181,7 @@ drift on the check that stops a suspend mid-game.
 - **Screenshots.** Retained PNGs would bloat the broker and its persistence
   file. They stay on the HTTP bridge behind a Home Assistant `generic` camera.
 
-**The existing htpc-1 → sidecar HTTP path remains.** MQTT is additive; the QML
+**The existing node-1 → sidecar HTTP path remains.** MQTT is additive; the QML
 shell's Steam widget depends on those routes.
 
 ## Configuration
