@@ -220,7 +220,9 @@ async fn run() -> ExitCode {
             // that was merely slow, and the service manager reported it with a
             // line that named nothing.
             tracing::error!(
-                "opening the CEC adapter made no progress within {OPEN_TIMEOUT:?}; giving up                  rather than hanging the start job. If the thread budget warning above fired,                  that is the cause."
+                "opening the CEC adapter made no progress within {OPEN_TIMEOUT:?}; \
+                 giving up rather than hanging the start job. If the thread budget \
+                 warning above fired, that is the cause."
             );
             notifier.status("adapter open timed out");
             return ExitCode::FAILURE;
@@ -602,6 +604,43 @@ mod tests {
             "OPEN_TIMEOUT={OPEN_TIMEOUT:?} is not inside TimeoutStartSec={start_timeout}s, \
              so systemd reports the failure first and the cause goes unlogged"
         );
+    }
+
+    /// **No operator-facing message carries a run of stray spaces.**
+    ///
+    /// A long literal wrapped across source lines keeps the indentation of every
+    /// continuation line unless the line ends in a `\`. The compiler is happy,
+    /// the source reads correctly, and the message an operator actually sees has
+    /// eighteen spaces in the middle of a sentence. That is a poor bug to ship in
+    /// any message and a worse one here, because every message in this file is
+    /// read at the moment the daemon will not start — the failed-startup text is
+    /// the only thing standing between a blank journal and a diagnosis.
+    ///
+    /// Scanning the source is the point rather than a shortcut: the defect is
+    /// created between source and literal, it is invisible in a review diff, and
+    /// it cannot be reached at runtime for the arms that need hardware to fire.
+    /// This fails on every message in the file, including ones not yet written.
+    #[test]
+    fn no_message_in_this_file_has_mangled_whitespace() {
+        let source = include_str!("main.rs");
+        // Built rather than written, so this test's own needle is not a literal
+        // containing the run it searches for.
+        let run = " ".repeat(3);
+        for (n, line) in source.lines().enumerate() {
+            // Only inside a literal, and only runs the wrap bug produces. Source
+            // indentation itself is leading whitespace, which this skips.
+            let Some(quote) = line.find('"') else {
+                continue;
+            };
+            let body = &line[quote + 1..];
+            assert!(
+                !body.contains(&run),
+                "line {} looks like a literal wrapped without a trailing `\\`, so the \
+                 rendered message carries stray spaces: {}",
+                n + 1,
+                line.trim()
+            );
+        }
     }
 
     /// `pids.max` is a number or the word `max`, and `max` is not a limit.
