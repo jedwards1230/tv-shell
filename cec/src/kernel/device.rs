@@ -198,8 +198,9 @@ impl KernelBackend {
                 // exist and the bus would report nothing about it.
                 tracing::warn!(
                     "physical address MISMATCH on {path}: set {configured}, adapter reports \
-                     {got}. `2.5.0.0` is the pre-2026-08-07 value and is unverified against \
-                     the current rack — check `cec-ctl -d {path} --show-topology`"
+                     {got}. The configured value is [device] phys_addr in cec.toml, whose \
+                     default is measured for one installation only — check `cec-ctl -d \
+                     {path} --show-topology` against this one"
                 );
             }
             Observation::Unknown => {
