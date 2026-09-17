@@ -446,11 +446,11 @@ pub struct Topology {
     pub phys_addr_configured: PhysAddr,
     /// The physical address `CEC_ADAP_G_PHYS_ADDR` **read back**.
     ///
-    /// Published beside the configured value on purpose. `2.5.0.0` is the
-    /// pre-2026-08-07 value and is UNVERIFIED against the current rack (plan
-    /// §7 item 3); the adapter's own port has no readable EDID, so it cannot be
-    /// derived. Reporting both is what makes a wrong value visible instead of
-    /// silently addressing a port that does not exist.
+    /// Published beside the configured value on purpose. The default address is
+    /// measured against a live bus (2026-09-16) for ONE deployment, and the
+    /// adapter's own port has no readable EDID, so it cannot be derived
+    /// anywhere else. Reporting both is what makes a wrong value visible
+    /// instead of silently addressing a port that does not exist.
     pub phys_addr_read_back: Observation<PhysAddr>,
     /// The logical addresses the adapter holds, as read back.
     pub log_addrs: Vec<String>,

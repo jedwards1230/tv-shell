@@ -1,0 +1,167 @@
+# Per-machine configuration for the tv-shell v2 AV daemon (`tv-shell-cec`).
+#
+# THIS IS A THIRD FILE — not v1's config.toml and not the core's core.toml —
+# AND IT MUST STAY THAT WAY. Both of those roots are `deny_unknown_fields`, so
+# a [device] table added to either one makes THAT daemon abort at startup, and
+# the symptom presents as "v1 is broken" rather than "someone added an AV
+# table" (docs/V2_DESIGN.md §11, "beside, not instead, at every shared layer").
+# The daemon's socket is separate for the same reason: a stray client reaching
+# the wrong socket must fail to connect rather than be answered by the wrong
+# vocabulary.
+#
+# Copy to ~/.config/tv-shell/cec.toml and edit. EVERYTHING here is OPTIONAL —
+# with no cec.toml at all the daemon starts on the defaults below. Every key is
+# shown commented out with its default.
+#
+# This file is parsed with `deny_unknown_fields` at every level, so a typo
+# (`phys_add = "2.5.0.0"`) is a startup failure naming the bad key rather than a
+# setting that silently did nothing. `validate()` then rejects values that would
+# fail confusingly later, with a `config: ...` message naming the value.
+#
+# THAT STRICTNESS IS WHY THIS FILE HAS A CHECKER. A daemon that refuses to start
+# is the right answer to a bad config and the wrong thing to discover at the
+# next session start, hours after the run that wrote the file reported success.
+# So check the file with the daemon's own parser BEFORE it is installed:
+#
+#   TV_SHELL_CEC_CONFIG=<staged file> tv-shell-cec --check-config
+#
+# It exits 0 and prints one line naming the file and which optional legs it
+# configures, or prints the `config:` error to stderr and exits non-zero. It
+# opens no adapter, binds no socket and transmits nothing, so it is safe to run
+# against a live deployment and on a box with no adapter at all. This is the
+# shape `tv-shell-core write-session-env` already provides for core.toml, and
+# what an Ansible `template:` names as its `validate:` command.
+#
+# Path overrides (runtime/session only, not per-machine config):
+#   TV_SHELL_CEC_CONFIG  — the path to this file
+#   TV_SHELL_CEC_SOCK    — the IPC socket path
+#                          (default /run/user/<uid>/tv-shell-v2-cec.sock —
+#                           deliberately neither v1's socket nor the core's)
+
+# --- The adapter, and how we identify ourselves on the bus ---------------------
+[device]
+# The CEC device node to open.
+#
+# The unit's `ConditionPathExists=` names /dev/cec0 literally, so a box pointing
+# this elsewhere must adjust BOTH. That is deliberate: the condition is what
+# keeps the unit inert — recorded as an unmet condition, starting nothing — on
+# every box that has no adapter.
+#path = "/dev/cec0"
+
+# The adapter's physical address: its `a.b.c.d` port path in the HDMI topology.
+#
+# NOT AUTO-DERIVED, ON PURPOSE. `cec-ctl --phys-addr-from-edid` reads the EDID of
+# the connector the adapter sits on, and on the reference deployment the adapter
+# sits on a DIFFERENT HDMI input from the video leg — so that EDID is the wrong
+# port's answer. `CEC_ADAP_G_CONNECTOR_INFO` answers `None` on this adapter, so
+# the kernel cannot derive it either. An explicit key is the only honest option.
+#
+# THE DEFAULT IS THE VIDEO LEG'S ADDRESS, and claiming it is a deliberate
+# fiction rather than a bug: `<Active Source>` and the volume traffic should
+# refer to the input that actually shows picture. Verified by measurement on the
+# reference deployment, 2026-09-16.
+#
+# A WRONG VALUE FAILS SILENTLY — a later `<Active Source>` addresses a port that
+# does not exist and nothing on the bus complains. So the daemon logs the value
+# it set alongside what `CEC_ADAP_G_PHYS_ADDR` reads back, warns on a mismatch,
+# and `av-state` publishes both side by side. That read-back is the standing
+# guard for a DIFFERENT installation: check it there before trusting this
+# default.
+#phys_addr = "2.5.0.0"
+
+# The OSD name this adapter announces — the input label a TV or receiver shows.
+#
+# At most 14 bytes and ASCII, per the CEC specification. A longer or non-ASCII
+# name is REFUSED at startup rather than truncated at runtime: a truncated label
+# is the operator's chosen name silently replaced by a different one on the
+# television.
+#osd_name = "tv-shell"
+
+# --- The receiver's IP leg ----------------------------------------------------
+# OPT-IN, AND ABSENT MEANS ABSENT. An empty `host` is not a receiver at "", it
+# is no receiver at all: every telnet step is skipped, nothing here opens a
+# socket, and `backend` reports `cec` as the only backend there is.
+#
+# This leg is a CAPABILITY COMPLEMENT first and a failover second — Zone 2 has
+# no CEC expression whatsoever, so `zone2_off` below runs with a perfectly
+# healthy bus.
+[avr]
+# Hostname or address of the receiver's telnet control port. Empty disables
+# every AVR step. Resolved at send time, never at startup, so a receiver that is
+# unplugged does not stop the daemon from starting.
+#host = "192.0.2.10"
+
+# The control port. Denon/Marantz receivers speak ASCII over TCP/23.
+#port = 23
+
+# The source code to select on wake (`SI<input>`, e.g. "GAME"). Empty skips the
+# input switch. Validated as ASCII alphanumeric, because it is interpolated into
+# a carriage-return-terminated control line and an embedded return would be
+# accepted by the receiver as a second command.
+#input = ""
+
+# Drive the receiver's MAIN-zone power over telnet (`PWON` / `PWSTANDBY`).
+#
+# OFF BY DEFAULT, AND THIS IS A SAFETY DEFAULT, NOT A CONVENIENCE ONE.
+# POWERING THE MAIN ZONE DOWN CAN BLACK OUT A TELEVISION SOMEBODY IS WATCHING.
+# On the CEC path the main zone is already powered by `<Image View On>` /
+# `<Standby>`, and this daemon does not grant itself that authority merely
+# because its own adapter stopped answering. With this off, an `ip`-carried
+# `standby` answers `error:` naming this setting — after sending the `Z2OFF`
+# that CEC could never send. A power-ON is not symmetrical (it blacks nothing
+# out), so the authority path sends `PWON` without an opt-in.
+#main_power = false
+
+# Send `Z2OFF` on every standby. ON by default: Zone 2 is not CEC-addressable at
+# all, so this is a capability the bus does not have rather than a fallback for
+# when it fails.
+#zone2_off = true
+
+# --- The television's IP leg: Wake-on-LAN, and nothing else -------------------
+# WRITE-ONLY, WITH NO STATE READ. There is no webOS/SSAP client in this tree and
+# none is planned — a second auth surface with a history of breaking across
+# firmware is one of the reasons §13 Q7 demoted IP to the cold path. The one
+# thing this leg exists for is a cold wake of a television at mains standby,
+# which CEC cannot express at all.
+[tv]
+# The television's MAC address. EMPTY MEANS NO WAKE-ON-LAN AT ALL, which is the
+# default.
+#
+# CONFIRM IT BEFORE SETTING IT. A magic packet is unacknowledged: sent to the
+# wrong MAC it FAILS SILENTLY — no error, no log, nothing on the wire that says
+# so — and presents as a television that just does not wake. Read the address
+# off the set itself rather than inferring it from a lease.
+#wol_mac = "aa:bb:cc:dd:ee:ff"
+
+# Where to broadcast the magic packet. A numeric `addr:port`, never a name: a
+# magic packet is a broadcast, and a DNS name resolves to a single host. A
+# loopback address is refused, since no television can receive one.
+#wol_broadcast = "255.255.255.255:9"
+
+# --- The warm-path failover decision ------------------------------------------
+# Every key here is READ. CEC is authoritative whenever the observed health is
+# healthy; these four thresholds decide when it stops being, and when it comes
+# back.
+[failover]
+# Consecutive transmit failures, with nothing heard in the same window, that
+# count as a wedged adapter.
+#
+# AT LEAST 2, ENFORCED AT STARTUP: a threshold of 1 makes a single NAK a backend
+# change, and a single failed transmit is not a failed bus.
+#tx_error_threshold = 3
+
+# How far apart those failures may be and still count as one run.
+#tx_error_window_ms = 10000
+
+# How long a failing observation must hold before the backend changes.
+# Hysteresis applies on BOTH edges, so this is not the whole story on its own.
+#fail_after_ms = 5000
+
+# How long health must hold, across re-observations, before the backend changes
+# back.
+#
+# Un-failover is KERNEL-DRIVEN, NOT TIMER-DRIVEN: the device stays open through
+# a degraded period, a state change re-reads the addressing, and a recovery is
+# committed only inside a fresh healthy observation — never on elapsed time
+# alone.
+#recover_after_ms = 10000

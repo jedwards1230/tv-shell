@@ -469,7 +469,9 @@ contained.
 ## Config
 
 `~/.config/tv-shell/cec.toml`, overridable with `$TV_SHELL_CEC_CONFIG`. A missing
-file is all-defaults.
+file is all-defaults. `config/cec.toml.example` is the annotated copy — every key
+commented out at its default, with the reason it is that value — and
+`tv-shell-cec --check-config` judges a file before it is installed (below).
 
 ```toml
 [device]
@@ -603,6 +605,37 @@ snapshot precisely so it still answers when the device is the thing being
 diagnosed, while "what is the AVR's volume" is a question only the AVR can
 answer.
 
+### One volume scale, and it is CEC's
+
+**`volume-state` reports the CEC 7-bit audio level — `0..=100`, with `0x7F`
+published as `unknown` — and nothing else. The IP leg has, and will keep, no
+volume expression at all.** This is written down because the alternative is a
+plausible-sounding future change that would break every caller.
+
+**The receiver answers the same physical question on two protocols in two
+incompatible units.** Measured on the reference deployment on one evening,
+2026-09-16: CEC `<Report Audio Status>` reported a level in the 50s on its
+`0..=100` scale, while the receiver's own ASCII control protocol reported a
+*different* number, on a scale whose maximum it also reports and which is not
+100. Same volume, two numbers, and **nothing on either wire labels which scale
+it is**. A caller holding one of them cannot tell what it has.
+
+So: the single scale is CEC's. A receiver's native volume number is deliberately
+**never published, never used as a fallback, and never mixed in** — not when the
+IP leg is merely complementing CEC, and not when it is the authority.
+
+**The code is already right; this section is a lock, not a change.**
+`ip::plan_for` gives the volume verbs no IP expression at all, and
+`ip::volume_unreachable` turns a `volume` request on an IP-carrying path into an
+explicit refusal that names the reason — rather than an answer in the other
+unit. `the_input_and_volume_verbs_have_no_ip_leg` pins it. A caller therefore
+receives one scale or an honest refusal, and never two incompatible numbers for
+the same property.
+
+A future contributor who wants a volume reading while the IP leg is authoritative
+must add a **named, separate** property that says which scale it carries — not
+widen `volume-state`, whose contract is the CEC scale.
+
 ### `refused:` — the one addition to the reply grammar
 
 `refused:<why>` means **the daemon deliberately did not act, nothing is broken,
@@ -679,6 +712,40 @@ more here: this daemon is the one whose restarts belong to `WatchdogSec=`, and
 The binary also **refuses an argument it does not understand** rather than
 serving anyway. The unit starts it with no arguments at all, so that refusal is
 reachable only by a human typing one.
+
+## Checking a config file before it is installed
+
+```bash
+TV_SHELL_CEC_CONFIG=<staged file> tv-shell-cec --check-config
+```
+
+Exits 0 and prints one line naming the file it checked and which optional legs
+it configures; on a bad file it prints the `config:` error to stderr and exits
+non-zero. A missing file is a **success** — all-defaults is a valid
+configuration and the daemon starts on it, so absence is the state of every
+fresh install rather than a fault.
+
+**It exists because this daemon's strictness has a deployment cost.**
+`deny_unknown_fields` at every level plus `validate()` is the right answer to a
+bad config — a typo is a named startup failure, not a silently-defaulted value —
+but it means a file written by a configuration-management run is judged for the
+first time at the *next session start*, hours after the run that wrote it
+reported success. So the real parser judges the staged file first. This is the
+shape `tv-shell-core write-session-env` already provides for `core.toml`, and
+what an Ansible `template:` names as its `validate:` command.
+
+It is dispatched **before the tokio runtime is built**, in the same place
+`--version` and `--help` are and for the same stated reason: a refused argument
+must not need a runtime, and neither must checking a file. It opens no adapter,
+binds no socket and transmits nothing, so it is safe to run against a live
+deployment and on a box that has no adapter at all.
+
+The report says **whether** each optional leg is configured, never **what** with:
+the file it judges carries a receiver's address and a television's MAC, and a
+config run's log is not where either belongs.
+
+`config/cec.toml.example` is the annotated reference for the file itself — every
+key commented out at its default, with the reason it is that value.
 
 ## Build, test & lint
 
@@ -813,14 +880,15 @@ Each of these lands with the module that reads it, never ahead of it:
   leg is Wake-on-LAN only, by decision; see "The IP leg" above.
 - **A `backend-pin` control on the panel** — the `/devices/av` page stays
   read-only. The verb is available on the daemon's socket.
-- **An on-hardware run of any of it.** Everything below "Not yet here" used to
-  include the §8 rewrite and enabling the unit; both landed. What is left is the
-  operator step that gives this daemon a device to open.
+- **A failover soak.** The daemon runs on the reference deployment and the
+  device-backed facts above were measured there (2026-09-16): the adapter
+  negotiates onto the bus, the physical address reads back as configured, and
+  the receiver acts on volume. What has *not* been observed on hardware is a
+  sustained degraded period and the recovery out of it.
 
-Nothing here can be verified against real hardware yet: `/dev/cec0` does not
-exist on the deploy box, and the receiver and television are live equipment in a
-living room. The on-box checklists for after that operator step are in the pull
-requests that added `health` and the IP leg. Note that the deploy box's journal
-retains about a day (jedwards1230/tv-shell#509), so a failover soak **cannot be
-evidenced after the fact** — raise retention or capture to a file before running
-one.
+The remaining checklists are in the pull requests that added `health` and the IP
+leg. Note that the deploy box's journal retains about a day
+(jedwards1230/tv-shell#509), so a failover soak **cannot be evidenced after the
+fact** — raise retention or capture to a file before running one. The receiver
+and television are live equipment in a living room, so anything that could
+change their state waits for a window where nobody is watching.

@@ -56,6 +56,7 @@
 //! verdict. The reasoning for that split, and for the other three facts, lives
 //! with the state machine.
 
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,7 +113,7 @@ const DEFAULT_WATCHDOG_PERIOD: Duration = Duration::from_secs(15);
 
 /// The whole argument surface, in one place so the error path and `--help`
 /// cannot drift apart.
-const USAGE: &str = "tv-shell-cec [--version|-V] [--help|-h]";
+const USAGE: &str = "tv-shell-cec [--check-config] [--version|-V] [--help|-h]";
 
 /// What the command line asked for.
 ///
@@ -127,6 +128,9 @@ enum Cli {
     Version,
     /// Print the usage line and exit 0.
     Help,
+    /// Load and validate the config, report, and exit — without opening an
+    /// adapter, binding a socket or transmitting anything.
+    CheckConfig,
     /// Anything else, carried so the message can name it.
     Unknown(String),
 }
@@ -146,8 +150,69 @@ fn parse_args(args: &[String]) -> Cli {
         None => Cli::Serve,
         Some("--version" | "-V") => Cli::Version,
         Some("--help" | "-h") => Cli::Help,
+        Some("--check-config") => Cli::CheckConfig,
         Some(other) => Cli::Unknown(other.to_string()),
     }
+}
+
+/// `--check-config`: judge the file the daemon would read, with the parser the
+/// daemon uses, and say so.
+///
+/// This exists so a configuration-management run can validate `cec.toml`
+/// **before** it is moved into place — the shape `tv-shell-core
+/// write-session-env` already provides for `core.toml` and Ansible's
+/// `template:` consumes as `validate:`. The alternative is what this daemon's
+/// strictness would otherwise guarantee: `deny_unknown_fields` at every level
+/// plus [`CecConfig::validate`] means a typo'd key is not a defaulted value but
+/// a daemon that refuses to start, and a file deployed by a config run is then
+/// judged for the first time at the next session start, by which time the run
+/// that wrote it has reported success and gone.
+///
+/// It opens no adapter, binds no socket and transmits nothing, so it is safe to
+/// run against a live deployment and on a box that has no adapter at all.
+fn check_config() -> ExitCode {
+    // `config_path()` then `load_from`, which is exactly `CecConfig::load()`'s
+    // body — spelled out so the path that gets REPORTED is the same one that was
+    // read, rather than a second resolution that could disagree with the first.
+    let path = config::config_path();
+    match check_config_at(&path) {
+        // STDOUT and `println!`, not the tracing layer, for the same reason
+        // `--version` uses it: this line is quoted verbatim in a config run's
+        // output, and a timestamp and a level in front of it are noise there.
+        Ok(report) => {
+            println!("{report}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The pure half of [`check_config`]: everything but the env read and the
+/// printing, so a test can exercise the whole path a `validate:` takes.
+///
+/// Returns the success line. It says **whether** each optional leg is
+/// configured and never **what** it is configured with: the file it judges
+/// carries a receiver's address and a television's MAC, and the output of a
+/// config-management run is not where either belongs.
+fn check_config_at(path: &Path) -> anyhow::Result<String> {
+    // A MISSING FILE IS A SUCCESS. All-defaults is a valid configuration — the
+    // daemon starts on it — so a check that failed on absence would refuse the
+    // state of every fresh install.
+    let config = CecConfig::load_from(path).map_err(|e| anyhow::anyhow!("config: {e}"))?;
+    config.validate()?;
+    // `validate` already parsed this; asked again for the answer rather than
+    // unwrapping a `Result` whose Ok-ness is an invariant of the line above.
+    let ip = config.ip()?;
+    let leg = |present: bool| if present { "configured" } else { "absent" };
+    Ok(format!(
+        "{}: config ok; [avr] {}, [tv] wake-on-lan {}",
+        path.display(),
+        leg(ip.avr.is_some()),
+        leg(ip.tv_wol.is_some()),
+    ))
 }
 
 fn main() -> ExitCode {
@@ -166,6 +231,12 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
         }
+        // Also before the runtime, and for the same stated reason as the two
+        // above: checking a config file must not need one. This is what an
+        // Ansible `template:` names as its `validate:` command, so it runs
+        // wherever the file is staged — as an unprivileged user, with no
+        // adapter, possibly on a box where /dev/cec0 does not exist.
+        Cli::CheckConfig => return check_config(),
         Cli::Unknown(other) => {
             tracing::error!("unknown argument {other:?}; usage: {USAGE}");
             return ExitCode::FAILURE;
@@ -538,11 +609,97 @@ mod tests {
             parse_args(&args(&["--adapter=/dev/cec1"])),
             Cli::Unknown("--adapter=/dev/cec1".to_string())
         );
+        // Near-misses of the config check are refused too, and by the same rule:
+        // a `validate:` command that was silently the SERVE path would open the
+        // adapter on the box staging a config file.
+        for near in [
+            "--check",
+            "--checkconfig",
+            "--check-config=x",
+            "check-config",
+        ] {
+            assert_eq!(
+                parse_args(&args(&[near])),
+                Cli::Unknown(near.to_string()),
+                "{near} must be refused, not treated as --check-config"
+            );
+        }
+    }
+
+    /// The `validate:` arm. It has exactly one spelling, because the one thing
+    /// naming it is a config-management template, not a human at a prompt.
+    #[test]
+    fn the_config_check_has_one_spelling_and_takes_no_argument() {
+        assert_eq!(parse_args(&args(&["--check-config"])), Cli::CheckConfig);
+        // The path comes from `$TV_SHELL_CEC_CONFIG` — the same resolution the
+        // daemon uses — so a trailing word is an argument nobody reads, and an
+        // ignored path would check a DIFFERENT file from the one named.
+        assert_eq!(
+            parse_args(&args(&["--check-config", "/tmp/cec.toml"])),
+            Cli::CheckConfig
+        );
+    }
+
+    /// **The rule: the check refuses what the daemon would refuse.**
+    ///
+    /// This is the whole value of the flag — a document the daemon would abort
+    /// on must fail HERE, where the config run can still decline to install it,
+    /// rather than at the next session start.
+    #[test]
+    fn the_config_check_takes_the_same_path_a_validate_would() {
+        let dir = std::env::temp_dir().join(format!("tv-cec-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Absent ⇒ ok. All-defaults is a valid configuration, so a fresh install
+        // must not be reported as a broken one.
+        let missing = dir.join("missing.toml");
+        let ok = check_config_at(&missing).unwrap();
+        assert!(ok.contains("config ok"), "{ok}");
+        assert!(ok.contains("[avr] absent"), "{ok}");
+        assert!(ok.contains("[tv] wake-on-lan absent"), "{ok}");
+
+        // A typo'd key: `deny_unknown_fields` is what makes this a startup
+        // failure rather than a silently-defaulted value, and the check inherits
+        // it because it uses the same parser.
+        let typo = dir.join("typo.toml");
+        std::fs::write(&typo, "[device]\nphysaddr = \"1.0.0.0\"\n").unwrap();
+        let e = check_config_at(&typo).unwrap_err().to_string();
+        assert!(e.starts_with("config:"), "{e}");
+        assert!(e.contains("physaddr"), "{e}");
+
+        // A well-formed document with a bad VALUE fails too, naming the key —
+        // parsing and validation are two gates and the check runs both.
+        let bad = dir.join("bad.toml");
+        std::fs::write(&bad, "[device]\nphys_addr = \"25.0.0\"\n").unwrap();
+        let e = check_config_at(&bad).unwrap_err().to_string();
+        assert!(e.contains("[device] phys_addr"), "{e}");
+
+        // A valid document with both optional legs set reports them as present —
+        // and reports WHETHER, never WHAT.
+        let full = dir.join("full.toml");
+        std::fs::write(
+            &full,
+            "[avr]\nhost = \"192.0.2.10\"\n[tv]\nwol_mac = \"aa:bb:cc:dd:ee:ff\"\n",
+        )
+        .unwrap();
+        let ok = check_config_at(&full).unwrap();
+        assert!(ok.contains("[avr] configured"), "{ok}");
+        assert!(ok.contains("[tv] wake-on-lan configured"), "{ok}");
+        assert!(
+            !ok.contains("192.0.2.10"),
+            "the report must not echo the file: {ok}"
+        );
+        assert!(
+            !ok.contains("aa:bb:cc:dd:ee:ff"),
+            "the report must not echo the file: {ok}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn the_usage_line_names_every_flag_the_parser_accepts() {
-        for flag in ["--version", "-V", "--help", "-h"] {
+        for flag in ["--version", "-V", "--help", "-h", "--check-config"] {
             assert!(USAGE.contains(flag), "usage omits {flag}: {USAGE}");
         }
     }
